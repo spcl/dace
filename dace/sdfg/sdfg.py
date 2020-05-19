@@ -2209,55 +2209,6 @@ class MemletTrackingView(object):
         return traverse(tree_root)
 
 
-def trace_nested_access(node, state, sdfg):
-    """ Given an AccessNode in a nested SDFG, trace the accessed memory
-        back to the outermost scope in which it is defined.
-
-        :param node: An access node.
-        :param state: State in which the access node is located.
-        :param sdfg: SDFG in which the access node is located.
-        :return: A list of scopes (node, state, sdfg) in which the given
-                 data is accessed, from outermost scope to innermost scope.
-        """
-    if node.access == dace.dtypes.AccessType.ReadWrite:
-        raise NotImplementedError("Access node must be read or write only")
-    curr_node = node
-    curr_sdfg = sdfg
-    trace = [(node, state, sdfg)]
-    while curr_sdfg.parent is not None:
-        curr_state = curr_sdfg.parent
-        # Find the nested SDFG containing ourself in the parent state
-        for nested_sdfg in curr_state.nodes():
-            if isinstance(
-                    nested_sdfg,
-                    dace.nodes.NestedSDFG) and nested_sdfg.sdfg == curr_sdfg:
-                break
-        else:
-            raise ValueError("{} not found in its parent state {}".format(
-                curr_sdfg.name, curr_state.label))
-        if node.access == dace.dtypes.AccessType.ReadOnly:
-            for e in curr_state.in_edges(nested_sdfg):
-                if e.dst_conn == curr_node.data:
-                    # See if the input to this connector traces back to an
-                    # access node. If not, just give up here
-                    curr_node = find_input_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, dace.nodes.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
-        if node.access == dace.dtypes.AccessType.WriteOnly:
-            for e in curr_state.out_edges(nested_sdfg):
-                if e.src_conn == curr_node.data:
-                    # See if the output of this connector traces back to an
-                    # access node. If not, just give up here
-                    curr_node = find_output_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, dace.nodes.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
-    return list(reversed(trace))
-
-
 class ScopeSubgraphView(SubgraphView, MemletTrackingView):
     """ An extension to SubgraphView that enables the creation of scope
         dictionaries in subgraphs and free symbols. """
@@ -3585,22 +3536,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         validate_state(self)
 
 
-def find_input_arraynode(graph, edge):
-    result = graph.memlet_path(edge)[0]
-    if not isinstance(result.src, nd.AccessNode):
-        raise RuntimeError("Input array node not found for memlet " +
-                           str(edge.data))
-    return result.src
-
-
-def find_output_arraynode(graph, edge):
-    result = graph.memlet_path(edge)[-1]
-    if not isinstance(result.dst, nd.AccessNode):
-        raise RuntimeError("Output array node not found for memlet " +
-                           str(edge.data))
-    return result.dst
-
-
 def _scope_subgraph(graph, entry_node, include_entry, include_exit):
     if not isinstance(entry_node, nd.EntryNode):
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(
@@ -3690,70 +3625,6 @@ def _scope_dict_to_ids(state: SDFGState, scope_dict: Dict[Any, List[Any]]):
         node_id_or_none(k): [node_id_or_none(vi) for vi in v]
         for k, v in scope_dict.items()
     }
-
-
-def concurrent_subgraphs(graph):
-    """ Finds subgraphs of an SDFGState or ScopeSubgraphView that can
-        run concurrently. """
-    if not (isinstance(graph, SDFGState)
-            or isinstance(graph, ScopeSubgraphView)):
-        raise TypeError(
-            "Expected SDFGState or ScopeSubgraphView, got: {}".format(
-                type(graph).__name__))
-    candidates = graph.source_nodes()
-    components = collections.OrderedDict()  # {start node: nodes in component}
-    for cand in candidates:
-        if isinstance(cand, dace.graph.nodes.AccessNode):
-            # AccessNodes can be read from multiple concurrent components, so
-            # check all out edges
-            start_nodes = [e.dst for e in graph.out_edges(cand)]
-            for n in start_nodes:
-                if n not in components:
-                    components[n] = {cand, n}
-                else:
-                    # Components can read from multiple start arrays
-                    components[n].add(cand)
-        else:
-            # The source node == the first control or compute node
-            components[cand] = {cand}
-    subgraphs = []  # [{nodes in subgraph}]
-    for i, start_node in enumerate(components):
-        # Do BFS and find all nodes reachable from this start node
-        seen = set()
-        to_search = [start_node]
-        while len(to_search) > 0:
-            node = to_search.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            for e in graph.out_edges(node):
-                if e.dst not in seen:
-                    to_search.append(e.dst)
-        # If this component overlaps with any previously determined components,
-        # fuse them
-        to_delete = []
-        for i, other in enumerate(subgraphs):
-            if len(other & seen) > 0:
-                to_delete.append(i)
-        if len(to_delete) == 0:
-            # If there was no overlap, this is a concurrent subgraph
-            subgraphs.append(seen | components[start_node])
-        else:
-            # Merge overlapping subgraphs
-            new_subgraph = seen | components[start_node]
-
-            for i, index in enumerate(reversed(to_delete)):
-                new_subgraph |= subgraphs.pop(index - i)
-
-            subgraphs.append(new_subgraph)
-
-    # Now stick each of the found components in a ScopeSubgraphView and return
-    # them. Sort according to original order of nodes
-    all_nodes = graph.nodes()
-    return [
-        ScopeSubgraphView(graph, [n for n in all_nodes if n in sg])
-        for sg in subgraphs
-    ]
 
 
 def scope_symbols(dfg):
@@ -3929,111 +3800,6 @@ def all_transients(dfg):
         yield node.data
 
 
-def _transients_in_scope(sdfg, scope, scope_dict):
-    return set(node.data
-               for node in scope_dict[scope.entry if scope else scope]
-               if isinstance(node, nd.AccessNode)
-               and sdfg.arrays[node.data].transient)
-
-
-def local_transients(sdfg, dfg, entry_node):
-    """ Returns transients local to the scope defined by the specified entry
-        node in the dataflow graph. """
-    state: SDFGState = dfg._graph
-    scope_dict = state.scope_dict(node_to_children=True)
-    scope_tree = state.scope_tree()
-    current_scope = scope_tree[entry_node]
-
-    # Start by setting shared transients as defined
-    defined_transients = set(sdfg.shared_transients())
-
-    # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_dict)
-
-    # Add transients defined in parent scopes
-    while current_scope.parent is not None:
-        current_scope = current_scope.parent
-        defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_dict))
-
-    return sorted(list(transients - defined_transients))
-
-
-def is_devicelevel(sdfg: SDFG, state: SDFGState, node: dace.graph.nodes.Node):
-    """ Tests whether a node in an SDFG is contained within GPU device-level
-        code.
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: True if node is in device-level code, False otherwise.
-    """
-    while sdfg is not None:
-        sdict = state.scope_dict()
-        scope = sdict[node]
-        while scope is not None:
-            if scope.schedule in dtypes.GPU_SCHEDULES:
-                return True
-            scope = sdict[scope]
-        # Traverse up nested SDFGs
-        if sdfg.parent is not None:
-            if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
-            else:
-                parent = sdfg.parent
-            state, node = next(
-                (s, n) for s in parent.nodes() for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
-        else:
-            parent = sdfg.parent
-        sdfg = parent
-    return False
-
-
-def devicelevel_block_size(
-        sdfg: SDFG, state: SDFGState,
-        node: dace.graph.nodes.Node) -> Tuple[symbolic.SymExpr]:
-    """ Returns the current thread-block size if the given node is enclosed in
-        a GPU kernel, or None otherwise.
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: A tuple of sizes or None if the node is not in device-level 
-                 code.
-    """
-    while sdfg is not None:
-        sdict = state.scope_dict()
-        scope = sdict[node]
-        while scope is not None:
-            if scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                return tuple(scope.map.range.size())
-            elif scope.schedule == dtypes.ScheduleType.GPU_Device:
-                # No thread-block map, use config default
-                return tuple(
-                    int(s) for s in Config.get(
-                        'compiler', 'cuda', 'default_block_size').split(','))
-            elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
-                # Dynamic thread-block map, use configured value
-                return tuple(
-                    int(s)
-                    for s in Config.get('compiler', 'cuda',
-                                        'dynamic_map_block_size').split(','))
-
-            scope = sdict[scope]
-        # Traverse up nested SDFGs
-        if sdfg.parent is not None:
-            if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
-            else:
-                parent = sdfg.parent
-            state, node = next(
-                (s, n) for s in parent.nodes() for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
-        else:
-            parent = sdfg.parent
-        sdfg = parent
-    return None
-
-
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
     if symlist is None:
@@ -4117,104 +3883,6 @@ def replace(subgraph: Union[SDFGState, ScopeSubgraphView, SubgraphView],
         edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
 
 
-def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
-    """ Test whether a stream is directly connected to an array. """
-
-    # Test all memlet paths from the array. If the path goes directly
-    # to/from a stream, construct a stream array view
-    all_source_paths = []
-    source_paths = []
-    all_sink_paths = []
-    sink_paths = []
-    for e in dfg.in_edges(node):
-        src_node = dfg.memlet_path(e)[0].src
-        # Append empty path to differentiate between a copy and an array-view
-        if isinstance(src_node, nd.CodeNode):
-            all_source_paths.append(None)
-        # Append path from source node
-        if isinstance(src_node, nd.AccessNode) and isinstance(
-                src_node.desc(sdfg), dt.Array):
-            source_paths.append(src_node)
-    for e in dfg.out_edges(node):
-        sink_node = dfg.memlet_path(e)[-1].dst
-
-        # Append empty path to differentiate between a copy and an array-view
-        if isinstance(sink_node, nd.CodeNode):
-            all_sink_paths.append(None)
-        # Append path to sink node
-        if isinstance(sink_node, nd.AccessNode) and isinstance(
-                sink_node.desc(sdfg), dt.Array):
-            sink_paths.append(sink_node)
-
-    all_sink_paths.extend(sink_paths)
-    all_source_paths.extend(source_paths)
-
-    # Special case: stream can be represented as a view of an array
-    if ((len(all_source_paths) > 0 and len(sink_paths) == 1)
-            or (len(all_sink_paths) > 0 and len(source_paths) == 1)):
-        # TODO: What about a source path?
-        arrnode = sink_paths[0]
-        # Only works if the stream itself is not an array of streams
-        if list(node.desc(sdfg).shape) == [1]:
-            node.desc(sdfg).sink = arrnode.data  # For memlet generation
-            arrnode.desc(
-                sdfg).src = node.data  # TODO: Move src/sink to node, not array
-            return True
-    return False
-
-
-def dynamic_map_inputs(state: SDFGState,
-                       map_entry: nd.MapEntry) -> List[MultiConnectorEdge]:
-    """
-    For a given map entry node, returns a list of dynamic-range input edges.
-    :param state: The state in which the map entry node resides.
-    :param map_entry: The given node.
-    :return: A list of edges in state whose destination is map entry and denote
-             dynamic-range input memlets.
-    """
-    return [
-        e for e in state.in_edges(map_entry)
-        if e.dst_conn and not e.dst_conn.startswith('IN_')
-    ]
-
-
-def has_dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> bool:
-    """
-    Returns True if a map entry node has dynamic-range inputs.
-    :param state: The state in which the map entry node resides.
-    :param map_entry: The given node.
-    :return: True if there are dynamic-range input memlets, False otherwise.
-    """
-    return len(dynamic_map_inputs(state, map_entry)) > 0
-
-
-def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
-    """
-    Returns True if a node or state are contained within a parallel
-    section.
-    :param state: The state to test.
-    :param node: An optional node in the state to test. If None, only checks
-                 state.
-    :return: True if the state or node are located within a map scope that
-             is scheduled to run in parallel, False otherwise.
-    """
-    if node is not None:
-        sdict = state.scope_dict()
-        curnode = node
-        while curnode is not None:
-            curnode = sdict[curnode]
-            if curnode.schedule != dtypes.ScheduleType.Sequential:
-                return True
-    if state.parent.parent is not None:
-        # Find nested SDFG node and continue recursion
-        nsdfg_node = next(
-            n for n in state.parent.parent
-            if isinstance(n, nd.NestedSDFG) and n.sdfg == state.parent)
-        return is_parallel(state.parent.parent, nsdfg_node)
-
-    return False
-
-
 def _get_optimizer_class(class_override):
     """ Imports and returns a class string defined in the configuration
         (under "optimizer.interface") or overridden in the input
@@ -4235,5 +3903,3 @@ def _get_optimizer_class(class_override):
         warnings.warn('Optimizer interface class "%s" not found' % clazz)
 
     return result
-
-
