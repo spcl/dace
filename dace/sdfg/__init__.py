@@ -22,6 +22,7 @@ from dace.sdfg.sdfg import (
 
     # replace.py
     replace,
+    replace_properties,
 
     # validation.py
     InvalidSDFGError,
