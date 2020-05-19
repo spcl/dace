@@ -669,7 +669,7 @@ class SDFGReferenceProperty(Property):
 
 
 class RangeProperty(Property):
-    """ Custom Property type for `dace.graph.subset.Range` members. """
+    """ Custom Property type for `dace.subsets.Range` members. """
     def __set__(self, obj, value):
         if isinstance(value, list):
             value = dace.subsets.Range(value)

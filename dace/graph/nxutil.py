@@ -10,10 +10,6 @@ params = List[dace.symbolic.symbol]
 ranges = List[Union[dace.subsets.Range, dace.subsets.Indices]]
 
 
-class CannotExpand(Exception):
-    pass
-
-
 def node_path_graph(*args):
     """ Generates a path graph passing through the input nodes.
 
