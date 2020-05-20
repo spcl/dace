@@ -3,7 +3,7 @@
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedDiGraph
 from dace.symbolic import pystr_to_symbolic
@@ -51,7 +51,7 @@ class MapFission(pattern_matching.Transformation):
 
     @staticmethod
     def _components(
-            subgraph: sd.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+            subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -72,7 +72,7 @@ class MapFission(pattern_matching.Transformation):
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
         sdict = subgraph.scope_dict(node_to_children=True)
-        subset = sd.SubgraphView(parent, sdict[None])
+        subset = gr.SubgraphView(parent, sdict[None])
         if nested:
             return set(node.data for node in subset.nodes()
                        if isinstance(node, nodes.AccessNode)

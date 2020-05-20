@@ -4,13 +4,12 @@ from typing import Union
 import warnings
 
 from dace.dtypes import validate_name
-from dace.sdfg.scope import scope_contains_scope
 
 ###########################################
 # Validation
 
 
-def validate(graph: 'dace.sdfg.SubgraphView'):
+def validate(graph: 'dace.sdfg.graph.SubgraphView'):
     from dace.sdfg import SDFG, SDFGState, SubgraphView
     gtype = graph.parent if isinstance(graph, SubgraphView) else graph
     if isinstance(gtype, SDFG):
@@ -77,6 +76,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg import SDFG
     from dace.config import Config
     from dace.sdfg import nodes as nd
+    from dace.sdfg.scope import scope_contains_scope
     from dace import data as dt
     from dace import subsets as sbs
 

@@ -2,7 +2,8 @@
 
 import collections
 import copy
-from dace.sdfg.sdfg import SDFG, SDFGState, ScopeSubgraphView
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
 from dace import data as dt, dtypes, subsets as sbs
 from string import ascii_uppercase
@@ -511,8 +512,9 @@ def find_output_arraynode(graph, edge):
 def concurrent_subgraphs(graph):
     """ Finds subgraphs of an SDFGState or ScopeSubgraphView that can
         run concurrently. """
-    if not (isinstance(graph, SDFGState)
-            or isinstance(graph, ScopeSubgraphView)):
+    from dace.sdfg.scope import ScopeSubgraphView
+
+    if not isinstance(graph, (SDFGState, ScopeSubgraphView)):
         raise TypeError(
             "Expected SDFGState or ScopeSubgraphView, got: {}".format(
                 type(graph).__name__))
