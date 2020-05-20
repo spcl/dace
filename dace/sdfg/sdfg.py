@@ -3455,9 +3455,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             raise TypeError("node_id_or_label is not an int nor string")
 
     def is_empty(self):
-        return len([
-            n for n in self.nodes() if not isinstance(n, nd.EmptyTasklet)
-        ]) == 0
+        return len([n for n in self.nodes()]) == 0
 
     def fill_scope_connectors(self):
         """ Creates new "IN_%d" and "OUT_%d" connectors on each scope entry
