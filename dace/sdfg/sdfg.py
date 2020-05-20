@@ -29,8 +29,8 @@ from dace.sdfg.validation import (InvalidSDFGError, InvalidSDFGEdgeError,
 from dace.config import Config
 from dace.frontend.python import wrappers
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.graph import nodes as nd, labeling
-from dace.graph.labeling import propagate_memlet, propagate_labels_sdfg
+from dace.graph import nodes as nd
+from dace.sdfg.propagation import propagate_memlet, propagate_memlets_sdfg
 from dace.dtypes import validate_name
 from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
                               SubgraphView, Edge, MultiConnectorEdge)
@@ -1652,7 +1652,7 @@ class SDFG(OrderedDiGraph):
         if optclass is not None:
             # Propagate memlets in the graph
             if self._propagate:
-                propagate_labels_sdfg(sdfg)
+                propagate_memlets_sdfg(sdfg)
 
             opt = optclass(sdfg)
             sdfg = opt.optimize()
@@ -2046,7 +2046,7 @@ class SDFG(OrderedDiGraph):
 
         # Propagate memlets in the graph
         if sdfg.propagate:
-            labeling.propagate_labels_sdfg(sdfg)
+            propagate_memlets_sdfg(sdfg)
 
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 

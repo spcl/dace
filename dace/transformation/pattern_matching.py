@@ -7,10 +7,10 @@ import dace
 import inspect
 from typing import Dict
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil
+from dace.sdfg import utils as sdutil, propagation
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
-from dace.graph import labeling, graph as gr, nodes as nd
+from dace.graph import graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
@@ -154,7 +154,7 @@ class Transformation(object):
         """ Applies this transformation on the given SDFG. """
         self.apply(sdfg)
         if not self.annotates_memlets():
-            labeling.propagate_labels_sdfg(sdfg)
+            propagation.propagate_memlets_sdfg(sdfg)
 
     def __str__(self):
         return type(self).__name__

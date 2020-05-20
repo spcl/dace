@@ -14,7 +14,6 @@ import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
-from dace.graph import labeling
 from dace.graph.nodes import Tasklet, NestedSDFG
 from dace.symbolic import symstr, SymExpr
 from dace.frontend.tensorflow.winograd import winograd_convolution

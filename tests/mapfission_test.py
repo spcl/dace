@@ -281,7 +281,7 @@ class MapFissionTest(unittest.TestCase):
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
-        dace.propagate_labels_sdfg(sdfg)
+        dace.propagate_memlets_sdfg(sdfg)
         sdfg.validate()
 
         # Test
@@ -321,7 +321,7 @@ class MapFissionTest(unittest.TestCase):
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
-        dace.propagate_labels_sdfg(sdfg)
+        dace.propagate_memlets_sdfg(sdfg)
         sdfg.validate()
 
         # Test

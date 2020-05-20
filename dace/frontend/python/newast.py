@@ -19,7 +19,7 @@ from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 ParseMemlet, inner_eval_ast,
                                                 MemletExpr)
 from dace.graph import nodes
-from dace.graph.labeling import propagate_memlet
+from dace.sdfg.propagation import propagate_memlet
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState

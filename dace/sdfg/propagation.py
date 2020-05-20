@@ -539,7 +539,7 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def propagate_labels_sdfg(sdfg):
+def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         @note: This is an in-place operation on the SDFG.
     """
@@ -579,7 +579,7 @@ def _propagate_labels(g, sdfg):
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in g.nodes():
         if isinstance(node, nodes.NestedSDFG):
-            propagate_labels_sdfg(node.sdfg)
+            propagate_memlets_sdfg(node.sdfg)
 
     scopes_to_process = g.scope_leaves()
     next_scopes = set()
