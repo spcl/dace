@@ -7,8 +7,8 @@ from typing import Dict, List, Set, Optional
 import warnings
 
 from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
-from dace.graph import nodes
-from dace.graph.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching, helpers

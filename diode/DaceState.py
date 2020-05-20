@@ -103,7 +103,7 @@ class DaceState:
         for state in sdfg.nodes():
             data.update(
                 set((n.data, n.desc(sdfg)) for n in state.nodes()
-                    if isinstance(n, dace.graph.nodes.AccessNode)))
+                    if isinstance(n, dace.sdfg.nodes.AccessNode)))
 
         sym_args = [k for k, _ in sdfg.undefined_symbols(False).items()]
         data_args = [d for d in data if not d[1].transient]
@@ -124,7 +124,7 @@ class DaceState:
         for state in sdfg.nodes():
             data.update(
                 set((n.data, n.desc(sdfg)) for n in state.nodes()
-                    if isinstance(n, dace.graph.nodes.AccessNode)))
+                    if isinstance(n, dace.sdfg.nodes.AccessNode)))
 
         sym_args = [k for k, _ in sdfg.undefined_symbols(False).items()]
         data_args = [d for d in data if not d[1].transient]

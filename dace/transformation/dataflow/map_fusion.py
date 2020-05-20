@@ -3,7 +3,7 @@
 
 from copy import deepcopy as dcpy
 from dace import dtypes, registry, symbolic, subsets
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.sdfg import utils as sdutil

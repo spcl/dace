@@ -1,6 +1,6 @@
 from dace.transformation import pattern_matching
 from dace import memlet, registry
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 

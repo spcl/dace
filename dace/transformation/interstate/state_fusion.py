@@ -3,7 +3,7 @@
 import networkx as nx
 
 from dace import dtypes, registry, sdfg
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.config import Config

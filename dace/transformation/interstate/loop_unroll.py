@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 from dace import dtypes, registry, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.graph import graph as gr, nodes
+from dace.sdfg import graph as gr, nodes
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import DetectLoop
@@ -24,8 +24,9 @@ class LoopUnroll(DetectLoop):
                      "iterations (loop must be constant-sized for 0)")
 
     @staticmethod
-    def _loop_range(itervar: str, inedges: List[gr.Edge], condition: sp.Expr
-                    ) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
+    def _loop_range(
+            itervar: str, inedges: List[gr.Edge],
+            condition: sp.Expr) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
         """
         Finds loop range from state machine.
         :param itersym: String representing the iteration variable.

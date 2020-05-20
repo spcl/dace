@@ -8,7 +8,7 @@ from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 from dace.transformation.pattern_matching import Transformation
-from dace.graph.nodes import LibraryNode
+from dace.sdfg.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -621,8 +621,8 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
         name = x['name']
         classname = name[:name.index('$')] if name.find('$') >= 0 else name
 
-        transformation = next(t for t in Transformation.extensions().keys() if
-                              t.__name__ == classname)
+        transformation = next(t for t in Transformation.extensions().keys()
+                              if t.__name__ == classname)
         matching = optimizer.get_pattern_matches(patterns=[transformation])
 
         # Apply properties (will automatically apply by step-matching)
@@ -1250,6 +1250,7 @@ def main():
         # Wait for an event that will never arrive (passive wait)
         event = threading.Event()
         event.wait()
+
 
 if __name__ == '__main__':
     main()

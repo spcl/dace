@@ -8,7 +8,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
@@ -381,7 +381,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             # Don't generate brackets and comments for empty states
             if len([
                     n for n in state.nodes()
-                    if not isinstance(n, dace.graph.nodes.EmptyTasklet)
+                    if not isinstance(n, dace.sdfg.nodes.EmptyTasklet)
             ]) > 0:
 
                 callsite_stream.write('{', sdfg, sid)

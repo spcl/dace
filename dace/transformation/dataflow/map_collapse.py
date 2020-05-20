@@ -2,7 +2,7 @@
 
 from dace import registry
 from dace.symbolic import symlist
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties

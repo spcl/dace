@@ -3,7 +3,7 @@
 from dace import dtypes, registry
 from dace.sdfg import has_dynamic_map_inputs
 from dace.sdfg import utils as sdutil
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 

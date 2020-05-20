@@ -1,6 +1,6 @@
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, registry, symbolic
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties

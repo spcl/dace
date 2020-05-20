@@ -2,8 +2,8 @@
 import copy
 from typing import List, Optional
 
-from dace.graph import nodes
-from dace.graph.graph import SubgraphView, MultiConnectorEdge
+from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import EmptyMemlet, Memlet
 
@@ -263,10 +263,10 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         # Try to squeeze internal memlet
         result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
-            raise ValueError('Unexpected extra dimensions in internal memlet '
-                             'while un-squeezing memlet.\nExternal memlet: %s\n'
-                             'Internal memlet: %s' %
-                             (external_memlet, internal_memlet))
+            raise ValueError(
+                'Unexpected extra dimensions in internal memlet '
+                'while un-squeezing memlet.\nExternal memlet: %s\n'
+                'Internal memlet: %s' % (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
 

@@ -4,7 +4,7 @@
 from dace import registry
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil

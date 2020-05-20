@@ -9,7 +9,7 @@ import warnings
 
 from dace import registry, subsets, symbolic, dtypes
 from dace.memlet import EmptyMemlet, Memlet
-from dace.graph import nodes
+from dace.sdfg import nodes
 
 
 @registry.make_registry

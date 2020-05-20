@@ -1,9 +1,9 @@
 """ Contains the GPU Transform Map transformation. """
 
 from dace import data, dtypes, sdfg as sd, registry
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.graph.graph import SubgraphView
+from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching, helpers
 from dace.properties import Property, make_properties
 

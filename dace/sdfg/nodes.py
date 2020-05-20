@@ -8,7 +8,7 @@ import itertools
 import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.graph import graph
+from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
@@ -170,6 +170,15 @@ class Node(object):
             filling connectors when adding edges to scopes. """
         return str(self._next_connector_int() - 1)
 
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this node's properties. """
+        return set()
+
+    def new_symbols(self, sdfg, state) -> Dict[str, dtypes.typeclass]:
+        """ Returns a mapping between symbols defined by this node (e.g., for
+            scope entries) to their type. """
+        return {}
+
 
 # ------------------------------------------------------------------------------
 
@@ -256,6 +265,9 @@ class CodeNode(Node):
         # Properties
         self.label = label
         self.location = location if location is not None else {}
+
+    def free_symbols(self) -> Set[str]:
+        return set.union(*[v.free_symbols for v in self.location.values()])
 
 
 @make_properties

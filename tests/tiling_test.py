@@ -100,7 +100,7 @@ if __name__ == "__main__":
     sdfg.fill_scope_connectors()
     sdfg.apply_transformations(MapTiling, states=[body])
     for node in body.nodes():
-        if (isinstance(node, dace.graph.nodes.MapEntry)
+        if (isinstance(node, dace.sdfg.nodes.MapEntry)
                 and node.label[:-2] == 'stencil'):
             if len(body.in_edges(node)) > 1:
                 print(f"Edge union in {node} failed!")

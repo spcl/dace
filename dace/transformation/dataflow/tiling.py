@@ -3,7 +3,7 @@
 
 from dace import registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 

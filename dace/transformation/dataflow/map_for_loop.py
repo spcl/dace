@@ -4,7 +4,7 @@
 import dace
 from dace import data, registry, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.transformation.helpers import nest_state_subgraph

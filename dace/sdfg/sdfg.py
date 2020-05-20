@@ -29,11 +29,11 @@ from dace.sdfg.validation import (InvalidSDFGError, InvalidSDFGEdgeError,
 from dace.config import Config
 from dace.frontend.python import wrappers
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.graph import nodes as nd
+from dace.sdfg import nodes as nd
 from dace.sdfg.propagation import propagate_memlet, propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.graph.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
-                              SubgraphView, Edge, MultiConnectorEdge)
+from dace.sdfg.graph import (OrderedDiGraph, OrderedMultiDiConnectorGraph,
+                             SubgraphView, Edge, MultiConnectorEdge)
 from dace.properties import (make_properties, Property, CodeProperty,
                              DictProperty, OrderedDictProperty, CodeBlock)
 
@@ -178,7 +178,7 @@ class SDFG(OrderedDiGraph):
         assignments (see the `InterstateEdge` class documentation). The nested
         acyclic multigraphs represent dataflow, where nodes may represent data
         regions in memory, tasklets, or parametric graph scopes (see
-        `dace.graph.nodes` for a full list of available node types); edges in
+        `dace.sdfg.nodes` for a full list of available node types); edges in
         the multigraph represent data movement using memlets, as described in
         the `Memlet` class documentation.
     """
@@ -845,17 +845,17 @@ class SDFG(OrderedDiGraph):
 
         # Explore scope of node to find iteration variables
         scope_dict = state.scope_dict()
-        if isinstance(node, dace.graph.nodes.EntryNode):
+        if isinstance(node, dace.sdfg.nodes.EntryNode):
             scope = node
         else:
             scope = scope_dict[node]
         while scope is not None:
-            if isinstance(scope, dace.graph.nodes.MapEntry):
+            if isinstance(scope, dace.sdfg.nodes.MapEntry):
                 for param in scope.params:
                     symbols[param] = dt.Scalar(symbolic.symbol(param).dtype)
                 for sym in scope.range.free_symbols:
                     symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
-            elif isinstance(scope, dace.graph.nodes.ConsumeEntry):
+            elif isinstance(scope, dace.sdfg.nodes.ConsumeEntry):
                 symbols[scope.consume.pe_index] = dt.Scalar(
                     symbolic.symbol(scope.consume.pe_index).dtype)
                 for sym in scope.consume.num_pes.free_symbols:
@@ -928,19 +928,19 @@ class SDFG(OrderedDiGraph):
     def resolve_node(self, node):
         """ Resolves data objects and SDFG objects into their corresponding
             nodes in the SDFG. """
-        if isinstance(node, dace.graph.nodes.Node):
+        if isinstance(node, dace.sdfg.nodes.Node):
             return [node]
         all_nodes = itertools.chain([(self, None)], self.all_nodes_recursive())
         if isinstance(node, dace.data.Data):
             resolved = [
                 n for n, _ in all_nodes
-                if isinstance(n, dace.graph.nodes.AccessNode)
+                if isinstance(n, dace.sdfg.nodes.AccessNode)
                 and n.desc(self) == node
             ]
         elif isinstance(node, SDFG):
             resolved = [
-                n for n, _ in all_nodes if
-                isinstance(n, dace.graph.nodes.NestedSDFG) and n.sdfg == node
+                n for n, _ in all_nodes
+                if isinstance(n, dace.sdfg.nodes.NestedSDFG) and n.sdfg == node
             ]
         else:
             raise TypeError("Unrecognized type {} passed.".format(
@@ -963,7 +963,7 @@ class SDFG(OrderedDiGraph):
             states = [
                 s for s in self.nodes() if node in [
                     n.sdfg for n in s.nodes()
-                    if isinstance(n, dace.graph.nodes.NestedSDFG)
+                    if isinstance(n, dace.sdfg.nodes.NestedSDFG)
                 ]
             ]
         else:
@@ -2323,14 +2323,14 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
     def all_nodes_recursive(self):
         for node in self.nodes():
             yield node, self
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 yield from node.sdfg.all_nodes_recursive()
 
     def all_edges_recursive(self):
         for e in self.edges():
             yield e, self
         for node in self.nodes():
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 yield from node.sdfg.all_edges_recursive()
 
 
@@ -2459,14 +2459,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def all_nodes_recursive(self):
         for node in self.nodes():
             yield node, self
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 yield from node.sdfg.all_nodes_recursive()
 
     def all_edges_recursive(self):
         for e in self.edges():
             yield e, self
         for node in self.nodes():
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 yield from node.sdfg.all_edges_recursive()
 
     def data_symbols(self):
@@ -2564,9 +2564,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         # Fix potentially broken scopes
         for n in nodes:
-            if isinstance(n, dace.graph.nodes.MapExit):
+            if isinstance(n, dace.sdfg.nodes.MapExit):
                 n.map = ret.entry_node(n).map
-            elif isinstance(n, dace.graph.nodes.ConsumeExit):
+            elif isinstance(n, dace.sdfg.nodes.ConsumeExit):
                 n.consume = ret.entry_node(n).consume
 
         return ret
@@ -3637,9 +3637,9 @@ def scope_symbols(dfg):
     all_dynamic_symbols = set()
     for n in dfg.nodes():
         # TODO(later): Refactor to method on Node objects
-        if not isinstance(n, dace.graph.nodes.EntryNode):
+        if not isinstance(n, dace.sdfg.nodes.EntryNode):
             continue
-        if isinstance(n, dace.graph.nodes.MapEntry):
+        if isinstance(n, dace.sdfg.nodes.MapEntry):
             # Collect dynamic map range symbols from parent scopes
             dynamic_symbols = set()
             x = n
@@ -3668,7 +3668,7 @@ def scope_symbols(dfg):
                             "Unexpected map range type for {}: {}".format(
                                 n.map,
                                 type(n.map.range).__name__))
-        elif isinstance(n, dace.graph.nodes.ConsumeEntry):
+        elif isinstance(n, dace.sdfg.nodes.ConsumeEntry):
             # Collect dynamic map range symbols from parent scopes
             dynamic_symbols = set()
             x = n
@@ -3760,7 +3760,7 @@ def undefined_symbols(sdfg, obj, include_scalar_data):
     defined |= {
         n.data
         for n, scope in obj.all_nodes_recursive()
-        if (isinstance(n, dace.graph.nodes.AccessNode) and (
+        if (isinstance(n, dace.sdfg.nodes.AccessNode) and (
             scope.parent is None and n.desc(scope).transient or scope.parent))
     }
     symbols = collections.OrderedDict(
@@ -3790,7 +3790,7 @@ def all_transients(dfg):
     """ Iterate over all transient data in the specified dataflow graph. """
     visited = set()
     for node in dfg.nodes():
-        if not isinstance(node, dace.graph.nodes.AccessNode):
+        if not isinstance(node, dace.sdfg.nodes.AccessNode):
             continue
         if not node.desc(dfg.parent).transient:
             continue

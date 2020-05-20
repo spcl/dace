@@ -1,6 +1,6 @@
 import copy
 import dace
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np

@@ -300,7 +300,7 @@ class MemletTree(object):
         edge,
         parent=None,
         children=None
-    ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+    ):  # type: (dace.sdfg.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
         self.edge = edge
         self.parent = parent
         self.children = children or []

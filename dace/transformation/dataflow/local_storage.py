@@ -7,7 +7,7 @@ from abc import ABC
 
 from dace import registry, symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 

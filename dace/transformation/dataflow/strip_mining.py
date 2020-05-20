@@ -6,7 +6,7 @@ from copy import deepcopy as dcpy
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
 from dace.transformation import pattern_matching

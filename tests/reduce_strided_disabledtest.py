@@ -1,6 +1,6 @@
 import copy
 import dace
-import dace.graph.nodes
+import dace.sdfg.nodes
 import numpy as np
 
 # Python version of the SDFG below

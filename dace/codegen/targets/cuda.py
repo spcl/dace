@@ -10,7 +10,7 @@ import dace
 from dace.frontend import operations
 from dace import registry, subsets, symbolic, dtypes, data as dt
 from dace.config import Config
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
@@ -1147,9 +1147,9 @@ void __dace_runkernel_{fname}({fargs})
 void  *{kname}_args[] = {{ {kargs} }};
 cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
             .format(kname=kernel_name,
-                    kargs=', '.join([
-                        '(void *)&' + arg
-                        for arg in kernel_args] + extra_kernel_args),
+                    kargs=', '.join(['(void *)&' + arg
+                                     for arg in kernel_args] +
+                                    extra_kernel_args),
                     gdims=','.join(_topy(grid_dims)),
                     bdims=','.join(_topy(block_dims)),
                     dynsmem=_topy(dynsmem_size),

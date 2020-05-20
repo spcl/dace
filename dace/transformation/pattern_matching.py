@@ -10,7 +10,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
-from dace.graph import graph as gr, nodes as nd
+from dace.sdfg import graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
@@ -99,7 +99,7 @@ class Transformation(object):
                               Transformation.
             :raise TypeError: When state_id is not instance of int.
             :raise TypeError: When subgraph is not a dict of
-                              dace.graph.nodes.Node : int.
+                              dace.sdfg.nodes.Node : int.
         """
 
         self.sdfg_id = sdfg_id
@@ -189,8 +189,8 @@ class ExpandTransformation(Transformation):
         return [sdutil.node_path_graph(clc._match_node)]
 
     @staticmethod
-    def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[dace.graph.nodes.Node, int],
+    def can_be_applied(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+                       candidate: Dict[dace.sdfg.nodes.Node, int],
                        expr_index: int,
                        sdfg,
                        strict: bool = False):
@@ -198,8 +198,8 @@ class ExpandTransformation(Transformation):
         return True
 
     @classmethod
-    def match_to_str(clc, graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-                     candidate: Dict[dace.graph.nodes.Node, int]):
+    def match_to_str(clc, graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+                     candidate: Dict[dace.sdfg.nodes.Node, int]):
         node = graph.nodes()[candidate[clc._match_node]]
         return str(node)
 
@@ -229,7 +229,7 @@ class ExpandTransformation(Transformation):
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name)
-        elif isinstance(expansion, dace.graph.nodes.CodeNode):
+        elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
             pass
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")

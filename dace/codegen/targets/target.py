@@ -6,7 +6,7 @@ import warnings
 
 import dace
 from dace import dtypes
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.registry import extensible_enum, make_registry

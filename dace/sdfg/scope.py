@@ -3,9 +3,9 @@ from typing import Dict, List, Tuple
 from dace import dtypes, symbolic
 from dace.config import Config
 
-NodeType = 'dace.graph.nodes.Node'
-EntryNodeType = 'dace.graph.nodes.EntryNode'
-ExitNodeType = 'dace.graph.nodes.ExitNode'
+NodeType = 'dace.sdfg.nodes.Node'
+EntryNodeType = 'dace.sdfg.nodes.EntryNode'
+ExitNodeType = 'dace.sdfg.nodes.ExitNode'
 ScopeDictType = Dict[NodeType, List[NodeType]]
 
 
@@ -43,7 +43,7 @@ def is_devicelevel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    from dace.graph import nodes as nd
+    from dace.sdfg import nodes as nd
     from dace.sdfg.sdfg import SDFGState
 
     while sdfg is not None:
@@ -80,7 +80,7 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG',
                  code.
     """
     from dace.sdfg.sdfg import SDFGState
-    from dace.graph import nodes as nd
+    from dace.sdfg import nodes as nd
 
     while sdfg is not None:
         sdict = state.scope_dict()

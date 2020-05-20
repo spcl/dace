@@ -6,7 +6,7 @@ import warnings
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import make_properties, Property
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching

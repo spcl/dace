@@ -12,8 +12,8 @@ from dace.libraries.blas.blas_helpers import to_blastype as _to_blastype
 State = dace.sdfg.SDFGState
 Shape = typing.List[typing.Union[int, symbolic.symbol]]
 Index = typing.List[typing.Union[int, str, symbolic.symbol]]
-Node = dace.graph.nodes.Node
-DNode = dace.graph.nodes.AccessNode
+Node = dace.sdfg.nodes.Node
+DNode = dace.sdfg.nodes.AccessNode
 
 # TODO: Most of the external operations here emit Z (complex double) ops, fix
 

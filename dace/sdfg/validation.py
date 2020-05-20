@@ -76,7 +76,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     # Avoid import loops
     from dace.sdfg import SDFG
     from dace.config import Config
-    from dace.graph import nodes as nd
+    from dace.sdfg import nodes as nd
     from dace import data as dt
     from dace import subsets as sbs
 

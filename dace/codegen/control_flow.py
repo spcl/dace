@@ -1,7 +1,7 @@
 """ Various classes to facilitate the detection of control flow elements (e.g.,
     `for`, `if`, `while`) from state machines in SDFGs. """
 
-from dace.graph.graph import Edge
+from dace.sdfg.graph import Edge
 from dace.properties import Property, make_properties
 
 ###############################################################################

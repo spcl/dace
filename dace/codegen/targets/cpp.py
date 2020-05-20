@@ -14,7 +14,7 @@ from dace.codegen.targets.target import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel
 

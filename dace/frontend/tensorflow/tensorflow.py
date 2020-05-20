@@ -14,7 +14,7 @@ import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
-from dace.graph.nodes import Tasklet, NestedSDFG
+from dace.sdfg.nodes import Tasklet, NestedSDFG
 from dace.symbolic import symstr, SymExpr
 from dace.frontend.tensorflow.winograd import winograd_convolution
 from dace.frontend.tensorflow.transformations.redundant_array import (
@@ -280,7 +280,7 @@ class TFSession:
                     state.remove_node(node)
                     if node.label in self.constDict:
                         del self.constDict[node.label]
-                elif isinstance(node, dace.graph.nodes.AccessNode):
+                elif isinstance(node, dace.sdfg.nodes.AccessNode):
                     node_types[node.data] = node.desc(self.graph).dtype.type
         ############################
         # Set up arguments
@@ -461,7 +461,7 @@ class TFSession:
                         state.remove_node(node)
                         if node.label in self.constDict:
                             del self.constDict[node.label]
-                    elif isinstance(node, dace.graph.nodes.AccessNode):
+                    elif isinstance(node, dace.sdfg.nodes.AccessNode):
                         node_types[node.data] = node.desc(
                             self.graph).dtype.type
             self.graph._arg_types.update(self.callbackTypeDict)

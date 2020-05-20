@@ -9,7 +9,7 @@ import time
 import dace
 from dace.config import Config
 from dace.sdfg import propagation
-from dace.graph.graph import SubgraphView
+from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
 
 # This import is necessary since it registers all the patterns

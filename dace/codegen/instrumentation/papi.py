@@ -6,9 +6,9 @@ from dace import dtypes, registry, symbolic
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.targets.common import sym2cpp
 from dace.config import Config
-from dace.graph import nodes
-from dace.graph.nodes import EntryNode, MapEntry, MapExit, Tasklet
-from dace.graph.graph import SubgraphView
+from dace.sdfg import nodes
+from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
+from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
 
@@ -466,10 +466,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             self._counters)
 
     def perf_counter_start_measurement_string(
-            self,
-            unified_id: int,
-            iteration: str,
-            core_str: str = "PAPI_thread_id()"):
+        self,
+        unified_id: int,
+        iteration: str,
+        core_str: str = "PAPI_thread_id()"):
         pcs = self.perf_counter_string()
         return '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});

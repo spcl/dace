@@ -3,7 +3,7 @@
 
 from copy import deepcopy as dcpy
 from dace import data, properties, symbolic, dtypes, registry
-from dace.graph import graph, nodes
+from dace.sdfg import graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 

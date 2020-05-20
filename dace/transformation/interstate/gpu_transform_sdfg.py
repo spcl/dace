@@ -1,7 +1,7 @@
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
@@ -130,7 +130,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         output_nodes.append((node.data, node.desc(sdfg)))
                 elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
                     if not isinstance(node,
-                                      (nodes.EmptyTasklet, nodes.LibraryNode, nodes.NestedSDFG)):
+                                      (nodes.EmptyTasklet, nodes.LibraryNode,
+                                       nodes.NestedSDFG)):
                         global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity
@@ -240,10 +241,13 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                             for e in state.out_edges(node)):
                         continue
 
-                    gpu_storage = [dtypes.StorageType.GPU_Global,
-                                 dtypes.StorageType.GPU_Shared,
-                                  dtypes.StorageType.CPU_Pinned]
-                    if sdict[node] is None and nodedesc.storage not in gpu_storage:
+                    gpu_storage = [
+                        dtypes.StorageType.GPU_Global,
+                        dtypes.StorageType.GPU_Shared,
+                        dtypes.StorageType.CPU_Pinned
+                    ]
+                    if sdict[
+                            node] is None and nodedesc.storage not in gpu_storage:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global

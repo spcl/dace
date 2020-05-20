@@ -3,7 +3,7 @@
 import collections
 import copy
 from dace.sdfg.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.graph import nodes as nd, graph as gr
+from dace.sdfg import nodes as nd, graph as gr
 from dace import data as dt, dtypes, subsets as sbs
 from string import ascii_uppercase
 from typing import Callable, List, Optional, Union

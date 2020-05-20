@@ -3,9 +3,9 @@
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.graph.graph import OrderedDiGraph
+from dace.sdfg.graph import OrderedDiGraph
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pattern_matching, helpers
 from typing import List, Optional, Tuple
