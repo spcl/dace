@@ -174,7 +174,7 @@ class Node(object):
         """ Returns a set of symbols used in this node's properties. """
         return set()
 
-    def new_symbols(self, sdfg, state) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         """ Returns a mapping between symbols defined by this node (e.g., for
             scope entries) to their type. """
         return {}
@@ -403,6 +403,11 @@ class NestedSDFG(CodeNode):
 
         return ret
 
+    def free_symbols(self) -> Set[str]:
+        return set.union(
+            *[v.free_symbols for v in self.symbol_mapping.values()],
+            *[v.free_symbols for v in self.location.values()])
+
     def __str__(self):
         if not self.label:
             return "SDFG"
@@ -483,9 +488,9 @@ class MapEntry(EntryNode):
         return Map
 
     @classmethod
-    def from_json(clc, json_obj, context=None):
-        m = clc.map_type()("", [], [])
-        ret = clc(map=m)
+    def from_json(cls, json_obj, context=None):
+        m = cls.map_type()("", [], [])
+        ret = cls(map=m)
 
         try:
             # Connection of the scope nodes
@@ -515,6 +520,32 @@ class MapEntry(EntryNode):
     def __str__(self):
         return str(self.map)
 
+    def free_symbols(self) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+        return set(k for k in self._map.range.free_symbols().keys()
+                   if k not in dyn_inputs)
+
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        from dace.codegen.tools.type_inference import infer_expr_type
+
+        result = {}
+        # Add map params
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols),
+                                              infer_expr_type(rng[1], symbols))
+
+        # Add dynamic inputs
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+
+        # TODO: Get connector type from connector
+        for e in state.in_edges(self):
+            if e.dst_conn in dyn_inputs:
+                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+
+        return result
+
 
 @dace.serialize.serializable
 class MapExit(ExitNode):
@@ -532,16 +563,16 @@ class MapExit(ExitNode):
         return Map
 
     @classmethod
-    def from_json(clc, json_obj, context=None):
+    def from_json(cls, json_obj, context=None):
         try:
             # Set map reference to map entry
             entry_node = context['sdfg_state'].node(
                 int(json_obj['scope_entry']))
 
-            ret = clc(map=entry_node.map)
+            ret = cls(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
-            ret = clc(clc.map_type()('_', [], []))
+            ret = cls(cls.map_type()('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
@@ -699,6 +730,31 @@ class ConsumeEntry(EntryNode):
 
     def __str__(self):
         return str(self.consume)
+
+    def free_symbols(self) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+        return ((set(self._consume.num_pes.free_symbols)
+                 | set(self._consume.condition.free_symbols())) - dyn_inputs)
+
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        from dace.codegen.tools.type_inference import infer_expr_type
+
+        result = {}
+        # Add PE index
+        result[self._consume.pe_index] = infer_expr_type(
+            self._consume.num_pes, symbols)
+
+        # Add dynamic inputs
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+
+        # TODO: Get connector type from connector
+        for e in state.in_edges(self):
+            if e.dst_conn in dyn_inputs:
+                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+
+        return result
 
 
 @dace.serialize.serializable
@@ -1047,13 +1103,13 @@ class LibraryNode(CodeNode):
         transformation.apply(sdfg, *args, **kwargs)
 
     @classmethod
-    def register_implementation(clc, name, transformation_type):
+    def register_implementation(cls, name, transformation_type):
         """Register an implementation to belong to this library node type."""
-        clc.implementations[name] = transformation_type
+        cls.implementations[name] = transformation_type
         match_node_name = "__" + transformation_type.__name__
         if (hasattr(transformation_type, "_match_node")
                 and transformation_type._match_node != match_node_name):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = clc(match_node_name)
+        transformation_type._match_node = cls(match_node_name)
