@@ -1657,10 +1657,10 @@ class SDFG(OrderedDiGraph):
             opt = optclass(sdfg)
             sdfg = opt.optimize()
 
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
-
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
