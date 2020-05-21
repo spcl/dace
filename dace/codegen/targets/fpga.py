@@ -407,7 +407,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # kernel launch
             subgraphs = [dfg_scope]
             return self.generate_kernel(
-                sdfg, sdfg.find_state(state_id),
+                sdfg, sdfg.node(state_id),
                 dfg_scope.source_nodes()[0].map.label.replace(" ", "_"),
                 subgraphs, function_stream, callsite_stream)
 
@@ -1098,7 +1098,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg,
-                                                 sdfg.find_state(state_id),
+                                                 sdfg.node(state_id),
                                                  node)
         allocated = set()
         for child in dfg.scope_dict(node_to_children=True)[node]:

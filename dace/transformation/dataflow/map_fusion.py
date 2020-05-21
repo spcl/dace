@@ -143,14 +143,14 @@ class MapFusion(pattern_matching.Transformation):
 
         # Check that input set of second map is provided by the output set
         # of the first map, or other unrelated maps
-        for _, _, _, _, second_memlet in graph.out_edges(second_map_entry):
+        for second_edge in graph.out_edges(second_map_entry):
             # Memlets that do not come from one of the intermediate arrays
-            if second_memlet.data not in intermediate_data:
+            if second_edge.data.data not in intermediate_data:
                 # however, if intermediate_data eventually leads to
                 # second_memlet.data, need to fail.
                 for _n in intermediate_nodes:
-                    source_node = _n  # graph.find_node(_n.data)
-                    destination_node = graph.find_node(second_memlet.data)
+                    source_node = _n
+                    destination_node = graph.memlet_path(second_edge)[0].src
                     # NOTE: Assumes graph has networkx version
                     if destination_node in nx.descendants(
                             graph._nx, source_node):
@@ -160,14 +160,14 @@ class MapFusion(pattern_matching.Transformation):
             provided = False
 
             # Compute second subset with respect to first subset's symbols
-            sbs_permuted = dcpy(second_memlet.subset)
+            sbs_permuted = dcpy(second_edge.data.subset)
             sbs_permuted.replace({
                 symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
                 for k, v in params_dict.items()
             })
 
             for first_memlet in out_memlets:
-                if first_memlet.data != second_memlet.data:
+                if first_memlet.data != second_edge.data.data:
                     continue
 
                 # If there is a covered subset, it is provided

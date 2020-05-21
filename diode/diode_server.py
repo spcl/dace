@@ -594,7 +594,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
 
     sid = int(property_element['state_id'])
     nid = int(property_element['node_id'])
-    node = sdfg.find_node(sid, nid)
+    node = sdfg.node(sid).node(nid)
 
     for prop in property_element['params']:
         dace.serialize.set_properties_from_json(node, prop, context=sdfg)

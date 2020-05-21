@@ -451,7 +451,7 @@ class TargetDispatcher(object):
                 continue
 
             if isinstance(v, nodes.MapEntry):
-                scope_subgraph = sdfg.find_state(state_id).scope_subgraph(v)
+                scope_subgraph = sdfg.node(state_id).scope_subgraph(v)
 
                 self.dispatch_scope(v.map.schedule, sdfg, scope_subgraph,
                                     state_id, function_stream, callsite_stream)

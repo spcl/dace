@@ -240,6 +240,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def set_label(self, label):
         self._label = label
 
+    def is_empty(self):
+        return self.number_of_nodes() == 0
+
+    def validate(self) -> None:
+        validate_state(self)
+
     def replace(self, name: str, new_name: str):
         """ Finds and replaces all occurrences of a symbol or array in this
             state.
@@ -1280,29 +1286,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                               total_size=total_size,
                               alignment=alignment)
 
-    # SDFG queries
-    ######################################
-    def find_node(self, node_id_or_label):
-        """ Finds a node according to its ID (if integer is
-            provided) or label (if string is provided).
-
-            :param node_id_or_label  Node ID (if int) or label (if str)
-            :return A nodes.Node object
-        """
-
-        if isinstance(node_id_or_label, str):
-            for n in self.nodes():
-                if n.label == node_id_or_label:
-                    return n
-            raise LookupError("Node %s not found" % node_id_or_label)
-        elif isinstance(node_id_or_label, int):
-            return self.nodes()[node_id_or_label]
-        else:
-            raise TypeError("node_id_or_label is not an int nor string")
-
-    def is_empty(self):
-        return len([n for n in self.nodes()]) == 0
-
     def fill_scope_connectors(self):
         """ Creates new "IN_%d" and "OUT_%d" connectors on each scope entry
             and exit, depending on array names. """
@@ -1375,10 +1358,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         continue
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node._in_connectors.add(edge.dst_conn)
-
-    def validate(self) -> None:
-        validate_state(self)
-
 
 def top_level_transients(dfg):
     """ Iterate over top-level transients (i.e., ones that exist in multiple

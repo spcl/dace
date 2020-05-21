@@ -76,6 +76,25 @@ def _tensorshape(tensor: tf.Tensor):
     return tensor.shape
 
 
+def _find_node(state, node_id_or_label):
+    """ Finds a node according to its ID (if integer is
+        provided) or label (if string is provided).
+
+        :param node_id_or_label  Node ID (if int) or label (if str)
+        :return A nodes.Node object
+    """
+
+    if isinstance(node_id_or_label, str):
+        for n in state.nodes():
+            if n.label == node_id_or_label:
+                return n
+        raise LookupError("Node %s not found" % node_id_or_label)
+    elif isinstance(node_id_or_label, int):
+        return state.nodes()[node_id_or_label]
+    else:
+        raise TypeError("node_id_or_label is not an int nor string")
+
+
 def string_builder(string):
     """ To match DaCe variable naming conventions, replaces all undesired 
         characters with "_".
@@ -871,7 +890,7 @@ class TFSession:
             str(_tensorshape(node.outputs[0])))
 
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node))
@@ -891,7 +910,7 @@ class TFSession:
         state = self.state
         label = string_builder(node.inputs[1].name)
         try:
-            fillNode = state.find_node(label)
+            fillNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -904,7 +923,7 @@ class TFSession:
 
         label = string_builder(node.inputs[0].name)
         try:
-            emptyNode = state.find_node(string_builder(node.inputs[0].name))
+            emptyNode = _find_node(state, string_builder(node.inputs[0].name))
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -937,7 +956,7 @@ class TFSession:
 
         # Check if the node is already in the graph and get as a list
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
 
         except (LookupError):
             outputNode = self.create_and_add_output_node(node)
@@ -1016,7 +1035,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1035,7 +1054,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
 
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1052,7 +1071,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1071,7 +1090,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1616,7 +1635,7 @@ class TFSession:
 
             label = string_builder(inp.name)
             try:
-                inputNode = state.find_node(label)
+                inputNode = _find_node(state, label)
             except (LookupError):
 
                 inputNode = self.create_and_add_input_node(inp)[0]
@@ -1664,7 +1683,7 @@ class TFSession:
         inp = node.inputs[0]
         label = string_builder(inp.name)
         try:
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.outputs[0]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -1798,7 +1817,7 @@ class TFSession:
         inp = node.inputs[0]
         label = string_builder(inp.name)
         try:
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[2]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -2440,7 +2459,7 @@ class TFSession:
             self.constDict[label] = shape
             # Make outputs as non transients
             try:
-                outpNode = self.state.find_node(label)
+                outpNode = _find_node(self.state, label)
             except (LookupError):
                 outpNode = self.state.add_array(
                     label,
@@ -3074,7 +3093,7 @@ class TFSession:
         for out in node.outputs:
             label = string_builder(out.name)
             try:
-                outputNode = state.find_node(label)
+                outputNode = _find_node(state, label)
             except (LookupError):
                 dtype = dace.typeclass(_tensortype(node))
                 shape = dace.properties.ShapeProperty.from_string(
@@ -3853,7 +3872,7 @@ class TFSession:
         # Try to find node in DaCe graph
         try:
             # If successful, use the existing node
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             # Get type and shape of the input tensor
             try:
@@ -3893,7 +3912,7 @@ class TFSession:
             # Try to find node in DaCe graph
             try:
                 # If successful, use the existing node
-                outputNode = state.find_node(label)
+                outputNode = _find_node(state, label)
             except (LookupError):
                 # Get type and shape of the tensor
                 dtype = dace.typeclass(_tensortype(out))

@@ -1570,18 +1570,6 @@ class SDFG(OrderedDiGraph):
                 "state_id_or_label is not an int nor string: {}".format(
                     state_id_or_label))
 
-    def find_node(self, state_id_or_label, node_id_or_label):
-        """ Finds a node within a state according to its ID (if integer is
-            provided) or label (if string is provided).
-
-            :param state_id_or_label: State ID (if int) or label (if str).
-            :param node_id_or_label:  Node ID (if int) or label (if str)
-                                      within the given state.
-            :return: A nodes.Node object.
-        """
-        state = self.find_state(state_id_or_label)
-        return state.find_node(node_id_or_label)
-
     def specialize(self, symbols: Dict[str, Any]):
         """ Sets symbolic values in this SDFG to constants.
             :param symbols: Values to specialize.
