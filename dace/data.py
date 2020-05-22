@@ -3,6 +3,7 @@ import re, json
 import copy as cp
 import sympy as sp
 import numpy
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 import dace, dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -11,6 +12,13 @@ from dace.properties import (Property, make_properties, ReferenceProperty,
                              ShapeProperty, SubsetProperty, SymbolicProperty,
                              TypeClassProperty, DebugInfoProperty, DictProperty,
                              CodeProperty, ListProperty, LambdaProperty)
+
+
+# Type hints
+Integer = Union[int, dace.symbolic.symbol]
+ShapeTuple = Tuple[Integer]
+ShapeList = List[Integer]
+Shape = Union[ShapeTuple, ShapeList]
 
 
 def validate_name(name):
@@ -67,6 +75,24 @@ class Data(object):
                         desc="Allocate array outside of state",
                         default=False)
     debuginfo = DebugInfoProperty(allow_none=True)
+
+    space = Property(dtype=str, desc="Coordinate space", default="")
+    arrayspace_mapping = DictProperty(
+        key_type=int,
+        value_type=int,
+        desc="Mapping from array to coordinate space dimensions",
+        default=None,
+        allow_none=True)
+    constant_offsets = ListProperty(
+        element_type=int,
+        desc="Constant offsets for every space dimension",
+        default=None,
+        allow_none=True) 
+    dependent_offsets = ListProperty(
+        element_type=int,
+        desc="Dependent offsets for every space dimension",
+        default=None,
+        allow_none=True)
 
     def __init__(self, dtype, shape, dist_shape, transient, storage,
                  location, dist_location, dist_shape_map, toplevel, debuginfo):
@@ -675,3 +701,32 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+
+@make_properties
+class CoordinateSpace:
+    """ Describes a coordinate space for distributing data and computation.
+    """
+
+    process_grid = ShapeProperty(default=[])
+    block_sizes = ShapeProperty(default=[])
+
+    def __init__(self,
+                 pgrid: Shape,
+                 bsizes: Shape):
+        if len(pgrid) != len(bsizes):
+            raise ValueError("The coordinate space block must have the same "
+                             "number of dimensions as the process grid")
+        self.process_grid = pgrid
+        self.block_sizes = bsizes
+
+        self._strides = [1] * len(pgrid)
+        if len(pgrid) > 1:
+            for i in range(len(pgrid) - 2, -1, -1):
+                self._strides[i] = self._strides[i+1] * pgrid[i+1]
+
+    @property
+    def strides(self):
+        """ Returns the strides of the process grid.
+        """
+        return self._strides

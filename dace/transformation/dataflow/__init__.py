@@ -15,7 +15,7 @@ from .tiling import MapTiling
 from .vectorization import Vectorization
 
 # Data-related
-from. distributed_storage import DataDistribution
+from. distributed_storage import DataDistribution, MapDistribution
 from .stream_transient import AccumulateTransient, StreamTransient
 from .local_storage import InLocalStorage, OutLocalStorage
 from .reduce_expansion import ReduceExpansion

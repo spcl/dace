@@ -8,6 +8,12 @@ import numpy as np
 M = dace.symbol('M')
 K = dace.symbol('K')
 N = dace.symbol('N')
+PM = dace.symbol('PM')
+PK = dace.symbol('PK')
+PN = dace.symbol('PN')
+BM = dace.symbol('BM')
+BK = dace.symbol('BK')
+BN = dace.symbol('BN')
 
 
 @dace.program(dace.float64[M, K], dace.float64[K, N], dace.float64[M, N])
@@ -47,7 +53,67 @@ if __name__ == "__main__":
     C = np.zeros([M.get(), N.get()], dtype=np.float64)
     C_regression = np.zeros_like(C)
 
-    gemm(A, B, C)
+    # gemm(A, B, C)
+    from dace.transformation.dataflow import (MapReduceFusion, MapTiling, MapDistribution,
+                                              DataDistribution, InLocalStorage,
+                                              AccumulateTransient)
+    from dace.dtypes import DataDistributionType
+    sdfg = gemm.to_sdfg()
+    sdfg.add_space("mm", (PM, PN, PK), (BM, BN, BK))
+    sdfg.apply_transformations([MapReduceFusion,
+                                DataDistribution, DataDistribution, DataDistribution,
+                                MapDistribution],
+                                #  InLocalStorage, InLocalStorage, AccumulateTransient],
+                                options=[
+                                    {},
+                                    {'array': 'A',
+                                     'space': 'mm',
+                                     'arrayspace_mapping': {0: 0, 1: 2},
+                                     'constant_offset': [0, 0, 0],
+                                     'dependent_offset': [0, 0, 0]},
+                                    {'array': 'B',
+                                     'space': 'mm',
+                                     'arrayspace_mapping': {0: 2, 1: 1},
+                                     'constant_offset': [0, 0, 0],
+                                     'dependent_offset': [0, 0, 0]},
+                                    {'array': 'C',
+                                     'space': 'mm',
+                                     'arrayspace_mapping': {0: 0, 1: 1},
+                                     'constant_offset': [0, 0, 0],
+                                     'dependent_offset': [0, 0, 0]},
+                                    {'space': 'mm',
+                                     'iterationspace_mapping': {0: 0, 1: 1, 2: 2},
+                                     'constant_offset': [0, 0, 0],
+                                     'dependent_offset': [0, 0, 0]}],
+                                    # {'array': 'A'},
+                                    # {'array': 'B'},
+                                    # {'array': 'C'}],
+                                validate=False)
+    # sdfg.apply_transformations([MapReduceFusion, MapTiling, DataDistribution,
+    #                              DataDistribution, DataDistribution],
+    #                             #  InLocalStorage, InLocalStorage, AccumulateTransient],
+    #                             options=[
+    #                                 {},
+    #                                 {'prefix': 'r',
+    #                                  'tile_sizes': ['T0', 'T1', 'T2'],
+    #                                  'divides_evenly': True},
+    #                                 {'array': 'A',
+    #                                  'dist_type': DataDistributionType.Block,
+    #                                  'dist_shape': ['M/T0', 'K/T2'],
+    #                                  'local_shape': ['T0', 'T2']},
+    #                                 {'array': 'B',
+    #                                  'dist_type': DataDistributionType.Block,
+    #                                  'dist_shape': ['K/T2', 'N/T1'],
+    #                                  'local_shape': ['T2', 'T1']},
+    #                                 {'array': 'C',
+    #                                  'dist_type': DataDistributionType.Block,
+    #                                  'dist_shape': ['M/T0', 'N/T1'],
+    #                                  'local_shape': ['T0', 'T1']}],
+    #                                 # {'array': 'A'},
+    #                                 # {'array': 'B'},
+    #                                 # {'array': 'C'}],
+    #                             validate=False)
+    sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
     if dace.Config.get_bool('profiling'):
         dace.timethis('gemm', 'numpy', (2 * M.get() * K.get() * N.get()),

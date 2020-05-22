@@ -201,6 +201,10 @@ class SDFG(OrderedDiGraph):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
+    _spaces = Property(dtype=dict,
+                       desc="Coordinate spaces for this SDFG",
+                       to_json=_arrays_to_json,  # TODO: Does this work?
+                       from_json=_arrays_from_json)
 
     global_code = CodeProperty(
         desc=
@@ -246,6 +250,7 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self._spaces = {}  # type: Dict[str, dt.CoordinateSpace]
         self.global_code = ''
         self.init_code = ''
         self.exit_code = ''
@@ -333,6 +338,13 @@ class SDFG(OrderedDiGraph):
             in this SDFG, with an extra `None` entry for empty memlets.
         """
         return self._arrays
+
+    @property
+    def spaces(self):
+        """ Returns a dictionary of coordinate spaces (`CoordinateSpace`
+            objects) used in this SDFG.
+        """
+        return self._spaces
 
     @property
     def symbols(self):
@@ -1509,6 +1521,47 @@ subgraph cluster_state_{state} {{
                     "in SDFG" % name)
         self._arrays[name] = datadesc
         return name
+
+    def add_space(self,
+                  name: str,
+                  pgrid: Shape,
+                  bsizes: Shape,
+                  find_new_name: bool=False):
+        """ Adds a coordinate space to the SDFG coordinate space store. """
+
+        if not isinstance(name, str):
+            raise TypeError("Coordinate space name must be a string. Got %s" %
+                            type(name).__name__)
+
+        # If exists, fail
+        if name in self._spaces:
+            if not find_new_name:
+                raise NameError(
+                    'Coordinate space with name "%s" already exists '
+                    "in SDFG" % name)
+            else:
+                name = self._find_new_name(name)
+
+        # convert strings to int if possible
+        newpgrid = []
+        for s in pgrid:
+            try:
+                newpgrid.append(int(s))
+            except:
+                newpgrid.append(dace.symbolic.pystr_to_symbolic(s))
+        pgrid = newpgrid
+        newbsizes= []
+        for s in bsizes:
+            try:
+                newbsizes.append(int(s))
+            except:
+                newbsizes.append(dace.symbolic.pystr_to_symbolic(s))
+        bsizes = newbsizes
+
+        space = dt.CoordinateSpace(pgrid, bsizes)
+
+        self._spaces[name] = space
+        return name, space
 
     def add_loop(
             self,

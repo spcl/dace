@@ -8,7 +8,7 @@ import random
 
 from dace import dtypes, registry, symbolic, subsets, sdfg as sd
 from dace.properties import (LambdaProperty, Property, ShapeProperty, DictProperty,
-                             TypeProperty, make_properties)
+                             TypeProperty, ListProperty, make_properties)
 from dace.graph import nodes, nxutil
 from dace.transformation import pattern_matching
 
@@ -17,43 +17,36 @@ from dace.transformation import pattern_matching
 @make_properties
 class DataDistribution(pattern_matching.Transformation):
     """ Implements the Data Distribution transformation, that
-        distributes/replicates data among multiple ranks.
+        distributes data among multiple ranks.
     """
 
     _access_node = nodes.AccessNode('')
 
     array = Property(
         dtype=str,
-        desc="Array to distribute/replicate for (if empty, first available)",
-        default=None,
-        allow_none=True)
+        desc="Array to distribute",
+        allow_none=False)
 
-    dist_type = Property(
-        dtype=dtypes.DataDistributionType,
-        desc="Distribution type",
-        default=dtypes.DataDistributionType.Block)
+    space = Property(
+        dtype=str,
+        desc="Space to use",
+        allow_none=False)
 
-    dist_shape = ShapeProperty(
-        desc="Distributed shape",
-        default=None,
-        allow_none=True)
-
-    local_shape = ShapeProperty(
-        desc="Local shape",
-        default=None,
-        allow_none=True)
-    
-    dist_location = LambdaProperty(
-        desc="Distributed location",
-        default=None,
-        allow_none=True)
-
-    dist_shape_map = DictProperty(
+    arrayspace_mapping = DictProperty(
         key_type=int,
         value_type=int,
-        desc="Distributed shape map",
-        default=None,
-        allow_none=True)
+        desc="Mapping from array to coordinate space dimensions",
+        allow_none=False)
+
+    constant_offsets = ListProperty(
+        element_type=int,
+        desc="Constant offsets for every space dimension",
+        allow_none=False)
+    
+    dependent_offsets = ListProperty(
+        element_type=int,
+        desc="Dependent offsets for every space dimension",
+        allow_none=False)
     
     def __init__(self, sdfg_id, state_id, subgraph, expr_index):
         super().__init__(sdfg_id, state_id, subgraph, expr_index)
@@ -87,155 +80,232 @@ class DataDistribution(pattern_matching.Transformation):
                     node = n
                     break
 
-        if (self.dist_type == dtypes.DataDistributionType.Block
-                 and not self.local_shape):
-            data = sdfg.arrays[node.data]
-            self.local_shape = [symbolic.pystr_to_symbolic("T{}".format(i))
-                                for i in range(len(data.shape))]
+        data = sdfg.arrays[node.data]
+        data.space = self.space
+        data.arrayspace_mapping = self.arrayspace_mapping
+        data.constant_offsets = self.constant_offsets
+        data.dependent_offsets = self.dependent_offsets
 
-        sdfg.distribute_data(node.data, self.dist_type, self.dist_shape,
-                             self.local_shape, self.dist_location, self.dist_shape_map)
-        sdfg.arrays[node.data].storage = dtypes.StorageType.Distributed
+        space = sdfg.spaces[self.space]
+        dims = len(data.shape)
+        pdims = len(space.process_grid)
 
+        inv_mapping = {}
+        for k, v in self.arrayspace_mapping.items():
+            inv_mapping[v] = k
 
-# @make_properties
-# class LocalStorage(pattern_matching.Transformation, ABC):
-#     """ Implements the Local Storage prototype transformation, which adds a
-#         transient data node between two nodes.
-#     """
+        new_shape = [1] * 2 * dims
+        new_dist_shape = [1] * pdims
+        for k, v in self.arrayspace_mapping.items():
+            new_shape[k] = symbolic.pystr_to_symbolic(
+                "int_ceil({}, ({}) * ({}))".format(data.shape[k],
+                                                   space.block_sizes[v],
+                                                   space.process_grid[v]))
+            new_shape[k + dims] = space.block_sizes[v]
+        for k, v in inv_mapping.items():
+            new_dist_shape[k] = space.process_grid[k]
+        data.shape = new_shape
+        data.dist_shape = new_dist_shape
 
-#     _node_a = nodes.Node()
-#     _node_b = nodes.Node()
+        edges = set()
+        visited_edges = set()
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode):
+                    for e1 in state.all_edges(node):
+                        for e2 in state.memlet_tree(e1):
+                            if e2 in visited_edges:
+                                continue
+                            if (not isinstance(e2.src, nodes.CodeNode) and
+                                    not isinstance(e2.dst, nodes.CodeNode)):
+                                visited_edges.add(e2)
+                                continue
+                            if e2.data.data != self.array:
+                                visited_edges.add(e2)
+                                continue
+                            edges.add(e2)
+                            visited_edges.add(e2)
 
-#     array = Property(
-#         dtype=str,
-#         desc="Array to create local storage for (if empty, first available)",
-#         default=None,
-#         allow_none=True)
-
-#     def __init__(self, sdfg_id, state_id, subgraph, expr_index):
-#         super().__init__(sdfg_id, state_id, subgraph, expr_index)
-#         self._local_name = None
-#         self._data_node = None
-
-#     @staticmethod
-#     def expressions():
-#         return [
-#             nxutil.node_path_graph(LocalStorage._node_a, LocalStorage._node_b)
-#         ]
-
-#     @staticmethod
-#     def match_to_str(graph, candidate):
-#         a = candidate[LocalStorage._node_a]
-#         b = candidate[LocalStorage._node_b]
-#         return '%s -> %s' % (a, b)
-
-#     def apply(self, sdfg):
-#         graph = sdfg.nodes()[self.state_id]
-#         node_a = graph.nodes()[self.subgraph[LocalStorage._node_a]]
-#         node_b = graph.nodes()[self.subgraph[LocalStorage._node_b]]
-
-#         # Determine direction of new memlet
-#         scope_dict = graph.scope_dict()
-#         propagate_forward = sd.scope_contains_scope(scope_dict, node_a, node_b)
-
-#         array = self.array
-#         if array is None or len(array) == 0:
-#             array = next(e.data.data
-#                          for e in graph.edges_between(node_a, node_b)
-#                          if e.data.data is not None and e.data.wcr is None)
-
-#         original_edge = None
-#         invariant_memlet = None
-#         for edge in graph.edges_between(node_a, node_b):
-#             if array == edge.data.data:
-#                 original_edge = edge
-#                 invariant_memlet = edge.data
-#                 break
-#         if invariant_memlet is None:
-#             for edge in graph.edges_between(node_a, node_b):
-#                 original_edge = edge
-#                 invariant_memlet = edge.data
-#                 warnings.warn('Array %s not found! Using array %s instead.' %
-#                               (array, invariant_memlet.data))
-#                 array = invariant_memlet.data
-#                 break
-#         if invariant_memlet is None:
-#             raise NameError('Array %s not found!' % array)
-
-#         # Add transient array
-#         new_data, _ = sdfg.add_array('trans_' + invariant_memlet.data, [
-#             symbolic.overapproximate(r)
-#             for r in invariant_memlet.bounding_box_size()
-#         ],
-#                                      sdfg.arrays[invariant_memlet.data].dtype,
-#                                      transient=True,
-#                                      find_new_name=True)
-#         data_node = nodes.AccessNode(new_data)
-
-#         # Store as fields so that other transformations can use them
-#         self._local_name = new_data
-#         self._data_node = data_node
-
-#         to_data_mm = copy.deepcopy(invariant_memlet)
-#         from_data_mm = copy.deepcopy(invariant_memlet)
-#         offset = subsets.Indices([r[0] for r in invariant_memlet.subset])
-
-#         # Reconnect, assuming one edge to the access node
-#         graph.remove_edge(original_edge)
-#         if propagate_forward:
-#             graph.add_edge(node_a, original_edge.src_conn, data_node, None,
-#                            to_data_mm)
-#             new_edge = graph.add_edge(data_node, None, node_b,
-#                                       original_edge.dst_conn, from_data_mm)
-#         else:
-#             new_edge = graph.add_edge(node_a, original_edge.src_conn,
-#                                       data_node, None, to_data_mm)
-#             graph.add_edge(data_node, None, node_b, original_edge.dst_conn,
-#                            from_data_mm)
-
-#         # Offset all edges in the memlet tree (including the new edge)
-#         for edge in graph.memlet_tree(new_edge):
-#             edge.data.subset.offset(offset, True)
-#             edge.data.data = new_data
+        for e in edges:
+            local_ranges = [(0, 0, 1)] * 2 * dims
+            dist_ranges = [(0, 0, 1)] * pdims
+            for k, v in self.arrayspace_mapping.items():
+                local_ranges[k] = (
+                    symbolic.pystr_to_symbolic(
+                        "({}) // (({}) * ({}))".format(
+                            e.data.subset[k][0],
+                            space.block_sizes[v],
+                            space.process_grid[v])),
+                    symbolic.pystr_to_symbolic(
+                        "({}) // (({}) * ({}))".format(
+                            e.data.subset[k][1],
+                            space.block_sizes[v],
+                            space.process_grid[v])), 1)
+                local_ranges[k + dims] = (
+                    symbolic.pystr_to_symbolic(
+                        "({}) % ({})".format(e.data.subset[k][0],
+                                             space.block_sizes[v])),
+                    symbolic.pystr_to_symbolic(
+                        "({}) % ({})".format(e.data.subset[k][1],
+                                             space.block_sizes[v])), 1)
+            for k, v in inv_mapping.items():
+                dist_ranges[k] = (
+                    symbolic.pystr_to_symbolic(
+                        "(({}) // ({})) % ({})".format(
+                            e.data.subset[v][0],
+                            space.block_sizes[k],
+                            space.process_grid[k])),
+                    symbolic.pystr_to_symbolic(
+                        "(({}) // ({})) % ({})".format(
+                            e.data.subset[v][1],
+                            space.block_sizes[k],
+                            space.process_grid[k])), 1)
+            e.data.subset = subsets.Range(local_ranges)
+            e.data.dist_subset = subsets.Range(dist_ranges)
 
 
-# @registry.autoregister_params(singlestate=True)
-# @make_properties
-# class InLocalStorage(LocalStorage):
-#     """ Implements the InLocalStorage transformation, which adds a transient
-#         data node between two scope entry nodes.
-#     """
-#     @staticmethod
-#     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-#         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
-#         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
-#         if (isinstance(node_a, nodes.EntryNode)
-#                 and isinstance(node_b, nodes.EntryNode)):
-#             # Empty memlets cannot match
-#             for edge in graph.edges_between(node_a, node_b):
-#                 if edge.data.data is not None:
-#                     return True
-#         return False
+@registry.autoregister_params(singlestate=True)
+@make_properties
+class MapDistribution(pattern_matching.Transformation):
+    """ Implements the Map Distribution transformation, that
+        distributes the iteration space of a map among multiple ranks.
+    """
 
+    _map_entry = nodes.MapEntry(nodes.Map('', [], []))
 
-# @registry.autoregister_params(singlestate=True)
-# @make_properties
-# class OutLocalStorage(LocalStorage):
-#     """ Implements the OutLocalStorage transformation, which adds a transient
-#         data node between two scope exit nodes.
-#     """
-#     @staticmethod
-#     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-#         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
-#         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+    space = Property(
+        dtype=str,
+        desc="Space to use",
+        allow_none=False)
 
-#         if (isinstance(node_a, nodes.ExitNode)
-#                 and isinstance(node_b, nodes.ExitNode)):
+    iterationspace_mapping = DictProperty(
+        key_type=int,
+        value_type=int,
+        desc="Mapping from iteration to coordinate space dimensions",
+        allow_none=False)
 
-#             for edge in graph.edges_between(node_a, node_b):
-#                 # Empty memlets cannot match; WCR edges not supported (use
-#                 # AccumulateTransient instead)
-#                 if edge.data.data is not None and edge.data.wcr is None:
-#                     return True
-#         return False
+    constant_offsets = ListProperty(
+        element_type=int,
+        desc="Constant offsets for every space dimension",
+        allow_none=False)
+    
+    dependent_offsets = ListProperty(
+        element_type=int,
+        desc="Dependent offsets for every space dimension",
+        allow_none=False)
+    
+    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
+        super().__init__(sdfg_id, state_id, subgraph, expr_index)
+
+    @staticmethod
+    def expressions():
+        return [
+            nxutil.node_path_graph(MapDistribution._map_entry)
+        ]
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        node = graph.nodes()[candidate[MapDistribution._map_entry]]
+        return '%s' % node
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        # node = graph.nodes()[candidate[MapDistribution._map_entry]]
+        # data = sdfg.arrays[node.data]
+        # if data.dist_shape:
+        #     return False
+        return True
+
+    def apply(self, sdfg):
+        graph = sdfg.nodes()[self.state_id]
+        mentry = graph.nodes()[self.subgraph[MapDistribution._map_entry]]
+        mexit = graph.exit_nodes(mentry)[0]
+        mname = mentry.map.label
+        midx = mentry.map.params
+        mspace = mentry.map.range
+
+        space = sdfg.spaces[self.space]
+        dims = len(mspace)
+        pdims = len(space.process_grid)
+
+        inv_mapping = {}
+        for k, v in self.iterationspace_mapping.items():
+            inv_mapping[v] = k
+
+        pidx = ['p_' + str(i) for i in range(pdims)]
+        for k, v in inv_mapping.items():
+            pidx[k] = 'p_' + midx[v]
+        pspace = [(0, s-1, 1) for s in space.process_grid]
+        pmap = nodes.Map('p_' + mname, pidx, subsets.Range(pspace))
+        pentry = nodes.MapEntry(pmap)
+        pexit = nodes.MapExit(pmap)
+
+        lidx = ['l_' + idx for idx in midx]
+        oidx = [idx for idx in midx]
+        lspace = [None] * dims
+        ospace = [None] * dims
+        for k, v in self.iterationspace_mapping.items():
+            lspace[k] = (
+                0, "int_ceil({} - {} + 1, ({}) * ({}))".format(
+                    mspace[k][1], mspace[k][0], space.block_sizes[v],
+                    space.process_grid[v]), 1)
+            ospace[k] = (
+                "{} + ({} * ({}) + {}) * ({})".format(
+                    mspace[k][0], lidx[k], space.process_grid[v],
+                    pidx[v], space.block_sizes[v]),
+                 "{} + ({} * ({}) + {} + 1) * ({}) - 1".format(
+                    mspace[k][0], lidx[k], space.process_grid[v],
+                    pidx[v], space.block_sizes[v]), 1)
+        lmap = nodes.Map('l_' + mname, lidx, subsets.Range(lspace))
+        lentry = nodes.MapEntry(lmap)
+        lexit = nodes.MapExit(lmap)
+        omap = nodes.Map('o_' + mname, oidx, subsets.Range(ospace))
+        oentry = nodes.MapEntry(omap)
+        oexit = nodes.MapExit(omap)
+
+        mentry_in_edges = graph.in_edges(mentry)
+        mentry_out_edges = graph.out_edges(mentry)
+        mexit_in_edges = graph.in_edges(mexit)
+        mexit_out_edges = graph.out_edges(mexit)
+
+        graph.remove_nodes_from([mentry, mexit])
+
+        for e1 in mentry_out_edges:
+            for e2 in mentry_in_edges:
+                if e2.data.data == e1.data.data:
+                    mem = e1.data
+                    data = sdfg.arrays[e1.data.data]
+                    if data.space == self.space:
+                        new_subset = [None] * len(data.shape)
+                        new_dist_subset = [(0, 0, 1)] * pdims
+                        for k, v in data.arrayspace_mapping.items():
+                            new_subset[k] = (lidx[v], lidx[v], 1)
+                            new_subset[k + len(data.shape) // 2] = (
+                                "{} - ({})".format(oidx[v], ospace[v][0]),
+                                "{} - ({})".format(oidx[v], ospace[v][0]), 1)
+                            new_dist_subset[v] = (pidx[v], pidx[v], 1)
+                        mem.subset = subsets.Range(new_subset)
+                        mem.dist_subset = subsets.Range(new_dist_subset)
+                    graph.add_memlet_path(
+                        e2.src, pentry, lentry, oentry, e1.dst, memlet=mem,
+                        src_conn=e2.src_conn, dst_conn=e1.dst_conn)
+
+        for e1 in mexit_in_edges:
+            for e2 in mexit_out_edges:
+                if e2.data.data == e1.data.data:
+                    mem = e1.data
+                    data = sdfg.arrays[e1.data.data]
+                    if data.space == self.space:
+                        new_subset = [None] * len(data.shape)
+                        new_dist_subset = [(0, 0, 1)] * pdims
+                        for k, v in data.arrayspace_mapping.items():
+                            new_subset[k] = (lidx[v], lidx[v], 1)
+                            new_subset[k + len(data.shape) // 2] = (
+                                "{} - ({})".format(oidx[v], ospace[v][0]),
+                                "{} - ({})".format(oidx[v], ospace[v][0]), 1)
+                            new_dist_subset[v] = (pidx[v], pidx[v], 1)
+                        mem.subset = subsets.Range(new_subset)
+                        mem.dist_subset = subsets.Range(new_dist_subset)
+                    graph.add_memlet_path(
+                        e1.src, oexit, lexit, pexit, e2.dst, memlet=mem,
+                        src_conn=e1.src_conn, dst_conn=e2.dst_conn)
