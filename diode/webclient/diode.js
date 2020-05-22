@@ -999,7 +999,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     let exit_node = find_exit_for_entry(state.nodes, n);
 
                     // Highlight both entry and exit nodes
-                    let gstate = renderer.graph.node(foreground_elem.parent_id);
+                    let graph = renderer.sdfg_list[foreground_elem.sdfg.sdfg_list_id];
+                    let gstate = graph.node(foreground_elem.parent_id);
                     let rnode = gstate.data.graph.node(exit_node.id);
                     this.highlighted_elements.push(rnode);
 
@@ -1010,7 +1011,8 @@ class DIODE_Context_SDFG extends DIODE_Context {
                     let entry_node = state.nodes[entry_id];
 
                     // Highlight both entry and exit nodes
-                    let gstate = renderer.graph.node(foreground_elem.parent_id);
+                    let graph = renderer.sdfg_list[foreground_elem.sdfg.sdfg_list_id];
+                    let gstate = graph.node(foreground_elem.parent_id);
                     let rnode = gstate.data.graph.node(entry_node.id);
                     this.highlighted_elements.push(rnode);
 
@@ -4991,7 +4993,7 @@ class DIODE {
 
             }, val);
         } else if (
-            x.metatype == "str" || x.metatype == "float" || x.metatype == "LambdaProperty"
+            x.metatype == "str" || x.metatype == "float" || x.metatype == "LambdaProperty" || x.metatype == "Property"
         ) {
             elem = FormBuilder.createTextInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
@@ -5087,7 +5089,7 @@ class DIODE {
                     timeout: 300
                 });
             });
-        } else if (x.metatype == "CodeProperty") {
+        } else if (x.metatype == "CodeProperty" || x.metatype == "CodeBlock") {
             let codeelem = null;
             let langelem = null;
             let onchange = (elem) => {
@@ -5121,6 +5123,15 @@ class DIODE {
             elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
                 transthis.propertyChanged(node, x.name, elem.value);
             }, schedule_types, qualified);
+        } else if (x.metatype == 'AllocationLifetime') {
+            let types = this.getEnum('AllocationLifetime');
+            let qualified = x.value;
+            if (!types.includes(qualified)) {
+                qualified = "AllocationLifetime." + qualified;
+            }
+            elem = FormBuilder.createSelectInput("prop_" + x.name, (elem) => {
+                transthis.propertyChanged(node, x.name, elem.value);
+            }, types, qualified);
         } else if (x.metatype == 'AccessType') {
             let access_types = this.getEnum('AccessType');
             let qualified = x.value;
