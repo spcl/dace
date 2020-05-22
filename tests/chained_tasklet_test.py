@@ -22,7 +22,7 @@ if __name__ == '__main__':
     state = mysdfg.add_state()
     A_ = state.add_array('A', [N], dp.int32)
     B_ = state.add_array('B', [N], dp.int32)
-    mysdfg.add_scalar('something', dp.int32)
+    mysdfg.add_scalar('something', dp.int32, transient=True)
 
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N'))
     tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
