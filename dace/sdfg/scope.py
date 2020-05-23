@@ -5,8 +5,7 @@ from typing import Any, Dict, List, Tuple
 from dace import dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.state import MemletTrackingView
+from dace.sdfg.state import StateSubgraphView
 
 NodeType = 'dace.sdfg.nodes.Node'
 EntryNodeType = 'dace.sdfg.nodes.EntryNode'
@@ -25,108 +24,16 @@ class ScopeTree(object):
         self.exit: ExitNodeType = exitnode
 
 
-class ScopeSubgraphView(SubgraphView, MemletTrackingView):
+class ScopeSubgraphView(StateSubgraphView):
     """ An extension to SubgraphView that enables the creation of scope
         dictionaries in subgraphs and free symbols. """
     def __init__(self, graph, subgraph_nodes, entry_node):
-        super(ScopeSubgraphView, self).__init__(graph, subgraph_nodes)
+        super().__init__(graph, subgraph_nodes)
         self.entry = entry_node
-        self._clear_scopedict_cache()
 
     @property
     def parent(self):
         return self._graph.parent
-
-    def _clear_scopedict_cache(self):
-        """ Clears the cached results for the scope_dict function.
-
-            For use when the graph mutates (e.g., new edges/nodes, deletions).
-        """
-        self._scope_dict_toparent_cached = None
-        self._scope_dict_tochildren_cached = None
-
-    def scope_dict(self,
-                   node_to_children=False,
-                   return_ids=False,
-                   validate=True):
-        """ Returns a dictionary that segments an SDFG state into
-            entry-node/exit-node scopes.
-
-            :param node_to_children: If False (default), returns a mapping
-                                     of each node to its parent scope
-                                     (ScopeEntry) node. If True, returns a
-                                     mapping of each parent node to a list of
-                                     children nodes.
-            :type node_to_children: bool
-            :param return_ids: Return node ID numbers instead of node objects.
-            :type return_ids: bool
-            :param validate: Ensure that the graph is not malformed when
-                 computing dictionary.
-            :return: The mapping from a node to its parent scope node, or the
-                     mapping from a node to a list of children nodes.
-            :rtype: dict(Node, Node) or dict(Node, list(Node))
-        """
-        result = None
-        if not node_to_children and self._scope_dict_toparent_cached is not None:
-            result = copy.copy(self._scope_dict_toparent_cached)
-        elif node_to_children and self._scope_dict_tochildren_cached is not None:
-            result = copy.copy(self._scope_dict_tochildren_cached)
-
-        if result is None:
-            result = {}
-            node_queue = collections.deque(self.source_nodes())
-            eq = _scope_dict_inner(self, node_queue, None, node_to_children,
-                                   result)
-
-            # Sanity check
-            if validate:
-                assert len(eq) == 0
-
-            # Cache result
-            if node_to_children:
-                self._scope_dict_tochildren_cached = result
-            else:
-                self._scope_dict_toparent_cached = result
-
-            result = copy.copy(result)
-
-        if return_ids:
-            return _scope_dict_to_ids(self, result)
-        return result
-
-    def scope_subgraph(self,
-                       entry_node,
-                       include_entry=True,
-                       include_exit=True):
-        """ Returns a subgraph that only contains the scope, defined by the
-            given entry node.
-        """
-        return _scope_subgraph(self, entry_node, include_entry, include_exit)
-
-    def entry_node(self, node: nd.Node) -> nd.EntryNode:
-        """ Returns the entry node that wraps the current node, or None if
-            it is top-level in a state. """
-        return self.scope_dict()[node]
-
-    def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
-        """ Returns the exit node leaving the context opened by
-            the given entry node. """
-        node_to_children = self.scope_dict(True)
-        return next(v for v in node_to_children[entry_node]
-                    if isinstance(v, nd.ExitNode))
-
-    def all_nodes_recursive(self):
-        for node in self.nodes():
-            yield node, self
-            if isinstance(node, nd.NestedSDFG):
-                yield from node.sdfg.all_nodes_recursive()
-
-    def all_edges_recursive(self):
-        for e in self.edges():
-            yield e, self
-        for node in self.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                yield from node.sdfg.all_edges_recursive()
 
     def top_level_transients(self):
         """ Iterate over top-level transients of this subgraph. """
@@ -219,7 +126,7 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,
 
 
 def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState',
-                       scope_dict: Dict[Any, List[Any]]):
+                       scope_dict: ScopeDictType):
     """ Return a JSON-serializable dictionary of a scope dictionary,
         using integral node IDs instead of object references. """
     def node_id_or_none(node):

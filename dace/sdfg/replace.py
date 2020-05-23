@@ -24,9 +24,7 @@ def _replsym(symlist, symrepl):
     return symlist
 
 
-def replace(subgraph: Union['dace.sdfg.SDFGState',
-                            'dace.sdfg.ScopeSubgraphView',
-                            'dace.sdfg.graph.SubgraphView'], name: str,
+def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             new_name: str):
     """ Finds and replaces all occurrences of a symbol or array in the given
         subgraph.

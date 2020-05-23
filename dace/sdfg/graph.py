@@ -410,6 +410,7 @@ class Graph(object):
 @dace.serialize.serializable
 class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
+        super().__init__()
         self._graph = graph
         self._subgraph_nodes = subgraph_nodes
 

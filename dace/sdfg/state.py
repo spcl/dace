@@ -4,7 +4,8 @@ import collections
 import copy
 from dace import dtypes, memlet as mm, serialize, subsets as sbs, symbolic
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import OrderedMultiDiConnectorGraph, MultiConnectorEdge
+from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
+                             SubgraphView)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.properties import (Property, DictProperty, SubsetProperty,
@@ -28,8 +29,51 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
                             caller.filename)
 
 
-class MemletTrackingView(object):
-    """ A mixin class that enables tracking memlets in directed acyclic multigraphs. """
+class StateGraphView(object):
+    """ 
+    Read-only view interface of an SDFG state, containing methods for memlet
+    tracking, traversal, subgraph creation, queries, and replacements.
+    ``SDFGState`` and ``StateSubgraphView`` inherit from this class to share
+    methods. 
+    """
+    def __init__(self, *args, **kwargs):
+        self._clear_scopedict_cache()
+
+    ###################################################################
+    # Traversal methods
+
+    def all_nodes_recursive(self):
+        for node in self.nodes():
+            yield node, self
+            if isinstance(node, nd.NestedSDFG):
+                yield from node.sdfg.all_nodes_recursive()
+
+    def all_edges_recursive(self):
+        for e in self.edges():
+            yield e, self
+        for node in self.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                yield from node.sdfg.all_edges_recursive()
+
+    def data_nodes(self):
+        """ Returns all data_nodes (arrays) present in this state. """
+        return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
+
+    def entry_node(self, node: nd.Node) -> nd.EntryNode:
+        """ Returns the entry node that wraps the current node, or None if
+            it is top-level in a state. """
+        return self.scope_dict()[node]
+
+    def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
+        """ Returns the exit node leaving the context opened by
+            the given entry node. """
+        node_to_children = self.scope_dict(True)
+        return next(v for v in node_to_children[entry_node]
+                    if isinstance(v, nd.ExitNode))
+
+    ###################################################################
+    # Memlet-tracking methods
+
     def memlet_path(self,
                     edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
@@ -172,10 +216,158 @@ class MemletTrackingView(object):
         # Return node that corresponds to current edge
         return traverse(tree_root)
 
+    ###################################################################
+    # Scope-related methods
 
-# TODO: Use mixin for SDFGState and ScopeSubgraphView for scope dict
+    def _clear_scopedict_cache(self):
+        """ 
+        Clears the cached results for the scope_dict function.
+        For use when the graph mutates (e.g., new edges/nodes, deletions).
+        """
+        self._scope_dict_toparent_cached = None
+        self._scope_dict_tochildren_cached = None
+        self._scope_tree_cached = None
+        self._scope_leaves_cached = None
+
+    def scope_tree(self):
+        from dace.sdfg.scope import ScopeTree
+
+        if (hasattr(self, '_scope_tree_cached')
+                and self._scope_tree_cached is not None):
+            return copy.copy(self._scope_tree_cached)
+
+        sdp = self.scope_dict(node_to_children=False)
+        sdc = self.scope_dict(node_to_children=True)
+
+        result = {}
+
+        sdfg_symbols = self.parent.symbols.keys()
+
+        # Get scopes
+        for node, scopenodes in sdc.items():
+            if node is None:
+                exit_node = None
+            else:
+                exit_node = next(v for v in scopenodes
+                                 if isinstance(v, nd.ExitNode))
+            scope = ScopeTree(node, exit_node)
+            scope.defined_vars = set(
+                symbolic.pystr_to_symbolic(s)
+                for s in (self.symbols_defined_at(node).keys()
+                          | sdfg_symbols))
+            result[node] = scope
+
+        # Scope parents and children
+        for node, scope in result.items():
+            if node is not None:
+                scope.parent = result[sdp[node]]
+            scope.children = [
+                result[n] for n in sdc[node] if isinstance(n, nd.EntryNode)
+            ]
+
+        self._scope_tree_cached = result
+
+        return copy.copy(self._scope_tree_cached)
+
+    def scope_leaves(self):
+        if (hasattr(self, '_scope_leaves_cached')
+                and self._scope_leaves_cached is not None):
+            return copy.copy(self._scope_leaves_cached)
+        st = self.scope_tree()
+        self._scope_leaves_cached = [
+            scope for scope in st.values() if len(scope.children) == 0
+        ]
+        return copy.copy(self._scope_leaves_cached)
+
+    def scope_dict(self,
+                   node_to_children=False,
+                   return_ids=False,
+                   validate=True):
+        """ Returns a dictionary that segments an SDFG state into
+            entry-node/exit-node scopes.
+
+            :param node_to_children: If False (default), returns a mapping
+                                     of each node to its parent scope
+                                     (ScopeEntry) node. If True, returns a
+                                     mapping of each parent node to a list of
+                                     children nodes.
+            :type node_to_children: bool
+            :param return_ids: Return node ID numbers instead of node objects.
+            :type return_ids: bool
+            :param validate: Ensure that the graph is not malformed when
+                             computing dictionary.
+            :return: The mapping from a node to its parent scope node, or the
+                     mapping from a node to a list of children nodes.
+            :rtype: dict(Node, Node) or dict(Node, list(Node))
+        """
+        from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
+        result = None
+        if not node_to_children and self._scope_dict_toparent_cached is not None:
+            result = copy.copy(self._scope_dict_toparent_cached)
+        elif node_to_children and self._scope_dict_tochildren_cached is not None:
+            result = copy.copy(self._scope_dict_tochildren_cached)
+
+        if result is None:
+            result = {}
+            node_queue = collections.deque(self.source_nodes())
+            eq = _scope_dict_inner(self, node_queue, None, node_to_children,
+                                   result)
+
+            # Sanity check
+            if validate and len(eq) != 0:
+                raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            # Cache result
+            if node_to_children:
+                self._scope_dict_tochildren_cached = result
+            else:
+                self._scope_dict_toparent_cached = result
+
+            result = copy.copy(result)
+
+        if return_ids:
+            return _scope_dict_to_ids(self, result)
+        return result
+
+    ###################################################################
+    # Other methods
+
+    def scope_subgraph(self,
+                       entry_node,
+                       include_entry=True,
+                       include_exit=True):
+        from dace.sdfg.scope import _scope_subgraph
+        return _scope_subgraph(self, entry_node, include_entry, include_exit)
+
+    def top_level_transients(self):
+        """Iterate over top-level transients of this state."""
+        sdict = self.scope_dict(node_to_children=True)
+        sdfg = self.parent
+        result = set()
+        for node in sdict[None]:
+            if isinstance(node, nd.AccessNode) and node.desc(sdfg).transient:
+                result.add(node.data)
+        return result
+
+    def all_transients(self) -> List[str]:
+        """Iterate over all transients in this state."""
+        return dtypes.deduplicate([
+            n.data for n in self.nodes()
+            if isinstance(n, nd.AccessNode) and n.desc(self.parent).transient
+        ])
+
+    def replace(self, name: str, new_name: str):
+        """ Finds and replaces all occurrences of a symbol or array in this
+            state.
+            :param name: Name to find.
+            :param new_name: Name to replace.
+        """
+        from dace.sdfg.sdfg import replace
+        replace(self, name, new_name)
+
+
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
+class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -221,14 +413,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def __str__(self):
         return self._label
 
-    # Clears the cached results for the scope_dict function.
-    # For use when the graph mutates (e.g., new edges/nodes, deletions)
-    def _clear_scopedict_cache(self):
-        self._scope_dict_toparent_cached = None
-        self._scope_dict_tochildren_cached = None
-        self._scope_tree_cached = None
-        self._scope_leaves_cached = None
-
     @property
     def label(self):
         return self._label
@@ -246,16 +430,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
     def validate(self) -> None:
         validate_state(self)
 
-    def replace(self, name: str, new_name: str):
-        """ Finds and replaces all occurrences of a symbol or array in this
-            state.
-            :param name: Name to find.
-            :param new_name: Name to replace.
-        """
-        from dace.sdfg.sdfg import replace
-        replace(self, name, new_name)
-
-    def nodes(self) -> List[nd.Node]:
+    def nodes(self) -> List[nd.Node]:  # Added for type hints
         return super().nodes()
 
     def add_node(self, node):
@@ -301,26 +476,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             edge.src._out_connectors.remove(edge.src_conn)
         if edge.dst_conn in edge.dst.in_connectors:
             edge.dst._in_connectors.remove(edge.dst_conn)
-
-    def all_nodes_recursive(self):
-        for node in self.nodes():
-            yield node, self
-            if isinstance(node, nd.NestedSDFG):
-                yield from node.sdfg.all_nodes_recursive()
-
-    def all_edges_recursive(self):
-        for e in self.edges():
-            yield e, self
-        for node in self.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                yield from node.sdfg.all_edges_recursive()
-
-    def data_nodes(self):
-        """ Returns all data_nodes (arrays) present in this state. """
-        return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
-
-    def memlets_for_array(self, arrayname):
-        return [e for e in self.edges() if e[3].data == arrayname]
 
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe
@@ -463,143 +618,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             symbols.update(scope_node.new_symbols(sdfg, self, symbols))
 
         return symbols
-
-    # TODO: Move to scope.py
-    def scope_tree(self):
-        from dace.sdfg.scope import ScopeTree
-
-        if (hasattr(self, '_scope_tree_cached')
-                and self._scope_tree_cached is not None):
-            return copy.copy(self._scope_tree_cached)
-
-        sdp = self.scope_dict(node_to_children=False)
-        sdc = self.scope_dict(node_to_children=True)
-
-        result = {}
-
-        sdfg_symbols = self.parent.symbols.keys()
-
-        # Get scopes
-        for node, scopenodes in sdc.items():
-            if node is None:
-                exit_node = None
-            else:
-                exit_node = next(v for v in scopenodes
-                                 if isinstance(v, nd.ExitNode))
-            scope = ScopeTree(node, exit_node)
-            scope.defined_vars = set(
-                symbolic.pystr_to_symbolic(s)
-                for s in (self.symbols_defined_at(node).keys()
-                          | sdfg_symbols))
-            result[node] = scope
-
-        # Scope parents and children
-        for node, scope in result.items():
-            if node is not None:
-                scope.parent = result[sdp[node]]
-            scope.children = [
-                result[n] for n in sdc[node] if isinstance(n, nd.EntryNode)
-            ]
-
-        self._scope_tree_cached = result
-
-        return copy.copy(self._scope_tree_cached)
-
-    def scope_leaves(self):
-        if (hasattr(self, '_scope_leaves_cached')
-                and self._scope_leaves_cached is not None):
-            return copy.copy(self._scope_leaves_cached)
-        st = self.scope_tree()
-        self._scope_leaves_cached = [
-            scope for scope in st.values() if len(scope.children) == 0
-        ]
-        return copy.copy(self._scope_leaves_cached)
-
-    def scope_dict(self,
-                   node_to_children=False,
-                   return_ids=False,
-                   validate=True):
-        """ Returns a dictionary that segments an SDFG state into
-            entry-node/exit-node scopes.
-
-            :param node_to_children: If False (default), returns a mapping
-                                     of each node to its parent scope
-                                     (ScopeEntry) node. If True, returns a
-                                     mapping of each parent node to a list of
-                                     children nodes.
-            :type node_to_children: bool
-            :param return_ids: Return node ID numbers instead of node objects.
-            :type return_ids: bool
-            :param validate: Ensure that the graph is not malformed when
-                             computing dictionary.
-            :return: The mapping from a node to its parent scope node, or the
-                     mapping from a node to a list of children nodes.
-            :rtype: dict(Node, Node) or dict(Node, list(Node))
-        """
-        from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
-        result = None
-        if not node_to_children and self._scope_dict_toparent_cached is not None:
-            result = copy.copy(self._scope_dict_toparent_cached)
-        elif node_to_children and self._scope_dict_tochildren_cached is not None:
-            result = copy.copy(self._scope_dict_tochildren_cached)
-
-        if result is None:
-            result = {}
-            node_queue = collections.deque(self.source_nodes())
-            eq = _scope_dict_inner(self, node_queue, None, node_to_children,
-                                   result)
-
-            # Sanity check
-            if validate and len(eq) != 0:
-                raise RuntimeError("Leftover nodes in queue: {}".format(eq))
-
-            # Cache result
-            if node_to_children:
-                self._scope_dict_tochildren_cached = result
-            else:
-                self._scope_dict_toparent_cached = result
-
-            result = copy.copy(result)
-
-        if return_ids:
-            return _scope_dict_to_ids(self, result)
-        return result
-
-    def scope_subgraph(self,
-                       entry_node,
-                       include_entry=True,
-                       include_exit=True):
-        from dace.sdfg.scope import _scope_subgraph
-        return _scope_subgraph(self, entry_node, include_entry, include_exit)
-
-    def top_level_transients(self):
-        """Iterate over top-level transients of this state."""
-        sdict = self.scope_dict(node_to_children=True)
-        sdfg = self.parent
-        result = set()
-        for node in sdict[None]:
-            if isinstance(node, nd.AccessNode) and node.desc(sdfg).transient:
-                result.add(node.data)
-        return result
-
-    def all_transients(self) -> List[str]:
-        """Iterate over all transients in this state."""
-        return dtypes.deduplicate([
-            n.data for n in self.nodes()
-            if isinstance(n, nd.AccessNode) and n.desc(self.parent).transient
-        ])
-
-    def entry_node(self, node: nd.Node) -> nd.EntryNode:
-        """ Returns the entry node that wraps the current node, or None if
-            it is top-level in a state. """
-        return self.scope_dict()[node]
-
-    def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
-        """ Returns the exit node leaving the context opened by
-            the given entry node. """
-        node_to_children = self.scope_dict(True)
-        return next(v for v in node_to_children[entry_node]
-                    if isinstance(v, nd.ExitNode))
 
     # Dynamic SDFG creation API
     ##############################
@@ -1399,3 +1417,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         continue
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node._in_connectors.add(edge.dst_conn)
+
+
+class StateSubgraphView(SubgraphView, StateGraphView):
+    """ A read-only subgraph view of an SDFG state. """
+    def __init__(self, graph, subgraph_nodes):
+        super().__init__(graph, subgraph_nodes)
