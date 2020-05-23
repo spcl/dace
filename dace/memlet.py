@@ -219,8 +219,9 @@ class Memlet(object):
         """ Returns a set of symbols used in this edge's properties. """
         # Symbolic properties are in num_accesses, and the two subsets
         result = set()
-        result |= self.num_accesses.free_symbols
-        result |= self.subset.free_symbols
+        result |= set(map(str, self.num_accesses.free_symbols))
+        if self.subset:
+            result |= self.subset.free_symbols
         if self.other_subset:
             result |= self.other_subset.free_symbols
         return result

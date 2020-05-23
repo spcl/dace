@@ -9,7 +9,7 @@ import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties,
@@ -326,6 +326,20 @@ class Tasklet(CodeNode):
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        result = set()
+
+        # Search AST for undefined symbols
+        if self.code.language == dtypes.Language.Python:
+            visitor = TaskletFreeSymbolVisitor(self.in_connectors
+                                               | self.out_connectors)
+            for stmt in self.code.code:
+                visitor.visit(stmt)
+            result = visitor.free_symbols
+
+        return result
+
     def __str__(self):
         if not self.label:
             return "--Empty--"
@@ -408,8 +422,8 @@ class NestedSDFG(CodeNode):
     @property
     def free_symbols(self) -> Set[str]:
         return set().union(
-            *(v.free_symbols for v in self.symbol_mapping.values()),
-            *(v.free_symbols for v in self.location.values()))
+            *(map(str, v.free_symbols) for v in self.symbol_mapping.values()),
+            *(map(str, v.free_symbols) for v in self.location.values()))
 
     def __str__(self):
         if not self.label:

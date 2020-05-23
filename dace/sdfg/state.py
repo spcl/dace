@@ -229,7 +229,7 @@ class StateGraphView(object):
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
 
-    def scope_tree(self):
+    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
         from dace.sdfg.scope import ScopeTree
 
         if (hasattr(self, '_scope_tree_cached')
@@ -269,7 +269,7 @@ class StateGraphView(object):
 
         return copy.copy(self._scope_tree_cached)
 
-    def scope_leaves(self):
+    def scope_leaves(self) -> List['dace.sdfg.scope.ScopeTree']:
         if (hasattr(self, '_scope_leaves_cached')
                 and self._scope_leaves_cached is not None):
             return copy.copy(self._scope_leaves_cached)
@@ -330,7 +330,27 @@ class StateGraphView(object):
         return result
 
     ###################################################################
-    # Other methods
+    # Query, subgraph, and replacement methods
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ 
+        Returns a set of symbol names that are used, but not defined, in 
+        this graph view (SDFG state or subgraph thereof).
+        :note: Assumes that the graph is valid (i.e., without undefined or
+               overlapping symbols).
+        """
+        sdfg = self.parent
+        new_symbols = set()
+        freesyms = set()
+        for n in self.nodes():
+            if isinstance(n, nd.EntryNode):
+                new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
+            freesyms |= n.free_symbols
+        for e in self.edges():
+            freesyms |= e.data.free_symbols
+
+        return freesyms - new_symbols
 
     def scope_subgraph(self,
                        entry_node,

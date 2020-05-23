@@ -656,8 +656,11 @@ class SDFG(OrderedDiGraph):
     def parent_sdfg(self, value):
         self._parent_sdfg = value
 
-    def nodes(self) -> List['SDFGState']:
+    def nodes(self) -> List[SDFGState]:
         return super().nodes()
+
+    def node(self, id) -> SDFGState:
+        return super().node(id)
 
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
