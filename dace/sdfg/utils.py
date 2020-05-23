@@ -569,7 +569,7 @@ def concurrent_subgraphs(graph):
     # them. Sort according to original order of nodes
     all_nodes = graph.nodes()
     return [
-        ScopeSubgraphView(graph, [n for n in all_nodes if n in sg])
+        ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None)
         for sg in subgraphs
     ]
 

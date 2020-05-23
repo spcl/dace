@@ -1011,7 +1011,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                                        | dynamic_inputs)
 
         # Get symbolic parameters (free symbols) for kernel
-        syms = sdfg.symbols_defined_at(scope_entry)
+        syms = state.symbols_defined_at(scope_entry)
 
         # Pointers to callback functions cannot be used within CUDA kernels
         syms_copy = {}

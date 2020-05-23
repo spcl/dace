@@ -224,6 +224,7 @@ def max_value(dtype):
     else:
         return _LIMITS[ctype].format("MAX")
 
+
 def min_value(dtype):
     """Get a min value literal for `dtype`."""
     ctype = dtype.ctype
@@ -259,14 +260,18 @@ class typeclass(object):
             elif config_data_types.lower() == 'c':
                 wrapped_type = numpy.int32
             else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
         elif wrapped_type is float:
             if config_data_types.lower() == 'python':
                 wrapped_type = numpy.float64
             elif config_data_types.lower() == 'c':
                 wrapped_type = numpy.float32
             else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
         elif wrapped_type is complex:
             wrapped_type = numpy.complex128
 
@@ -324,15 +329,32 @@ class typeclass(object):
         return self.ctype
 
 
-def result_type_of(lhs, rhs):
-    """Returns the largest between two types (dace.types.typeclass) according
-       to C semantics."""
+def result_type_of(lhs, *rhs):
+    """ 
+    Returns the largest between two or more types (dace.types.typeclass) 
+    according to C semantics.
+    """
+    if len(rhs) == 0:
+        rhs = None
+    elif len(rhs) > 1:
+        result = lhs
+        for r in rhs:
+            result = result_type_of(result, r)
+        return result
+
+    rhs = rhs[0]
+
+    # Extract the type if symbolic
+    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
+    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+
     if lhs == rhs:
         return lhs  # Types are the same, return either
     if lhs == None:
         return rhs  # Use RHS even if it's None
     if rhs == None:
         return lhs  # Use LHS
+
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
     rhs_ = rhs.type if isinstance(rhs, typeclass) else rhs

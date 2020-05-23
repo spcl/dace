@@ -225,7 +225,8 @@ class MapFission(pattern_matching.Transformation):
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-            for symname, sym in map_syms.items():
+            for sym in map_syms:
+                symname = str(sym)
                 if symname in outer_map.params:
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():

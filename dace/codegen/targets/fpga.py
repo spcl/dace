@@ -9,7 +9,7 @@ import sympy as sp
 import numpy as np
 
 import dace
-from dace import subsets
+from dace import subsets, data as dt
 from dace.dtypes import deduplicate
 from dace.config import Config
 from dace.frontend import operations
@@ -197,7 +197,8 @@ class FPGACodeGen(TargetCodeGenerator):
         shared_data = cls.shared_data(subgraphs)
 
         # Find scalar parameters (to filter out from data parameters)
-        scalar_parameters = sdfg.scalar_parameters(False)
+        scalar_parameters = [(k, v) for k, v in sdfg.arrays.items()
+                             if isinstance(v, dt.Scalar) and not v.transient]
         scalar_set = set(p[0] for p in scalar_parameters)
 
         # For some reason the array allocation dispatcher takes nodes, not
@@ -294,7 +295,7 @@ class FPGACodeGen(TargetCodeGenerator):
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
         top_level_local_data = [data_to_node[n] for n in top_level_local_data]
 
-        symbol_parameters = sdfg.undefined_symbols(False)
+        symbol_parameters = {k: dt.Scalar(v) for k, v in sdfg.symbols.items()}
 
         return (global_data_parameters, top_level_local_data,
                 subgraph_parameters, scalar_parameters, symbol_parameters,
@@ -1097,8 +1098,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg,
-                                                 sdfg.node(state_id),
+        to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
                                                  node)
         allocated = set()
         for child in dfg.scope_dict(node_to_children=True)[node]:

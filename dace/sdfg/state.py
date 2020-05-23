@@ -315,20 +315,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             if isinstance(node, nd.NestedSDFG):
                 yield from node.sdfg.all_edges_recursive()
 
-    def data_symbols(self):
-        """ Returns all symbols used in data nodes. """
-        from dace.sdfg.sdfg import data_symbols
-        return data_symbols(self)
-
-    def scope_symbols(self):
-        """ Returns all symbols defined by scopes within this state. """
-        from dace.sdfg.sdfg import scope_symbols
-        return scope_symbols(self)
-
-    def undefined_symbols(self, sdfg, include_scalar_data):
-        from dace.sdfg.sdfg import undefined_symbols
-        return undefined_symbols(sdfg, self, include_scalar_data)
-
     def data_nodes(self):
         """ Returns all data_nodes (arrays) present in this state. """
         return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
@@ -430,6 +416,54 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         return sdfg._repr_html_()
 
+    def symbols_defined_at(self, node: nd.Node) -> Dict[str, dtypes.typeclass]:
+        """ 
+        Returns all symbols available to a given node.
+        The symbols a node can access are a combination of the global SDFG
+        symbols, symbols defined in inter-state paths to its state,
+        and symbols defined in scope entries in the path to this node.
+        :param node: The given node.
+        :return: A dictionary mapping symbol names to their types.
+        """
+        from dace.sdfg.sdfg import SDFG
+
+        if node is None:
+            return collections.OrderedDict()
+
+        sdfg: SDFG = self.parent
+
+        # Start with global symbols
+        symbols = collections.OrderedDict(sdfg.symbols)
+        for desc in sdfg.arrays.values():
+            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+
+        # Add symbols from inter-state edges along the path to the state
+        try:
+            start_state = sdfg.start_state
+            for path in sdfg.all_simple_paths(start_state, self,
+                                              as_edges=True):
+                for e in path:
+                    symbols.update(e.data.new_symbols(symbols))
+        except ValueError:
+            # Cannot determine starting state (possibly some inter-state edges
+            # do not yet exist)
+            for e in sdfg.edges():
+                symbols.update(e.data.new_symbols(symbols))
+
+        # Find scopes this node is situated in
+        sdict = self.scope_dict()
+        scope_list = []
+        curnode = node
+        while sdict[curnode] is not None:
+            curnode = sdict[curnode]
+            scope_list.append(curnode)
+
+        # Add the scope symbols top-down
+        for scope_node in reversed(scope_list):
+            symbols.update(scope_node.new_symbols(sdfg, self, symbols))
+
+        return symbols
+
     # TODO: Move to scope.py
     def scope_tree(self):
         from dace.sdfg.scope import ScopeTree
@@ -443,7 +477,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
         result = {}
 
-        sdfg_symbols = self.parent.undefined_symbols(True).keys()
+        sdfg_symbols = self.parent.symbols.keys()
 
         # Get scopes
         for node, scopenodes in sdc.items():
@@ -455,7 +489,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
             scope = ScopeTree(node, exit_node)
             scope.defined_vars = set(
                 symbolic.pystr_to_symbolic(s)
-                for s in (self.parent.symbols_defined_at(node, self).keys()
+                for s in (self.symbols_defined_at(node).keys()
                           | sdfg_symbols))
             result[node] = scope
 
@@ -540,11 +574,20 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
 
     def top_level_transients(self):
         """Iterate over top-level transients of this state."""
-        return top_level_transients(self)  # Free function
+        sdict = self.scope_dict(node_to_children=True)
+        sdfg = self.parent
+        result = set()
+        for node in sdict[None]:
+            if isinstance(node, nd.AccessNode) and node.desc(sdfg).transient:
+                result.add(node.data)
+        return result
 
-    def all_transients(self):
+    def all_transients(self) -> List[str]:
         """Iterate over all transients in this state."""
-        return all_transients(self)
+        return dtypes.deduplicate([
+            n.data for n in self.nodes()
+            if isinstance(n, nd.AccessNode) and n.desc(self.parent).transient
+        ])
 
     def entry_node(self, node: nd.Node) -> nd.EntryNode:
         """ Returns the entry node that wraps the current node, or None if
@@ -661,15 +704,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
         self.add_node(s)
 
         # Add "default" undefined symbols if None are given
-        symbols = sdfg.undefined_symbols(False)
+        symbols = sdfg.symbols.keys()
         if symbol_mapping is None:
-            symbol_mapping = {s: s for s in symbols.keys()}
+            symbol_mapping = {s: s for s in symbols}
             s.symbol_mapping = symbol_mapping
 
         # Validate missing symbols
-        missing_symbols = [
-            s for s in symbols.keys() if s not in symbol_mapping
-        ]
+        missing_symbols = [s for s in symbols if s not in symbol_mapping]
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG "%s": %s' %
                              (name, missing_symbols))
@@ -1358,33 +1399,3 @@ class SDFGState(OrderedMultiDiConnectorGraph, MemletTrackingView):
                         continue
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node._in_connectors.add(edge.dst_conn)
-
-def top_level_transients(dfg):
-    """ Iterate over top-level transients (i.e., ones that exist in multiple
-        states or scopes) of the passed dataflow graph. """
-    sdfg = dfg.parent
-    visited_transients = set()
-    scope_dict = dfg.scope_dict(node_to_children=True)
-    for node in scope_dict[None]:  # Top-level nodes
-        if not isinstance(node, nd.AccessNode):
-            continue
-        if node.data in visited_transients:
-            continue
-        if not node.desc(sdfg).transient:
-            continue
-        visited_transients.add(node.data)
-        yield node.data
-
-
-def all_transients(dfg):
-    """ Iterate over all transient data in the specified dataflow graph. """
-    visited = set()
-    for node in dfg.nodes():
-        if not isinstance(node, nd.AccessNode):
-            continue
-        if not node.desc(dfg.parent).transient:
-            continue
-        if node.data in visited:
-            continue
-        visited.add(node.data)
-        yield node.data

@@ -160,7 +160,7 @@ class DoubleBuffering(pattern_matching.Transformation):
         # All instances of the map parameter in this state become the loop start
         sd.replace(initial_state, map_param, map_rstart)
         # Initial writes go to the first buffer
-        sd.replace(initial_state, '__dace_db_param', '0')
+        sd.replace(initial_state, '__dace_db_param', 0)
 
         ##############################
         # Modify main state's memlets

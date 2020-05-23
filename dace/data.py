@@ -3,6 +3,7 @@ import re, json
 import copy as cp
 import sympy as sp
 import numpy
+from typing import Set
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -109,7 +110,8 @@ class Data(object):
         raise NotImplementedError
 
     @property
-    def free_symbols(self):
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of undefined symbols in this data descriptor. """
         result = set()
         for s in self.shape:
             if isinstance(s, sp.Expr):

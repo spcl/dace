@@ -51,8 +51,8 @@ def infer_expr_type(code, symbols=None):
     """
     symbols = symbols or {}
     inferred_symbols = {}
-    if isinstance(code, str):
-        parsed_ast = ast.parse(code)
+    if isinstance(code, (str, float, int, complex)):
+        parsed_ast = ast.parse(str(code))
     elif isinstance(code, Basic) or isinstance(code, SymExpr):
         parsed_ast = ast.parse(symstr(code))
 

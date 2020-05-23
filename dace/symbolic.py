@@ -19,11 +19,7 @@ class symbol(sympy.Symbol):
 
     s_currentsymbol = 0
 
-    def __new__(cls,
-                name=None,
-                dtype=DEFAULT_SYMBOL_TYPE,
-                override_dtype=False,
-                **assumptions):
+    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)

@@ -319,7 +319,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             for e in sdfg.out_edges(state):
                 # Used arrays = intersection between symbols and cloned arrays
                 arrays_used.update(
-                    set(e.data.condition_symbols())
+                    set(e.data.free_symbols)
                     & set(cloned_arrays.keys()))
 
             # Create a state and copy out used arrays

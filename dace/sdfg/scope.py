@@ -28,8 +28,9 @@ class ScopeTree(object):
 class ScopeSubgraphView(SubgraphView, MemletTrackingView):
     """ An extension to SubgraphView that enables the creation of scope
         dictionaries in subgraphs and free symbols. """
-    def __init__(self, graph, subgraph_nodes):
+    def __init__(self, graph, subgraph_nodes, entry_node):
         super(ScopeSubgraphView, self).__init__(graph, subgraph_nodes)
+        self.entry = entry_node
         self._clear_scopedict_cache()
 
     @property
@@ -102,14 +103,6 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         """
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
-    def top_level_transients(self):
-        from dace.sdfg.state import top_level_transients
-        return top_level_transients(self)
-
-    def all_transients(self):
-        from dace.sdfg.state import all_transients
-        return all_transients(self)
-
     def entry_node(self, node: nd.Node) -> nd.EntryNode:
         """ Returns the entry node that wraps the current node, or None if
             it is top-level in a state. """
@@ -121,26 +114,6 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         node_to_children = self.scope_dict(True)
         return next(v for v in node_to_children[entry_node]
                     if isinstance(v, nd.ExitNode))
-
-    def data_symbols(self):
-        """Returns all symbols used in data nodes."""
-        from dace.sdfg.sdfg import data_symbols
-        return data_symbols(self)
-
-    def scope_symbols(self):
-        """Returns all symbols defined by scopes within this state."""
-        from dace.sdfg.sdfg import scope_symbols
-        return scope_symbols(self)
-
-    def interstate_symbols(self):
-        """Returns all symbols (assigned, used) in interstate edges in nested
-           SDFGs within this subgraph."""
-        from dace.sdfg.sdfg import interstate_symbols
-        return interstate_symbols(self)
-
-    def undefined_symbols(self, sdfg, include_scalar_data):
-        from dace.sdfg.sdfg import undefined_symbols
-        return undefined_symbols(sdfg, self, include_scalar_data)
 
     def all_nodes_recursive(self):
         for node in self.nodes():
@@ -154,6 +127,16 @@ class ScopeSubgraphView(SubgraphView, MemletTrackingView):
         for node in self.nodes():
             if isinstance(node, nd.NestedSDFG):
                 yield from node.sdfg.all_edges_recursive()
+
+    def top_level_transients(self):
+        """ Iterate over top-level transients of this subgraph. """
+        sdict = self.scope_dict(node_to_children=True)
+        sdfg = self.parent
+        result = set()
+        for node in sdict[self.entry]:
+            if isinstance(node, nd.AccessNode) and node.desc(sdfg).transient:
+                result.add(node.data)
+        return result
 
 
 def _scope_subgraph(graph, entry_node, include_entry, include_exit):
@@ -188,7 +171,8 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
 
     # Preserve order of nodes
     return ScopeSubgraphView(graph,
-                             [n for n in graph.nodes() if n in children_nodes])
+                             [n for n in graph.nodes() if n in children_nodes],
+                             entry_node)
 
 
 def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,

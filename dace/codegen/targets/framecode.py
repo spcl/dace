@@ -1,6 +1,7 @@
 from typing import Optional, Set, Tuple
 
 import collections
+import copy
 import dace
 import functools
 from dace.codegen import control_flow as cflow
@@ -651,14 +652,21 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     allocated.add(node.data)
 
         # Allocate inter-state variables
-        assigned, _ = sdfg.interstate_symbols()
-        for isvarName, isvarType in assigned.items():
+        global_symbols = copy.deepcopy(sdfg.symbols)
+        interstate_symbols = {}
+        for e in sdfg.edges():
+            symbols = e.data.new_symbols(global_symbols)
+            interstate_symbols.update(symbols)
+            global_symbols.update(symbols)
+
+        for isvarName, isvarType in interstate_symbols.items():
             # Skip symbols that have been declared as outer-level transients
             if isvarName in allocated:
                 continue
+            isvar = data.Scalar(isvarType)
             callsite_stream.write(
-                '%s;\n' %
-                (isvarType.signature(with_types=True, name=isvarName)), sdfg)
+                '%s;\n' % (isvar.signature(with_types=True, name=isvarName)),
+                sdfg)
 
         callsite_stream.write('\n', sdfg)
 

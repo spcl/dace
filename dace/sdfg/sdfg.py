@@ -106,23 +106,39 @@ class InterstateEdge(object):
     def condition_sympy(self):
         return symbolic.pystr_to_symbolic(self.condition.as_string)
 
-    def condition_symbols(self):
-        return dace.symbolic.symbols_in_ast(self.condition.code[0])
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this edge's properties. """
+        # Symbols in conditions and assignments
+        result = set(
+            map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        for assign in self.assignments.values():
+            result |= set(
+                map(str,
+                    symbolic.pystr_to_symbolic(assign).free_symbols))
+
+        return result - set(self.assignments.keys())
+
+    def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
+        """ 
+        Returns a mapping between symbols defined by this edge (i.e., 
+        assignments) to their type.
+        """
+        from dace.codegen.tools.type_inference import infer_expr_type
+        return {
+            k: infer_expr_type(v, symbols)
+            for k, v in self.assignments.items()
+        }
 
     def to_json(self, parent=None):
-        ret = {
+        return {
             'type': type(self).__name__,
             'attributes': dace.serialize.all_properties_to_json(self),
             'label': self.label
         }
 
-        return ret
-
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "InterstateEdge":
-            raise TypeError("Invalid data type")
-
         # Create dummy object
         ret = InterstateEdge()
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
@@ -173,11 +189,14 @@ class SDFG(OrderedDiGraph):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
+    symbols = DictProperty(str,
+                           dtypes.typeclass,
+                           desc="Global symbols for this SDFG")
 
     global_code = DictProperty(
         str,
         CodeBlock,
-        desc="Code generated in a global scope on the generated files.")
+        desc="Code generated in a global scope on the output files.")
     init_code = DictProperty(
         str, CodeBlock, desc="Code generated in the `__dace_init` function.")
     exit_code = DictProperty(
@@ -213,7 +232,7 @@ class SDFG(OrderedDiGraph):
 
         self._propagate = propagate
         self._parent = parent
-        self._symbols = {}  # type: Dict[str, dtypes.typeclass]
+        self.symbols = {}
         self._parent_sdfg = None
         self._sdfg_list = [self]
         self._start_state = None
@@ -234,21 +253,6 @@ class SDFG(OrderedDiGraph):
             :return: A string representing the JSON-serialized SDFG.
         """
         tmp = super().to_json()
-
-        # Inject the undefined symbols
-        try:
-            tmp['undefined_symbols'] = [
-                (k, v.to_json())
-                for k, v in sorted(self.undefined_symbols(True).items())
-            ]
-        except RuntimeError:
-            tmp['undefined_symbols'] = []
-
-        try:
-            tmp['scalar_parameters'] = [(k, v.to_json()) for k, v in sorted(
-                self.scalar_parameters(True), key=lambda x: x[0])]
-        except RuntimeError:
-            tmp['scalar_parameters'] = []
 
         # Location in the SDFG list
         self.reset_sdfg_list()
@@ -290,17 +294,6 @@ class SDFG(OrderedDiGraph):
             e = dace.serialize.loads(dace.serialize.dumps(e))
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
-        # Redefine symbols
-        for k, v in json_obj['undefined_symbols']:
-            v = dace.serialize.from_json(v)
-            symbolic.symbol(k, v.dtype, override_dtype=True)
-
-        for k, v in json_obj['scalar_parameters']:
-            v = dace.serialize.from_json(v)
-            ret.add_symbol(k, v.dtype, override_dtype=True)
-
-        ret.validate()
-
         return ret
 
     @property
@@ -310,18 +303,12 @@ class SDFG(OrderedDiGraph):
         """
         return self._arrays
 
-    @property
-    def symbols(self):
-        """ Returns a dictionary of symbols (constant variables) used in this
-            SDFG. """
-        return self._symbols
-
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
         if dataname in self._arrays:
             return self._arrays[dataname]
-        if str(dataname) in self._symbols:
-            return self._symbols[str(dataname)]
+        if str(dataname) in self.symbols:
+            return self.symbols[str(dataname)]
         raise KeyError('Data descriptor with name "%s" not found in SDFG' %
                        dataname)
 
@@ -344,7 +331,7 @@ class SDFG(OrderedDiGraph):
         # Replace in arrays and symbols (if a variable name)
         if validate_name(new_name):
             replace_dict(self._arrays, name, new_name)
-            replace_dict(self._symbols, name, new_name)
+            replace_dict(self.symbols, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -363,20 +350,16 @@ class SDFG(OrderedDiGraph):
         for state in self.nodes():
             state.replace(name, new_name)
 
-    def add_symbol(self, name, stype, override_dtype=False):
+    def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
             :param name: Symbol name.
             :param stype: Symbol type.
-            :param override_dtype: If True, overrides existing symbol type in
-                                   symbol registry.
         """
-        if name in self._symbols:
+        if name in self.symbols:
             raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.DTYPE_TO_TYPECLASS[stype]
-
-        symbolic.symbol(name, stype, override_dtype=override_dtype)
-        self._symbols[name] = stype
+        self.symbols[name] = stype
 
     @property
     def start_state(self):
@@ -384,12 +367,13 @@ class SDFG(OrderedDiGraph):
         source_nodes = self.source_nodes()
         if len(source_nodes) == 1:
             return source_nodes[0]
-        if self._start_state is None:
-            raise ValueError('Ambiguous or undefined starting state for SDFG')
-        if self._start_state not in source_nodes:
-            raise ValueError("Start state {} not found in source nodes".format(
-                self._start_state))
-        return self._start_state
+        # If starting state is ambiguous (i.e., loop to initial state or more
+        # than one possible start state), allow manually overriding start state
+        if self._start_state is not None:
+            return self._start_state
+        raise ValueError('Ambiguous or undefined starting state for SDFG, '
+                         'please use "is_start_state=True" when adding the '
+                         'starting state with "add_state"')
 
     @start_state.setter
     def start_state(self, state_id):
@@ -748,213 +732,7 @@ class SDFG(OrderedDiGraph):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def interstate_symbols(self):
-        """ Returns variables are assigned/used in the top-level and can be
-            shared between states.
-        """
-
-        assigned = collections.OrderedDict()
-        used = collections.OrderedDict()
-
-        # Find symbols in inter-state edges
-        for _, _, edge_data in self.edges():
-            for var, expr in edge_data.assignments.items():
-                assigned[var] = dt.Scalar(symbolic.symtype(expr))
-                if isinstance(expr, str):
-                    expr = symbolic.pystr_to_symbolic(expr, simplify=False)
-                if isinstance(expr, sp.Expr):
-                    for sname, s in dace.symbolic.symlist(expr).items():
-                        used[sname] = dt.Scalar(s.dtype)
-                elif expr is None or isinstance(expr, int):
-                    pass  # Nothing to extract, or a constant
-                else:
-                    raise TypeError("Unexpected type: {}".format(type(expr)))
-            for s in edge_data.condition_symbols():
-                used[s] = dt.Scalar(symbolic.symbol(s).dtype)
-
-        assigned = collections.OrderedDict([(k, v)
-                                            for k, v in assigned.items()
-                                            if not k.startswith('__dace')])
-        used = collections.OrderedDict([(k, v) for k, v in used.items()
-                                        if not k.startswith('__dace')])
-
-        return assigned, used
-
-    def scalar_parameters(self, include_constants):
-        """ Returns all scalar data arguments to the SDFG (this excludes
-            symbols used to define array sizes)."""
-        return [
-            (name, dt.Scalar(stype)) for name, stype in self._symbols.items()
-            # Exclude constant variables if requested
-            if (include_constants or (name not in self.constants))
-        ]
-
-    def symbols_defined_at(self, node, state=None):
-        """ Returns all symbols available to a given node, including only
-            scope-defined variables that encompass the node, assuming that all
-            required inputs to the SDFG have been resolved. """
-        if node is None:
-            return collections.OrderedDict()
-
-        # From e.g., Data or SDFG to the corresponding node
-        resolved = self.resolve_node(node)
-        if len(resolved) > 1:
-            raise ValueError("Node {} is present multiple times in SDFG: "
-                             "result is ambiguous".format(node))
-        node = resolved[0]
-
-        if state is None:
-            state = self.states_for_node(node)
-            if len(state) > 1:
-                raise ValueError('Node "{}" is present in multiple states, '
-                                 "result is ambiguous: {}".format(
-                                     node, ", ".join(state)))
-            state = state[0]
-        else:
-            if node not in state.nodes():
-                raise ValueError(
-                    'Node "{}" does not exist in state "{}"'.format(
-                        node, state))
-
-        # All scalar inputs, data symbols and interstate symbols are assumed to
-        # have been resolved at this point
-        symbols = collections.OrderedDict(
-            (name, data) for name, data in self.scalar_parameters(True))
-        symbols.update(self.data_symbols(True))
-        assigned, used = self.interstate_symbols()
-        symbols.update(assigned)
-        #symbols.update(used)
-
-        # Explore scope of node to find iteration variables
-        scope_dict = state.scope_dict()
-        if isinstance(node, dace.sdfg.nodes.EntryNode):
-            scope = node
-        else:
-            scope = scope_dict[node]
-        while scope is not None:
-            if isinstance(scope, dace.sdfg.nodes.MapEntry):
-                for param in scope.params:
-                    symbols[param] = dt.Scalar(symbolic.symbol(param).dtype)
-                for sym in scope.range.free_symbols:
-                    symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
-            elif isinstance(scope, dace.sdfg.nodes.ConsumeEntry):
-                symbols[scope.consume.pe_index] = dt.Scalar(
-                    symbolic.symbol(scope.consume.pe_index).dtype)
-                for sym in scope.consume.num_pes.free_symbols:
-                    symbols[sym] = dt.Scalar(symbolic.symbol(sym).dtype)
-            else:
-                raise TypeError("Unsupported entry node type: {}".format(
-                    type(scope).__name__))
-            scope = scope_dict[scope]
-
-        # Call recursively on parents
-        if self.parent is not None:
-            # Find parent Nested SDFG node
-            parent_node = next(
-                n for n in self.parent.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == self.name)
-            symbols.update(
-                self._parent_sdfg.symbols_defined_at(parent_node, self.parent))
-
-        symbols.update(self.constants)
-
-        return symbols
-
-    def data_symbols(self, include_constants):
-        """ Returns all symbols used in data nodes within the SDFG. """
-        symbols = collections.OrderedDict()
-        for state in self.nodes():
-            symbols.update(state.data_symbols())
-        if include_constants:
-            return symbols
-        else:
-            return collections.OrderedDict((key, val)
-                                           for key, val in symbols.items()
-                                           if key not in self.constants)
-
-    def scope_symbols(self):
-        """ Returns all symbols used in scopes (maps) within the SDFG. """
-        iteration_variables = collections.OrderedDict()
-        subset_symbols = collections.OrderedDict()
-        for state in self.nodes():
-            iv, ss = state.scope_symbols()
-            iteration_variables.update(iv)
-            subset_symbols.update(ss)
-        return iteration_variables, subset_symbols
-
-    def all_symbols(self, include_constants):
-        """ Returns all symbols used in this SDFG, including scalar parameters
-            to the SDFG, loop iteration variables, array sizes and variables
-            used in interstate edges. """
-        symbols = collections.OrderedDict(
-            (name, data)
-            for name, data in self.scalar_parameters(include_constants))
-        symbols.update(self.data_symbols(True))
-        assigned, used = self.interstate_symbols()
-        symbols.update(used)
-        iteration_variables, subset_symbols = self.scope_symbols()
-        symbols.update(subset_symbols)
-        symbols.update(iteration_variables)
-        if include_constants:
-            return symbols
-        else:
-            return collections.OrderedDict((key, val)
-                                           for key, val in symbols.items()
-                                           if key not in self.constants)
-
-    def undefined_symbols(self, include_scalar_data):
-        """ Returns all symbols used in this SDFG that are undefined, and thus
-            must be given as input parameters. """
-        return undefined_symbols(self, self, include_scalar_data)
-
-    def resolve_node(self, node):
-        """ Resolves data objects and SDFG objects into their corresponding
-            nodes in the SDFG. """
-        if isinstance(node, dace.sdfg.nodes.Node):
-            return [node]
-        all_nodes = itertools.chain([(self, None)], self.all_nodes_recursive())
-        if isinstance(node, dace.data.Data):
-            resolved = [
-                n for n, _ in all_nodes
-                if isinstance(n, dace.sdfg.nodes.AccessNode)
-                and n.desc(self) == node
-            ]
-        elif isinstance(node, SDFG):
-            resolved = [
-                n for n, _ in all_nodes
-                if isinstance(n, dace.sdfg.nodes.NestedSDFG) and n.sdfg == node
-            ]
-        else:
-            raise TypeError("Unrecognized type {} passed.".format(
-                type(node).__name__))
-        if len(resolved) == 0:
-            raise RuntimeError("Node {} of type {} not found "
-                               "in SDFG {}.".format(node.data,
-                                                    type(node).__name__,
-                                                    self.name))
-        return resolved
-
-    def states_for_node(self, node):
-        """ Finds which states a node is located in. """
-        if isinstance(node, dace.data.Data):
-            states = [
-                s for s in self.nodes()
-                if node in [n.data for n in s.data_nodes()]
-            ]
-        elif isinstance(node, SDFG):
-            states = [
-                s for s in self.nodes() if node in [
-                    n.sdfg for n in s.nodes()
-                    if isinstance(n, dace.sdfg.nodes.NestedSDFG)
-                ]
-            ]
-        else:
-            states = [s for s in self.nodes() if node in s.nodes()]
-        if len(states) == 0:
-            raise ValueError('Node "{}" not found'.format(node))
-        return states
-
-    def arglist(self):
+    def arglist(self) -> Dict[str, dtypes.typeclass]:
         """ Returns a list of argument names required to call this SDFG.
             The return type is a dictionary of names to dtypes. """
         data_args = []
@@ -965,7 +743,21 @@ class SDFG(OrderedDiGraph):
             ]
         data_args = sorted(dtypes.deduplicate(data_args))
 
-        sym_args = sorted(self.undefined_symbols(True).items())
+        symbols = {}
+        symbols.update(self.symbols)
+        # Add data symbols (with default-int type if type is not defined)
+        # and scalars
+        for name, desc in self.arrays.items():
+            if isinstance(desc, dt.Scalar) and not desc.transient:
+                symbols[name] = desc.dtype
+            for sym in desc.free_symbols:
+                if str(sym) not in symbols:
+                    symbols[str(sym)] = sym.dtype
+
+        sym_args = sorted(symbols.items())
+        isdefs = set().union(*(set(e.data.new_symbols({}).keys())
+                               for e in self.edges()))
+        sym_args = [(k, v) for k, v in sym_args if k not in isdefs]
 
         # Arguments are sorted as follows:
         # 1. Program arguments, as given in the dace program definition
@@ -998,6 +790,12 @@ class SDFG(OrderedDiGraph):
                     arg_type.signature(name=name,
                                        with_types=with_types,
                                        for_call=for_call))
+            elif isinstance(arg_type, dtypes.typeclass):
+                sigtype = dt.Scalar(arg_type)
+                signature_args.append(
+                    sigtype.signature(name=name,
+                                      with_types=with_types,
+                                      for_call=for_call))
             else:
                 raise TypeError("Unsupported argument type")
 
@@ -1074,7 +872,7 @@ class SDFG(OrderedDiGraph):
 
         # If a transient is present in an inter-state edge, it is shared
         for interstate_edge in self.edges():
-            for sym in interstate_edge.data.condition_symbols():
+            for sym in interstate_edge.data.free_symbols:
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
                     shared.append(sym)
@@ -1113,14 +911,20 @@ class SDFG(OrderedDiGraph):
                         result.append(node)
         return result
 
-    def save(self, filename: str, use_pickle=False, with_metadata=False):
+    def save(self,
+             filename: str,
+             use_pickle=False,
+             with_metadata=False,
+             exception=None):
         """ Save this SDFG to a file.
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
                                JSON).
             :param with_metadata: Save property metadata (e.g. name,
                                   description). False or True override current
-                                  option, whereas None keeps default
+                                  option, whereas None keeps default.
+            :param exception: If not None, stores error information along with
+                              SDFG.
         """
         try:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -1989,7 +1793,7 @@ class SDFG(OrderedDiGraph):
                 if isinstance(node, nd.NestedSDFG):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
-                    node.expand(self)
+                    node.expand(self, state)
                     print("Automatically expanded library node \"" +
                           str(node) + "\".")
                     # We made a copy of the original list of nodes, so we keep
@@ -2032,148 +1836,6 @@ class SDFG(OrderedDiGraph):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.arrays[array])
-
-
-def scope_symbols(dfg):
-    """ Returns all symbols used in scopes within the given DFG, separated
-        into (iteration variables, symbols used in subsets). """
-    iteration_variables = collections.OrderedDict()
-    subset_symbols = collections.OrderedDict()
-    parent_scopes = dfg.scope_dict(False)
-    sibling_scopes = dfg.scope_dict(True)
-    all_dynamic_symbols = set()
-    for n in dfg.nodes():
-        # TODO(later): Refactor to method on Node objects
-        if not isinstance(n, dace.sdfg.nodes.EntryNode):
-            continue
-        if isinstance(n, dace.sdfg.nodes.MapEntry):
-            # Collect dynamic map range symbols from parent scopes
-            dynamic_symbols = set()
-            x = n
-            while x is not None:
-                dynamic_symbols |= x.in_connectors
-                x = parent_scopes[x]
-
-            for param in n.params:
-                iteration_variables[param] = dt.Scalar(
-                    symbolic.symbol(param).dtype)
-            for dim in n.map.range:
-                try:
-                    for i in dim:
-                        if isinstance(i, sp.Expr):
-                            subset_symbols.update(
-                                (k.name, dt.Scalar(k.dtype))
-                                for k in i.free_symbols
-                                if k.name not in dynamic_symbols)
-                except TypeError:  # X object is not iterable
-                    if isinstance(dim, sp.Expr):
-                        subset_symbols.update((k.name, dt.Scalar(k.dtype))
-                                              for k in dim.free_symbols
-                                              if k.name not in dynamic_symbols)
-                    else:
-                        raise TypeError(
-                            "Unexpected map range type for {}: {}".format(
-                                n.map,
-                                type(n.map.range).__name__))
-        elif isinstance(n, dace.sdfg.nodes.ConsumeEntry):
-            # Collect dynamic map range symbols from parent scopes
-            dynamic_symbols = set()
-            x = n
-            while x is not None:
-                dynamic_symbols |= x.in_connectors
-                x = parent_scopes[x]
-
-            # Add PE index as iteration variable
-            iteration_variables[n.consume.pe_index] = dt.Scalar(
-                symbolic.symbol(n.consume.pe_index).dtype)
-            if isinstance(n.consume.num_pes, sp.Expr):
-                subset_symbols.update((k.name, dt.Scalar(k.dtype))
-                                      for k in n.consume.num_pes.free_symbols
-                                      if k.name not in dynamic_symbols)
-        else:
-            raise TypeError("Unsupported entry node type: {}".format(
-                type(n).__name__))
-
-        all_dynamic_symbols |= dynamic_symbols
-
-        for sibling_scope in sibling_scopes[n]:
-            for edge in dfg.in_edges(sibling_scope):
-                if edge.data.data:
-                    subset_symbols.update(
-                        (symname, dt.Scalar(sym.dtype)) for symname, sym in
-                        edge.data.subset.free_symbols.items()
-                        if symname not in iteration_variables)
-
-    for sibling_scope in sibling_scopes[None]:
-        for edge in dfg.in_edges(sibling_scope):
-            if edge.data.data:
-                subset_symbols.update(
-                    (symname, dt.Scalar(sym.dtype))
-                    for symname, sym in edge.data.subset.free_symbols.items()
-                    if symname not in iteration_variables)
-
-    for x in all_dynamic_symbols:
-        try:
-            del subset_symbols[x]
-        except:
-            pass
-    return iteration_variables, subset_symbols
-
-
-def data_symbols(dfg):
-    """ Returns all symbols used in data nodes within the specified DFG. """
-    sdfg = dfg.parent
-    result = collections.OrderedDict()
-    # Scalars determining the size of arrays
-    for d in dfg.nodes():
-        # Update symbols with symbols used in nested SDFG invocations
-        if isinstance(d, nd.NestedSDFG):
-            result.update((k.name, dt.Scalar(k.dtype))
-                          for m in d.symbol_mapping.values()
-                          if symbolic.issymbolic(m) for k in m.free_symbols
-                          if not k.name.startswith('__dace'))
-            continue
-        if not isinstance(d, nd.AccessNode):
-            continue
-        ddesc = d.desc(sdfg)
-        result.update((s.name, dt.Scalar(s.dtype)) for s in ddesc.free_symbols
-                      if not s.name.startswith('__dace'))
-
-    return result
-
-
-def undefined_symbols(sdfg, obj, include_scalar_data):
-    """ Returns all symbols used in this object that are undefined, and thus
-        must be given as input parameters. """
-    if include_scalar_data:
-        scalar_arguments = sdfg.scalar_parameters(False)
-        symbols = collections.OrderedDict(
-            (name, data) for name, data in scalar_arguments)
-    else:
-        symbols = collections.OrderedDict()
-    defined = set(sdfg.constants.keys())
-    symbols.update(
-        obj.data_symbols(True) if isinstance(obj, SDFG) else obj.data_symbols(
-        ))
-    assigned, used = obj.interstate_symbols()
-    defined |= assigned.keys()
-    symbols.update(used)
-    iteration_variables, subset_symbols = obj.scope_symbols()
-    symbols.update(subset_symbols)
-
-    # Don't include iteration variables
-    # TODO: this is too lenient; take scope into account
-    defined |= iteration_variables.keys()
-    defined |= {
-        n.data
-        for n, scope in obj.all_nodes_recursive()
-        if (isinstance(n, dace.sdfg.nodes.AccessNode) and (
-            scope.parent is None and n.desc(scope).transient or scope.parent))
-    }
-    symbols = collections.OrderedDict(
-        (key, value) for key, value in symbols.items()
-        if key not in defined and not key.startswith('__dace'))
-    return symbols
 
 
 def _get_optimizer_class(class_override):

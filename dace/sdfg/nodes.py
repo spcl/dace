@@ -170,6 +170,7 @@ class Node(object):
             filling connectors when adding edges to scopes. """
         return str(self._next_connector_int() - 1)
 
+    @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this node's properties. """
         return set()
@@ -266,8 +267,9 @@ class CodeNode(Node):
         self.label = label
         self.location = location if location is not None else {}
 
+    @property
     def free_symbols(self) -> Set[str]:
-        return set.union(*[v.free_symbols for v in self.location.values()])
+        return set().union(*[v.free_symbols for v in self.location.values()])
 
 
 @make_properties
@@ -403,10 +405,11 @@ class NestedSDFG(CodeNode):
 
         return ret
 
+    @property
     def free_symbols(self) -> Set[str]:
-        return set.union(
-            *[v.free_symbols for v in self.symbol_mapping.values()],
-            *[v.free_symbols for v in self.location.values()])
+        return set().union(
+            *(v.free_symbols for v in self.symbol_mapping.values()),
+            *(v.free_symbols for v in self.location.values()))
 
     def __str__(self):
         if not self.label:
@@ -438,7 +441,7 @@ class NestedSDFG(CodeNode):
                     % dname)
 
         # Validate undefined symbols
-        symbols = set(k for k in self.sdfg.undefined_symbols(False).keys()
+        symbols = set(k for k in self.sdfg.symbols.keys()
                       if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
@@ -520,10 +523,11 @@ class MapEntry(EntryNode):
     def __str__(self):
         return str(self.map)
 
+    @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
-        return set(k for k in self._map.range.free_symbols().keys()
+        return set(k for k in self._map.range.free_symbols
                    if k not in dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
@@ -735,7 +739,7 @@ class ConsumeEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
         return ((set(self._consume.num_pes.free_symbols)
-                 | set(self._consume.condition.free_symbols())) - dyn_inputs)
+                 | set(self._consume.condition.free_symbols)) - dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -1042,7 +1046,7 @@ class LibraryNode(CodeNode):
                                                     context=context)
             return ret
 
-    def expand(self, sdfg, *args, **kwargs):
+    def expand(self, sdfg, state, *args, **kwargs):
         """Create and perform the expansion transformation for this library
            node."""
         implementation = self.implementation
@@ -1087,15 +1091,6 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation: " + implementation)
         transformation_type = type(self).implementations[implementation]
-        states = sdfg.states_for_node(self)
-        if len(states) < 1:
-            raise ValueError("Node \"" + str(self) +
-                             "\" not found in SDFG \"" + str(sdfg) + "\".")
-        if len(states) > 1:
-            raise ValueError("Node \"" + str(self) +
-                             "\" found in multiple states: " +
-                             ", ".join(str(s) for s in states))
-        state = states[0]
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}

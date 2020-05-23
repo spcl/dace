@@ -1,9 +1,10 @@
 """ Exception classes and methods for validation of SDFGs. """
+import copy
 import os
-from typing import Union
+from typing import Dict, Union
 import warnings
 
-from dace.dtypes import validate_name
+from dace.dtypes import typeclass, validate_name
 
 ###########################################
 # Validation
@@ -43,31 +44,77 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                                        None)
 
         # Check every state separately
-        for sid, state in enumerate(sdfg.nodes()):
-            validate_state(state, sid, sdfg)
+        start_state = sdfg.start_state
+        symbols = copy.deepcopy(sdfg.symbols)
+        symbols.update(sdfg.arrays)
+        for desc in sdfg.arrays.values():
+            for sym in desc.free_symbols:
+                symbols[str(sym)] = sym.dtype
+        visited = set()
+        visited_edges = set()
+        # Run through states via DFS, ensuring that only the defined symbols
+        # are available for validation
+        for edge in sdfg.dfs_edges(start_state):
+            # Source -> inter-state definition -> Destination
+            ##########################################
+            visited_edges.add(edge)
+            # Source
+            if edge.src not in visited:
+                visited.add(edge.src)
+                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols)
 
-        # Interstate edge checks
+            ##########################################
+            # Edge
+            # Check inter-state edge for undefined symbols
+            undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
+            if len(undef_syms) > 0:
+                eid = sdfg.edge_id(edge)
+                raise InvalidSDFGInterstateEdgeError(
+                    "Undefined symbols in edge: %s" % undef_syms, sdfg, eid)
+
+            # Validate inter-state edge names
+            issyms = edge.data.new_symbols(symbols)
+            if any(not validate_name(s) for s in issyms):
+                invalid = next(s for s in issyms if not validate_name(s))
+                eid = sdfg.edge_id(edge)
+                raise InvalidSDFGInterstateEdgeError(
+                    "Invalid interstate symbol name %s" % invalid, sdfg, eid)
+
+            # Add edge symbols into defined symbols
+            symbols.update(issyms)
+
+            ##########################################
+            # Destination
+            if edge.dst not in visited:
+                visited.add(edge.dst)
+                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols)
+        # End of state DFS
+
+        # If there is only one state, the DFS will miss it
+        if start_state not in visited:
+            validate_state(start_state, sdfg.node_id(start_state), sdfg,
+                           symbols)
+
+        # Validate all inter-state edges (including self-loops not found by DFS)
         for eid, edge in enumerate(sdfg.edges()):
-
-            # Name validation
-            if len(edge.data.assignments) > 0:
-                for assign in edge.data.assignments.keys():
-                    if not validate_name(assign):
-                        raise InvalidSDFGInterstateEdgeError(
-                            "Invalid interstate symbol name %s" % assign, sdfg,
-                            eid)
-
-        # TODO: Check interstate edges with undefined symbols
+            if edge in visited_edges:
+                continue
+            issyms = edge.data.assignments.keys()
+            if any(not validate_name(s) for s in issyms):
+                invalid = next(s for s in issyms if not validate_name(s))
+                raise InvalidSDFGInterstateEdgeError(
+                    "Invalid interstate symbol name %s" % invalid, sdfg, eid)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
-        sdfg.save(os.path.join('_dacegraphs', 'invalid.sdfg'), ex)
+        sdfg.save(os.path.join('_dacegraphs', 'invalid.sdfg'), exception=ex)
         raise
 
 
 def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
-                   sdfg: 'dace.sdfg.SDFG' = None):
+                   sdfg: 'dace.sdfg.SDFG' = None,
+                   symbols: Dict[str, typeclass] = None):
     """ Verifies the correctness of an SDFG state by applying multiple
         tests. Raises an InvalidSDFGError with the erroneous node on
         failure.
@@ -82,6 +129,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
+    symbols = symbols or {}
 
     if not validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
@@ -89,10 +137,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if state._parent != sdfg:
         raise InvalidSDFGError("State does not point to the correct "
                                "parent", sdfg, state_id)
-
-    # Used in memlet validation
-    if Config.get_bool('experimental', 'validate_undefs'):
-        scope_tree = state.scope_tree()
 
     # Unreachable
     ########################################
@@ -379,9 +423,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
             # Test subset and other_subset for undefined symbols
             if Config.get_bool('experimental', 'validate_undefs'):
-                defined_symbols = set(
-                    map(str, scope_tree[scope[e.dst]].defined_vars))
-                undefs = (e.data.subset.free_symbols.keys() - defined_symbols)
+                # TODO: Traverse by scopes and accumulate data
+                defined_symbols = state.symbols_defined_at(e.dst)
+                undefs = (e.data.subset.free_symbols -
+                          set(defined_symbols.keys()))
                 if len(undefs) > 0:
                     raise InvalidSDFGEdgeError(
                         'Undefined symbols %s found in memlet subset' % undefs,

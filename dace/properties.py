@@ -576,16 +576,26 @@ class DictProperty(Property):
         self.key_type = key_type
         self.value_type = value_type
 
+        # Check whether a key/value is an instance of its type, if the given
+        # type is a Python type, or call self.*_type if it's a callable.
+        if isinstance(key_type, type):
+            self.is_key = lambda k: isinstance(k, self.key_type)
+        else:
+            self.is_key = lambda k: False
+        if isinstance(value_type, type):
+            self.is_value = lambda v: isinstance(v, self.value_type)
+        else:
+            self.is_value = lambda v: False
+
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = ast.literal_eval(val)
         elif isinstance(val, (tuple, list)):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
-            val = {
-                self.key_type(k): self.value_type(v)
-                for k, v in val.items()
-            }
+            val = {(k if self.is_key(k) else self.key_type(k)):
+                   (v if self.is_value(v) else self.value_type(v))
+                   for k, v in val.items()}
         super(DictProperty, self).__set__(obj, val)
 
     @staticmethod

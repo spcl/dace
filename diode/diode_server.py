@@ -499,9 +499,10 @@ def expand_node_or_sdfg():
         sdfg.expand_library_nodes()
     else:
         context_sdfg = sdfg.sdfg_list[sdfg_id]
-        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        state = context_sdfg.node(state_id)
+        node = state.node(node_id)
         if isinstance(node, LibraryNode):
-            node.expand(context_sdfg)
+            node.expand(context_sdfg, state)
         else:
             return jsonify({'error': 'The given node is not a library node'})
 

@@ -365,10 +365,23 @@ class Graph(object):
                     queue.append(succ)
         return seen.keys()
 
-    def all_simple_paths(self, source_node, dest_node):
-        """ Finds all simple paths (with no repeating nodes) from source_node
-            to dest_node """
-        return nx.all_simple_paths(self._nx, source_node, dest_node)
+    def all_simple_paths(self, source_node, dest_node, as_edges=False):
+        """ 
+        Finds all simple paths (with no repeating nodes) from source_node
+        to dest_node.
+        :param source_node: Node to start from.
+        :param dest_node: Node to end at.
+        :param as_edges: If True, returns list of edges instead of nodes.
+        """
+        if as_edges:
+            for path in map(
+                    nx.utils.pairwise,
+                    nx.all_simple_paths(self._nx, source_node, dest_node)):
+                yield [
+                    Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path
+                ]
+        else:
+            return nx.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin, end):
         """Finds all nodes between begin and end. Returns None if there is any

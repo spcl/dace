@@ -666,7 +666,7 @@ def propagate_memlet(dfg_state,
                              if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
-        for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
+        for s in dfg_state.symbols_defined_at(scope_node).keys()
         if s not in scope_node_symbols
     ]
 
