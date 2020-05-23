@@ -52,6 +52,19 @@ def test_state_subgraph():
     assert state.scope_subgraph(me, include_entry=False,
                                 include_exit=False).free_symbols == {'L', 'i'}
 
+
+def test_sdfg():
+    sdfg: dace.SDFG = fsymtest_multistate.to_sdfg()
+    sdfg.apply_strict_transformations()
+    # Test each state separately
+    for state in sdfg.nodes():
+        assert (state.free_symbols == {'k', 'N', 'M', 'L'}
+                or state.free_symbols == set())
+    # The SDFG itself should have another free symbol
+    assert sdfg.free_symbols == {'K', 'M', 'N', 'L'}
+
+
 if __name__ == '__main__':
     test_single_state()
     test_state_subgraph()
+    test_sdfg()

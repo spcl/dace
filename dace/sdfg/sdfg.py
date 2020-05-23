@@ -735,6 +735,34 @@ class SDFG(OrderedDiGraph):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ 
+        Returns a set of symbol names that are used by the SDFG, but not 
+        defined within it. This property is used to determine the symbolic
+        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
+        :note: Assumes that the graph is valid (i.e., without undefined or
+               overlapping symbols).
+        """
+        defined_syms = set()
+        free_syms = set()
+
+        # Add free data symbols
+        for desc in self.arrays.values():
+            free_syms |= set(map(str, desc.free_symbols))
+
+        # Add free state symbols
+        for state in self.nodes():
+            free_syms |= state.free_symbols
+
+        # Add free inter-state symbols
+        for e in self.edges():
+            defined_syms |= set(e.data.new_symbols({}).keys())
+            free_syms |= e.data.free_symbols
+
+        # Subtract symbols defined in inter-state edges
+        return free_syms - defined_syms
+
     def arglist(self) -> Dict[str, dtypes.typeclass]:
         """ Returns a list of argument names required to call this SDFG.
             The return type is a dictionary of names to dtypes. """
