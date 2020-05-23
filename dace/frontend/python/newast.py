@@ -986,8 +986,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add symbols
         for arr in scope_arrays.values():
             self.scope_vars.update(
-                    {str(k): self.globals[str(k)]
-                     for k in arr.free_symbols})
+                {str(k): self.globals[str(k)]
+                 for k in arr.free_symbols})
 
         # Disallow keywords
         for stmt in _DISALLOWED_STMTS:
@@ -1276,6 +1276,7 @@ class ProgramVisitor(ExtNodeVisitor):
             internal_node = state.add_nested_sdfg(sdfg, self.sdfg,
                                                   set(inputs.keys()),
                                                   set(outputs.keys()))
+            self._add_nested_symbols(internal_node)
 
             # If consume scope, inject stream inputs to the internal SDFG
             if 'consume' in dec:
@@ -1829,6 +1830,17 @@ class ProgramVisitor(ExtNodeVisitor):
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
 
+    def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
+        """ 
+        Adds symbols from nested SDFG mapping values (if appear as globals)
+        to current SDFG.
+        """
+        for mv in nsdfg_node.symbol_mapping.values():
+            for sym in mv.free_symbols:
+                if (sym.name not in self.sdfg.symbols
+                        and sym.name in self.globals):
+                    self.sdfg.add_symbol(sym.name, sym.dtype)
+
     def _recursive_visit(self,
                          body: List[ast.AST],
                          name: str,
@@ -1892,6 +1904,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 extra_symbols=self._symbols_from_params(params, map_inputs))
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
+            self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs,
                                    map_inputs)
         elif iterator == 'range':
@@ -2808,6 +2821,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys(), mapping)
+            self._add_nested_symbols(nsdfg)
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
             if output_slices:
