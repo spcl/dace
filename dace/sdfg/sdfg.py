@@ -757,7 +757,8 @@ class SDFG(OrderedDiGraph):
         sym_args = sorted(symbols.items())
         isdefs = set().union(*(set(e.data.new_symbols({}).keys())
                                for e in self.edges()))
-        sym_args = [(k, v) for k, v in sym_args if k not in isdefs]
+        sym_args = [(k, v) for k, v in sym_args
+                    if k not in isdefs and not k.startswith('__dace')]
 
         # Arguments are sorted as follows:
         # 1. Program arguments, as given in the dace program definition
