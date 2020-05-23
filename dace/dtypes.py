@@ -304,6 +304,10 @@ class typeclass(object):
     def to_json(self):
         return self.type.__name__
 
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return json_to_typeclass(json_obj, context)
+
     # Create a new type
     def __call__(self, *args, **kwargs):
         return self.type(*args, **kwargs)
@@ -410,7 +414,7 @@ class pointer(typeclass):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
-        return pointer(json_to_typeclass(json_obj['dtype']))
+        return pointer(json_to_typeclass(json_obj['dtype'], context))
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -469,7 +473,7 @@ class struct(typeclass):
 
         ret = struct(json_obj['name'])
         ret._data = {
-            k: json_to_typeclass(v)
+            k: json_to_typeclass(v, context)
             for k, v in json_obj['data'].items()
         }
         ret._length = {k: v for k, v in json_obj['length'].items()}
@@ -666,7 +670,8 @@ class callback(typeclass):
 
         return callback(
             json_to_typeclass(rettype) if rettype else None,
-            *(dace.serialize.from_json(arg) for arg in json_obj['arguments']))
+            *(dace.serialize.from_json(arg, context)
+              for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"
@@ -869,14 +874,14 @@ class DebugInfo:
 # Static (utility) functions
 
 
-def json_to_typeclass(obj):
+def json_to_typeclass(obj, context=None):
     # TODO: this does two different things at the same time. Should be split
     # into two separate functions.
     from dace.serialize import get_serializer
     if isinstance(obj, str):
         return get_serializer(obj)
     elif isinstance(obj, dict) and "type" in obj:
-        return get_serializer(obj["type"]).from_json(obj)
+        return get_serializer(obj["type"]).from_json(obj, context)
     else:
         raise ValueError("Cannot resolve: {}".format(obj))
 
