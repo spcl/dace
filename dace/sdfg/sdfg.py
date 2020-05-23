@@ -760,10 +760,12 @@ class SDFG(OrderedDiGraph):
             defined_syms |= set(e.data.new_symbols({}).keys())
             free_syms |= e.data.free_symbols
 
-        # Subtract symbols defined in inter-state edges
+        defined_syms |= set(self.constants.keys())
+
+        # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
 
-    def arglist(self) -> Dict[str, dtypes.typeclass]:
+    def arglist(self) -> Dict[str, Union[dtypes.typeclass, dt.Data]]:
         """ Returns a list of argument names required to call this SDFG.
             The return type is a dictionary of names to dtypes. """
         data_args = []

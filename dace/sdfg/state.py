@@ -343,12 +343,23 @@ class StateGraphView(object):
         sdfg = self.parent
         new_symbols = set()
         freesyms = set()
+
+        # Free symbols from nodes
         for n in self.nodes():
             if isinstance(n, nd.EntryNode):
                 new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
+            elif isinstance(n, nd.AccessNode):
+                # Add data descriptor symbols
+                freesyms |= set(map(str, n.desc(sdfg).free_symbols))
+
             freesyms |= n.free_symbols
+
+        # Free symbols from memlets
         for e in self.edges():
             freesyms |= e.data.free_symbols
+
+        # Do not consider SDFG constants as symbols
+        new_symbols.update(set(sdfg.constants.keys()))
 
         return freesyms - new_symbols
 

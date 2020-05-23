@@ -64,7 +64,20 @@ def test_sdfg():
     assert sdfg.free_symbols == {'K', 'M', 'N', 'L'}
 
 
+def test_constants():
+    sdfg: dace.SDFG = fsymtest_multistate.to_sdfg()
+    sdfg.apply_strict_transformations()
+    sdfg.add_constant('K', 5)
+    sdfg.add_constant('L', 20)
+
+    for state in sdfg.nodes():
+        assert (state.free_symbols == {'k', 'N', 'M'}
+                or state.free_symbols == set())
+    assert sdfg.free_symbols == {'M', 'N'}
+
+
 if __name__ == '__main__':
     test_single_state()
     test_state_subgraph()
     test_sdfg()
+    test_constants()
