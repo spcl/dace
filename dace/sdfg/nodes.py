@@ -9,7 +9,7 @@ import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
+from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties,
@@ -328,17 +328,8 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        result = set()
-
-        # Search AST for undefined symbols
-        if self.code.language == dtypes.Language.Python:
-            visitor = TaskletFreeSymbolVisitor(self.in_connectors
-                                               | self.out_connectors)
-            for stmt in self.code.code:
-                visitor.visit(stmt)
-            result = visitor.free_symbols
-
-        return result
+        return self.code.get_free_symbols(self.in_connectors
+                                          | self.out_connectors)
 
     def __str__(self):
         if not self.label:
@@ -754,7 +745,8 @@ class ConsumeEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
         return ((set(self._consume.num_pes.free_symbols)
-                 | set(self._consume.condition.free_symbols)) - dyn_inputs)
+                 | set(self._consume.condition.get_free_symbols())) -
+                dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type

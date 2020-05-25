@@ -1,7 +1,7 @@
 import ast
 from collections import OrderedDict
 import copy
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
 import pydoc
 import re
@@ -12,7 +12,7 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo
-from typing import List, Union
+from typing import List, Set, Union
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -914,6 +914,23 @@ class CodeBlock(object):
                             'than Python')
         else:
             self.code = code
+
+    def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
+        """ 
+        Returns the set of free symbol names in this code block, excluding
+        the given symbol names.
+        """
+        defined_syms = defined_syms or set()
+
+        # Search AST for undefined symbols
+        if self.language == dace.dtypes.Language.Python:
+            visitor = TaskletFreeSymbolVisitor(defined_syms)
+            if self.code:
+                for stmt in self.code:
+                    visitor.visit(stmt)
+            return visitor.free_symbols
+
+        return set()
 
     @property
     def as_string(self):
