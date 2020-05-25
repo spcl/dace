@@ -749,6 +749,7 @@ class ConsumeEntry(EntryNode):
     def __str__(self):
         return str(self.consume)
 
+    @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
