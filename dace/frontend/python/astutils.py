@@ -334,7 +334,7 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     def __init__(self, defined_syms):
         super().__init__()
         self.free_symbols = set()
-        self.defined = defined_syms
+        self.defined = set(defined_syms)
 
     def visit_Call(self, node: ast.Call):
         for arg in node.args:
@@ -348,4 +348,6 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
             self.free_symbols.add(node.id)
+        else:
+            self.defined.add(node.id)
         self.generic_visit(node)
