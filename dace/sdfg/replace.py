@@ -47,6 +47,7 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
             edge.data.data = new_name
         edge.data.subset = _replsym(edge.data.subset, symrepl)
         edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
+        edge.data.num_accesses = _replsym(edge.data.num_accesses, symrepl)
 
 
 def replace_properties(node: Any, name: str, new_name: str):
