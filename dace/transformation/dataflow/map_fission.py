@@ -234,7 +234,8 @@ class MapFission(pattern_matching.Transformation):
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
-                del nsdfg_node.symbol_mapping[str(name)]
+                if str(name) in nsdfg_node.symbol_mapping:
+                    del nsdfg_node.symbol_mapping[str(name)]
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
