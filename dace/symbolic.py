@@ -689,3 +689,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
             return _sunpickle(value)
         else:
             raise pickle.UnpicklingError("unsupported persistent object")
+
+
+# Type hint for symbolic expressions
+SymbolicType = Union[sympy.Basic, SymExpr]

@@ -110,7 +110,7 @@ class Data(object):
         raise NotImplementedError
 
     @property
-    def free_symbols(self) -> Set[str]:
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
         result = set()
         for s in self.shape:

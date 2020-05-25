@@ -1096,19 +1096,6 @@ class SDFG(OrderedDiGraph):
                   alignment=0) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
-        if not isinstance(name, str):
-            raise TypeError("Array name must be a string. Got %s" %
-                            type(name).__name__)
-
-        # If exists, fail
-        if name in self._arrays:
-            if not find_new_name:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
-            else:
-                name = self._find_new_name(name)
-
         # convert strings to int if possible
         newshape = []
         for s in shape:
@@ -1134,8 +1121,7 @@ class SDFG(OrderedDiGraph):
                         debuginfo=debuginfo,
                         total_size=total_size)
 
-        self._arrays[name] = desc
-        return name, desc
+        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
     def add_stream(self,
                    name: str,
@@ -1148,20 +1134,8 @@ class SDFG(OrderedDiGraph):
                    offset=None,
                    lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
-                   find_new_name=False):
+                   find_new_name=False) -> Tuple[str, dt.Stream]:
         """ Adds a stream to the SDFG data descriptor store. """
-        if not isinstance(name, str):
-            raise TypeError("Stream name must be a string. Got %s" %
-                            type(name).__name__)
-
-        # If exists, fail
-        if name in self._arrays:
-            if not find_new_name:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
-            else:
-                name = self._find_new_name(name)
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -1178,8 +1152,7 @@ class SDFG(OrderedDiGraph):
             debuginfo=debuginfo,
         )
 
-        self._arrays[name] = desc
-        return name, desc
+        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
     def add_scalar(self,
                    name: str,
@@ -1188,19 +1161,8 @@ class SDFG(OrderedDiGraph):
                    transient=False,
                    lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
-                   find_new_name=False):
+                   find_new_name=False) -> Tuple[str, dt.Scalar]:
         """ Adds a scalar to the SDFG data descriptor store. """
-        if not isinstance(name, str):
-            raise TypeError("Scalar name must be a string. Got %s" %
-                            type(name).__name__)
-        # If exists, fail
-        if name in self._arrays:
-            if not find_new_name:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
-            else:
-                name = self._find_new_name(name)
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -1213,8 +1175,7 @@ class SDFG(OrderedDiGraph):
             debuginfo=debuginfo,
         )
 
-        self._arrays[name] = desc
-        return name, desc
+        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
     def add_transient(self,
                       name,
@@ -1229,7 +1190,7 @@ class SDFG(OrderedDiGraph):
                       allow_conflicts=False,
                       total_size=None,
                       find_new_name=False,
-                      alignment=0):
+                      alignment=0) -> Tuple[str, dt.Array]:
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1286,7 +1247,10 @@ class SDFG(OrderedDiGraph):
                               allow_conflicts=allow_conflicts,
                               total_size=total_size)
 
-    def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False):
+    def add_datadesc(self,
+                     name: str,
+                     datadesc: dt.Data,
+                     find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
@@ -1306,6 +1270,12 @@ class SDFG(OrderedDiGraph):
                     'Array or Stream with name "%s" already exists '
                     "in SDFG" % name)
         self._arrays[name] = datadesc
+
+        # Add free symbols to the SDFG global symbol storage
+        for sym in datadesc.free_symbols:
+            if sym.name not in self.symbols:
+                self.add_symbol(sym.name, sym.dtype)
+
         return name
 
     def add_loop(
