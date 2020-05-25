@@ -232,6 +232,10 @@ class MapFission(pattern_matching.Transformation):
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
 
+            # Remove map symbols from nested mapping
+            for name in outer_map.params:
+                del nsdfg_node.symbol_mapping[str(name)]
+
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
             sources = subgraph.source_nodes()
