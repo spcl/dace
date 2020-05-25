@@ -581,7 +581,7 @@ def simplify_ext(expr):
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
-    if isinstance(expr, SymExpr):
+    if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
 
     symbol_map = symbol_map or {}

@@ -17,6 +17,7 @@ from dace.properties import (Property, CodeProperty, LambdaProperty,
                              SDFGReferenceProperty, DictProperty,
                              LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
+from dace.symbolic import pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -413,8 +414,12 @@ class NestedSDFG(CodeNode):
     @property
     def free_symbols(self) -> Set[str]:
         return set().union(
-            *(map(str, v.free_symbols) for v in self.symbol_mapping.values()),
-            *(map(str, v.free_symbols) for v in self.location.values()))
+            *(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.symbol_mapping.values()),
+            *(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.location.values()))
 
     def __str__(self):
         if not self.label:
