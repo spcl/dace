@@ -2,7 +2,8 @@
 
 import collections
 import copy
-from dace import dtypes, memlet as mm, serialize, subsets as sbs, symbolic
+from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
+                  symbolic)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge,
                              SubgraphView)
@@ -11,6 +12,7 @@ from dace.sdfg.validation import validate_state
 from dace.properties import (Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
+import itertools
 from typing import Any, Dict, Optional, List, Set, Tuple, Union
 import warnings
 
@@ -362,6 +364,115 @@ class StateGraphView(object):
         new_symbols.update(set(sdfg.constants.keys()))
 
         return freesyms - new_symbols
+
+    def arglist(self) -> Dict[str, dt.Data]:
+        """ 
+        Returns an ordered dictionary of arguments (names and types) required 
+        to invoke this SDFG state or subgraph thereof.
+        
+        The arguments differ from SDFG.arglist, but follow the same order,
+        namely: <sorted data arguments>, <sorted scalar arguments>.
+
+        Data arguments contain:
+            * All used non-transient data containers in the subgraph
+            * All used transient data containers that were allocated outside.
+              This includes data from memlets, transients shared across multiple
+              states, and transients that could not be allocated within the
+              subgraph (due to their ``AllocationLifetime`` or according to the 
+              ``dtypes.can_allocate`` function).
+        
+        Scalar arguments contain:
+            * Free symbols in this state/subgraph.
+            * All transient and non-transient scalar data containers used in
+              this subgraph.
+        
+        This structure will create a sorted list of pointers followed by a
+        sorted list of PoDs and structs.
+
+        :return: An ordered dictionary of (name, data descriptor type) of all 
+                 the arguments, sorted as defined here.
+        """
+        sdfg: 'dace.sdfg.SDFG' = self.parent
+        shared_transients = sdfg.shared_transients()
+        sdict = self.scope_dict()
+
+        data_args = {}
+        scalar_args = {}
+
+        # Gather data descriptors from nodes
+        descs = {}
+        for node in self.nodes():
+            if isinstance(node, nd.AccessNode):
+                descs[node.data] = node.desc(sdfg)
+
+        # Add data arguments from memlets
+        for edge in self.edges():
+            if edge.data.data not in data_args:
+                descs[edge.data.data] = sdfg.arrays[edge.data.data]
+
+        # Loop over locally-used data descriptors
+        for name, desc in descs.items():
+            # If scalar, always add
+            if isinstance(desc, dt.Scalar):
+                scalar_args[node.data] = desc
+            # If array/stream is not transient, then it is external
+            elif not desc.transient:
+                data_args[node.data] = desc
+            # Check for shared transients
+            elif node.data in shared_transients:
+                data_args[node.data] = desc
+            # Check allocation lifetime for external transients:
+            #   1. If a full state, Global, SDFG, and Persistent
+            elif (not isinstance(self, SubgraphView)
+                  and desc.lifetime not in (dtypes.AllocationLifetime.Scope,
+                                            dtypes.AllocationLifetime.State)):
+                data_args[node.data] = desc
+            #   2. If a subgraph, State also applies
+            elif isinstance(self, SubgraphView):
+                if (desc.lifetime != dtypes.AllocationLifetime.Scope):
+                    data_args[node.data] = desc
+            # Check for allocation constraints that would
+            # enforce array to be allocated outside subgraph
+            elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+                curnode = sdict[node]
+                while curnode is not None:
+                    if dtypes.can_allocate(desc.storage, curnode.schedule):
+                        break
+                    curnode = sdict[curnode]
+                else:
+                    # If no internal scope can allocate node,
+                    # mark as external
+                    data_args[node.data] = desc
+        # End of data descriptor loop
+
+        # Add scalar arguments from free symbols
+        scalar_args.update({
+            k: dt.Scalar(sdfg.symbols[k])
+            for k in self.free_symbols if not k.startswith('__dace')
+        })
+
+        # Fill up ordered dictionary
+        result = collections.OrderedDict()
+        for k, v in itertools.chain(sorted(data_args.items()),
+                                    sorted(scalar_args.items())):
+            result[k] = v
+
+        return result
+
+    def signature_arglist(self, with_types=True, for_call=False):
+        """ Returns a list of arguments necessary to call this state or 
+            subgraph, formatted as a list of C definitions.
+            :param with_types: If True, includes argument types in the result.
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG. This means that immaterial data
+                             will generate "nullptr" arguments instead of the
+                             argument names.
+            :return: A list of strings. For example: `['float *A', 'int b']`.
+        """
+        return [
+            v.signature(name=k, with_types=with_types, for_call=for_call)
+            for k, v in self.arglist().items()
+        ]
 
     def scope_subgraph(self,
                        entry_node,
