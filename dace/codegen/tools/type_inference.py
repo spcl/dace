@@ -53,7 +53,7 @@ def infer_expr_type(code, symbols=None):
     inferred_symbols = {}
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
-    elif isinstance(code, Basic) or isinstance(code, SymExpr):
+    elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         parsed_ast = ast.parse(symstr(code))
 
     # The parsed AST must only contain one expression
