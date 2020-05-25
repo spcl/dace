@@ -789,12 +789,16 @@ class SDFG(OrderedDiGraph):
         }
         scalar_args = {
             k: v
-            for k, v in self.arrays.items()
-            if not v.transient and isinstance(v, dt.Scalar)
+            for k, v in self.arrays.items() if not v.transient
+            and isinstance(v, dt.Scalar) and not k.startswith('__dace')
         }
 
         # Add global symbols to scalar arguments
-        scalar_args.update({k: dt.Scalar(v) for k, v in self.symbols.items()})
+        scalar_args.update({
+            k: dt.Scalar(v)
+            for k, v in self.symbols.items()
+            if k not in self.constants and not k.startswith('__dace')
+        })
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
@@ -814,25 +818,10 @@ class SDFG(OrderedDiGraph):
                              argument names.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
-        arg_list = self.arglist()
-
-        signature_args = []
-        for name, arg_type in arg_list.items():
-            if isinstance(arg_type, dace.data.Data):
-                signature_args.append(
-                    arg_type.signature(name=name,
-                                       with_types=with_types,
-                                       for_call=for_call))
-            elif isinstance(arg_type, dtypes.typeclass):
-                sigtype = dt.Scalar(arg_type)
-                signature_args.append(
-                    sigtype.signature(name=name,
-                                      with_types=with_types,
-                                      for_call=for_call))
-            else:
-                raise TypeError("Unsupported argument type")
-
-        return signature_args
+        return [
+            v.signature(name=k, with_types=with_types, for_call=for_call)
+            for k, v in self.arglist().items()
+        ]
 
     def signature(self, with_types=True, for_call=False):
         """ Returns a C/C++ signature of this SDFG, used when generating code.
