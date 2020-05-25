@@ -203,42 +203,6 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
-_LIMITS = {
-    'int': "INT_{}",
-    'float': "FLT_{}",
-    'char': "CHAR_{}",
-    'short': "SHRT_{}",
-    'long long': "LLONG_{}",
-    'unsigned char': "UCHAR_{}",
-    'unsigned short': "USHRT_{}",
-    'unsigned int': "UINT_{}",
-    'unsigned long long': "ULLONG_{}",
-    'double': "DBL_{}",
-}
-
-
-def max_value(dtype):
-    """Get a max value literal for `dtype`."""
-    ctype = dtype.ctype
-    if ctype == "bool":
-        return "true"
-    elif ctype == "dace::float16":
-        return "65504.0"
-    else:
-        return _LIMITS[ctype].format("MAX")
-
-
-def min_value(dtype):
-    """Get a min value literal for `dtype`."""
-    ctype = dtype.ctype
-    if ctype == "bool":
-        return "false"
-    elif ctype in ["double", "float", "dace::float16"]:
-        # use the sign bit for floats
-        return "-" + max_value(dtype)
-    else:
-        return _LIMITS[ctype].format("MIN")
-
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -334,6 +298,32 @@ class typeclass(object):
 
     def __repr__(self):
         return self.ctype
+
+
+def max_value(dtype: typeclass):
+    """Get a max value literal for `dtype`."""
+    nptype = dtype.as_numpy_dtype()
+    if nptype == numpy.bool:
+        return True
+    elif numpy.issubdtype(nptype, numpy.integer):
+        return numpy.iinfo(nptype).max
+    elif numpy.issubdtype(nptype, numpy.floating):
+        return numpy.finfo(nptype).max
+
+    raise TypeError('Unsupported type "%s" for maximum' % dtype)
+
+
+def min_value(dtype: typeclass):
+    """Get a min value literal for `dtype`."""
+    nptype = dtype.as_numpy_dtype()
+    if nptype == numpy.bool:
+        return False
+    elif numpy.issubdtype(nptype, numpy.integer):
+        return numpy.iinfo(nptype).min
+    elif numpy.issubdtype(nptype, numpy.floating):
+        return numpy.finfo(nptype).min
+
+    raise TypeError('Unsupported type "%s" for minimum' % dtype)
 
 
 def result_type_of(lhs, *rhs):
