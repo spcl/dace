@@ -765,45 +765,44 @@ class SDFG(OrderedDiGraph):
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
 
-    def arglist(self) -> Dict[str, Union[dtypes.typeclass, dt.Data]]:
-        """ Returns a list of argument names required to call this SDFG.
-            The return type is a dictionary of names to dtypes. """
-        data_args = []
-        for state in self.nodes():
-            data_args += [
-                (n.data, n.desc(self)) for n in state.nodes()
-                if isinstance(n, nd.AccessNode) and not n.desc(self).transient
-            ]
-        data_args = sorted(dtypes.deduplicate(data_args))
+    def arglist(self) -> Dict[str, dt.Data]:
+        """ 
+        Returns an ordered dictionary of arguments (names and types) required 
+        to invoke this SDFG.
+        
+        The arguments follow the following order: 
+        <sorted data arguments>, <sorted scalar arguments>.
+        Data arguments are all the non-transient data containers in the 
+        SDFG; and scalar arguments are all the non-transient scalar data 
+        containers and free symbols (see ``SDFG.free_symbols``). This structure
+        will create a sorted list of pointers followed by a sorted list of PoDs
+        and structs.
 
-        symbols = {}
-        symbols.update(self.symbols)
-        # Add data symbols (with default-int type if type is not defined)
-        # and scalars
-        for name, desc in self.arrays.items():
-            if isinstance(desc, dt.Scalar) and not desc.transient:
-                symbols[name] = desc.dtype
-            for sym in desc.free_symbols:
-                if str(sym) not in symbols:
-                    symbols[str(sym)] = sym.dtype
+        :return: An ordered dictionary of (name, data descriptor type) of all 
+                 the arguments, sorted as defined here.
+        """
+        # Start with data descriptors
+        data_args = {
+            k: v
+            for k, v in self.arrays.items()
+            if not v.transient and not isinstance(v, dt.Scalar)
+        }
+        scalar_args = {
+            k: v
+            for k, v in self.arrays.items()
+            if not v.transient and isinstance(v, dt.Scalar)
+        }
 
-        sym_args = sorted(symbols.items())
-        isdefs = set().union(*(set(e.data.new_symbols({}).keys())
-                               for e in self.edges()))
-        sym_args = [(k, v) for k, v in sym_args
-                    if k not in isdefs and not k.startswith('__dace')]
+        # Add global symbols to scalar arguments
+        scalar_args.update({k: dt.Scalar(v) for k, v in self.symbols.items()})
 
-        # Arguments are sorted as follows:
-        # 1. Program arguments, as given in the dace program definition
-        # 2. Other free symbols, sorted by name
-        # 3. Data arguments inferred from the SDFG, if not given in the program
-        #    definition (or if not created from a dace.program)
-        arg_list = collections.OrderedDict()
-        for key, val in itertools.chain(data_args, sym_args):
-            if key not in self.constants_prop and key not in arg_list:
-                arg_list[key] = val
+        # Fill up ordered dictionary
+        result = collections.OrderedDict()
+        for k, v in itertools.chain(sorted(data_args.items()),
+                                    sorted(scalar_args.items())):
+            result[k] = v
 
-        return arg_list
+        return result
 
     def signature_arglist(self, with_types=True, for_call=False):
         """ Returns a list of arguments necessary to call this SDFG,
