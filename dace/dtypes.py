@@ -30,9 +30,12 @@ class StorageType(aenum.AutoNumberEnum):
 @extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
+    # TODO: Address different targets w.r.t. sequential
+    # TODO: Add per-type properties for scope nodes. Consider TargetType enum
+    #       and a MapScheduler class
 
     Default = ()  # Scope-default parallel schedule
-    Sequential = ()  # Sequential code (single-core)
+    Sequential = ()  # Sequential code (single-thread)
     MPI = ()  # MPI processes
     CPU_Multicore = ()  # OpenMP
     GPU_Device = ()  # Kernel
@@ -920,4 +923,42 @@ def validate_name(name):
         return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
+    return True
+
+
+def can_allocate(storage: StorageType, schedule: ScheduleType):
+    """ 
+    Identifies whether a container of a storage type can be allocated in a
+    specific schedule. Used to determine arguments to subgraphs by the 
+    innermost scope that a container can be allocated in. For example, 
+    FPGA_Global memory cannot be allocated from within the FPGA scope, or
+    GPU shared memory cannot be allocated outside of device-level code.
+
+    :param storage: The storage type of the data container to allocate.
+    :param schedule: The scope schedule to query.
+    :return: True if the container can be allocated, False otherwise.
+    """
+    # Host-only allocation
+    if storage in [
+            StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
+            StorageType.GPU_Global
+    ]:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI
+        ]
+
+    # FPGA-local memory
+    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
+        return schedule == ScheduleType.FPGA_Device
+
+    # GPU-local memory
+    if storage == StorageType.GPU_Shared:
+        return schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic
+        ]
+
+    # The rest (Registers) can be allocated everywhere
     return True
