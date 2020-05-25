@@ -747,9 +747,10 @@ class SDFG(OrderedDiGraph):
         defined_syms = set()
         free_syms = set()
 
-        # Add free data symbols
-        for desc in self.arrays.values():
+        # Add free data symbols and exclude data descriptor names
+        for name, desc in self.arrays.items():
             free_syms |= set(map(str, desc.free_symbols))
+            defined_syms.add(name)
 
         # Add free state symbols
         for state in self.nodes():
@@ -793,11 +794,10 @@ class SDFG(OrderedDiGraph):
             and isinstance(v, dt.Scalar) and not k.startswith('__dace')
         }
 
-        # Add global symbols to scalar arguments
+        # Add global free symbols to scalar arguments
         scalar_args.update({
-            k: dt.Scalar(v)
-            for k, v in self.symbols.items()
-            if k not in self.constants and not k.startswith('__dace')
+            k: dt.Scalar(self.symbols[k])
+            for k in self.free_symbols if not k.startswith('__dace')
         })
 
         # Fill up ordered dictionary
