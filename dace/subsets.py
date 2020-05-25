@@ -3,7 +3,7 @@ from dace import data, symbolic, dtypes
 import re
 import sympy as sp
 from functools import reduce
-from sympy.core.sympify import SympifyError
+import sympy.core.sympify
 from typing import Set
 import warnings
 
@@ -463,7 +463,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except SympifyError:
+            except sympy.core.sympify.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))

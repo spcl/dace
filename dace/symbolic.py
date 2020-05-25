@@ -5,8 +5,8 @@ from typing import Dict, Optional, Union
 import warnings
 import numpy
 
-from sympy.abc import _clash
-from sympy.printing.str import StrPrinter
+import sympy.abc
+import sympy.printing.str
 
 from dace import dtypes
 
@@ -588,7 +588,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     locals = {'min': sympy.Min, 'max': sympy.Max}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
-    locals.update(_clash)
+    locals.update(sympy.abc._clash)
 
     # Sympy processes "not" as direct evaluation rather than negation
     if isinstance(expr, str) and 'not' in expr:
@@ -606,7 +606,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
                              symbol_map)
 
 
-class DaceSympyPrinter(StrPrinter):
+class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
     def _print_Float(self, expr):
