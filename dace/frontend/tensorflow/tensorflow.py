@@ -483,6 +483,12 @@ class TFSession:
                     elif isinstance(node, dace.sdfg.nodes.AccessNode):
                         node_types[node.data] = node.desc(
                             self.graph).dtype.type
+
+            # Remove arrays that were not used by other access nodes
+            for name in list(self.graph.arrays.keys()):
+                if name not in node_types:
+                    del self.graph.arrays[name]
+
             self.graph._arg_types.update(self.callbackTypeDict)
             self.graph.fill_scope_connectors()
             ############################
@@ -514,7 +520,8 @@ class TFSession:
             ############################
             # Mark outputs as non-transients
             for output in outputs:
-                self.graph.arrays[output].transient = False
+                if output in self.graph.arrays:
+                    self.graph.arrays[output].transient = False
             ############################
             # Compile the SDFG
             if gpu:
