@@ -485,8 +485,8 @@ class TFSession:
                             self.graph).dtype.type
 
             # Remove arrays that were not used by other access nodes
-            for name in list(self.graph.arrays.keys()):
-                if name not in node_types:
+            for name, desc in list(self.graph.arrays.items()):
+                if name not in node_types and not isinstance(desc, Scalar):
                     del self.graph.arrays[name]
 
             self.graph._arg_types.update(self.callbackTypeDict)
@@ -765,7 +765,7 @@ class TFSession:
         self.callbackFunctionDict[node_name] = tensorflow_callback
 
         # Register callback in SDFG
-        self.graph.add_symbol(node_name,
+        self.graph.add_scalar(node_name,
                               self.callbackTypeDict[node_name].dtype)
 
         callback_tasklet = self.state.add_tasklet(
