@@ -1520,20 +1520,23 @@ class CPUCodeGen(TargetCodeGenerator):
         if node.consume.chunksize == 1:
             chunk = "const %s& %s" % (
                 input_streamdesc.dtype.ctype,
-                node.consume.label + "_element",
+                "__dace_" + node.consume.label + "_element",
             )
-            self._dispatcher.defined_vars.add(node.consume.label + "_element",
-                                              DefinedType.Scalar)
+            self._dispatcher.defined_vars.add(
+                "__dace_" + node.consume.label + "_element",
+                DefinedType.Scalar)
         else:
             chunk = "const %s *%s, size_t %s" % (
                 input_streamdesc.dtype.ctype,
-                node.consume.label + "_elements",
-                node.consume.label + "_numelems",
+                "__dace_" + node.consume.label + "_elements",
+                "__dace_" + node.consume.label + "_numelems",
             )
-            self._dispatcher.defined_vars.add(node.consume.label + "_elements",
-                                              DefinedType.Pointer)
-            self._dispatcher.defined_vars.add(node.consume.label + "_numelems",
-                                              DefinedType.Scalar)
+            self._dispatcher.defined_vars.add(
+                "__dace_" + node.consume.label + "_elements",
+                DefinedType.Pointer)
+            self._dispatcher.defined_vars.add(
+                "__dace_" + node.consume.label + "_numelems",
+                DefinedType.Scalar)
 
         # Take quiescence condition into account
         if node.consume.condition.code is not None:
@@ -1574,15 +1577,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # consumed element and modify the outgoing memlet path ("OUT_stream")
         # TODO: do this before getting to the codegen
         if node.consume.chunksize == 1:
-            newname, _ = sdfg.add_scalar(node.consume.label + "_element",
+            newname, _ = sdfg.add_scalar("__dace_" + node.consume.label +
+                                         "_element",
                                          input_streamdesc.dtype,
                                          transient=True,
                                          storage=dtypes.StorageType.Register,
                                          find_new_name=True)
             ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         else:
-            newname, _ = sdfg.add_array(node.consume.label + '_elements',
-                                        [node.consume.chunksize],
+            newname, _ = sdfg.add_array("__dace_" + node.consume.label +
+                                        '_elements', [node.consume.chunksize],
                                         input_streamdesc.dtype,
                                         transient=True,
                                         storage=dtypes.StorageType.Register,
