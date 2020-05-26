@@ -1304,7 +1304,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     symname=symname,
                     symval=sym2cpp(symval)), sdfg, state_id, node)
         for sym in sorted(node.symbol_mapping.keys()):
-            if symname in sdfg.constants:
+            if sym in sdfg.constants:
                 continue
             callsite_stream.write(
                 'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
