@@ -132,10 +132,10 @@ class SpecializeMatMul(
                         alpha=1.0,
                         beta=0.0)
             return gemm
-        elif len(size_a) == 3 and len(size_b) == 3:
+        elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication
-            import dace.libraries.blas.nodes.batched_matmul.BatchedMatMul as BatchedMatMul
-            batched = MatchedMatMul(node.name,
+            from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
+            batched = BatchedMatMul(node.name,
                                     dtype=node.dtype,
                                     location=node.location)
             return batched
@@ -152,8 +152,7 @@ class SpecializeMatMul(
             raise NotImplementedError("GEMV not yet implemented.")
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
-                                      "for "
-                                      "shapes: {} and {}".format(
+                                      "for shapes: {} and {}".format(
                                           size_a, size_b))
 
 

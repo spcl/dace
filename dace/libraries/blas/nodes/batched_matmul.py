@@ -26,7 +26,7 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
           strides_b)) = _get_matmul_inputs(node, parent_state, parent_sdfg)
         outedge = parent_state.out_edges(node)[0]
         cdesc = parent_sdfg.arrays[outedge.data.data]
-        bopt = get_batchmm_opts(shape_a, strides_a, shape_b, strides_b,
+        bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b,
                                 cdesc.shape, cdesc.strides)
 
         if shape_a[-1] != shape_b[-2]:
@@ -322,7 +322,7 @@ class BatchedMatMul(dace.graph.nodes.LibraryNode):
                              "batched matrix-matrix product")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
-        if len(size0) != 3:
+        if len(size0) not in [2, 3]:
             raise ValueError(
                 "Batched matrix-matrix product only supported on matrices")
         if len(size1) != 3:
