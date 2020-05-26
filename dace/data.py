@@ -114,7 +114,7 @@ class Data(object):
         """ Returns a set of undefined symbols in this data descriptor. """
         result = set()
         for s in self.shape:
-            if isinstance(s, sp.Expr):
+            if isinstance(s, sp.Basic):
                 result |= set(s.free_symbols)
         return result
 

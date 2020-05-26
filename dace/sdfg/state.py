@@ -405,32 +405,51 @@ class StateGraphView(object):
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
 
-        # Add data arguments from memlets
+        # If a subgraph, and a node appears outside the subgraph as well,
+        # it is externally allocated
+        if isinstance(self, SubgraphView):
+            outer_nodes = set(self.graph.nodes()) - set(self.nodes())
+            for node in outer_nodes:
+                if isinstance(node, nd.AccessNode) and node.data in descs:
+                    desc = descs[node.data]
+                    if isinstance(desc, dt.Scalar):
+                        scalar_args[node.data] = desc
+                    else:
+                        data_args[node.data] = desc
+
+        # Add data arguments from memlets, if do not appear in any of the nodes
+        # (i.e., originate externally)
         for edge in self.edges():
-            if edge.data.data not in data_args:
-                descs[edge.data.data] = sdfg.arrays[edge.data.data]
+            if edge.data.data not in descs:
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dt.Scalar):
+                    scalar_args[edge.data.data] = desc
+                else:
+                    data_args[edge.data.data] = desc
 
         # Loop over locally-used data descriptors
         for name, desc in descs.items():
+            if name in data_args or name in scalar_args:
+                continue
             # If scalar, always add
             if isinstance(desc, dt.Scalar):
-                scalar_args[node.data] = desc
+                scalar_args[name] = desc
             # If array/stream is not transient, then it is external
             elif not desc.transient:
-                data_args[node.data] = desc
+                data_args[name] = desc
             # Check for shared transients
-            elif node.data in shared_transients:
-                data_args[node.data] = desc
+            elif name in shared_transients:
+                data_args[name] = desc
             # Check allocation lifetime for external transients:
             #   1. If a full state, Global, SDFG, and Persistent
             elif (not isinstance(self, SubgraphView)
                   and desc.lifetime not in (dtypes.AllocationLifetime.Scope,
                                             dtypes.AllocationLifetime.State)):
-                data_args[node.data] = desc
+                data_args[name] = desc
             #   2. If a subgraph, State also applies
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
-                    data_args[node.data] = desc
+                    data_args[name] = desc
             # Check for allocation constraints that would
             # enforce array to be allocated outside subgraph
             elif desc.lifetime == dtypes.AllocationLifetime.Scope:
@@ -442,7 +461,7 @@ class StateGraphView(object):
                 else:
                     # If no internal scope can allocate node,
                     # mark as external
-                    data_args[node.data] = desc
+                    data_args[name] = desc
         # End of data descriptor loop
 
         # Add scalar arguments from free symbols

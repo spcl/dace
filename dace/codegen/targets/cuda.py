@@ -993,57 +993,17 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                                     state.node_id(scope_entry),
                                     sdfg.node_id(state))
 
-        # Get parameters from input/output memlets to this map
-        # TODO: Refactor into its own function
-        input_params = set(e.data.data for node in dfg_scope.source_nodes()
-                           for e in state.in_edges(node))
-        output_params = set(e.data.data for node in dfg_scope.sink_nodes()
-                            for e in state.out_edges(node))
-        toplevel_params = set(node.data for node in dfg_scope.nodes()
-                              if isinstance(node, nodes.AccessNode)
-                              and sdfg.arrays[node.data].toplevel)
-        dynamic_inputs = set(
-            e.data.data
-            for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
-        params = input_params | output_params | toplevel_params
-        params -= dynamic_inputs
-        const_params = input_params - (output_params | toplevel_params
-                                       | dynamic_inputs)
-
-        # Get symbolic parameters (free symbols) for kernel
-        syms = state.symbols_defined_at(scope_entry)
-
-        # Pointers to callback functions cannot be used within CUDA kernels
-        syms_copy = {}
-        for _n, _s in syms.items():
-            try:
-                if 'callback' in str(_s.dtype.ctype):
-                    continue
-                else:
-                    syms_copy[_n] = _s
-            except AttributeError:
-                syms_copy[_n] = _s
-        syms = syms_copy
-        freesyms = {
-            k: v
-            for k, v in syms.items() if k not in sdfg.constants
-            and k not in scope_entry.map.params and k not in params
-        }
-        symbol_sigs = [
-            v.dtype.ctype + ' ' + k for k, v in sorted(freesyms.items())
-        ]
-        symbol_names = [k for k in sorted(freesyms.keys())]
-
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap = self.get_kernel_dimensions(
             dfg_scope)
 
-        kernel_args = [
-            sdfg.arrays[p].signature(False, name=p) for p in sorted(params)
-        ] + symbol_names
-        kernel_args_typed = [('const ' if p in const_params else '') +
-                             sdfg.arrays[p].signature(name=p)
-                             for p in sorted(params)] + symbol_sigs
+        # Get parameters of subgraph
+        kernel_args = dfg_scope.arglist()
+        const_params = _get_const_params(dfg_scope)
+        kernel_args_typed = [
+            ('const ' if k in const_params else '') + v.signature(name=k)
+            for k, v in kernel_args.items()
+        ]
 
         # Store init/exit code streams
         old_entry_stream = self.scope_entry_stream
@@ -1841,3 +1801,18 @@ def _get_storagename(storage):
         Example: dtypes.StorageType.GPU_Shared will return "Shared". """
     sname = str(storage)
     return sname[sname.rindex('_') + 1:]
+
+
+def _get_const_params(dfg_scope):
+    state = dfg_scope.graph
+    sdfg = dfg_scope.parent
+    scope_entry = dfg_scope.source_nodes()[0]
+    scope_exit = dfg_scope.sink_nodes()[0]
+    input_params = set(e.data.data for e in state.in_edges(scope_entry))
+    output_params = set(e.data.data for e in state.out_edges(scope_exit))
+    toplevel_params = set(node.data for node in dfg_scope.nodes()
+                          if isinstance(node, nodes.AccessNode)
+                          and sdfg.arrays[node.data].toplevel)
+    dynamic_inputs = set(
+        e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
+    return input_params - (output_params | toplevel_params | dynamic_inputs)
