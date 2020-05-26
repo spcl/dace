@@ -662,11 +662,11 @@ def propagate_memlet(dfg_state,
         return EmptyMemlet()
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in scope_node.in_connectors
+    scope_node_symbols = set(conn for conn in entry_node.in_connectors
                              if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
-        for s in dfg_state.symbols_defined_at(scope_node).keys()
+        for s in dfg_state.symbols_defined_at(entry_node).keys()
         if s not in scope_node_symbols
     ]
 
@@ -736,7 +736,7 @@ def propagate_memlet(dfg_state,
         new_subset = subsets.Range.from_array(arr)
     else:
         raise NotImplementedError('Unimplemented primitive: %s' %
-                                  type(scope_node))
+                                  type(entry_node))
     ### End of subset propagation
 
     new_memlet = copy.copy(memlet)
