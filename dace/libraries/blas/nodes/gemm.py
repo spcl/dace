@@ -7,7 +7,7 @@ import dace.library
 import dace.graph.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
-from dace.libraries.blas.nodes.matmul import (_get_matmul_inputs,
+from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
@@ -48,7 +48,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         ((edge_a, outer_array_a, shape_a, strides_a),
          (edge_b, outer_array_b, shape_b,
-          strides_b)) = _get_matmul_inputs(node, parent_state, parent_sdfg)
+          strides_b), _) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -201,7 +201,7 @@ class ExpandGemmMKL(ExpandTransformation):
                              str(dtype))
         (_, adesc, ashape,
          astrides), (_, bdesc, bshape,
-                     bstrides) = _get_matmul_inputs(node, state, sdfg)
+                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, cdesc.dtype.ctype, func)

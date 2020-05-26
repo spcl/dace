@@ -141,28 +141,3 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
         raise Exception("sCM or sCN should be 1")
 
     return opts[optA + optB + optC]
-
-
-def _get_matmul_inputs(node, state, sdfg):
-    """Returns the matrix multiplication input edges, arrays, and shape."""
-    res_a = None
-    res_b = None
-    for edge in state.in_edges(node):
-        if edge.dst_conn in ["_a", "_b"]:
-            subset = dc(edge.data.subset)
-            squeezed = subset.squeeze()
-            size = subset.size()
-            outer_array = sdfg.data(
-                dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = [
-                s for i, s in enumerate(outer_array.strides) if i in squeezed
-            ]
-            res = edge, outer_array, size, strides
-            if edge.dst_conn == "_a":
-                res_a = res
-            else:
-                res_b = res
-    if res_a is None or res_b is None:
-        raise ValueError("Matrix multiplication input connectors \"_a\" and "
-                         "\"_b\" not found.")
-    return res_a, res_b

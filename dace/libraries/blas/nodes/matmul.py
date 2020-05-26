@@ -1,14 +1,20 @@
 import dace
+import itertools
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 
 
-def _get_matmul_inputs(node, state, sdfg):
+def _get_matmul_operands(node,
+                         state,
+                         sdfg,
+                         name_lhs="_a",
+                         name_rhs="_b",
+                         name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
-    res_a = None
-    res_b = None
-    for edge in state.in_edges(node):
-        if edge.dst_conn in ["_a", "_b"]:
+    res_lhs = None
+    res_rhs = None
+    for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
+        if edge.dst_conn in [name_lhs, name_rhs]:
             subset = dc(edge.data.subset)
             squeezed = subset.squeeze()
             size = subset.size()
@@ -18,14 +24,26 @@ def _get_matmul_inputs(node, state, sdfg):
                 s for i, s in enumerate(outer_array.strides) if i in squeezed
             ]
             res = edge, outer_array, size, strides
-            if edge.dst_conn == "_a":
-                res_a = res
+            if edge.dst_conn == name_lhs:
+                res_lhs = res
             else:
-                res_b = res
-    if res_a is None or res_b is None:
-        raise ValueError("Matrix multiplication input connectors \"_a\" and "
-                         "\"_b\" not found.")
-    return res_a, res_b
+                res_rhs = res
+        elif edge.src_conn == name_out:
+            subset = dc(edge.data.subset)
+            squeezed = subset.squeeze()
+            size = subset.size()
+            outer_array = sdfg.data(
+                dace.sdfg.find_output_arraynode(state, edge).data)
+            strides = [
+                s for i, s in enumerate(outer_array.strides) if i in squeezed
+            ]
+            res_out = edge, outer_array, size, strides
+    for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out,
+                                                                 name_out)):
+        if res is None:
+            raise ValueError("Matrix multiplication connector "
+                             "\"{}\" not found.".format(name))
+    return res_lhs, res_rhs, res_out
 
 
 def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape,
@@ -75,8 +93,8 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     from dace.codegen.targets.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride), (_, _, bshape,
-                              bstride) = _get_matmul_inputs(node, state, sdfg)
+    (_, _, ashape, astride), (_, _, bshape, bstride), _ = _get_matmul_operands(
+        node, state, sdfg)
     opt = get_gemm_opts(astride, bstride, cdesc.strides)
     bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cdesc.shape,
                              cdesc.strides)
@@ -120,36 +138,43 @@ class SpecializeMatMul(
 
     @staticmethod
     def expansion(node, state, sdfg):
-        a, b = _get_matmul_inputs(node, state, sdfg)
+        a, b, c = _get_matmul_operands(node, state, sdfg)
         size_a = a[2]
         size_b = b[2]
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
-            gemm = Gemm(node.name,
-                        dtype=node.dtype,
-                        location=node.location,
-                        alpha=1.0,
-                        beta=0.0)
+            gemm = Gemm(
+                node.name,
+                dtype=node.dtype,
+                location=node.location,
+                alpha=1.0,
+                beta=0.0)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
-            batched = BatchedMatMul(node.name,
-                                    dtype=node.dtype,
-                                    location=node.location)
+            batched = BatchedMatMul(
+                node.name, dtype=node.dtype, location=node.location)
             return batched
+        elif len(size_a) == 2 and len(size_b) == 1:
+            # Matrix and vector -> GEMV
+            from dace.libraries.blas.nodes.gemv import Gemv
+            # Rename inputs to match dot naming
+            a[0].dst_conn = "_a"
+            b[0].dst_conn = "_x"
+            c[0].src_conn = "_y"
+            gemv = Gemv(node.name, dtype=node.dtype, location=node.location)
+            return gemv
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
-            import dace.libraries.blas.nodes.dot.Dot as Dot
+            from dace.libraries.blas.nodes.dot import Dot
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"
-            dot = Dot(node.name, dtype=node.dtype)
+            c[0].src_conn = "_result"
+            dot = Dot(node.name, dtype=node.dtype, location=node.location)
             return dot
-        elif len(size_a) == 2 and len(size_b) == 1:
-            # Matrix and vector -> GEMV
-            raise NotImplementedError("GEMV not yet implemented.")
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
                                       "for shapes: {} and {}".format(
@@ -173,8 +198,6 @@ class MatMul(dace.graph.nodes.LibraryNode):
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, location=None):
-        super().__init__(name,
-                         location=location,
-                         inputs={"_a", "_b"},
-                         outputs={"_c"})
+        super().__init__(
+            name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
         self.dtype = dtype
