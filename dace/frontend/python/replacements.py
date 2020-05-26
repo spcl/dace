@@ -293,6 +293,7 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('exp')
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
+@oprepo.replaces('math.exp')
 def _exp(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'exp')
 
@@ -300,6 +301,7 @@ def _exp(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('sin')
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
+@oprepo.replaces('math.sin')
 def _sin(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sin')
 
@@ -307,6 +309,7 @@ def _sin(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('cos')
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
+@oprepo.replaces('math.cos')
 def _cos(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'cos')
 
@@ -314,6 +317,7 @@ def _cos(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('sqrt')
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
+@oprepo.replaces('math.sqrt')
 def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sqrt')
 
@@ -321,6 +325,7 @@ def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('log')
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
+@oprepo.replaces('math.log')
 def _log(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
