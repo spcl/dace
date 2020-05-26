@@ -1296,12 +1296,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # TODO: When emitting nested SDFGs as separate functions,
         #       remove the workaround
         for symname, symval in sorted(node.symbol_mapping.items()):
+            if symname in sdfg.constants:
+                continue
             callsite_stream.write(
                 '{dtype} __dacesym_{symname} = {symval};\n'.format(
                     dtype=symbolic.symtype(symval),
                     symname=symname,
                     symval=sym2cpp(symval)), sdfg, state_id, node)
         for sym in sorted(node.symbol_mapping.keys()):
+            if symname in sdfg.constants:
+                continue
             callsite_stream.write(
                 'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
                 sdfg, state_id, node)

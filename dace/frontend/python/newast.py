@@ -1280,9 +1280,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # If consume scope, inject stream inputs to the internal SDFG
             if 'consume' in dec:
+                free_symbols_before = copy.copy(sdfg.free_symbols)
                 self._inject_consume_memlets(dec, entry, inputs, internal_node,
                                              sdfg, state, stream_elem,
                                              stream_name)
+                # Remove symbols defined after injection
+                syms_to_remove = free_symbols_before - sdfg.free_symbols
+                for sym in syms_to_remove:
+                    del internal_node.symbol_mapping[sym]
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs,
