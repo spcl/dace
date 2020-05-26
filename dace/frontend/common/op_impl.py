@@ -46,8 +46,7 @@ def gpu_transform_tasklet(sdfg, graph, tasklet_node):
     cnode = tasklet_node
 
     gpu_storage_types = [
-        dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared,
-        dace.dtypes.StorageType.GPU_Stack
+        dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.GPU_Shared
     ]
 
     #######################################################
@@ -458,15 +457,13 @@ def matrix_multiplication(state: State,
                        dace.Memlet.simple(A_node, A_inner_range))
         state.add_edge(ij_entry, 'OUT_2', tasklet, 'b',
                        dace.Memlet.simple(B_node, B_inner_range))
-        wcr = 0
-        if accumulate:
-            wcr = None
+        if not accumulate:
+            raise NotImplementedError('Missing initialization state')
         state.add_edge(
             tasklet, 'c', ij_exit, 'IN_1',
             dace.Memlet.simple(C_node,
                                C_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=wcr,
                                wcr_conflict=False))
         state.add_edge(ij_exit, 'OUT_1', k_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
@@ -485,15 +482,13 @@ def matrix_multiplication(state: State,
                        dace.Memlet.simple(A_node, A_inner_range))
         state.add_edge(k_entry, 'OUT_2', tasklet, 'b',
                        dace.Memlet.simple(B_node, B_inner_range))
-        wcr = 0
-        if accumulate:
-            wcr = None
+        if not accumulate:
+            raise NotImplementedError('Missing initialization state')
         state.add_edge(
             tasklet, 'c', k_exit, 'IN_1',
             dace.Memlet.simple(C_node,
                                C_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=wcr,
                                wcr_conflict=False))
         state.add_edge(k_exit, 'OUT_1', ij_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
@@ -934,15 +929,13 @@ def matrix_multiplication_s(A_label: str,
                        dace.Memlet.simple(A_node, A_inner_range))
         state.add_edge(ij_entry, 'OUT_2', tasklet, 'b',
                        dace.Memlet.simple(B_node, B_inner_range))
-        wcr = 0
-        if accumulate:
-            wcr = None
+        if not accumulate:
+            raise NotImplementedError('Missing initialization state')
         state.add_edge(
             tasklet, 'c', ij_exit, 'IN_1',
             dace.Memlet.simple(C_node,
                                C_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=wcr,
                                wcr_conflict=False))
         state.add_edge(ij_exit, 'OUT_1', k_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
@@ -961,15 +954,13 @@ def matrix_multiplication_s(A_label: str,
                        dace.Memlet.simple(A_node, A_inner_range))
         state.add_edge(k_entry, 'OUT_2', tasklet, 'b',
                        dace.Memlet.simple(B_node, B_inner_range))
-        wcr = 0
-        if accumulate:
-            wcr = None
+        if not accumulate:
+            raise NotImplementedError('Missing initialization state')
         state.add_edge(
             tasklet, 'c', k_exit, 'IN_1',
             dace.Memlet.simple(C_node,
                                C_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=wcr,
                                wcr_conflict=False))
         state.add_edge(k_exit, 'OUT_1', ij_exit, 'IN_1',
                        dace.Memlet.simple(C_node, C_middle_range))
@@ -1104,7 +1095,6 @@ def scalar_array_multiplication(state: State,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=wcr_conflict))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1204,7 +1194,6 @@ def scalar_array_multiplication_s(alpha_label: str,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=wcr_conflict))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1268,7 +1257,6 @@ def constant_array_multiplication(state: State,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1328,7 +1316,6 @@ def unary_array_op(state: State,
             dace.Memlet.simple(B_node,
                                B_inner_range,
                                wcr_str='lambda x, y: x + y',
-                               wcr_identity=None,
                                wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'b', map_exit, 'IN_1',
@@ -1696,15 +1683,13 @@ def matrix_pointwise_op(state: State,
     state.add_edge(map_entry, 'OUT_2', tasklet, 'b',
                    dace.Memlet.simple(B_node, B_inner_range))
     if reduce:
-        wcr = 0
-        if accumulate:
-            wcr = None
+        if not accumulate:
+            raise NotImplementedError('Missing initialization state')
         state.add_edge(
             tasklet, 'c', map_exit, 'IN_1',
             dace.Memlet.simple(C_node,
                                C_inner_range,
                                wcr_str='lambda x, y: x ' + reduce_op + ' y',
-                               wcr_identity=wcr,
                                wcr_conflict=False))
     else:
         state.add_edge(tasklet, 'c', map_exit, 'IN_1',

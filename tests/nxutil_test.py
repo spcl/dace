@@ -1,44 +1,6 @@
 import unittest
+import networkx as nx
 from dace.graph.nxutil import *
-
-
-class TestRangeConversion(unittest.TestCase):
-    def test_str_to_range(self):
-        self.assertEqual(str_to_range("[1:3, 5:50:5, :7, 3:, :]"),
-                         [("1", "3", None), ("5", "50", "5"),
-                          (None, "7", None), ("3", None, None),
-                          (None, None, None)])
-        with self.assertRaises(ValueError):
-            str_to_range("[::]")
-        with self.assertRaises(ValueError):
-            str_to_range("[1:2:1:1]")
-        with self.assertRaises(ValueError):
-            str_to_range("[1:2, ]")
-        with self.assertRaises(ValueError):
-            str_to_range("1:2]")
-        with self.assertRaises(ValueError):
-            str_to_range("[1:2")
-        with self.assertRaises(TypeError):
-            str_to_range(["(", "1", ":", "2", ")"])
-
-    def test_range_to_str(self):
-        self.assertEqual(
-            range_to_str([(None, None, None), (1, None, None), (None, 3, None),
-                          (None, None, 7), (3, 8, None), (None, 8, 1),
-                          (4, None, 1), (1, 2, 3)],
-                         limit_length=None), ("[(None):(None):(None), "
-                                              "1:(None):(None), "
-                                              "(None):3:(None), "
-                                              "(None):(None):7, "
-                                              "3:8:(None), "
-                                              "(None):8, "
-                                              "4:(None), "
-                                              "1:2:3]"))
-        self.assertEqual(range_to_str((1, 8, 2)), "[1:8:2]")
-        with self.assertRaises(ValueError):
-            range_to_str([(1, 2)])
-        with self.assertRaises(TypeError):
-            range_to_str(3)
 
 
 class GraphSearchSpace(object):

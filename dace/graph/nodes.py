@@ -8,14 +8,14 @@ import itertools
 import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.graph import dot, graph
+from dace.graph import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
                              make_properties, indirect_properties,
                              DataProperty, SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
-                             LibraryImplementationProperty)
+                             LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace import data, subsets as sbs, dtypes
 import pydoc
@@ -52,7 +52,7 @@ class Node(object):
 
         try:
             scope_entry_node = parent.entry_node(self)
-        except RuntimeError:
+        except (RuntimeError, StopIteration):
             scope_entry_node = None
 
         if scope_entry_node is not None:
@@ -67,7 +67,7 @@ class Node(object):
         if isinstance(self, EntryNode):
             try:
                 scope_exit_node = str(parent.node_id(parent.exit_node(self)))
-            except RuntimeError:
+            except (RuntimeError, StopIteration):
                 scope_exit_node = None
 
         retdict = {
@@ -227,19 +227,6 @@ class AccessNode(Node):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
 
-    def draw_node(self, sdfg, graph):
-        desc = self.desc(sdfg)
-        if isinstance(desc, data.Stream):
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="oval",
-                                 style='dashed')
-        elif desc.transient:
-            return dot.draw_node(sdfg, graph, self, shape="oval")
-        else:
-            return dot.draw_node(sdfg, graph, self, shape="oval", style='bold')
-
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
@@ -280,14 +267,7 @@ class Tasklet(CodeNode):
         language by the code generator.
     """
 
-    code = CodeProperty(desc="Tasklet code", default="")
-    code_global = CodeProperty(
-        desc="Global scope code needed for tasklet execution", default="")
-    code_init = CodeProperty(
-        desc="Extra code that is called on DaCe runtime initialization",
-        default="")
-    code_exit = CodeProperty(
-        desc="Extra code that is called on DaCe runtime cleanup", default="")
+    code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
     debuginfo = DebugInfoProperty()
 
     instrument = Property(
@@ -301,26 +281,16 @@ class Tasklet(CodeNode):
                  outputs=None,
                  code="",
                  language=dtypes.Language.Python,
-                 code_global="",
-                 code_init="",
-                 code_exit="",
                  location=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
-        # Properties
-        # Set the language directly
-        #self.language = language
-        self.code = {'code_or_block': code, 'language': language}
-
-        self.code_global = {'code_or_block': code_global, 'language': language}
-        self.code_init = {'code_or_block': code_init, 'language': language}
-        self.code_exit = {'code_or_block': code_exit, 'language': language}
+        self.code = CodeBlock(code, language)
         self.debuginfo = debuginfo
 
     @property
     def language(self):
-        return self._code['language']
+        return self.code.language
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -331,9 +301,6 @@ class Tasklet(CodeNode):
     @property
     def name(self):
         return self._label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="octagon")
 
     def validate(self, sdfg, state):
         if not dtypes.validate_name(self.label):
@@ -358,9 +325,6 @@ class EmptyTasklet(Tasklet):
         in an SDFG. """
     def __init__(self, label=""):
         super(EmptyTasklet, self).__init__(label)
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, style="invis", shape="octagon")
 
     def validate(self, sdfg, state):
         pass
@@ -443,9 +407,6 @@ class NestedSDFG(CodeNode):
         ret.sdfg.update_sdfg_list([])
 
         return ret
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="doubleoctagon")
 
     def __str__(self):
         if not self.label:
@@ -556,11 +517,6 @@ class MapEntry(EntryNode):
     def map(self, val):
         self._map = val
 
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg, graph, self, shape="hexagon")
-        return dot.draw_node(sdfg, graph, self, shape="trapezium")
-
     def __str__(self):
         return str(self.map)
 
@@ -616,9 +572,6 @@ class MapExit(ExitNode):
     def label(self):
         return self._map.label
 
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg, graph, self, shape="invtrapezium")
-
     def __str__(self):
         return str(self.map)
 
@@ -645,7 +598,6 @@ class Map(object):
                         from_string=lambda x: dtypes.ScheduleType[x],
                         default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    flatten = Property(dtype=bool, desc="Map loop flattening")
     collapse = Property(dtype=int,
                         default=1,
                         desc="How many dimensions to"
@@ -666,7 +618,6 @@ class Map(object):
                  ndrange,
                  schedule=dtypes.ScheduleType.Default,
                  unroll=False,
-                 flatten=False,
                  collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
@@ -676,7 +627,6 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.flatten = flatten
         self.collapse = 1
         self.params = params
         self.range = ndrange
@@ -752,19 +702,6 @@ class ConsumeEntry(EntryNode):
     def consume(self, val):
         self._consume = val
 
-    def draw_node(self, sdfg, graph):
-        if self.is_collapsed:
-            return dot.draw_node(sdfg,
-                                 graph,
-                                 self,
-                                 shape="hexagon",
-                                 style='dashed')
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="trapezium",
-                             style='dashed')
-
     def __str__(self):
         return str(self.consume)
 
@@ -817,13 +754,6 @@ class ConsumeExit(ExitNode):
     @property
     def label(self):
         return self._consume.label
-
-    def draw_node(self, sdfg, graph):
-        return dot.draw_node(sdfg,
-                             graph,
-                             self,
-                             shape="invtrapezium",
-                             style='dashed')
 
     def __str__(self):
         return str(self.consume)
@@ -909,74 +839,99 @@ ConsumeEntry = indirect_properties(Consume,
 # ------------------------------------------------------------------------------
 
 
+@dace.serialize.serializable
+class PipelineEntry(MapEntry):
+    @staticmethod
+    def map_type():
+        return Pipeline
+
+    @property
+    def pipeline(self):
+        return self._map
+
+    @pipeline.setter
+    def pipeline(self, val):
+        self._map = val
+
+
+@dace.serialize.serializable
+class PipelineExit(MapExit):
+    @staticmethod
+    def map_type():
+        return Pipeline
+
+    @property
+    def pipeline(self):
+        return self._map
+
+    @pipeline.setter
+    def pipeline(self, val):
+        self._map = val
+
+
 @make_properties
-class Reduce(Node):
-    """ An SDFG node that reduces an N-dimensional array to an
-        (N-k)-dimensional array, with a list of axes to reduce and
-        a reduction binary function. """
-
-    # Properties
-    axes = ListProperty(element_type=int, allow_none=True)
-    wcr = LambdaProperty(default='lambda a,b: a')
-    identity = Property(allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Reduction execution policy",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
-    debuginfo = DebugInfoProperty()
-
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+class Pipeline(Map):
+    """ This a convenience-subclass of Map that allows easier implementation of
+        loop nests (using regular Map indices) that need a constant-sized
+        initialization and drain phase (e.g., N*M + c iterations), which would
+        otherwise need a flattened one-dimensional map.
+    """
+    init_size = Property(dtype=int,
+                         desc="Number of initialization iterations.")
+    init_overlap = Property(
+        dtype=int,
+        desc="Whether to increment regular map indices during initialization.")
+    drain_size = Property(dtype=int, desc="Number of drain iterations.")
+    drain_overlap = Property(
+        dtype=int,
+        desc="Whether to increment regular map indices during pipeline drain.")
 
     def __init__(self,
-                 wcr,
-                 axes,
-                 identity=None,
-                 schedule=dtypes.ScheduleType.Default,
-                 debuginfo=None):
-        super(Reduce, self).__init__()
-        self.wcr = wcr  # type: ast._Lambda
-        self.axes = axes
-        self.identity = identity
-        self.schedule = schedule
-        self.debuginfo = debuginfo
+                 *args,
+                 init_size=0,
+                 init_overlap=False,
+                 drain_size=0,
+                 drain_overlap=False,
+                 **kwargs):
+        super(Pipeline, self).__init__(*args, **kwargs)
+        self.init_size = init_size
+        self.init_overlap = init_overlap
+        self.drain_size = drain_size
+        self.drain_overlap = drain_overlap
+        self.flatten = True
 
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="invtriangle")
+    def iterator_str(self):
+        return "__" + "".join(self.params)
 
-    @staticmethod
-    def from_json(json_obj, context=None):
-        ret = Reduce("(lambda a, b: (a + b))", None)
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
-        return ret
+    def loop_bound_str(self):
+        from dace.codegen.targets.common import sym2cpp
+        bound = 1
+        for begin, end, step in self.range:
+            bound *= (step + end - begin) // step
+        # Add init and drain phases when relevant
+        add_str = (" + " + sym2cpp(self.init_size)
+                   if self.init_size != 0 and not self.init_overlap else "")
+        add_str += (" + " + sym2cpp(self.drain_size)
+                    if self.drain_size != 0 and not self.drain_overlap else "")
+        return sym2cpp(bound) + add_str
 
-    def __str__(self):
-        # Autodetect reduction type
-        redtype = detect_reduction_type(self.wcr)
-        if redtype == dtypes.ReductionType.Custom:
-            wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
-        else:
-            wcrstr = str(redtype)
-            wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
+    def init_condition(self):
+        """Variable that can be checked to see if pipeline is currently in
+           initialization phase."""
+        if self.init_size <= 0:
+            raise ValueError("No init condition exists for " + self.label)
+        return self.iterator_str() + "_init"
 
-        return 'Op: {op}, Axes: {axes}'.format(
-            axes=('all' if self.axes is None else str(self.axes)), op=wcrstr)
+    def drain_condition(self):
+        """Variable that can be checked to see if pipeline is currently in
+           draining phase."""
+        if self.drain_size <= 0:
+            raise ValueError("No drain condition exists for " + self.label)
+        return self.iterator_str() + "_drain"
 
-    def __label__(self, sdfg, state):
-        # Autodetect reduction type
-        redtype = detect_reduction_type(self.wcr)
-        if redtype == dtypes.ReductionType.Custom:
-            wcrstr = unparse(ast.parse(self.wcr).body[0].value.body)
-        else:
-            wcrstr = str(redtype)
-            wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
 
-        return 'Op: {op}\nAxes: {axes}'.format(
-            axes=('all' if self.axes is None else str(self.axes)), op=wcrstr)
-
+PipelineEntry = indirect_properties(Pipeline,
+                                    lambda obj: obj.map)(PipelineEntry)
 
 # ------------------------------------------------------------------------------
 
@@ -990,6 +945,13 @@ class LibraryNode(CodeNode):
         allow_none=True,
         desc=("Which implementation this library node will expand into."
               "Must match a key in the list of possible implementations."))
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="If set, determines the default device mapping of "
+        "the node upon expansion, if expanded to a nested SDFG.",
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1100,105 +1062,3 @@ class LibraryNode(CodeNode):
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
         transformation_type._match_node = clc(match_node_name)
-
-    def draw_node(self, sdfg, state):
-        return dot.draw_node(sdfg, state, self, shape="folder")
-
-
-# ------------------------------------------------------------------------------
-
-
-@dace.serialize.serializable
-class PipelineEntry(MapEntry):
-    @staticmethod
-    def map_type():
-        return Pipeline
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@dace.serialize.serializable
-class PipelineExit(MapExit):
-    @staticmethod
-    def map_type():
-        return Pipeline
-
-    @property
-    def pipeline(self):
-        return self._map
-
-    @pipeline.setter
-    def pipeline(self, val):
-        self._map = val
-
-
-@make_properties
-class Pipeline(Map):
-    """ This a convenience-subclass of Map that allows easier implementation of
-        loop nests (using regular Map indices) that need a constant-sized
-        initialization and drain phase (e.g., N*M + c iterations), which would
-        otherwise need a flattened one-dimensional map.
-    """
-    init_size = SymbolicProperty(default=0,
-                                 desc="Number of initialization iterations.")
-    init_overlap = Property(
-        dtype=bool,
-        desc="Whether to increment regular map indices during initialization.")
-    drain_size = SymbolicProperty(default=0,
-                                  desc="Number of drain iterations.")
-    drain_overlap = Property(
-        dtype=bool,
-        desc="Whether to increment regular map indices during pipeline drain.")
-
-    def __init__(self,
-                 *args,
-                 init_size=0,
-                 init_overlap=False,
-                 drain_size=0,
-                 drain_overlap=False,
-                 **kwargs):
-        super(Pipeline, self).__init__(*args, **kwargs)
-        self.init_size = init_size
-        self.init_overlap = init_overlap
-        self.drain_size = drain_size
-        self.drain_overlap = drain_overlap
-        self.flatten = True
-
-    def iterator_str(self):
-        return "__" + "".join(self.params)
-
-    def loop_bound_str(self):
-        bound = 1
-        for begin, end, step in self.range:
-            bound *= (step + end - begin) // step
-        from dace.codegen.targets.cpp import sym2cpp
-        # Add init and drain phases when relevant
-        add_str = (" + " + sym2cpp(self.init_size)
-                   if self.init_size != 0 and not self.init_overlap else "")
-        add_str += (" + " + sym2cpp(self.drain_size)
-                    if self.drain_size != 0 and not self.drain_overlap else "")
-        return sym2cpp(bound) + add_str
-
-    def init_condition(self):
-        """Variable that can be checked to see if pipeline is currently in
-           initialization phase."""
-        if self.init_size == 0:
-            raise ValueError("No init condition exists for " + self.label)
-        return self.iterator_str() + "_init"
-
-    def drain_condition(self, sdfg=None):
-        """Variable that can be checked to see if pipeline is currently in
-           draining phase."""
-        if self.drain_size == 0:
-            raise ValueError("No drain condition exists for " + self.label)
-        return self.iterator_str() + "_drain"
-
-
-PipelineEntry = indirect_properties(Pipeline,
-                                    lambda obj: obj.map)(PipelineEntry)

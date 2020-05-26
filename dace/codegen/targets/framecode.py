@@ -4,6 +4,7 @@ import collections
 import dace
 import functools
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.graph import nodes
@@ -53,11 +54,15 @@ class DaCeCodeGenerator(object):
                     "constexpr %s %s = %s;\n" %
                     (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
 
-    def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream):
+    def generate_fileheader(self,
+                            sdfg: SDFG,
+                            global_stream: CodeIOStream,
+                            backend: str = 'frame'):
         """ Generate a header in every output file that includes custom types
             and constants.
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
+            :param backend: Whose backend this header belongs to.
         """
         #########################################################
         # Custom types
@@ -83,7 +88,11 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         for sd in sdfg.all_sdfgs_recursive():
-            global_stream.write(sd.global_code, sd)
+            if None in sd.global_code:
+                global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
+            if backend in sd.global_code:
+                global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
+                                    sd)
 
     def generate_header(self, sdfg: SDFG, used_environments: Set[str],
                         global_stream: CodeIOStream,
@@ -114,7 +123,7 @@ class DaCeCodeGenerator(object):
 
         global_stream.write("\n", sdfg)
 
-        self.generate_fileheader(sdfg, global_stream)
+        self.generate_fileheader(sdfg, global_stream, 'frame')
 
         # Instrumentation preamble
         if len(self._dispatcher.instrumentation) > 1:
@@ -191,7 +200,10 @@ DACE_EXPORTED int __dace_init_%s(%s)
                 callsite_stream.write(env.init_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write(sdfg.init_code, sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
+            callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -206,7 +218,10 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
-        callsite_stream.write(sdfg.exit_code, sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -242,9 +257,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
                                                global_stream, callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, sid, node,
-                                                 global_stream,
-                                                 callsite_stream)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -318,7 +330,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
 
-        condition_string = cppunparse.cppunparse(edge.data.condition, False)
+        condition_string = cppunparse.cppunparse(edge.data.condition.code,
+                                                 False)
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -433,7 +446,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             entry_edge = control.scope.entry.edge
                             condition = cppunparse.cppunparse(
-                                entry_edge.data.condition, False)
+                                entry_edge.data.condition.code, False)
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -496,7 +509,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             then_entry = then_scope.entry.edge
 
                             condition = cppunparse.cppunparse(
-                                then_entry.data.condition, False)
+                                then_entry.data.condition.code, False)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
@@ -593,11 +606,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream.write(
             "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
 
-    def generate_code(self,
-                      sdfg: SDFG,
-                      schedule: Optional[dtypes.ScheduleType],
-                      sdfg_id: str = ""
-                      ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+    def generate_code(
+        self,
+        sdfg: SDFG,
+        schedule: Optional[dtypes.ScheduleType],
+        sdfg_id: str = ""
+    ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.
@@ -637,9 +651,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     self._dispatcher.dispatch_allocate(sdfg, state, None, node,
                                                        global_stream,
                                                        callsite_stream)
-                    self._dispatcher.dispatch_initialize(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
                     allocated.add(node.data)
 
         # Allocate inter-state variables
@@ -651,15 +662,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             callsite_stream.write(
                 '%s;\n' %
                 (isvarType.signature(with_types=True, name=isvarName)), sdfg)
-
-        # Initialize parameter arrays
-        for argnode in dtypes.deduplicate(sdfg.input_arrays() +
-                                          sdfg.output_arrays()):
-            # Ignore transient arrays
-            if argnode.desc(sdfg).transient: continue
-            self._dispatcher.dispatch_initialize(sdfg, sdfg, None, argnode,
-                                                 global_stream,
-                                                 callsite_stream)
 
         callsite_stream.write('\n', sdfg)
 

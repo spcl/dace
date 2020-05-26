@@ -1,16 +1,9 @@
-from ast import Subscript
 from collections import deque
 import copy
-import itertools
-import re
-import os
 from typing import Callable, List, Union
 from string import ascii_uppercase
-import networkx as nx
 
 import dace
-from dace import sdfg, dtypes, symbolic
-from dace.config import Config
 from dace.graph import nodes, graph as gr
 
 params = List[dace.symbolic.symbol]
@@ -108,7 +101,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     The function produces nodes in a depth-first topological ordering
     (DFS to make sure maps are visited properly), with the condition
     that each node visited had all its predecessors visited. Applies
-    for DAGs only.
+    for DAGs only, but works on any directed graph.
 
     :param G: An input DiGraph (assumed acyclic).
     :param sources: (optional) node or list of nodes that
@@ -162,143 +155,12 @@ def dfs_topological_sort(G, sources=None, condition=None):
                 stack.pop()
 
 
-def traverse_sdfg_scope(G, source, yield_edges=True):
-    """ Traverse an SDFG scope (nodes dominated by a ScopeEntry and 
-        post-dominated by a ScopeExit). 
-        :param G: Input graph (assumed SDFGState).
-        :param source: Source node.
-        :param yield_edges: If True, returned generator yields edges
-                            as well as nodes.
-        :return: A generator that iterates over the scope nodes (or edges).
-    """
-
-    if not isinstance(source, nodes.EntryNode):
-        raise SyntaxError('Source should be an entry node')
-
-    visited = set()
-    visited.add(source)
-
-    if yield_edges:
-        for e in G.out_edges(source):
-            yield tuple(e) + (1, )
-    else:
-        yield source, 1
-
-    stack = [(1, source, iter(G.out_edges(source)))]
-    while stack:
-        scope, parent, children = stack[-1]
-        try:
-            e = next(children)
-            child = e.dst
-            if child not in visited:
-                # Make sure that all predecessors have been visited
-                skip = False
-                for pred in G.predecessors(child):
-                    if pred not in visited:
-                        skip = True
-                        break
-                if skip:
-                    continue
-
-                if yield_edges:
-                    if not (isinstance(child, nodes.ExitNode) and scope == 1):
-                        for e in G.out_edges(child):
-                            yield tuple(e) + (scope, )
-                else:
-                    yield child, scope
-
-                visited.add(child)
-                if isinstance(child, nodes.EntryNode):
-                    stack.append((scope + 1, child, iter(G.out_edges(child))))
-                elif isinstance(child, nodes.ExitNode):
-                    if scope > 1:  # Don't traverse beyond scope
-                        stack.append(
-                            (scope - 1, child, iter(G.out_edges(child))))
-                else:
-                    stack.append((scope, child, iter(G.out_edges(child))))
-        except StopIteration:
-            stack.pop()
-
-
-def gen_label(prefix=""):
-    """ Generates a label as A,B,C,...,Z,AA,AB,... """
-    indices = [0]
-    while True:
-        label = "".join([ascii_uppercase[i] for i in indices])
-        yield prefix + label
-        indices[0] += 1
-        for pos, val in enumerate(indices):
-            if val == len(ascii_uppercase):
-                indices[pos] = 0
-            if len(indices) == pos + 1:
-                indices.append(1)
-            else:
-                indices[pos + 1] += 1
-
-
-def range_to_str(ranges, limit_length=50):
-    """ Converts one or multiple range tuples to a string. """
-
-    try:
-        len(ranges[0])
-    except TypeError:
-        ranges = [ranges]
-
-    def convert_index(r):
-        if len(r) == 3:
-            if r[2] != 1:
-                return "{}:{}:{}".format(symbolic.symstr(r[0]),
-                                         symbolic.symstr(r[1]),
-                                         symbolic.symstr(r[2]))
-            else:
-                return "{}:{}".format(symbolic.symstr(r[0]),
-                                      symbolic.symstr(r[1]))
-        else:
-            raise ValueError("Unsupported range: " + str(r))
-
-    s = []
-    for r in ranges:
-        s.append(convert_index(r))
-
-    res = ', '.join(s)
-
-    return "[" + res + "]"
-
-
-def str_to_range(rangeStr):
-    """ Converts a range string into a range tuple. """
-    if rangeStr[0] != "[" or rangeStr[-1] != "]":
-        raise ValueError("Invalid range " + rangeStr)
-    rangeStr = re.sub("[\[\] ]", "", rangeStr)
-    dimensions = rangeStr.split(",")
-    ranges = [None] * len(dimensions)
-    for i, r in enumerate(dimensions):
-        entries = r.split(":")
-        numArgs = len(entries)
-        if numArgs < 2 or numArgs > 3:
-            raise ValueError(
-                "Range string should contain one or two separators (received "
-                + str(r) + ")")
-        iMin = None
-        iMax = None
-        step = None
-        if entries[0]:
-            iMin = entries[0]
-        if entries[1]:
-            iMax = entries[1]
-        if numArgs == 3:
-            if not entries[2]:
-                raise ValueError("Stride for range cannot be empty")
-            step = entries[2]
-        ranges[i] = (iMin, iMax, step)
-    return ranges
-
-
-def change_edge_dest(graph: dace.graph.graph.OrderedDiGraph,
-                     node_a: Union[dace.graph.nodes.Node, dace.graph.graph.
-                                   OrderedMultiDiConnectorGraph],
-                     node_b: Union[dace.graph.nodes.Node, dace.graph.graph.
-                                   OrderedMultiDiConnectorGraph]):
+def change_edge_dest(
+    graph: dace.graph.graph.OrderedDiGraph,
+    node_a: Union[dace.graph.nodes.Node,
+                  dace.graph.graph.OrderedMultiDiConnectorGraph],
+    node_b: Union[dace.graph.nodes.Node,
+                  dace.graph.graph.OrderedMultiDiConnectorGraph]):
     """ Changes the destination of edges from node A to node B.
 
         The function finds all edges in the graph that have node A as their
@@ -321,27 +183,17 @@ def change_edge_dest(graph: dace.graph.graph.OrderedDiGraph,
         graph.remove_edge(e)
         # Insert the new edges to the graph.
         if isinstance(e, gr.MultiConnectorEdge):
-            # dst_conn = e.dst_conn
-            # if e.dst_conn is not None:
-            #     # Remove connector from node A.
-            #     node_a.remove_in_connector(e.dst_conn)
-            #     # Insert connector to node B.
-            #     if (not node_b.add_in_connector(dst_conn) and isinstance(
-            #             node_b, (dace.graph.nodes.CodeNode,
-            #                      dace.graph.nodes.MapEntry))):
-            #         while not node_b.add_in_connector(dst_conn):
-            #             dst_conn = dst_conn + '_'
-            # graph.add_edge(e.src, e.src_conn, node_b, dst_conn, e.data)
             graph.add_edge(e.src, e.src_conn, node_b, e.dst_conn, e.data)
         else:
             graph.add_edge(e.src, node_b, e.data)
 
 
-def change_edge_src(graph: dace.graph.graph.OrderedDiGraph,
-                    node_a: Union[dace.graph.nodes.Node, dace.graph.graph.
-                                  OrderedMultiDiConnectorGraph],
-                    node_b: Union[dace.graph.nodes.Node, dace.graph.graph.
-                                  OrderedMultiDiConnectorGraph]):
+def change_edge_src(
+    graph: dace.graph.graph.OrderedDiGraph,
+    node_a: Union[dace.graph.nodes.Node,
+                  dace.graph.graph.OrderedMultiDiConnectorGraph],
+    node_b: Union[dace.graph.nodes.Node,
+                  dace.graph.graph.OrderedMultiDiConnectorGraph]):
     """ Changes the sources of edges from node A to node B.
 
         The function finds all edges in the graph that have node A as their 
@@ -364,17 +216,6 @@ def change_edge_src(graph: dace.graph.graph.OrderedDiGraph,
         graph.remove_edge(e)
         # Insert the new edges to the graph.
         if isinstance(e, gr.MultiConnectorEdge):
-            # src_conn = e.src_conn
-            # if e.src_conn is not None:
-            #     # Remove connector from node A.
-            #     node_a.remove_out_connector(e.src_conn)
-            #     # Insert connector to node B.
-            #     if (not node_b.add_out_connector(src_conn) and isinstance(
-            #             node_b, (dace.graph.nodes.CodeNode,
-            #                      dace.graph.nodes.MapExit))):
-            #         while not node_b.add_out_connector(src_conn):
-            #             src_conn = src_conn + '_'
-            # graph.add_edge(node_b, src_conn, e.dst, e.dst_conn, e.data)
             graph.add_edge(node_b, e.src_conn, e.dst, e.dst_conn, e.data)
         else:
             graph.add_edge(node_b, e.dst, e.data)
@@ -403,16 +244,16 @@ def find_sink_nodes(graph):
     return [n for n in graph.nodes() if graph.out_degree(n) == 0]
 
 
-def merge_maps(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-               outer_map_entry: dace.graph.nodes.MapEntry,
-               outer_map_exit: dace.graph.nodes.MapExit,
-               inner_map_entry: dace.graph.nodes.MapEntry,
-               inner_map_exit: dace.graph.nodes.MapExit,
-               param_merge: Callable[[params, params], params] = lambda p1, p2:
-               p1 + p2,
-               range_merge: Callable[[ranges, ranges], ranges] = lambda r1, r2:
-               type(r1)(r1.ranges + r2.ranges)
-               ) -> (dace.graph.nodes.MapEntry, dace.graph.nodes.MapExit):
+def merge_maps(
+    graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
+    outer_map_entry: dace.graph.nodes.MapEntry,
+    outer_map_exit: dace.graph.nodes.MapExit,
+    inner_map_entry: dace.graph.nodes.MapEntry,
+    inner_map_exit: dace.graph.nodes.MapExit,
+    param_merge: Callable[[params, params], params] = lambda p1, p2: p1 + p2,
+    range_merge: Callable[[ranges, ranges], ranges] = lambda r1, r2: type(r1)
+    (r1.ranges + r2.ranges)
+) -> (dace.graph.nodes.MapEntry, dace.graph.nodes.MapExit):
     """ Merges two maps (their entries and exits). It is assumed that the
     operation is valid. """
 

@@ -11,7 +11,7 @@ def dace_sum(X_in: dace.float32[N], X_out: dace.float32[1]):
 
 @dace.program
 def dace_max(X_in: dace.float32[N], X_out: dace.float32[1]):
-    dace.reduce(lambda a, b: max(a, b), X_in, X_out)
+    dace.reduce(lambda a, b: max(a, b), X_in, X_out, identity=-9999999)
 
 
 @dace.program

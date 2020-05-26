@@ -34,7 +34,7 @@ bail() {
 run_sample() {
     # Args:
     #  1 - Relative path of FPGA test starting from test folder
-    #  2 - Name of the DAPP program
+    #  2 - Name of the DaCe program
     #  3 - a string indicating the list of input to pass to the python program (the transformation sequence)
     #  4 - program command line argument (if any)
 
