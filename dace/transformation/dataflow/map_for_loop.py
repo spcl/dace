@@ -79,15 +79,8 @@ class MapToForLoop(pattern_matching.Transformation):
         def replace_param(param):
             param = symbolic.symstr(param)
             for p, pval in param_to_edge.items():
-                # TODO: This special replacement condition will be removed
-                #       when the code generator is modified to make consistent
-                #       scalar/array decisions.
-                if (isinstance(nsdfg.arrays[pval.data.data], data.Scalar)
-                        or (nsdfg.arrays[pval.data.data].shape[0] == 1
-                            and len(nsdfg.arrays[pval.data.data].shape) == 1)):
-                    param = param.replace(p, pval.data.data)
-                else:
-                    param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
+                # TODO: Correct w.r.t. connector type
+                param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
             return param
 
         # End of dynamic input range
