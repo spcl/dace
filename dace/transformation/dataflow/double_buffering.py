@@ -205,6 +205,10 @@ class DoubleBuffering(pattern_matching.Transformation):
                                               (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
 
+        # Remove symbol once done
+        del nsdfg_node.sdfg.symbols['__dace_db_param']
+        del nsdfg_node.symbol_mapping['__dace_db_param']
+
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):
         desc = sdfg.arrays[data_name]
