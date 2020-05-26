@@ -883,7 +883,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self.add_node(s)
 
         # Add "default" undefined symbols if None are given
-        symbols = sdfg.symbols.keys()
+        symbols = sdfg.free_symbols
         if symbol_mapping is None:
             symbol_mapping = {s: s for s in symbols}
             s.symbol_mapping = symbol_mapping
