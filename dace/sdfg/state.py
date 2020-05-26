@@ -471,7 +471,8 @@ class StateGraphView(object):
 
         # Add scalar arguments from free symbols
         scalar_args.update({
-            k: dt.Scalar(sdfg.symbols[k])
+            k:
+            dt.Scalar(sdfg.symbols[k]) if k in sdfg.symbols else sdfg.arrays[k]
             for k in self.free_symbols
             if not k.startswith('__dace') and k not in sdfg.constants
         })
