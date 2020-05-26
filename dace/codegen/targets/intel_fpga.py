@@ -172,11 +172,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_stream.write("channel {} {}{}{};".format(
             vec_type, var_name, size_str, depth_attribute))
 
-    def define_local_array(self, dtype, vector_length, var_name, array_size,
-                           storage, shape, function_stream, kernel_stream,
+    def define_local_array(self, var_name, desc, array_size, veclen,
+                           function_stream, kernel_stream,
                            sdfg, state_id, node):
-        vec_type = self.make_vector_type(dtype, vector_length, False)
-        if storage == dace.dtypes.StorageType.FPGA_Registers:
+        vec_type = self.make_vector_type(desc.dtype, veclen, False)
+        if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
             attributes = " __attribute__((register))"
         else:
             attributes = ""
