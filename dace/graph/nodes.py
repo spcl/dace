@@ -1007,7 +1007,7 @@ class LibraryNode(CodeNode):
             try:
                 config_override = Config.get("library", library_name,
                                              "override")
-                if config_override:
+                if config_override and implementation in self.implementations:
                     if implementation is not None:
                         warnings.warn(
                             "Overriding explicitly specified "
