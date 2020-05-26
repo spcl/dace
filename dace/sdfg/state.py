@@ -420,7 +420,7 @@ class StateGraphView(object):
         # Add data arguments from memlets, if do not appear in any of the nodes
         # (i.e., originate externally)
         for edge in self.edges():
-            if edge.data.data not in descs:
+            if edge.data.data is not None and edge.data.data not in descs:
                 desc = sdfg.arrays[edge.data.data]
                 if isinstance(desc, dt.Scalar):
                     scalar_args[edge.data.data] = desc
@@ -467,7 +467,8 @@ class StateGraphView(object):
         # Add scalar arguments from free symbols
         scalar_args.update({
             k: dt.Scalar(sdfg.symbols[k])
-            for k in self.free_symbols if not k.startswith('__dace')
+            for k in self.free_symbols
+            if not k.startswith('__dace') and k not in sdfg.constants
         })
 
         # Fill up ordered dictionary
@@ -893,6 +894,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG "%s": %s' %
                              (name, missing_symbols))
+
+        # Add new global symbols to nested SDFG
+        from dace.codegen.tools.type_inference import infer_expr_type
+        for sym, symval in s.symbol_mapping.items():
+            if sym not in sdfg.symbols:
+                # TODO: Think of a better way to avoid calling
+                # symbols_defined_at in this moment
+                sdfg.add_symbol(
+                    sym,
+                    infer_expr_type(symval, self.parent.symbols)
+                    or dtypes.typeclass(int))
 
         return s
 

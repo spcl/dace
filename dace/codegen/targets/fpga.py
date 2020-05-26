@@ -295,7 +295,10 @@ class FPGACodeGen(TargetCodeGenerator):
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
         top_level_local_data = [data_to_node[n] for n in top_level_local_data]
 
-        symbol_parameters = {k: dt.Scalar(v) for k, v in sdfg.symbols.items()}
+        symbol_parameters = {
+            k: dt.Scalar(v)
+            for k, v in sdfg.symbols.items() if k not in sdfg.constants
+        }
 
         return (global_data_parameters, top_level_local_data,
                 subgraph_parameters, scalar_parameters, symbol_parameters,
