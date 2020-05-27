@@ -524,6 +524,7 @@ def make_sdfg(specialize_all):
         ("T" if not specialize_all else T.get()))
 
     sdfg = dace.SDFG(name)
+    sdfg.add_symbol('T', dace.int32)
     init_state = make_init_state(sdfg)
 
     fpga_state = make_outer_compute_state(sdfg)
