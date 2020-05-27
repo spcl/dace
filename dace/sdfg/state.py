@@ -365,6 +365,42 @@ class StateGraphView(object):
 
         return freesyms - new_symbols
 
+    def defined_symbols(self) -> Dict[str, dt.Data]:
+        """
+        Returns a dictionary that maps currently-defined symbols in this SDFG
+        state or subgraph to their types.
+        """
+        state = self.graph if isinstance(self, SubgraphView) else self
+        sdfg = self.parent
+
+        # Start with SDFG global symbols
+        defined_syms = {k: v for k, v in sdfg.symbols.items()}
+
+        # Add data-descriptor free symbols
+        for desc in sdfg.arrays.values():
+            for sym in desc.free_symbols:
+                defined_syms[str(sym)] = sym.dtype
+
+        # Add inter-state symbols
+        # NOTE: A DFS such as in validate_sdfg can be invoked here, but may
+        #       be time consuming.
+        for edge in sdfg.edges():
+            defined_syms.update(edge.data.new_symbols(defined_syms))
+
+        # Add scope symbols all the way to the subgraph
+        sdict = self.scope_dict()
+        scope_nodes = []
+        for source_node in self.source_nodes():
+            curnode = source_node
+            while sdict[curnode] is not None:
+                curnode = sdict[curnode]
+                scope_nodes.append(curnode)
+
+        for snode in dtypes.deduplicate(list(reversed(scope_nodes))):
+            defined_syms.update(snode.new_symbols(defined_syms))
+
+        return defined_syms
+
     def arglist(self) -> Dict[str, dt.Data]:
         """ 
         Returns an ordered dictionary of arguments (names and types) required 
@@ -470,9 +506,10 @@ class StateGraphView(object):
         # End of data descriptor loop
 
         # Add scalar arguments from free symbols
+        defined_syms = self.defined_symbols()
         scalar_args.update({
             k:
-            dt.Scalar(sdfg.symbols[k]) if k in sdfg.symbols else sdfg.arrays[k]
+            dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
             for k in self.free_symbols
             if not k.startswith('__dace') and k not in sdfg.constants
         })
