@@ -1034,7 +1034,8 @@ class LibraryNode(CodeNode):
                         raise ValueError("No implementation or default "
                                          "implementation specified.")
         if implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation: " + implementation)
+            raise KeyError("Unknown implementation for node {}: {}".format(
+                type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
         states = sdfg.states_for_node(self)
         if len(states) < 1:
