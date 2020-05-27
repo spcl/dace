@@ -153,8 +153,8 @@ def scope_contains_scope(sdict: ScopeDictType, node: NodeType,
     return False
 
 
-def is_devicelevel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                   node: NodeType) -> bool:
+def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
+                       node: NodeType) -> bool:
     """ Tests whether a node in an SDFG is contained within GPU device-level
         code.
         :param sdfg: The SDFG in which the node resides.

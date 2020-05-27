@@ -2,7 +2,7 @@ from dace.sdfg.sdfg import SDFG, InterstateEdge
 
 from dace.sdfg.state import SDFGState
 
-from dace.sdfg.scope import (scope_contains_scope, is_devicelevel,
+from dace.sdfg.scope import (scope_contains_scope, is_devicelevel_gpu,
                              devicelevel_block_size, ScopeSubgraphView)
 
 from dace.sdfg.replace import replace, replace_properties

@@ -56,7 +56,7 @@ class GPUTransformMap(pattern_matching.Transformation):
             if (candidate_map.schedule in [dtypes.ScheduleType.MPI] +
                     dtypes.GPU_SCHEDULES):
                 return False
-            if sd.is_devicelevel(sdfg, graph, map_entry):
+            if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
 
             # Dynamic map ranges cannot become kernels
@@ -86,7 +86,7 @@ class GPUTransformMap(pattern_matching.Transformation):
             reduce = graph.nodes()[candidate[GPUTransformMap._reduce]]
 
             # Disallow GPU transformation if already in device-level code
-            if sd.is_devicelevel(sdfg, graph, reduce):
+            if sd.is_devicelevel_gpu(sdfg, graph, reduce):
                 return False
 
             return True

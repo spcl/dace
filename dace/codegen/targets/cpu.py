@@ -9,7 +9,7 @@ from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
-                       is_devicelevel, is_array_stream_view,
+                       is_devicelevel_gpu, is_array_stream_view,
                        NodeNotExpandedError)
 
 
@@ -1482,7 +1482,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
-        if instr is not None and not is_devicelevel(sdfg, state_dfg, node):
+        if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node):
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
                                 callsite_stream, function_stream)
 

@@ -11,7 +11,7 @@ from dace.frontend import operations
 from dace import registry, subsets, symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.sdfg import nodes
-from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
+from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel_gpu, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
@@ -562,9 +562,10 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                         break
                     # If leading from/to a GPU tasklet, keep stream
                     if ((isinstance(path[0].src, nodes.CodeNode)
-                         and is_devicelevel(cur_sdfg, graph, path[0].src)) or
-                        (isinstance(path[-1].dst, nodes.CodeNode)
-                         and is_devicelevel(cur_sdfg, graph, path[-1].dst))):
+                         and is_devicelevel_gpu(cur_sdfg, graph, path[0].src))
+                            or
+                        (isinstance(path[-1].dst, nodes.CodeNode) and
+                         is_devicelevel_gpu(cur_sdfg, graph, path[-1].dst))):
                         break
                 else:  # If we did not break, we do not need a CUDA stream
                     if hasattr(node, '_cuda_stream'):

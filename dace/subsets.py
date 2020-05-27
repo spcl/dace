@@ -66,7 +66,8 @@ class Subset(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of undefined symbols in this subset. """
-        raise NotImplementedError
+        raise NotImplementedError('free_symbols not implemented by "%s"' %
+                                  type(self).__name__)
 
 
 def _simplified_str(val):
