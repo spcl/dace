@@ -51,7 +51,6 @@ def make_sdfg(implementation,
     result = state.add_write("result" + suffix)
 
     node = blas.nodes.matmul.MatMul("matmul", dtype)
-    node.implementation = implementation
 
     state.add_memlet_path(x,
                           node,
@@ -180,10 +179,6 @@ def test_batchmm():
 
     sdfg = bmmtest.to_sdfg()
     sdfg.apply_gpu_transformations()
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if isinstance(node, blas.nodes.matmul.MatMul):
-                node.implementation = 'cuBLAS'
     csdfg = sdfg.compile(optimizer=False)
 
     b, m, n, k = 3, 32, 31, 30
@@ -204,6 +199,7 @@ def test_batchmm():
 
 if __name__ == '__main__':
     import os
+    blas.default_implementation = "cuBLAS"
     try:
         test_batchmm()
         test_types()
