@@ -66,7 +66,7 @@ run_all() {
     run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
     
     # Test pipeline scopes 
-    run_sample pipeline_test pipeline_test "\n" 
+    run_sample pipeline_scope pipeline_scope "\n" 
 
     # Test shift register abstraction with stencil code
     run_sample fpga_stencil fpga_stencil_test "\n"
