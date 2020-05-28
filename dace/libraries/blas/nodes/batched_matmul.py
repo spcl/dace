@@ -138,19 +138,14 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
         opt['tb'] = 'CblasNoTrans' if opt['tb'] == 'N' else 'CblasTrans'
 
-        if not opt['BATCH']:
-            code = ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
-                    "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
-                    "_c, {ldc});").format_map(opt)
-        else:
-            code = '''
-            for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
-                cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
-                             (({dtype}*){x}) + __ib*{stride_a}, {lda},
-                             (({dtype}*){y}) + __ib*{stride_b}, {ldb},
-                             {beta},
-                             (({dtype}*)_c) + __ib*{stride_c}, {ldc});
-            }}'''.format_map(opt)
+        code = '''
+        for (int __ib = 0; __ib < {BATCH}; ++__ib) {{
+            cblas_{func}(CblasColMajor, {ta}, {tb}, {M}, {N}, {K}, {alpha},
+                         (({dtype}*){x}) + __ib*{stride_a}, {lda},
+                         (({dtype}*){y}) + __ib*{stride_b}, {ldb},
+                         {beta},
+                         (({dtype}*)_c) + __ib*{stride_c}, {ldc});
+        }}'''.format_map(opt)
 
         tasklet = dace.graph.nodes.Tasklet(node.name,
                                            node.in_connectors,
@@ -215,25 +210,15 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                                      alpha, beta, cdtype, func)
 
         # Matrix multiplication
-        if not opt['BATCH']:
-            call = '''cublas{func}(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){x}, {lda},
-                ({dtype}*){y}, {ldb},
-                {beta},
-                ({dtype}*)_c, {ldc});'''
-        else:  # Batched matrix multiplication
-            call = '''cublas{func}StridedBatched(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){x}, {lda}, {stride_a},
-                ({dtype}*){y}, {ldb}, {stride_b},
-                {beta},
-                ({dtype}*)_c, {ldc}, {stride_c},
-                {BATCH});'''
+        call = '''cublas{func}StridedBatched(__dace_cublas_handle,
+            CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+            {M}, {N}, {K},
+            {alpha},
+            ({dtype}*){x}, {lda}, {stride_a},
+            ({dtype}*){y}, {ldb}, {stride_b},
+            {beta},
+            ({dtype}*)_c, {ldc}, {stride_c},
+            {BATCH});'''
 
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 call.format_map(opt))
