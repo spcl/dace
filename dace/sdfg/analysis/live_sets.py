@@ -16,7 +16,7 @@ def live_sets(sdfg):
     # Initialize arrays.
     memory_before = 0
     arrays = {}
-    static_transients = set()
+    shared_transients = set()
     transients = set()
     alloc_dealloc_states = {}
     maximum_live_set_states = {}
@@ -32,7 +32,7 @@ def live_sets(sdfg):
         if arrays[a] == 1:
             transients.add(a)
         if arrays[a] != 1:
-            static_transients.add(a)
+            shared_transients.add(a)
 
     # Determine the maximum live set and the allocation/deallocation table for each state.
     for state in sdfg.states():
@@ -52,7 +52,7 @@ def live_sets(sdfg):
                 G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_node(n))])
                 for m in scope_dict[n]:
                     if isinstance(m, nodes.AccessNode) and m.data in transients:
-                        static_transients.add(m.data)
+                        shared_transients.add(m.data)
                         transients.remove(m.data)
                     G.remove_node(m)
 
@@ -168,7 +168,7 @@ def live_sets(sdfg):
     # Generate maximum live set over all states.  Add static transients
     # and union all maximum live set of the states and add all sizes together.
     maximum_live_set = [set(), 0]
-    for t in static_transients:
+    for t in shared_transients:
         maximum_live_set[0].add(t)
         maximum_live_set[1] += sdfg.arrays[t].total_size
     for state in maximum_live_set_states:
@@ -177,4 +177,4 @@ def live_sets(sdfg):
         maximum_live_set[0] = maximum_live_set[0].union(liveSet)
         maximum_live_set[1] += size
 
-    return alloc_dealloc_states, maximum_live_set, maximum_live_set_states, static_transients
+    return alloc_dealloc_states, maximum_live_set, maximum_live_set_states, shared_transients
