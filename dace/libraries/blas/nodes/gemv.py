@@ -2,7 +2,7 @@ import copy
 from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
-import dace.graph.nodes
+import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
@@ -135,7 +135,7 @@ class ExpandGemvPure(ExpandTransformation):
 
 
 @dace.library.node
-class Gemv(dace.graph.nodes.LibraryNode):
+class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
