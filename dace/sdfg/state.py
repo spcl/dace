@@ -981,7 +981,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         """
         debuginfo = _getdebuginfo(debuginfo)
         map = nd.Map(name,
-                     *self._make_iterators,
+                     *self._make_iterators(ndrange),
                      schedule=schedule,
                      unroll=unroll,
                      debuginfo=debuginfo)
@@ -1222,7 +1222,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             init_overlap=False,
             drain_size=0,
             drain_overlap=False,
-            schedule=dace.dtypes.ScheduleType.FPGA_Device,
+            schedule=dtypes.ScheduleType.FPGA_Device,
             debuginfo=None,
             **kwargs
     ) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
@@ -1238,7 +1238,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                                   the "main" streaming phase of the loop.
             :return: (map_entry, map_exit) node 2-tuple
         """
-        debuginfo = getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo)
         pipeline = nd.Pipeline(name,
                                *self._make_iterators(ndrange),
                                init_size=init_size,
