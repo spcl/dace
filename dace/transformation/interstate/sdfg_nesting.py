@@ -7,9 +7,10 @@ from typing import Dict, List, Set, Optional
 import warnings
 
 from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
-from dace.graph import nodes, nxutil
-from dace.graph.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching, helpers
 from dace.properties import make_properties, Property
 
@@ -45,7 +46,7 @@ class InlineSDFG(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         # Matches anything
-        return [nxutil.node_path_graph(InlineSDFG._nested_sdfg)]
+        return [sdutil.node_path_graph(InlineSDFG._nested_sdfg)]
 
     @staticmethod
     def _find_edge(state: SDFGState, node: nodes.Node,

@@ -3,7 +3,8 @@
 
 from dace import registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -39,7 +40,7 @@ class MapTiling(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapTiling._map_entry)]
+        return [sdutil.node_path_graph(MapTiling._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):

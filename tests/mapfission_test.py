@@ -1,6 +1,6 @@
 import copy
 import dace
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
@@ -281,7 +281,7 @@ class MapFissionTest(unittest.TestCase):
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
-        dace.propagate_labels_sdfg(sdfg)
+        dace.propagate_memlets_sdfg(sdfg)
         sdfg.validate()
 
         # Test
@@ -321,7 +321,7 @@ class MapFissionTest(unittest.TestCase):
 
         self.assertGreater(sdfg.apply_transformations(MapFission), 0)
 
-        dace.propagate_labels_sdfg(sdfg)
+        dace.propagate_memlets_sdfg(sdfg)
         sdfg.validate()
 
         # Test

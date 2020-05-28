@@ -1,8 +1,8 @@
 import unittest
 
 import dace
-from dace.graph.nodes import MapEntry, Tasklet
-from dace.graph.graph import SubgraphView
+from dace.sdfg.nodes import MapEntry, Tasklet
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.helpers import nest_state_subgraph
 
 N = dace.symbol('N')

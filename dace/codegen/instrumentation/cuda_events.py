@@ -1,5 +1,5 @@
 from dace import dtypes, registry
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 
 
