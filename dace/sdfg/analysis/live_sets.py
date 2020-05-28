@@ -102,8 +102,11 @@ def live_sets(sdfg):
         ##############
         # MAX LIVE SET
 
-        # Get longest path in the DAG.
+        # Get longest path in the DAG. And continue if it is zero.
         longest_path = nx.dag_longest_path(G)
+        if len(longest_path) == 0:
+            maximum_live_set_states[state] = ([], 0)
+            continue
 
         # Generate node levels.
         levels = []

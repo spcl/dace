@@ -4,7 +4,7 @@ from __future__ import print_function
 import argparse
 import dace
 import numpy as np
-from dace.graph.analysis.live_sets import live_sets
+from dace.codegen.targets.memorypool import extend_dace
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -23,10 +23,13 @@ def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 1
         out = in_A * in_B
     dace.reduce(lambda a, b: a + b, tmp, E, axis=2, identity=0)
 
-    C[:] = A @ E @ (A @ B) @ (B @ D)
-
+    C[:] =  A @ E @ (A @ B) @ (B @ D)
+    #ctile[:] = C
+    #ctile[:] = A @ E @ (A @ B) @ (B @ D)
+    #C[:] = ctile
 
 if __name__ == "__main__":
+    extend_dace()
     print("==== Program start ====")
 
     parser = argparse.ArgumentParser()
@@ -45,11 +48,11 @@ if __name__ == "__main__":
     C_regression = np.zeros_like(C)
 
     sdfg = operation.to_sdfg(args)
-    live_sets(sdfg=sdfg)
+
     sdfg(A=A, B=B, C=C, D=D)
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B,D))
 
     diff = np.linalg.norm(C_regression - C) / (M.value * N.value)
-    print("Difference:", diff)
+    print("Difference:", diff, 'C_reg', C_regression, 'C', C)
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)
