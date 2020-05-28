@@ -93,6 +93,8 @@ class Executor(object):
 
     def run_local(self, sdfg: SDFG, driver_file: str):
         workdir = os.path.join('.dacecache', sdfg.name)
+        if Config.get_bool('diode', 'general', 'library_autoexpand'):
+            sdfg.expand_library_nodes()
         code_objects = sdfg.generate_code()
         use_mpi = Executor._use_mpi(code_objects)
         # TODO: Implement (instead of pyrun, use mpirun/mpiexec)

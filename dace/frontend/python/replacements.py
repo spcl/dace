@@ -293,6 +293,7 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('exp')
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
+@oprepo.replaces('math.exp')
 def _exp(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'exp')
 
@@ -300,6 +301,7 @@ def _exp(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('sin')
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
+@oprepo.replaces('math.sin')
 def _sin(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sin')
 
@@ -307,6 +309,7 @@ def _sin(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('cos')
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
+@oprepo.replaces('math.cos')
 def _cos(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'cos')
 
@@ -314,6 +317,7 @@ def _cos(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('sqrt')
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
+@oprepo.replaces('math.sqrt')
 def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sqrt')
 
@@ -321,6 +325,7 @@ def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('log')
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
+@oprepo.replaces('math.log')
 def _log(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
@@ -380,24 +385,22 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.max')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    # HACK: reduce doesn't work if identity isn't specified (at the moment)
     return _reduce(sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
                    axis=axis,
-                   identity=-9999999999999)
+                   identity=dtypes.min_value(sdfg.arrays[a].dtype))
 
 
 @oprepo.replaces('numpy.min')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    # HACK: reduce doesn't work if identity isn't specified (at the moment)
     return _reduce(sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
                    axis=axis,
-                   identity=999999999999)
+                   identity=dtypes.max_value(sdfg.arrays[a].dtype))
 
 
 @oprepo.replaces('numpy.argmax')
@@ -433,7 +436,8 @@ def _argminmax(sdfg: SDFG,
                a: str,
                axis,
                func,
-               result_type=dace.int32):
+               result_type=dace.int32,
+               return_both=False):
     nest = NestedCall(sdfg, state)
 
     assert func in ['min', 'max']
@@ -452,58 +456,98 @@ def _argminmax(sdfg: SDFG,
 
     val_and_idx = dace.struct('_val_and_idx', val=a_arr.dtype, idx=result_type)
 
-    # convert to array of structs
-    structs, structs_arr = sdfg.add_temp_transient(a_arr.shape, val_and_idx)
-
-    # HACK: at the time of writing, the reduce op on structs doesn't work unless we init the output
-    # array for that reason we will init the output array with (-1, -inf) in the loop. This should
-    # be removed once the issue is resolved
+    # HACK: since identity cannot be specified for structs, we have to init the output array
     reduced_structs, reduced_struct_arr = sdfg.add_temp_transient(
         reduced_shape, val_and_idx)
 
-    code = ("__out = _val_and_idx(val=__in, idx=__i{})\n".format(axis) +
-            "__init = _val_and_idx(val={}1e38, idx=-1)".format('-' if func ==
-                                                               'max' else ''))
+    code = "__init = _val_and_idx(val={}, idx=-1)".format(
+        dtypes.min_value(a_arr.dtype) if func ==
+        'max' else dtypes.max_value(a_arr.dtype))
 
-    state.add_mapped_tasklet(
+    nest.add_state().add_mapped_tasklet(
         name="_arg{}_convert_".format(func),
         map_ranges={
             '__i%d' % i: '0:%s' % n
-            for i, n in enumerate(a_arr.shape)
+            for i, n in enumerate(a_arr.shape) if i != axis
         },
-        inputs={
-            "__in":
-            Memlet.simple(
-                a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))
-        },
+        inputs={},
         code=code,
         outputs={
             '__init':
             Memlet.simple(
                 reduced_structs, ','.join('__i%d' % i
                                           for i in range(len(a_arr.shape))
-                                          if i != axis)),
-            '__out':
-            Memlet.simple(
-                structs,
-                ','.join('__i%d' % i for i in range(len(a_arr.shape))))
+                                          if i != axis))
         },
         external_edges=True)
 
-    # reduce array of structs
-    nest(_reduce)(  # comment for yapf
-        "lambda x, y: _val_and_idx(val={}(x.val, y.val), idx=(x.idx if x.val {} y.val else y.idx))"
-        .format(func, '>' if func == 'max' else '<'),
-        structs,
-        out_array=reduced_structs,
-        axis=axis)
+    nest.add_state().add_mapped_tasklet(
+        name="_arg{}_reduce_".format(func),
+        map_ranges={
+            '__i%d' % i: '0:%s' % n
+            for i, n in enumerate(a_arr.shape)
+        },
+        inputs={
+            '__in':
+            Memlet.simple(
+                a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))
+        },
+        code="__out = _val_and_idx(idx={}, val=__in)".format("__i%d" % axis),
+        outputs={
+            '__out':
+            Memlet.simple(
+                reduced_structs,
+                ','.join('__i%d' % i for i in range(len(a_arr.shape))
+                         if i != axis),
+                wcr_str=("lambda x, y:"
+                         "_val_and_idx(val={}(x.val, y.val), "
+                         "idx=(y.idx if x.val {} y.val else x.idx))").format(
+                             func, '<' if func == 'max' else '>'))
+        },
+        external_edges=True)
 
-    # map to int64
-    out, outarr = sdfg.add_temp_transient(sdfg.arrays[reduced_structs].shape,
-                                          dace.int64)
-    nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
+    if return_both:
+        outidx, outidxarr = sdfg.add_temp_transient(
+            sdfg.arrays[reduced_structs].shape, result_type)
+        outval, outvalarr = sdfg.add_temp_transient(
+            sdfg.arrays[reduced_structs].shape, a_arr.dtype)
 
-    return nest, out
+        nest.add_state().add_mapped_tasklet(
+            name="_arg{}_extract_".format(func),
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(a_arr.shape) if i != axis
+            },
+            inputs={
+                '__in':
+                Memlet.simple(
+                    reduced_structs, ','.join('__i%d' % i
+                                              for i in range(len(a_arr.shape))
+                                              if i != axis))
+            },
+            code="__out_val = __in.val\n__out_idx = __in.idx",
+            outputs={
+                '__out_val':
+                Memlet.simple(
+                    outval, ','.join('__i%d' % i
+                                     for i in range(len(a_arr.shape))
+                                     if i != axis)),
+                '__out_idx':
+                Memlet.simple(
+                    outidx, ','.join('__i%d' % i
+                                     for i in range(len(a_arr.shape))
+                                     if i != axis))
+            },
+            external_edges=True)
+
+        return nest, (outval, outidx)
+
+    else:
+        # map to result_type
+        out, outarr = sdfg.add_temp_transient(
+            sdfg.arrays[reduced_structs].shape, result_type)
+        nest(_elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
+        return nest, out
 
 
 ##############################################################################
@@ -792,26 +836,54 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 @oprepo.replaces_operator('Array', 'MatMult')
 def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+
+    from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
+
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
-    # TODO: Apply numpy broadcast rules
-    if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-        raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
-                          'not supported')
-    if arr1.shape[-1] != arr2.shape[-2]:
-        raise SyntaxError('Matrix dimension mismatch %s != %s' %
-                          (arr1.shape[-1], arr2.shape[-2]))
 
-    import dace.libraries.blas as blas  # Avoid import loop
-    from dace.libraries.blas.nodes.matmul import get_batchmm_opts
+    if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
-    # Determine batched multiplication
-    bopt = get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides,
-                            None, None)
-    if bopt:
-        output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
-    else:
-        output_shape = (arr1.shape[-2], arr2.shape[-1])
+        if len(arr1.shape) > 3 or len(arr2.shape) > 3:
+            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
+                              'not supported')
+
+        if arr1.shape[-1] != arr2.shape[-2]:
+            raise SyntaxError('Matrix dimension mismatch %s != %s' %
+                              (arr1.shape[-1], arr2.shape[-2]))
+
+        from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
+
+        # Determine batched multiplication
+        bopt = _get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape,
+                                 arr2.strides, None, None)
+        if bopt:
+            output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
+        else:
+            output_shape = (arr1.shape[-2], arr2.shape[-1])
+
+    elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
+
+        if arr1.shape[1] != arr2.shape[0]:
+            raise SyntaxError("Number of matrix columns {} must match"
+                              "size of vector {}.".format(
+                                  arr1.shape[1], arr2.shape[0]))
+
+        output_shape = (arr1.shape[0], )
+
+    elif len(arr1.shape) == 1 and len(arr2.shape) == 1: # vector * vector
+
+        if arr1.shape[0] != arr2.shape[0]:
+            raise SyntaxError("Vectors in vector product must have same size: "
+                              "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
+
+        output_shape = (1, )
+
+    else:  # Dunno what this is, bail
+
+        raise SyntaxError(
+            "Cannot multiply arrays with shapes: {} and {}".format(
+                arr1.shape, arr2.shape))
 
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
@@ -823,7 +895,7 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
 
-    tasklet = blas.MatMul('_MatMult_', restype)
+    tasklet = MatMul('_MatMult_', restype)
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_a',
                    dace.Memlet.from_array(op1, arr1))

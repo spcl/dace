@@ -7,7 +7,8 @@ from abc import ABC
 
 from dace import registry, symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -34,7 +35,7 @@ class LocalStorage(pattern_matching.Transformation, ABC):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(LocalStorage._node_a, LocalStorage._node_b)
+            sdutil.node_path_graph(LocalStorage._node_a, LocalStorage._node_b)
         ]
 
     @staticmethod

@@ -3,7 +3,8 @@
 
 from copy import deepcopy as dcpy
 from dace import data, properties, symbolic, dtypes, registry
-from dace.graph import edges, graph, nodes, nxutil
+from dace.sdfg import graph, nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -41,7 +42,7 @@ class CopyToDevice(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(CopyToDevice._nested_sdfg)]
+        return [sdutil.node_path_graph(CopyToDevice._nested_sdfg)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):

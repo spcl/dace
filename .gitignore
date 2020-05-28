@@ -183,3 +183,4 @@ rgf_dense_saved.sdfg
 _build/
 
 /*.sdfg
+/tests/numpy/test.sdfg

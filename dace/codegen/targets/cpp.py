@@ -8,14 +8,15 @@ from six import StringIO
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
 from dace.codegen import cppunparse
-from dace.codegen.targets.common import (sym2cpp, find_incoming_edges)
+from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
+                                         codeblock_to_cpp)
 from dace.codegen.targets.target import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.properties import LambdaProperty
-from dace.sdfg import SDFG, is_devicelevel
+from dace.sdfg import SDFG, is_devicelevel_gpu
 
 
 def copy_expr(
@@ -545,28 +546,13 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     if not node.code:
         return ""
 
-    # Not [], "" or None
-    if node.code_global:
-        if node.language is not dtypes.Language.CPP:
-            raise ValueError(
-                "Global code only supported for C++ tasklets: got {}".format(
-                    node.language))
-        function_stream.write(
-            type(node).__properties__["code_global"].to_string(
-                node.code_global),
-            sdfg,
-            state_id,
-            node,
-        )
-        function_stream.write("\n", sdfg, state_id, node)
-
     # If raw C++ code, return the code directly
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a CUDA stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if (max_streams >= 0 and not is_devicelevel(sdfg, state_dfg, node)
+        if (max_streams >= 0 and not is_devicelevel_gpu(sdfg, state_dfg, node)
                 and hasattr(node, "_cuda_stream")):
             callsite_stream.write(
                 'int __dace_current_stream_id = %d;\ncudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
@@ -584,13 +570,13 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             type(node).__properties__["code"].to_string(node.code), sdfg,
             state_id, node)
 
-        if hasattr(node, "_cuda_stream") and not is_devicelevel(
+        if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(
                 sdfg, state_dfg, node):
             synchronize_streams(sdfg, state_dfg, state_id, node, node,
                                 callsite_stream)
         return
 
-    body = node.code
+    body = node.code.code
 
     # Map local names to memlets (for WCR detection)
     memlets = {}
@@ -608,6 +594,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg,
                           state_id, node)
     for stmt in body:
+        stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
             rk = DaCeKeywordRemover(sdfg, memlets,
@@ -809,7 +796,7 @@ class StructInitializer(ExtNodeTransformer):
 
     def visit_Call(self, node):
         if isinstance(node.func,
-                      ast.Name) and (node.func.id.startswith('__DAPPSTRUCT_')
+                      ast.Name) and (node.func.id.startswith('__DACESTRUCT_')
                                      or node.func.id in self._structs):
             fields = ', '.join([
                 '.%s = %s' % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
@@ -817,8 +804,8 @@ class StructInitializer(ExtNodeTransformer):
             ])
 
             tname = node.func.id
-            if node.func.id.startswith('__DAPPSTRUCT_'):
-                tname = node.func.id[len('__DAPPSTRUCT_'):]
+            if node.func.id.startswith('__DACESTRUCT_'):
+                tname = node.func.id[len('__DACESTRUCT_'):]
 
             return ast.copy_location(
                 ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load),
@@ -830,7 +817,8 @@ class StructInitializer(ExtNodeTransformer):
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     state_dfg = sdfg.nodes()[state_id]
-    if hasattr(node, "_cuda_stream") or is_devicelevel(sdfg, state_dfg, node):
+    if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(
+            sdfg, state_dfg, node):
         return
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream"):

@@ -3,7 +3,7 @@ from copy import deepcopy as dc
 from dace.config import Config
 import dace.library
 import dace.properties
-import dace.graph.nodes
+import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from .. import environments
 
@@ -118,16 +118,16 @@ class ExpandTransposeMKL(ExpandTransformation):
         _, _, (m, n) = _get_transpose_input(node, state, sdfg)
         code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, _inp, "
                 "{n}, _out, {m});").format(f=func, m=m, n=n, a=alpha)
-        tasklet = dace.graph.nodes.Tasklet(node.name,
-                                           node.in_connectors,
-                                           node.out_connectors,
-                                           code,
-                                           language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
         return tasklet
 
 
 @dace.library.node
-class Transpose(dace.graph.nodes.LibraryNode):
+class Transpose(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {

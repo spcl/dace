@@ -1,5 +1,5 @@
 from dace import dtypes, registry
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 
 
@@ -10,11 +10,7 @@ class CUDAEventProvider(InstrumentationProvider):
         global_stream.write('#include <cuda_runtime.h>')
 
         # For other file headers
-        if len(sdfg.global_code) == 0:
-            sdfg.set_global_code('#include <cuda_runtime.h>')
-        else:
-            sdfg.set_global_code(sdfg.global_code +
-                                 '\n#include <cuda_runtime.h>')
+        sdfg.append_global_code('\n#include <cuda_runtime.h>', None)
 
     def _idstr(self, sdfg, state, node):
         if state is not None:

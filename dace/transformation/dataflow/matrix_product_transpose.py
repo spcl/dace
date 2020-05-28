@@ -2,7 +2,7 @@
 
 from copy import deepcopy as dcpy
 import dace
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace import registry
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -25,7 +25,7 @@ class MatrixProductTranspose(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        graph = dace.graph.graph.OrderedDiGraph()
+        graph = dace.sdfg.graph.OrderedDiGraph()
         graph.add_node(MatrixProductTranspose._transpose_a)
         graph.add_node(MatrixProductTranspose._at)
         graph.add_node(MatrixProductTranspose._transpose_b)

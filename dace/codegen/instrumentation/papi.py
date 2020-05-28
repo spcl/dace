@@ -6,9 +6,9 @@ from dace import dtypes, registry, symbolic
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.targets.common import sym2cpp
 from dace.config import Config
-from dace.graph import nodes
-from dace.graph.nodes import EntryNode, MapEntry, MapExit, Tasklet
-from dace.graph.graph import SubgraphView
+from dace.sdfg import nodes
+from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
+from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
 
@@ -142,7 +142,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
 
         cpu_storage_types = [
             dtypes.StorageType.CPU_Heap,
-            dtypes.StorageType.CPU_Stack,
+            dtypes.StorageType.CPU_ThreadLocal,
             dtypes.StorageType.CPU_Pinned,
             dtypes.StorageType.Register,
         ]
@@ -245,67 +245,6 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
             inner_stream.write("__perf_%s.enterCritical();\n" % node.label,
                                sdfg, state_id, node)
-        elif isinstance(node, nodes.Reduce):
-            unified_id = _unified_id(state.node_id(node), state_id)
-
-            input_size: str = PAPIUtils.get_memory_input_size(
-                node, sdfg, state_id)
-
-            # For measuring the memory bandwidth, we analyze the amount of data
-            # moved.
-            result = outer_stream
-            perf_expected_data_movement_sympy = 1
-
-            input_memlet = state.in_edges(node)[0].data
-            output_memlet = state.out_edges(node)[0].data
-            # If axes were not defined, use all input dimensions
-            input_dims = input_memlet.subset.dims()
-            output_dims = output_memlet.subset.data_dims()
-            axes = node.axes
-            if axes is None:
-                axes = tuple(range(input_dims))
-
-            isize = input_memlet.subset.size()
-            osize = input_memlet.subset.size()
-            for axis in range(output_dims):
-                perf_expected_data_movement_sympy *= osize[axis]
-            for axis in axes:
-                perf_expected_data_movement_sympy *= isize[axis]
-
-            if not dace.sdfg.is_parallel(state, node):
-                # We put a start marker, but only if we are in a serial state
-                result.write(
-                    self.perf_supersection_start_string(unified_id),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-            result.write(
-                self.perf_section_start_string(
-                    unified_id,
-                    sym2cpp(sp.simplify(perf_expected_data_movement_sympy)) +
-                    (" * (sizeof(%s) + sizeof(%s))" % (
-                        sdfg.arrays[output_memlet.data].dtype.ctype,
-                        sdfg.arrays[input_memlet.data].dtype.ctype,
-                    )),
-                    input_size,
-                ),
-                sdfg,
-                state_id,
-                node,
-            )
-
-            #############################################################
-            # Internal part
-            result = inner_stream
-            result.write(
-                self.perf_counter_start_measurement_string(
-                    unified_id, '__o%d' % (output_dims - 1)),
-                sdfg,
-                state_id,
-                node,
-            )
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
@@ -333,42 +272,6 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                     "__perf_store.addBytesMoved(%s);" %
                     PAPIUtils.get_tasklet_byte_accesses(
                         node, state, sdfg, state_id), sdfg, state_id, node)
-        elif isinstance(node, nodes.Reduce):
-            result = inner_stream
-            #############################################################
-            # Instrumentation: Post-Reduce (pre-braces)
-            byte_moved_measurement = "__perf_store.addBytesMoved(%s);\n"
-
-            # For reductions, we assume Read-Modify-Write for all operations
-            # Every reduction statement costs sizeof(input) + sizeof(output).
-            # This is wrong with some custom reductions or extending operations
-            # (e.g., i32 * i32 => i64)
-            # It also is wrong for write-avoiding min/max (min/max that only
-            # overwrite the reduced variable when it needs to be changed)
-
-            if node.instrument == dace.InstrumentationType.PAPI_Counters:
-                input_memlet = state.in_edges(node)[0].data
-                output_memlet = state.out_edges(node)[0].data
-                num_reduced_inputs = input_memlet.subset.num_elements()
-
-                result.write(
-                    byte_moved_measurement %
-                    ("%s * (sizeof(%s) + sizeof(%s))" %
-                     (sym2cpp(num_reduced_inputs),
-                      sdfg.arrays[output_memlet.data].dtype.ctype,
-                      sdfg.arrays[input_memlet.data].dtype.ctype)),
-                    sdfg,
-                    state_id,
-                    node,
-                )
-
-                if not self.has_surrounding_perfcounters(node, state):
-                    result.write(
-                        self.perf_counter_end_measurement_string(unified_id),
-                        sdfg,
-                        state_id,
-                        node,
-                    )
 
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):
@@ -430,12 +333,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         # Inner part
         result = inner_stream
 
-        if node.map.flatten:
-            # Performance counters for flattened maps include the calculations
-            # made to obtain the different axis indices
-            map_name = "__DACEMAP_%d_%d_iter" % (state_id, state.node_id(node))
-        else:
-            map_name = node.map.params[-1]
+        map_name = node.map.params[-1]
 
         result.write(
             self.perf_counter_start_measurement_string(unified_id, map_name),
@@ -568,10 +466,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             self._counters)
 
     def perf_counter_start_measurement_string(
-            self,
-            unified_id: int,
-            iteration: str,
-            core_str: str = "PAPI_thread_id()"):
+        self,
+        unified_id: int,
+        iteration: str,
+        core_str: str = "PAPI_thread_id()"):
         pcs = self.perf_counter_string()
         return '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});

@@ -1,4 +1,5 @@
 import ast
+import copy
 import itertools
 import os
 import re
@@ -13,6 +14,7 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
 from dace.codegen.targets import cpp, fpga
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -322,70 +324,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             "Unimplemented write type: {}".format(defined_type))
 
     @staticmethod
-    def make_reduction(sdfg, state_id, node, output_memlet, dtype,
-                       vector_length_in, vector_length_out, output_type,
-                       reduction_type, callsite_stream, iterators_inner,
-                       input_subset, identity, out_var, in_var):
-        """
-        Generates reduction loop body
-        """
-        axes = node.axes
-
-        # If axes were not defined, use all input dimensions
-        if axes is None:
-            axes = tuple(range(input_subset.dims()))
-
-        # Check if this is the first iteration of accumulating into this
-        # location
-
-        is_first_iteration = " && ".join([
-            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
-            for i, axis in enumerate(axes)
-        ])
-
-        if identity is not None:
-            # If this is the first iteration, set the previous value to be
-            # identity, otherwise read the value from the output location
-            prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
-                                                     is_first_iteration,
-                                                     identity, out_var), sdfg,
-                state_id, node)
-            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = {} {} {};".format(
-                        out_var, prev_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
-            else:
-                # use max/min opencl builtins
-                callsite_stream.write(
-                    "{} = {}{}({}, {});".format(
-                        out_var, ("f" if output_type == "float"
-                                  or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var,
-                        in_var), sdfg, state_id, node)
-
-        else:
-            # If this is the first iteration, assign the value read from the
-            # input directly to the output
-            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {} {} {};".format(
-                        out_var, is_first_iteration, in_var, out_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
-            else:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {}{}({}, {});".format(
-                        out_var, is_first_iteration, in_var,
-                        ("f" if output_type == "float"
-                         or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], out_var,
-                        in_var), sdfg, state_id, node)
-
-    @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
                                    node):
         kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
@@ -422,9 +360,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                callsite_stream, kernel_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 callsite_stream,
-                                                 kernel_stream)
 
         kernel_stream.write("\n")
 
@@ -545,7 +480,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         scope_dict = subgraph.scope_dict(node_to_children=True)
         top_scopes = [
             n for n in scope_dict[None]
-            if isinstance(n, dace.graph.nodes.EntryNode)
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
         if len(top_scopes) == 1:
@@ -618,7 +553,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                             set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
-            if not isinstance(node, dace.graph.nodes.AccessNode):
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
                 continue
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
@@ -626,9 +561,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream,
                                                module_body_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 module_stream,
-                                                 module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
@@ -694,7 +626,7 @@ __kernel void \\
                     raise SyntaxError('Duplicates found in memlets')
 
                 # Special case: code->code
-                if isinstance(edge.src, dace.graph.nodes.CodeNode):
+                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -723,7 +655,7 @@ __kernel void \\
                     continue
 
                 # Special case: code->code
-                if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -816,12 +748,12 @@ __kernel void \\
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
 
-        if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+        if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
             # Input memlet
             connector = edge.dst_conn
             is_output = False
             tasklet = edge.dst
-        elif isinstance(edge.src, dace.graph.nodes.CodeNode):
+        elif isinstance(edge.src, dace.sdfg.nodes.CodeNode):
             # Output memlet
             connector = edge.src_conn
             is_output = True
@@ -1046,16 +978,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         # Not [], "" or None
         if not node.code:
             return ''
-        # Not [], "" or None
-        if node.code_global:
-            if node.language is not dtypes.Language.CPP:
-                raise ValueError(
-                    "Global code only supported for C++ tasklets: got {}".
-                    format(node.language))
-            function_stream.write(
-                type(node).__properties__["code_global"].to_string(
-                    node.code_global), sdfg, state_id, node)
-            function_stream.write("\n", sdfg, state_id, node)
 
         # If raw C++ code, return the code directly
         if node.language != dtypes.Language.Python:
@@ -1068,7 +990,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                 state_id, node)
             return
 
-        body = node.code
+        body = node.code.code
 
         callsite_stream.write('// Tasklet code (%s)\n' % node.label, sdfg,
                               state_id, node)
@@ -1086,15 +1008,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
-        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()
-                                                 [node]].defined_vars
+        defined_symbols = state_dfg.symbols_defined_at(node)
 
-        # Dtypes is a dictionary containing associations name -> type (ctypes)
-        # Add defined variables
-        defined_symbols = {str(x): x.dtype for x in defined_symbols}
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
+        # TODO: Use connector types
         for connector, (memlet, _, _) in memlets.items():
             if connector is not None:
                 defined_symbols.update(
@@ -1102,6 +1021,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
 
         used_streams = []
         for stmt in body:  # for each statement in tasklet body
+            stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
                 sdfg, self._dispatcher.defined_vars, memlets,
                 self._memory_widths, sdfg.constants)
@@ -1352,4 +1272,3 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             node.func = new_node
 
         return self.generic_visit(node)
-

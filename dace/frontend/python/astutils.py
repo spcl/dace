@@ -214,8 +214,9 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 def negate_expr(node):
     """ Negates an AST expression by adding a `Not` AST node in front of it. 
     """
-    if isinstance(node, dict):
-        node = node['code_or_block']
+    from dace.properties import CodeBlock  # Avoid import loop
+    if isinstance(node, CodeBlock):
+        node = node.code
     if hasattr(node, "__len__"):
         if len(node) > 1:
             raise ValueError("negate_expr only expects "
@@ -323,3 +324,35 @@ class ASTFindReplace(ast.NodeTransformer):
         if node.arg in self.repldict:
             node.arg = self.repldict[node.arg]
         return self.generic_visit(node)
+
+
+class TaskletFreeSymbolVisitor(ast.NodeVisitor):
+    """ 
+    Simple Python AST visitor to find free symbols in a code, not including
+    attributes and function calls.
+    """
+    def __init__(self, defined_syms):
+        super().__init__()
+        self.free_symbols = set()
+        self.defined = set(defined_syms)
+
+    def visit_Call(self, node: ast.Call):
+        for arg in node.args:
+            self.visit(arg)
+        for kwarg in node.keywords:
+            self.visit(kwarg)
+
+    def visit_Attribute(self, node):
+        pass
+
+    def visit_AnnAssign(self, node):
+        # Skip visiting annotation
+        self.visit(node.target)
+        self.visit(node.value)
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
+            self.free_symbols.add(node.id)
+        else:
+            self.defined.add(node.id)
+        self.generic_visit(node)

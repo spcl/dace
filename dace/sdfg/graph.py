@@ -1,10 +1,9 @@
-""" Graph and multigraph implementations for DaCe. """
+""" File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
 import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
-from dace.properties import Property
 import dace.serialize
 
 
@@ -41,13 +40,11 @@ class Edge(object):
         yield self._data
 
     def to_json(self, parent_graph):
-        # Slight hack to preserve the old format (attributes should not behave like this)
         memlet_ret = self.data.to_json(parent_graph)
         ret = {
             'type': type(self).__name__,
             'attributes': {
-                'data':
-                memlet_ret  #TODO: FIXME: Why is data() not a Property instance? (Would need MemletProperty class)
+                'data': memlet_ret
             },
             'src': str(parent_graph.node_id(self.src)),
             'dst': str(parent_graph.node_id(self.dst)),
@@ -129,17 +126,17 @@ class MultiConnectorEdge(MultiEdge):
     def src_conn(self):
         return self._src_conn
 
-    @property
-    def src_connector(self):
-        return self._src_conn
+    @src_conn.setter
+    def src_conn(self, val):
+        self._src_conn = val
 
     @property
     def dst_conn(self):
         return self._dst_conn
 
-    @property
-    def dst_connector(self):
-        return self._dst_conn
+    @dst_conn.setter
+    def dst_conn(self, val):
+        self._dst_conn = val
 
     def __iter__(self):
         yield self._src
@@ -166,6 +163,11 @@ class Graph(object):
             'edges': [e.to_json(self) for e in self.edges()],
         }
         return ret
+
+    @property
+    def nx(self):
+        """ Returns a networkx version of this graph if available. """
+        raise TypeError("No networkx version exists for this graph type")
 
     def nodes(self):
         """Returns an iterable to internal graph nodes."""
@@ -305,7 +307,7 @@ class Graph(object):
                     queue.append(next_node)
                 yield e
 
-    def dfs_edges(G, source, condition=None):
+    def dfs_edges(self, source, condition=None):
         """Traverse a graph (DFS) with an optional condition to filter out nodes
         """
         if isinstance(source, list): nodes = source
@@ -315,7 +317,7 @@ class Graph(object):
             if start in visited:
                 continue
             visited.add(start)
-            stack = [(start, G.out_edges(start).__iter__())]
+            stack = [(start, self.out_edges(start).__iter__())]
             while stack:
                 parent, children = stack[-1]
                 try:
@@ -326,7 +328,7 @@ class Graph(object):
                                 e.src, e.dst, e.data):
                             yield e
                             stack.append(
-                                (e.dst, G.out_edges(e.dst).__iter__()))
+                                (e.dst, self.out_edges(e.dst).__iter__()))
                 except StopIteration:
                     stack.pop()
 
@@ -363,10 +365,23 @@ class Graph(object):
                     queue.append(succ)
         return seen.keys()
 
-    def all_simple_paths(self, source_node, dest_node):
-        """ Finds all simple paths (with no repeating nodes) from source_node
-            to dest_node """
-        return nx.all_simple_paths(self._nx, source_node, dest_node)
+    def all_simple_paths(self, source_node, dest_node, as_edges=False):
+        """ 
+        Finds all simple paths (with no repeating nodes) from source_node
+        to dest_node.
+        :param source_node: Node to start from.
+        :param dest_node: Node to end at.
+        :param as_edges: If True, returns list of edges instead of nodes.
+        """
+        if as_edges:
+            for path in map(
+                    nx.utils.pairwise,
+                    nx.all_simple_paths(self._nx, source_node, dest_node)):
+                yield [
+                    Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path
+                ]
+        else:
+            return nx.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin, end):
         """Finds all nodes between begin and end. Returns None if there is any
@@ -395,6 +410,7 @@ class Graph(object):
 @dace.serialize.serializable
 class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
+        super().__init__()
         self._graph = graph
         self._subgraph_nodes = subgraph_nodes
 
@@ -480,6 +496,7 @@ class SubgraphView(Graph):
 @dace.serialize.serializable
 class DiGraph(Graph):
     def __init__(self):
+        super().__init__()
         self._nx = nx.DiGraph()
 
     def nodes(self):
@@ -537,6 +554,7 @@ class DiGraph(Graph):
 
 class MultiDiGraph(DiGraph):
     def __init__(self):
+        super().__init__()
         self._nx = nx.MultiDiGraph()
 
     @staticmethod
@@ -545,7 +563,7 @@ class MultiDiGraph(DiGraph):
 
     def add_edge(self, source, destination, data):
         key = self._nx.add_edge(source, destination, data=data)
-        return (source, destination, data, key)
+        return source, destination, data, key
 
     def remove_edge(self, edge):
         self._nx.remove_edge(edge[0], edge[1], edge.key)
@@ -571,7 +589,7 @@ class MultiDiConnectorGraph(MultiDiGraph):
                                 data=data,
                                 src_conn=src_connector,
                                 dst_conn=dst_connector)
-        return (source, src_connector, destination, dst_connector, data, key)
+        return source, src_connector, destination, dst_connector, data, key
 
     def remove_edge(self, edge):
         self._nx.remove_edge(edge[0], edge[1], edge.key)

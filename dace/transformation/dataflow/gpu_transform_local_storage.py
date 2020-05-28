@@ -4,7 +4,8 @@
 import copy
 
 from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 from dace.config import Config
@@ -58,13 +59,15 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     )
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _reduce = nodes.Reduce("lambda: None", None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce("lambda: None", None)
 
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(GPUTransformLocalStorage._map_entry),
-            nxutil.node_path_graph(GPUTransformLocalStorage._reduce),
+            sdutil.node_path_graph(GPUTransformLocalStorage._map_entry),
+            sdutil.node_path_graph(GPUTransformLocalStorage._reduce),
         ]
 
     @staticmethod
@@ -123,12 +126,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         elif expr_index == 1:
             reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
 
-            # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule == dtypes.ScheduleType.MPI
-                    or reduce.schedule == dtypes.ScheduleType.GPU_Device
-                    or reduce.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
-                return False
-
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
             current_node = sdict[reduce]
@@ -183,7 +180,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         gpu_storage_types = [
             dtypes.StorageType.GPU_Global,
             dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack,
         ]
 
         #######################################################

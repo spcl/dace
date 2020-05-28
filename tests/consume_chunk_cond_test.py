@@ -18,7 +18,7 @@ consume_entry, consume_exit = state.add_consume('cons', ('p', str(nprocs)),
                                                 chunksize=2)
 tasklet = state.add_tasklet(
     'fibonacci', {'s'}, {'sout', 'val'}, """
-for i in range(cons_numelems):
+for i in range(__dace_cons_numelems):
     if s[i] == 1:
         val = 1
     elif s[i] > 1:

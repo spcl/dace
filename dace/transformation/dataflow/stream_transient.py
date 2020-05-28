@@ -6,8 +6,9 @@ import warnings
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import make_properties, Property
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
 from dace.sdfg import SDFG
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -62,7 +63,7 @@ class StreamTransient(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(StreamTransient._tasklet,
+            sdutil.node_path_graph(StreamTransient._tasklet,
                                    StreamTransient._map_exit,
                                    StreamTransient._outer_map_exit)
         ]
@@ -172,7 +173,7 @@ class AccumulateTransient(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(AccumulateTransient._tasklet,
+            sdutil.node_path_graph(AccumulateTransient._tasklet,
                                    AccumulateTransient._map_exit,
                                    AccumulateTransient._outer_map_exit)
         ]

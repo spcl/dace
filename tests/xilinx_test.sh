@@ -58,7 +58,6 @@ run_all() {
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
     run_sample remove_degenerate_loop remove_degenerate_loop_test
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 0 24
-    run_sample ../samples/fpga/histogram_fpga_parallel histogram_fpga_parallel_16 0 128 128 16
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream 0 64 64 640
     run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 
     run_sample ../samples/fpga/filter_fpga_vectorized filter_fpga_vectorized_4 1 8192 4 0.25

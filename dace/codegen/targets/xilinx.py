@@ -6,7 +6,7 @@ import re
 import dace
 from dace import registry
 from dace.config import Config
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
@@ -36,6 +36,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             # Don't register this code generator
             return
         super().__init__(*args, **kwargs)
+        # {(kernel name, interface name): (memory type, memory bank)}
+        self._interface_assignments = {}
 
     @staticmethod
     def cmake_options():
@@ -143,6 +145,38 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                        target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
+
+        # Configuration file with interface assignments
+        are_assigned = [
+            v is not None for v in self._interface_assignments.values()
+        ]
+        bank_assignment_code = []
+        if any(are_assigned):
+            if not all(are_assigned):
+                raise RuntimeError("Some, but not all global memory arrays "
+                                   "were assigned to memory banks: {}".format(
+                                       self._interface_assignments))
+            are_assigned = True
+        else:
+            are_assigned = False
+        for name, _ in self._host_codes:
+            # Only iterate over assignments if any exist
+            if are_assigned:
+                for (kernel_name, interface_name), (
+                        memory_type,
+                        memory_bank) in self._interface_assignments.items():
+                    if kernel_name != name:
+                        continue
+                    bank_assignment_code.append("{},{},{}".format(
+                        interface_name, memory_type.name, memory_bank))
+            # Create file even if there are no assignments
+            kernel_code_objs.append(
+                CodeObject("{}_memory_interfaces".format(name),
+                           "\n".join(bank_assignment_code),
+                           "csv",
+                           XilinxCodeGen,
+                           "Xilinx",
+                           target_type="device"))
 
         return [host_code_obj] + kernel_code_objs
 
@@ -307,15 +341,16 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         scalars = list(sorted(scalars, key=lambda t: t[0]))
 
         # Build kernel signature
-        kernel_args = []
+        array_args = []
         for is_output, dataname, data in arrays:
             kernel_arg = self.make_kernel_argument(
                 data, dataname, self._memory_widths[(dataname, sdfg)],
                 is_output, True)
             if kernel_arg:
-                kernel_args.append(kernel_arg)
-        kernel_args += (v.signature(with_types=True, name=k)
-                        for k, v in scalars)
+                array_args.append(kernel_arg)
+        kernel_args = array_args + [
+            v.signature(with_types=True, name=k) for k, v in scalars
+        ]
 
         kernel_args = dace.dtypes.deduplicate(kernel_args)
 
@@ -326,15 +361,27 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             sdfg, state_id)
 
         # Insert interface pragmas
-        mapped_args = 0
-        for arg in kernel_args:
+        num_mapped_args = 0
+        for arg, (_, dataname, _) in zip(array_args, arrays):
             var_name = re.findall("\w+", arg)[-1]
             if "*" in arg:
+                interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
                     "#pragma HLS INTERFACE m_axi port={} "
-                    "offset=slave bundle=gmem{}".format(var_name, mapped_args),
+                    "offset=slave bundle={}".format(var_name, interface_name),
                     sdfg, state_id)
-                mapped_args += 1
+                # Map this interface to the corresponding location
+                # specification to be passed to the Xilinx compiler
+                assignment = self._bank_assignments[(dataname, sdfg)]
+                if assignment is not None:
+                    mem_type, mem_bank = assignment
+                    self._interface_assignments[(kernel_name,
+                                                 interface_name)] = (mem_type,
+                                                                     mem_bank)
+                else:
+                    self._interface_assignments[(kernel_name,
+                                                 interface_name)] = None
+                num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
             var_name = re.findall("\w+", arg)[-1]
@@ -437,7 +484,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         scope_dict = subgraph.scope_dict(node_to_children=True)
         top_scopes = [
             n for n in scope_dict[None]
-            if isinstance(n, dace.graph.nodes.EntryNode)
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
         if len(top_scopes) == 1:
@@ -523,7 +570,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                             set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
-            if not isinstance(node, dace.graph.nodes.AccessNode):
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
                 continue
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
@@ -531,9 +578,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream,
                                                module_body_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 module_stream,
-                                                 module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
@@ -546,52 +590,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         module_stream.write("}\n\n")
 
         self._dispatcher.defined_vars.exit_scope(subgraph)
-
-    @staticmethod
-    def make_reduction(sdfg, state_id, node, output_memlet, dtype,
-                       vector_length_in, vector_length_out, output_type,
-                       reduction_type, callsite_stream, iterators_inner,
-                       input_subset, identity, out_var, in_var):
-        """
-        Generates reduction loop body
-        """
-        axes = node.axes
-
-        # If axes were not defined, use all input dimensions
-        if axes is None:
-            axes = tuple(range(input_subset.dims()))
-
-        # generate library call
-        reduction_cpp = "dace::Reduce<{}, {}, {}, {}<{}>>".format(
-            dtype.ctype, vector_length_in, vector_length_out,
-            REDUCTION_TYPE_TO_HLSLIB[reduction_type], dtype.ctype)
-
-        # Check if this is the first iteration of accumulating into this
-        # location
-
-        is_first_iteration = " && ".join([
-            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
-            for i, axis in enumerate(axes)
-        ])
-        if identity is not None:
-            # If this is the first iteration, set the previous value to be
-            # identity, otherwise read the value from the output location
-            prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
-                                                     is_first_iteration,
-                                                     identity, out_var), sdfg,
-                state_id, node)
-            callsite_stream.write(
-                "{} = {}({}, {});".format(out_var, reduction_cpp, prev_var,
-                                          in_var), sdfg, state_id, node)
-        else:
-            # If this is the first iteration, assign the value read from the
-            # input directly to the output
-            callsite_stream.write(
-                "{} = ({}) ? ({}) : {}({}, {});".format(
-                    out_var, is_first_iteration, in_var, reduction_cpp,
-                    out_var, in_var), sdfg, state_id, node)
 
     def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
                                  kernel_stream, function_stream,
@@ -639,8 +637,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream, entry_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 module_stream, entry_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
@@ -708,7 +704,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     raise SyntaxError('Duplicates found in memlets')
 
                 # Special case: code->code
-                if isinstance(edge.src, dace.graph.nodes.CodeNode):
+                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -737,7 +733,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     continue
 
                 # Special case: code->code
-                if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
