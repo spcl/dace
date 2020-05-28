@@ -4,7 +4,7 @@ from dace.data import Array
 from dace.symbolic import symstr
 import dace.library
 import dace.properties
-import dace.graph.nodes
+import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
@@ -147,11 +147,11 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
                          (({dtype}*)_c) + __ib*{stride_c}, {ldc});
         }}'''.format_map(opt)
 
-        tasklet = dace.graph.nodes.Tasklet(node.name,
-                                           node.in_connectors,
-                                           node.out_connectors,
-                                           code,
-                                           language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
         return tasklet
 
 
@@ -191,16 +191,16 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         for e in state.in_edges(node):
             if e.dst_conn == '_a':
                 anode = state.memlet_path(e)[0].src
-                if isinstance(anode, dace.graph.nodes.AccessNode):
+                if isinstance(anode, dace.sdfg.nodes.AccessNode):
                     adesc: Array = sdfg.arrays[anode.data]
             elif e.dst_conn == '_b':
                 bnode = state.memlet_path(e)[0].src
-                if isinstance(bnode, dace.graph.nodes.AccessNode):
+                if isinstance(bnode, dace.sdfg.nodes.AccessNode):
                     bdesc: Array = sdfg.arrays[bnode.data]
         for e in state.out_edges(node):
             if e.src_conn == '_c':
                 cnode = state.memlet_path(e)[-1].dst
-                if isinstance(cnode, dace.graph.nodes.AccessNode):
+                if isinstance(cnode, dace.sdfg.nodes.AccessNode):
                     cdesc: Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
@@ -222,11 +222,11 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
                 call.format_map(opt))
-        tasklet = dace.graph.nodes.Tasklet(node.name,
-                                           node.in_connectors,
-                                           node.out_connectors,
-                                           code,
-                                           language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
 
         # If buffers are not on the GPU, copy them
         # TODO: This creates variable shadowing
@@ -267,7 +267,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
 
 
 @dace.library.node
-class BatchedMatMul(dace.graph.nodes.LibraryNode):
+class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
