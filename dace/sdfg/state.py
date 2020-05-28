@@ -1226,7 +1226,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             debuginfo=None,
             **kwargs
     ) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
-        """ Adds a pipeline entry and pipeline exit.
+        """ Adds a pipeline entry and pipeline exit. These are used for FPGA
+            kernels to induce distinct behavior between an "initialization"
+            phase, a main streaming phase, and a "draining" phase, which require
+            a additive number of extra loop iterations (i.e., N*M + I + D),
+            where I and D are the number of initialization/drain iterations.
+            The code can detect which phase it is in by querying the
+            init_condition() and drain_condition() boolean variable.
+
             :param name:          Pipeline label
             :param ndrange:       Mapping between range variable names and
                                   their subsets (parsed from strings)
