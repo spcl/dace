@@ -4,9 +4,10 @@
 from dace import registry
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFG
+from dace.sdfg import utils as sdutil
 from dace.symbolic import symstr
 from dace.transformation import pattern_matching as pm
 
@@ -40,7 +41,7 @@ class MapReduceFusion(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(MapReduceFusion._tasklet,
+            sdutil.node_path_graph(MapReduceFusion._tasklet,
                                    MapReduceFusion._tmap_exit,
                                    MapReduceFusion._in_array,
                                    MapReduceFusion._reduce,
@@ -187,7 +188,7 @@ class MapWCRFusion(pm.Transformation):
     def expressions():
         return [
             # Map, then partial reduction of axes
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(
                 MapWCRFusion._tasklet, MapWCRFusion._tmap_exit,
                 MapWCRFusion._in_array, MapWCRFusion._rmap_out_entry,
                 MapWCRFusion._rmap_in_entry, MapWCRFusion._rmap_in_tasklet,

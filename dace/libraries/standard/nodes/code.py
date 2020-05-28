@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dace import dtypes
 from dace.data import Data
-from dace.graph.nodes import Node, Tasklet, LibraryNode
+from dace.sdfg.nodes import Node, Tasklet, LibraryNode
 import dace.library
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState

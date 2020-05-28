@@ -6,7 +6,8 @@ from copy import deepcopy as dcpy
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
 from dace.transformation import pattern_matching
 import sympy
@@ -158,7 +159,7 @@ class StripMining(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(StripMining._map_entry)
+            sdutil.node_path_graph(StripMining._map_entry)
             # kStripMining._tasklet, StripMining._map_exit)
         ]
 
@@ -298,9 +299,9 @@ class StripMining(pattern_matching.Transformation):
 
         # Redirect edges
         new_map_entry.in_connectors = dcpy(map_entry.in_connectors)
-        nxutil.change_edge_dest(graph, map_entry, new_map_entry)
+        sdutil.change_edge_dest(graph, map_entry, new_map_entry)
         new_map_exit.out_connectors = dcpy(map_exit.out_connectors)
-        nxutil.change_edge_src(graph, map_exit, new_map_exit)
+        sdutil.change_edge_src(graph, map_exit, new_map_exit)
 
         # Create new entry edges
         new_in_edges = dict()

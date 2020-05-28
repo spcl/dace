@@ -4,7 +4,7 @@ from dace.config import Config
 import dace.library
 import dace.properties
 from dace.symbolic import symstr
-import dace.graph.nodes
+import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.properties import Property
 from .. import environments
@@ -204,7 +204,7 @@ class ExpandGemmPure(ExpandTransformation):
 
 
 @dace.library.node
-class Gemm(dace.graph.nodes.LibraryNode):
+class Gemm(dace.sdfg.nodes.LibraryNode):
     """Executes alpha * (A @ B) + beta * C. C should be unidirectionally
        broadcastable (ONNX terminology) to A @ B.
     """

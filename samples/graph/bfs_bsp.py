@@ -25,14 +25,11 @@ estate = sdfg.add_state('doit2')
 rst0 = sdfg.add_state('reset0')
 rst1 = sdfg.add_state('reset1')
 
-sdfg.add_edge(istate, rst1,
-              dp.graph.edges.InterstateEdge(assignments={'d': '1'}))
-sdfg.add_edge(rst1, dstate, dp.graph.edges.InterstateEdge())
-sdfg.add_edge(dstate, rst0,
-              dp.graph.edges.InterstateEdge('fsz1 > 0', {'d': 'd+1'}))
-sdfg.add_edge(rst0, estate, dp.graph.edges.InterstateEdge())
-sdfg.add_edge(estate, rst1,
-              dp.graph.edges.InterstateEdge('fsz0 > 0', {'d': 'd+1'}))
+sdfg.add_edge(istate, rst1, dp.sdfg.InterstateEdge(assignments={'d': '1'}))
+sdfg.add_edge(rst1, dstate, dp.sdfg.InterstateEdge())
+sdfg.add_edge(dstate, rst0, dp.sdfg.InterstateEdge('fsz1 > 0', {'d': 'd+1'}))
+sdfg.add_edge(rst0, estate, dp.sdfg.InterstateEdge())
+sdfg.add_edge(estate, rst1, dp.sdfg.InterstateEdge('fsz0 > 0', {'d': 'd+1'}))
 
 ######################
 # Initialization state

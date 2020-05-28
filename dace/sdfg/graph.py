@@ -307,7 +307,7 @@ class Graph(object):
                     queue.append(next_node)
                 yield e
 
-    def dfs_edges(G, source, condition=None):
+    def dfs_edges(self, source, condition=None):
         """Traverse a graph (DFS) with an optional condition to filter out nodes
         """
         if isinstance(source, list): nodes = source
@@ -317,7 +317,7 @@ class Graph(object):
             if start in visited:
                 continue
             visited.add(start)
-            stack = [(start, G.out_edges(start).__iter__())]
+            stack = [(start, self.out_edges(start).__iter__())]
             while stack:
                 parent, children = stack[-1]
                 try:
@@ -328,7 +328,7 @@ class Graph(object):
                                 e.src, e.dst, e.data):
                             yield e
                             stack.append(
-                                (e.dst, G.out_edges(e.dst).__iter__()))
+                                (e.dst, self.out_edges(e.dst).__iter__()))
                 except StopIteration:
                     stack.pop()
 
@@ -365,10 +365,23 @@ class Graph(object):
                     queue.append(succ)
         return seen.keys()
 
-    def all_simple_paths(self, source_node, dest_node):
-        """ Finds all simple paths (with no repeating nodes) from source_node
-            to dest_node """
-        return nx.all_simple_paths(self._nx, source_node, dest_node)
+    def all_simple_paths(self, source_node, dest_node, as_edges=False):
+        """ 
+        Finds all simple paths (with no repeating nodes) from source_node
+        to dest_node.
+        :param source_node: Node to start from.
+        :param dest_node: Node to end at.
+        :param as_edges: If True, returns list of edges instead of nodes.
+        """
+        if as_edges:
+            for path in map(
+                    nx.utils.pairwise,
+                    nx.all_simple_paths(self._nx, source_node, dest_node)):
+                yield [
+                    Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path
+                ]
+        else:
+            return nx.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin, end):
         """Finds all nodes between begin and end. Returns None if there is any
@@ -397,6 +410,7 @@ class Graph(object):
 @dace.serialize.serializable
 class SubgraphView(Graph):
     def __init__(self, graph, subgraph_nodes):
+        super().__init__()
         self._graph = graph
         self._subgraph_nodes = subgraph_nodes
 

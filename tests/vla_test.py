@@ -31,7 +31,7 @@ if __name__ == '__main__':
         if not w:
             print('FAIL: No warnings caught')
             exit(2)
-        if not any('Variable-length' in warn.message.args[0] for warn in w):
+        if not any('Variable-length' in str(warn.message) for warn in w):
             print('FAIL: No VLA warnings caught')
             exit(3)
 

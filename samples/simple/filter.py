@@ -14,10 +14,11 @@ def pbf(A, out, outsz, ratio):
     @dace.map(_[0:N])
     def filter(i):
         a << A[i]
+        r << ratio
         b >> ostream(-1)
         osz >> outsz(-1, lambda x, y: x + y, 0)
 
-        filter = (a > ratio)
+        filter = (a > r)
 
         if filter:
             b = a

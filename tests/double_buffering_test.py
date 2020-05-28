@@ -2,7 +2,8 @@
 import dace
 import numpy as np
 
-from dace.transformation.dataflow import DoubleBuffering
+from dace.transformation.pattern_matching import match_pattern
+from dace.transformation.dataflow import DoubleBuffering, InLocalStorage
 
 
 @dace.program
@@ -12,16 +13,11 @@ def mm_double_buffered(A: dace.float32[256, 256], B: dace.float32[256, 256],
     for tile_i, tile_j in dace.map[0:256:128, 0:256:128]:
         # Load inputs in increments of 8 (128x8 tiles)
         for tile_k in dace.map[0:256:8]:
-            sA = np.ndarray([128, 8], dtype=A.dtype)
-            sB = np.ndarray([8, 128], dtype=B.dtype)
-            A[tile_i:tile_i + 128, tile_k:tile_k + 8] >> sA[0:128, 0:8]
-            B[tile_k:tile_k + 8, tile_j:tile_j + 128] >> sB[0:8, 0:128]
-
             # Compute outer products on input tiles
             for k, i, j in dace.map[0:8, 0:128, 0:128]:
                 with dace.tasklet:
-                    a << sA[i, k]
-                    b << sB[k, j]
+                    a << A[tile_i + i, tile_k + k]
+                    b << B[tile_k + k, tile_j + j]
                     c >> C(1, lambda x, y: x + y)[tile_i + i, tile_j + j]
                     c = a * b
 
@@ -38,7 +34,19 @@ if __name__ == '__main__':
     diff = np.linalg.norm(expected_C - C) / (256 * 256)
     print('Difference (before):', diff)
 
-    sdfg.apply_transformations(DoubleBuffering)
+    # Apply local storage transformation on inner map (last two transformations)
+    sdfg.apply_strict_transformations()
+    for i in range(2):
+        for match in reversed(
+                list(match_pattern(sdfg.node(0), InLocalStorage, sdfg))):
+            match.apply(sdfg)
+            break
+        else:
+            raise ValueError('Local storage transformation not applied')
+
+    applied = sdfg.apply_transformations(DoubleBuffering)
+    if applied != 1:
+        raise ValueError('Double-buffering transformation not applied')
     C = np.zeros((256, 256), dtype=np.float32)
     sdfg(A=A, B=B, C=C)
 

@@ -1,6 +1,6 @@
 import dace.library
 import dace.properties
-import dace.graph.nodes
+import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
 from .. import environments
 
@@ -52,11 +52,11 @@ class ExpandDotOpenBLAS(ExpandTransformation):
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
         code = "_result = cblas_{}(n, _x, 1, _y, 1);".format(func)
-        tasklet = dace.graph.nodes.Tasklet(node.name,
-                                           node.in_connectors,
-                                           node.out_connectors,
-                                           code,
-                                           language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
         return tasklet
 
 
@@ -91,17 +91,17 @@ class ExpandDotCuBLAS(ExpandTransformation):
                 "cublas{func}(__dace_cublas_handle, n, ___x.ptr<1>(), 1, "
                 "___y.ptr<1>(), 1, ___result.ptr<1>());".format(func=func))
 
-        tasklet = dace.graph.nodes.Tasklet(node.name,
-                                           node.in_connectors,
-                                           node.out_connectors,
-                                           code,
-                                           language=dace.dtypes.Language.CPP)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
 
         return tasklet
 
 
 @dace.library.node
-class Dot(dace.graph.nodes.LibraryNode):
+class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
