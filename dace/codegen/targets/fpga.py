@@ -1180,9 +1180,11 @@ class FPGACodeGen(TargetCodeGenerator):
                         it=it, step=r[2]))
             if len(cond) > 0:
                 callsite_stream.write("}\n")
-
-        self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
-                                            function_stream, callsite_stream)
+            callsite_stream.write("}\n}\n")
+        else:
+            self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
+                                                function_stream,
+                                                callsite_stream)
 
     def generate_kernel(self, sdfg, state, kernel_name, subgraphs,
                         function_stream, callsite_stream):
