@@ -268,11 +268,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # We need to track down all accesses to this array
         accesses = self._find_shift_register_accesses(sdfg, state, node,
                                                       shift_width)
-        access_args = ", ".join(map(str, sorted(accesses)))
-        kernel_stream.write(
-            "hlslib::ShiftRegister<dace::vec<{}, {}>, {}> {};".format(
-                desc.dtype, shift_width, access_args, var_name))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.ShiftRegister)
+        raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
@@ -377,7 +373,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def make_shift_register_write(self, defined_type, type_str, var_name,
                                   vector_length, write_expr, index, read_expr,
                                   wcr, is_unpack, packing_factor):
-        return "{}.Shift({});".format(var_name, read_expr)
+        raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
