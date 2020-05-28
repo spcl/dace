@@ -9,7 +9,7 @@ import warnings
 
 from dace import registry, subsets, symbolic, dtypes
 from dace.memlet import EmptyMemlet, Memlet
-from dace.graph import nodes
+from dace.sdfg import nodes
 
 
 @registry.make_registry
@@ -539,7 +539,7 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def propagate_labels_sdfg(sdfg):
+def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         @note: This is an in-place operation on the SDFG.
     """
@@ -579,7 +579,7 @@ def _propagate_labels(g, sdfg):
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in g.nodes():
         if isinstance(node, nodes.NestedSDFG):
-            propagate_labels_sdfg(node.sdfg)
+            propagate_memlets_sdfg(node.sdfg)
 
     scopes_to_process = g.scope_leaves()
     next_scopes = set()
@@ -662,11 +662,11 @@ def propagate_memlet(dfg_state,
         return EmptyMemlet()
 
     sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in scope_node.in_connectors
+    scope_node_symbols = set(conn for conn in entry_node.in_connectors
                              if not conn.startswith('IN_'))
     defined_vars = [
         symbolic.pystr_to_symbolic(s)
-        for s in (sdfg.symbols_defined_at(scope_node, dfg_state).keys())
+        for s in dfg_state.symbols_defined_at(entry_node).keys()
         if s not in scope_node_symbols
     ]
 
@@ -736,7 +736,7 @@ def propagate_memlet(dfg_state,
         new_subset = subsets.Range.from_array(arr)
     else:
         raise NotImplementedError('Unimplemented primitive: %s' %
-                                  type(scope_node))
+                                  type(entry_node))
     ### End of subset propagation
 
     new_memlet = copy.copy(memlet)

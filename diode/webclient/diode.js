@@ -3215,7 +3215,7 @@ class DIODE_Context_PropWindow extends DIODE_Context {
         free_symbol_table.setHeaders("Symbol", "Type", "Dimensions", "Controls");
 
         // Go over the undefined symbols first, then over the arrays (SDFG::arrays)
-        let all_symbols = [...data.undefined_symbols, "SwitchToArrays", ...Object.entries(data.attributes._arrays)];
+        let all_symbols = [...data.attributes.symbols, "SwitchToArrays", ...Object.entries(data.attributes._arrays)];
 
         let caller_id = calling_context;
         console.assert(caller_id != undefined && typeof (caller_id) == 'string');

@@ -1,6 +1,7 @@
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, registry, symbolic
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 
@@ -33,7 +34,7 @@ class Vectorization(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(Vectorization._map_entry,
+            sdutil.node_path_graph(Vectorization._map_entry,
                                    Vectorization._tasklet,
                                    Vectorization._map_exit)
         ]

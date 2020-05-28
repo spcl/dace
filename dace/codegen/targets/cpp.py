@@ -14,9 +14,9 @@ from dace.codegen.targets.target import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.properties import LambdaProperty
-from dace.sdfg import SDFG, is_devicelevel
+from dace.sdfg import SDFG, is_devicelevel_gpu
 
 
 def copy_expr(
@@ -552,7 +552,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if (max_streams >= 0 and not is_devicelevel(sdfg, state_dfg, node)
+        if (max_streams >= 0 and not is_devicelevel_gpu(sdfg, state_dfg, node)
                 and hasattr(node, "_cuda_stream")):
             callsite_stream.write(
                 'int __dace_current_stream_id = %d;\ncudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
@@ -570,7 +570,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             type(node).__properties__["code"].to_string(node.code), sdfg,
             state_id, node)
 
-        if hasattr(node, "_cuda_stream") and not is_devicelevel(
+        if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(
                 sdfg, state_dfg, node):
             synchronize_streams(sdfg, state_dfg, state_id, node, node,
                                 callsite_stream)
@@ -817,7 +817,8 @@ class StructInitializer(ExtNodeTransformer):
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     state_dfg = sdfg.nodes()[state_id]
-    if hasattr(node, "_cuda_stream") or is_devicelevel(sdfg, state_dfg, node):
+    if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(
+            sdfg, state_dfg, node):
         return
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream"):

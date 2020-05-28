@@ -2,7 +2,7 @@ import inspect
 import sys
 import types
 import dace.properties
-from dace.graph.nodes import LibraryNode
+from dace.sdfg.nodes import LibraryNode
 from dace.transformation.pattern_matching import (Transformation,
                                                   ExpandTransformation)
 
@@ -121,7 +121,7 @@ def node(n):
     n = dace.properties.make_properties(n)
     if not issubclass(n, LibraryNode):
         raise TypeError("Library node class \"" + n.__name__ +
-                        "\" must derive from dace.graph.nodes.LibraryNode")
+                        "\" must derive from dace.sdfg.nodes.LibraryNode")
     if not hasattr(n, "implementations"):
         raise ValueError("Library node class \"" + n.__name__ +
                          "\" must define implementations.")

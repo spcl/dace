@@ -480,7 +480,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         scope_dict = subgraph.scope_dict(node_to_children=True)
         top_scopes = [
             n for n in scope_dict[None]
-            if isinstance(n, dace.graph.nodes.EntryNode)
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
         if len(top_scopes) == 1:
@@ -553,7 +553,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                             set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
-            if not isinstance(node, dace.graph.nodes.AccessNode):
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
                 continue
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
@@ -626,7 +626,7 @@ __kernel void \\
                     raise SyntaxError('Duplicates found in memlets')
 
                 # Special case: code->code
-                if isinstance(edge.src, dace.graph.nodes.CodeNode):
+                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -655,7 +655,7 @@ __kernel void \\
                     continue
 
                 # Special case: code->code
-                if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -748,12 +748,12 @@ __kernel void \\
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
 
-        if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+        if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
             # Input memlet
             connector = edge.dst_conn
             is_output = False
             tasklet = edge.dst
-        elif isinstance(edge.src, dace.graph.nodes.CodeNode):
+        elif isinstance(edge.src, dace.sdfg.nodes.CodeNode):
             # Output memlet
             connector = edge.src_conn
             is_output = True
@@ -1008,15 +1008,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
-        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()
-                                                 [node]].defined_vars
+        defined_symbols = state_dfg.symbols_defined_at(node)
 
-        # Dtypes is a dictionary containing associations name -> type (ctypes)
-        # Add defined variables
-        defined_symbols = {str(x): x.dtype for x in defined_symbols}
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
+        # TODO: Use connector types
         for connector, (memlet, _, _) in memlets.items():
             if connector is not None:
                 defined_symbols.update(

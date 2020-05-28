@@ -14,8 +14,7 @@ import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
-from dace.graph import labeling
-from dace.graph.nodes import Tasklet, NestedSDFG
+from dace.sdfg.nodes import Tasklet, NestedSDFG
 from dace.symbolic import symstr, SymExpr
 from dace.frontend.tensorflow.winograd import winograd_convolution
 from dace.frontend.tensorflow.transformations.redundant_array import (
@@ -75,6 +74,25 @@ def _tensorshape(tensor: tf.Tensor):
     if tensor.shape.dims is None or tensor.shape.dims == []:
         return 1  # Scalar
     return tensor.shape
+
+
+def _find_node(state, node_id_or_label):
+    """ Finds a node according to its ID (if integer is
+        provided) or label (if string is provided).
+
+        :param node_id_or_label  Node ID (if int) or label (if str)
+        :return A nodes.Node object
+    """
+
+    if isinstance(node_id_or_label, str):
+        for n in state.nodes():
+            if n.label == node_id_or_label:
+                return n
+        raise LookupError("Node %s not found" % node_id_or_label)
+    elif isinstance(node_id_or_label, int):
+        return state.nodes()[node_id_or_label]
+    else:
+        raise TypeError("node_id_or_label is not an int nor string")
 
 
 def string_builder(string):
@@ -199,23 +217,22 @@ class TFSession:
         self.training = True
 
         # add edges between states
-        sdfg.add_edge(
-            s0, s1,
-            dace.graph.edges.InterstateEdge(assignments=dict(__dacet1=0)))
+        sdfg.add_edge(s0, s1,
+                      dace.sdfg.InterstateEdge(assignments=dict(__dacet1=0)))
         sdfg.add_edge(
             s1,
             reinitState,
-            dace.graph.edges.InterstateEdge(
+            dace.sdfg.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 <" + str(iterations - 1),
                     dace.dtypes.Language.Python),
                 assignments={"__dacet1": "__dacet1+1"},
             ),
         )
-        sdfg.add_edge(reinitState, s1, dace.graph.edges.InterstateEdge())
+        sdfg.add_edge(reinitState, s1, dace.sdfg.InterstateEdge())
         sdfg.add_edge(
             s1, s2,
-            dace.graph.edges.InterstateEdge(
+            dace.sdfg.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 >= " +
                     str(iterations - 1), dace.dtypes.Language.Python)))
@@ -282,7 +299,7 @@ class TFSession:
                     state.remove_node(node)
                     if node.label in self.constDict:
                         del self.constDict[node.label]
-                elif isinstance(node, dace.graph.nodes.AccessNode):
+                elif isinstance(node, dace.sdfg.nodes.AccessNode):
                     node_types[node.data] = node.desc(self.graph).dtype.type
         ############################
         # Set up arguments
@@ -463,9 +480,15 @@ class TFSession:
                         state.remove_node(node)
                         if node.label in self.constDict:
                             del self.constDict[node.label]
-                    elif isinstance(node, dace.graph.nodes.AccessNode):
+                    elif isinstance(node, dace.sdfg.nodes.AccessNode):
                         node_types[node.data] = node.desc(
                             self.graph).dtype.type
+
+            # Remove arrays that were not used by other access nodes
+            for name, desc in list(self.graph.arrays.items()):
+                if name not in node_types and not isinstance(desc, Scalar):
+                    del self.graph.arrays[name]
+
             self.graph._arg_types.update(self.callbackTypeDict)
             self.graph.fill_scope_connectors()
             ############################
@@ -497,7 +520,8 @@ class TFSession:
             ############################
             # Mark outputs as non-transients
             for output in outputs:
-                self.graph.arrays[output].transient = False
+                if output in self.graph.arrays:
+                    self.graph.arrays[output].transient = False
             ############################
             # Compile the SDFG
             if gpu:
@@ -741,7 +765,7 @@ class TFSession:
         self.callbackFunctionDict[node_name] = tensorflow_callback
 
         # Register callback in SDFG
-        self.graph.add_symbol(node_name,
+        self.graph.add_scalar(node_name,
                               self.callbackTypeDict[node_name].dtype)
 
         callback_tasklet = self.state.add_tasklet(
@@ -873,7 +897,7 @@ class TFSession:
             str(_tensorshape(node.outputs[0])))
 
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node))
@@ -893,7 +917,7 @@ class TFSession:
         state = self.state
         label = string_builder(node.inputs[1].name)
         try:
-            fillNode = state.find_node(label)
+            fillNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -906,7 +930,7 @@ class TFSession:
 
         label = string_builder(node.inputs[0].name)
         try:
-            emptyNode = state.find_node(string_builder(node.inputs[0].name))
+            emptyNode = _find_node(state, string_builder(node.inputs[0].name))
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -939,7 +963,7 @@ class TFSession:
 
         # Check if the node is already in the graph and get as a list
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
 
         except (LookupError):
             outputNode = self.create_and_add_output_node(node)
@@ -1018,7 +1042,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1037,7 +1061,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
 
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1054,7 +1078,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1073,7 +1097,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1618,7 +1642,7 @@ class TFSession:
 
             label = string_builder(inp.name)
             try:
-                inputNode = state.find_node(label)
+                inputNode = _find_node(state, label)
             except (LookupError):
 
                 inputNode = self.create_and_add_input_node(inp)[0]
@@ -1666,7 +1690,7 @@ class TFSession:
         inp = node.inputs[0]
         label = string_builder(inp.name)
         try:
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.outputs[0]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -1800,7 +1824,7 @@ class TFSession:
         inp = node.inputs[0]
         label = string_builder(inp.name)
         try:
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[2]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -2442,7 +2466,7 @@ class TFSession:
             self.constDict[label] = shape
             # Make outputs as non transients
             try:
-                outpNode = self.state.find_node(label)
+                outpNode = _find_node(self.state, label)
             except (LookupError):
                 outpNode = self.state.add_array(
                     label,
@@ -3076,7 +3100,7 @@ class TFSession:
         for out in node.outputs:
             label = string_builder(out.name)
             try:
-                outputNode = state.find_node(label)
+                outputNode = _find_node(state, label)
             except (LookupError):
                 dtype = dace.typeclass(_tensortype(node))
                 shape = dace.properties.ShapeProperty.from_string(
@@ -3855,7 +3879,7 @@ class TFSession:
         # Try to find node in DaCe graph
         try:
             # If successful, use the existing node
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             # Get type and shape of the input tensor
             try:
@@ -3895,7 +3919,7 @@ class TFSession:
             # Try to find node in DaCe graph
             try:
                 # If successful, use the existing node
-                outputNode = state.find_node(label)
+                outputNode = _find_node(state, label)
             except (LookupError):
                 # Get type and shape of the tensor
                 dtype = dace.typeclass(_tensortype(out))

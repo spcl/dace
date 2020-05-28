@@ -181,7 +181,7 @@ class SpecializeMatMul(
 
 
 @dace.library.node
-class MatMul(dace.graph.nodes.LibraryNode):
+class MatMul(dace.sdfg.nodes.LibraryNode):
     """This is a "meta-node" which delegates to different implementations of
        matrix multiplication in the mathematical sense to the appropriate
        computational operators, namely GEMM, batched matrix multiplication,

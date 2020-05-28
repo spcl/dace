@@ -10,9 +10,8 @@ import pdb
 import select
 import sys
 
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, InterstateEdge
 from dace.memlet import Memlet
-from dace.graph.edges import InterstateEdge
 from dace.dtypes import AllocationLifetime, ScheduleType, StorageType, Language
 from dace.properties import CodeProperty
 
@@ -837,8 +836,8 @@ def make_sdfg(specialize):
     main_state = make_main_state(sdfg)
     post_state = make_post_state(sdfg)
 
-    sdfg.add_edge(pre_state, main_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(main_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, main_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(main_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 

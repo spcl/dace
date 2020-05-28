@@ -12,7 +12,7 @@ from dace import dtypes
 from dace.codegen import cppunparse
 from dace.symbolic import SymExpr
 from dace.symbolic import symstr
-from sympy import Basic
+import sympy
 import sys
 
 
@@ -29,7 +29,7 @@ def infer_types(code, symbols=None):
         _dispatch(ast.parse(code), symbols, inferred_symbols)
     elif isinstance(code, ast.AST):
         _dispatch(code, symbols, inferred_symbols)
-    elif isinstance(code, Basic) or isinstance(code, SymExpr):
+    elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         _dispatch(ast.parse(symstr(code)), symbols, inferred_symbols)
     elif isinstance(code, list):
         # call infer for any code elements, maintaining a list of inferred_symbols so far
@@ -51,9 +51,9 @@ def infer_expr_type(code, symbols=None):
     """
     symbols = symbols or {}
     inferred_symbols = {}
-    if isinstance(code, str):
-        parsed_ast = ast.parse(code)
-    elif isinstance(code, Basic) or isinstance(code, SymExpr):
+    if isinstance(code, (str, float, int, complex)):
+        parsed_ast = ast.parse(str(code))
+    elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         parsed_ast = ast.parse(symstr(code))
 
     # The parsed AST must only contain one expression

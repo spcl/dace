@@ -67,24 +67,24 @@ def make_iteration_space(sdfg, add_one=False):
     loop_end = sdfg.add_state("loop_end")
 
     sdfg.add_edge(loop_begin, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"i": 0}))
 
     sdfg.add_edge(
         loop_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i < N" + (" + W" if add_one else ""),
                 language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry, loop_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i >= N" + (" + W" if add_one else ""),
                 language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(loop_body, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": "i + W"}))
+                  dace.sdfg.InterstateEdge(assignments={"i": "i + W"}))
 
     return loop_body
 
@@ -318,22 +318,22 @@ def make_write_sdfg():
                                memlet=Memlet.simple(i_write_zero, "0"))
 
     sdfg.add_edge(loop_begin, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"i": 0}))
 
     sdfg.add_edge(
         loop_entry, state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i < N + W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry, loop_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i >= N + W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(state, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": "i + W"}))
+                  dace.sdfg.InterstateEdge(assignments={"i": "i + W"}))
 
     B = state.add_array("B_mem", [N],
                         dtype=dtype,
@@ -539,9 +539,9 @@ def make_sdfg(specialize):
     copy_to_host_state = make_copy_to_host(sdfg)
 
     sdfg.add_edge(copy_to_device_state, compute_state,
-                  dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, copy_to_host_state,
-                  dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge())
 
     return sdfg
 

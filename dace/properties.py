@@ -1,7 +1,7 @@
 import ast
 from collections import OrderedDict
 import copy
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
 import pydoc
 import re
@@ -12,7 +12,7 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo
-from typing import List, Union
+from typing import List, Set, Union
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -576,16 +576,26 @@ class DictProperty(Property):
         self.key_type = key_type
         self.value_type = value_type
 
+        # Check whether a key/value is an instance of its type, if the given
+        # type is a Python type, or call self.*_type if it's a callable.
+        if isinstance(key_type, type):
+            self.is_key = lambda k: isinstance(k, self.key_type)
+        else:
+            self.is_key = lambda k: False
+        if isinstance(value_type, type):
+            self.is_value = lambda v: isinstance(v, self.value_type)
+        else:
+            self.is_value = lambda v: False
+
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = ast.literal_eval(val)
         elif isinstance(val, (tuple, list)):
             val = {k[0]: k[1] for k in val}
         elif isinstance(val, dict):
-            val = {
-                self.key_type(k): self.value_type(v)
-                for k, v in val.items()
-            }
+            val = {(k if self.is_key(k) else self.key_type(k)):
+                   (v if self.is_value(v) else self.value_type(v))
+                   for k, v in val.items()}
         super(DictProperty, self).__set__(obj, val)
 
     @staticmethod
@@ -669,7 +679,7 @@ class SDFGReferenceProperty(Property):
 
 
 class RangeProperty(Property):
-    """ Custom Property type for `dace.graph.subset.Range` members. """
+    """ Custom Property type for `dace.subsets.Range` members. """
     def __set__(self, obj, value):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
@@ -904,6 +914,23 @@ class CodeBlock(object):
                             'than Python')
         else:
             self.code = code
+
+    def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
+        """ 
+        Returns the set of free symbol names in this code block, excluding
+        the given symbol names.
+        """
+        defined_syms = defined_syms or set()
+
+        # Search AST for undefined symbols
+        if self.language == dace.dtypes.Language.Python:
+            visitor = TaskletFreeSymbolVisitor(defined_syms)
+            if self.code:
+                for stmt in self.code:
+                    visitor.visit(stmt)
+            return visitor.free_symbols
+
+        return set()
 
     @property
     def as_string(self):

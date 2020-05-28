@@ -50,7 +50,7 @@ if __name__ == '__main__':
         print('ERROR: Constants were not properly specialized')
         exit(2)
 
-    func = dp.compile(spec_sdfg)
+    func = spec_sdfg.compile()
     func(A=input, B=output, N=N, M=M)
 
     diff = np.linalg.norm(
