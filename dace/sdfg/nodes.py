@@ -1073,7 +1073,7 @@ class LibraryNode(CodeNode):
             try:
                 config_override = Config.get("library", library_name,
                                              "override")
-                if config_override:
+                if config_override and implementation in self.implementations:
                     if implementation is not None:
                         warnings.warn(
                             "Overriding explicitly specified "
@@ -1100,7 +1100,8 @@ class LibraryNode(CodeNode):
                         raise ValueError("No implementation or default "
                                          "implementation specified.")
         if implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation: " + implementation)
+            raise KeyError("Unknown implementation for node {}: {}".format(
+                type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         state_id = sdfg.nodes().index(state)

@@ -23,13 +23,13 @@ def to_blastype(dtype):
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
-    """ 
+    """
     Returns GEMM argument order, transposition, and leading dimensions
-    based on column-major storage from dace arrays. 
-    :param a: Data descriptor for the first matrix. 
+    based on column-major storage from dace arrays.
+    :param a: Data descriptor for the first matrix.
     :param b: Data descriptor for the second matrix.
     :param c: Data descriptor for the output matrix.
-    :return: A dictionary with the following keys: swap (if True, a and b 
+    :return: A dictionary with the following keys: swap (if True, a and b
              should be swapped); lda, ldb, ldc (leading dimensions); ta, tb
              (whether GEMM should be called with OP_N or OP_T).
     """
