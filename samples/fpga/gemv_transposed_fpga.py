@@ -162,10 +162,9 @@ def make_outer_compute_state(sdfg):
     load_state = make_load_state(nested_sdfg)
     compute_state = make_compute_state(nested_sdfg)
     store_state = make_store_state(nested_sdfg)
-    nested_sdfg.add_edge(load_state, compute_state,
-                         dace.graph.edges.InterstateEdge())
+    nested_sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(compute_state, store_state,
-                         dace.graph.edges.InterstateEdge())
+                         dace.sdfg.InterstateEdge())
 
     tasklet = state.add_nested_sdfg(nested_sdfg, sdfg,
                                     {"A_nested", "x_nested"}, {"y_nested"})
@@ -213,9 +212,8 @@ def make_sdfg(specialize):
     fpga_state = make_outer_compute_state(sdfg)
     finalize_state = make_finalize_state(sdfg)
 
-    sdfg.add_edge(init_state, fpga_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(fpga_state, finalize_state,
-                  dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(init_state, fpga_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(fpga_state, finalize_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 

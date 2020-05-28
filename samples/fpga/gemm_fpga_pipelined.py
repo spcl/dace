@@ -48,7 +48,7 @@ def make_sdfg(specialized):
     # Compute
 
     state = sdfg.add_state("gemm")
-    sdfg.add_edge(pre_state, state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, state, dace.sdfg.InterstateEdge())
 
     A = state.add_array("A_device", [N, K],
                         dtype=dace.float32,
@@ -92,18 +92,16 @@ def make_sdfg(specialized):
     end_state = nested_sdfg.add_state("end_state")
     nested_sdfg.add_edge(
         if_state, then_state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state, else_state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k != 0", language=dace.dtypes.Language.Python)))
-    nested_sdfg.add_edge(then_state, end_state,
-                         dace.graph.edges.InterstateEdge())
-    nested_sdfg.add_edge(else_state, end_state,
-                         dace.graph.edges.InterstateEdge())
+    nested_sdfg.add_edge(then_state, end_state, dace.sdfg.InterstateEdge())
+    nested_sdfg.add_edge(else_state, end_state, dace.sdfg.InterstateEdge())
 
     # These are identical, they only differ in their confres
     then_tasklet = then_state.add_tasklet("multiply", {"a", "b"}, {"c_out"},
@@ -231,7 +229,7 @@ def make_sdfg(specialized):
     # Copy back result
 
     post_state = sdfg.add_state("post_gemm")
-    sdfg.add_edge(state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(state, post_state, dace.sdfg.InterstateEdge())
 
     C_device = post_state.add_array(
         "C_device", [N, M],

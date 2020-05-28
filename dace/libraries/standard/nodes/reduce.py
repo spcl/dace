@@ -10,7 +10,7 @@ import dace.library
 from typing import Any, Dict, Set
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, devicelevel_block_size
-from dace.graph import graph
+from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
@@ -23,7 +23,7 @@ from dace import data, subsets as sbs, dtypes
 from dace import registry, subsets
 import pydoc
 import warnings
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
 from dace.transformation import pattern_matching as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
@@ -635,7 +635,7 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 
 
 @dace.library.node
-class Reduce(dace.graph.nodes.LibraryNode):
+class Reduce(dace.sdfg.nodes.LibraryNode):
     """ An SDFG node that reduces an N-dimensional array to an
         (N-k)-dimensional array, with a list of axes to reduce and
         a reduction binary function. """

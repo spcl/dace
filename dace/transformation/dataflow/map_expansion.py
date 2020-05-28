@@ -3,8 +3,9 @@
 from typing import Dict
 import dace
 from dace import dtypes, registry, subsets, symbolic
-from dace.graph import nodes, nxutil
-from dace.graph.graph import OrderedMultiDiConnectorGraph
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import pattern_matching as pm
 
 
@@ -25,11 +26,11 @@ class MapExpansion(pm.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapExpansion._map_entry)]
+        return [sdutil.node_path_graph(MapExpansion._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[dace.graph.nodes.Node, int],
+    def can_be_applied(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+                       candidate: Dict[dace.sdfg.nodes.Node, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
                        strict: bool = False):
@@ -39,8 +40,8 @@ class MapExpansion(pm.Transformation):
         return map_entry.map.get_param_num() > 1
 
     @staticmethod
-    def match_to_str(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-                     candidate: Dict[dace.graph.nodes.Node, int]):
+    def match_to_str(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+                     candidate: Dict[dace.sdfg.nodes.Node, int]):
         map_entry = graph.nodes()[candidate[MapExpansion._map_entry]]
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 

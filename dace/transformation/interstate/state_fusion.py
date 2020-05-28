@@ -3,7 +3,8 @@
 import networkx as nx
 
 from dace import dtypes, registry, sdfg
-from dace.graph import edges, nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.config import Config
 
@@ -19,7 +20,7 @@ class StateFusion(pattern_matching.Transformation):
 
     _states_fused = 0
     _first_state = sdfg.SDFGState()
-    _edge = edges.InterstateEdge()
+    _edge = sdfg.InterstateEdge()
     _second_state = sdfg.SDFGState()
 
     @staticmethod
@@ -29,7 +30,7 @@ class StateFusion(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(StateFusion._first_state,
+            sdutil.node_path_graph(StateFusion._first_state,
                                    StateFusion._second_state)
         ]
 
@@ -83,7 +84,7 @@ class StateFusion(pattern_matching.Transformation):
             # Find source/sink (data) nodes
             first_input = {
                 node
-                for node in nxutil.find_source_nodes(first_state)
+                for node in sdutil.find_source_nodes(first_state)
                 if isinstance(node, nodes.AccessNode)
             }
             first_output = {
@@ -93,7 +94,7 @@ class StateFusion(pattern_matching.Transformation):
             }
             second_input = {
                 node
-                for node in nxutil.find_source_nodes(second_state)
+                for node in sdutil.find_source_nodes(second_state)
                 if isinstance(node, nodes.AccessNode)
             }
             second_output = {
@@ -175,14 +176,14 @@ class StateFusion(pattern_matching.Transformation):
 
         # Special case 1: first state is empty
         if first_state.is_empty():
-            nxutil.change_edge_dest(sdfg, first_state, second_state)
+            sdutil.change_edge_dest(sdfg, first_state, second_state)
             sdfg.remove_node(first_state)
             return
 
         # Special case 2: second state is empty
         if second_state.is_empty():
-            nxutil.change_edge_src(sdfg, second_state, first_state)
-            nxutil.change_edge_dest(sdfg, second_state, first_state)
+            sdutil.change_edge_src(sdfg, second_state, first_state)
+            sdutil.change_edge_dest(sdfg, second_state, first_state)
             sdfg.remove_node(second_state)
             return
 
@@ -190,15 +191,15 @@ class StateFusion(pattern_matching.Transformation):
 
         # Find source/sink (data) nodes
         first_input = [
-            node for node in nxutil.find_source_nodes(first_state)
+            node for node in sdutil.find_source_nodes(first_state)
             if isinstance(node, nodes.AccessNode)
         ]
         first_output = [
-            node for node in nxutil.find_sink_nodes(first_state)
+            node for node in sdutil.find_sink_nodes(first_state)
             if isinstance(node, nodes.AccessNode)
         ]
         second_input = [
-            node for node in nxutil.find_source_nodes(second_state)
+            node for node in sdutil.find_source_nodes(second_state)
             if isinstance(node, nodes.AccessNode)
         ]
 
@@ -227,7 +228,7 @@ class StateFusion(pattern_matching.Transformation):
                                 if x.label == node.label)
             except StopIteration:
                 continue
-            nxutil.change_edge_src(first_state, old_node, node)
+            sdutil.change_edge_src(first_state, old_node, node)
             first_state.remove_node(old_node)
             second_input.remove(old_node)
             node.access = dtypes.AccessType.ReadWrite
@@ -237,7 +238,7 @@ class StateFusion(pattern_matching.Transformation):
                                 if x.label == node.label)
             except StopIteration:
                 continue
-            nxutil.change_edge_dest(first_state, node, new_node)
+            sdutil.change_edge_dest(first_state, node, new_node)
             first_state.remove_node(node)
             second_input.remove(new_node)
             new_node.access = dtypes.AccessType.ReadWrite
@@ -247,12 +248,12 @@ class StateFusion(pattern_matching.Transformation):
             if first_state.in_degree(node) == 0:
                 n = next((x for x in order if x.label == node.label), None)
                 if n:
-                    nxutil.change_edge_src(first_state, node, n)
+                    sdutil.change_edge_src(first_state, node, n)
                     first_state.remove_node(node)
                     n.access = dtypes.AccessType.ReadWrite
 
         # Redirect edges and remove second state
-        nxutil.change_edge_src(sdfg, second_state, first_state)
+        sdutil.change_edge_src(sdfg, second_state, first_state)
         sdfg.remove_node(second_state)
         if Config.get_bool("debugprint"):
             StateFusion._states_fused += 1

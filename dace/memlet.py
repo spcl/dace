@@ -1,7 +1,7 @@
 import ast
 from functools import reduce
 import operator
-from typing import List
+from typing import List, Set
 
 import dace
 import dace.serialize
@@ -214,6 +214,18 @@ class Memlet(object):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this edge's properties. """
+        # Symbolic properties are in num_accesses, and the two subsets
+        result = set()
+        result |= set(map(str, self.num_accesses.free_symbols))
+        if self.subset:
+            result |= self.subset.free_symbols
+        if self.other_subset:
+            result |= self.other_subset.free_symbols
+        return result
+
     def __label__(self, sdfg, state):
         """ Returns a string representation of the memlet for display in a
             graph.
@@ -300,7 +312,7 @@ class MemletTree(object):
         edge,
         parent=None,
         children=None
-    ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+    ):  # type: (dace.sdfg.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
         self.edge = edge
         self.parent = parent
         self.children = children or []

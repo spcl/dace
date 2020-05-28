@@ -95,22 +95,22 @@ def make_nested_sdfg(parent):
     write_out_size = make_write_out_size(sdfg)
 
     sdfg.add_edge(set_zero, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"i": 0}))
 
     sdfg.add_edge(
         loop_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i < N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry, write_out_size,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i >= N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(loop_body, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": "i + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"i": "i + 1"}))
 
     return sdfg
 
@@ -204,9 +204,9 @@ def make_sdfg(specialize):
     copy_to_host_state = make_copy_to_host(sdfg)
 
     sdfg.add_edge(copy_to_device_state, compute_state,
-                  dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, copy_to_host_state,
-                  dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge())
 
     return sdfg
 

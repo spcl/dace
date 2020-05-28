@@ -162,8 +162,8 @@ def make_sdfg(name=None):
     post_state = make_copy_to_host_state(sdfg)
     compute_state = make_fpga_state(sdfg)
 
-    sdfg.add_edge(pre_state, compute_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(compute_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 

@@ -7,9 +7,9 @@ from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.cpp import *
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
-                       is_devicelevel, is_array_stream_view,
+                       is_devicelevel_gpu, is_array_stream_view,
                        NodeNotExpandedError)
 
 
@@ -1296,12 +1296,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # TODO: When emitting nested SDFGs as separate functions,
         #       remove the workaround
         for symname, symval in sorted(node.symbol_mapping.items()):
+            if symname in sdfg.constants:
+                continue
             callsite_stream.write(
                 '{dtype} __dacesym_{symname} = {symval};\n'.format(
                     dtype=symbolic.symtype(symval),
                     symname=symname,
                     symval=sym2cpp(symval)), sdfg, state_id, node)
         for sym in sorted(node.symbol_mapping.keys()):
+            if sym in sdfg.constants:
+                continue
             callsite_stream.write(
                 'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
                 sdfg, state_id, node)
@@ -1478,7 +1482,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
-        if instr is not None and not is_devicelevel(sdfg, state_dfg, node):
+        if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node):
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream,
                                 callsite_stream, function_stream)
 
@@ -1520,20 +1524,23 @@ class CPUCodeGen(TargetCodeGenerator):
         if node.consume.chunksize == 1:
             chunk = "const %s& %s" % (
                 input_streamdesc.dtype.ctype,
-                node.consume.label + "_element",
+                "__dace_" + node.consume.label + "_element",
             )
-            self._dispatcher.defined_vars.add(node.consume.label + "_element",
-                                              DefinedType.Scalar)
+            self._dispatcher.defined_vars.add(
+                "__dace_" + node.consume.label + "_element",
+                DefinedType.Scalar)
         else:
             chunk = "const %s *%s, size_t %s" % (
                 input_streamdesc.dtype.ctype,
-                node.consume.label + "_elements",
-                node.consume.label + "_numelems",
+                "__dace_" + node.consume.label + "_elements",
+                "__dace_" + node.consume.label + "_numelems",
             )
-            self._dispatcher.defined_vars.add(node.consume.label + "_elements",
-                                              DefinedType.Pointer)
-            self._dispatcher.defined_vars.add(node.consume.label + "_numelems",
-                                              DefinedType.Scalar)
+            self._dispatcher.defined_vars.add(
+                "__dace_" + node.consume.label + "_elements",
+                DefinedType.Pointer)
+            self._dispatcher.defined_vars.add(
+                "__dace_" + node.consume.label + "_numelems",
+                DefinedType.Scalar)
 
         # Take quiescence condition into account
         if node.consume.condition.code is not None:
@@ -1574,15 +1581,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # consumed element and modify the outgoing memlet path ("OUT_stream")
         # TODO: do this before getting to the codegen
         if node.consume.chunksize == 1:
-            newname, _ = sdfg.add_scalar(node.consume.label + "_element",
+            newname, _ = sdfg.add_scalar("__dace_" + node.consume.label +
+                                         "_element",
                                          input_streamdesc.dtype,
                                          transient=True,
                                          storage=dtypes.StorageType.Register,
                                          find_new_name=True)
             ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         else:
-            newname, _ = sdfg.add_array(node.consume.label + '_elements',
-                                        [node.consume.chunksize],
+            newname, _ = sdfg.add_array("__dace_" + node.consume.label +
+                                        '_elements', [node.consume.chunksize],
                                         input_streamdesc.dtype,
                                         transient=True,
                                         storage=dtypes.StorageType.Register,

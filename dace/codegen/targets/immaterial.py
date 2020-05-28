@@ -3,7 +3,7 @@ import functools
 from dace import data, registry, subsets, symbolic, dtypes
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, sym2cpp
-from dace.graph import nodes
+from dace.sdfg import nodes
 
 from dace.codegen import cppunparse
 

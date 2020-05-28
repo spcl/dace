@@ -4,7 +4,8 @@
 import copy
 
 from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 from dace.config import Config
@@ -65,8 +66,8 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(GPUTransformLocalStorage._map_entry),
-            nxutil.node_path_graph(GPUTransformLocalStorage._reduce),
+            sdutil.node_path_graph(GPUTransformLocalStorage._map_entry),
+            sdutil.node_path_graph(GPUTransformLocalStorage._reduce),
         ]
 
     @staticmethod

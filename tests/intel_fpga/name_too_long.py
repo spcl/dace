@@ -11,7 +11,7 @@ if __name__ == "__main__":
 
     sdfg = make_sdfg("name_too_long")
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.graph.nodes.CodeNode):
+        if isinstance(node, dace.sdfg.nodes.CodeNode):
             node.label += KERNEL_NAME
     sdfg.specialize({"P": 4})
     try:

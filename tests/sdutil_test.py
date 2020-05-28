@@ -1,6 +1,6 @@
 import unittest
 import networkx as nx
-from dace.graph.nxutil import *
+from dace.sdfg.utils import *
 
 
 class GraphSearchSpace(object):
