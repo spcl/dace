@@ -372,13 +372,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 while key in alias:
                     key = alias[key]
                 name = key[0]
-                if desc.storage == dace.StorageType.ShiftRegister:
-                    # For shift registers, the memory width is determined only
-                    # by incoming memlets
-                    edges = state.in_edges(node)
-                else:
-                    edges = state.all_edges(node)
-                for edge in edges:
+                for edge in state.all_edges(node):
                     if (isinstance(edge.data, dace.memlet.EmptyMemlet)
                             or edge.data.data is None):
                         continue
@@ -405,9 +399,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         memory_widths[key] = edge.data.veclen
                     else:
                         if (memory_widths[key] is not None
-                                and memory_widths[key] != edge.data.veclen
-                                and desc.storage !=
-                                dace.StorageType.ShiftRegister):
+                                and memory_widths[key] != edge.data.veclen):
                             # If the vector length is inconsistent, set it to 1
                             memory_widths[key] = 1
         # Inherit the parent memory width for all aliased nested arrays
