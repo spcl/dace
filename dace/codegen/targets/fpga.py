@@ -33,7 +33,7 @@ _CPU_STORAGE_TYPES = {
 _FPGA_STORAGE_TYPES = {
     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType.FPGA_Local,
     dace.dtypes.StorageType.FPGA_Registers,
-    dace.dtypes.StorageType.ShiftRegister
+    dace.dtypes.StorageType.FPGA_ShiftRegister
 }
 
 
@@ -82,7 +82,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 n.desc(sdfg).storage in [
                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
                     StorageType.FPGA_Local, dace.dtypes.StorageType.
-                    FPGA_Registers, dace.dtypes.StorageType.ShiftRegister
+                    FPGA_Registers, dace.dtypes.StorageType.FPGA_ShiftRegister
                 ] for n in state.data_nodes()
             ]))
 
@@ -93,7 +93,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.FPGA_Global,
             dace.dtypes.StorageType.FPGA_Local,
             dace.dtypes.StorageType.FPGA_Registers,
-            dace.dtypes.StorageType.ShiftRegister,
+            dace.dtypes.StorageType.FPGA_ShiftRegister,
         ]
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
@@ -282,7 +282,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     elif (data.storage in (
                             dace.dtypes.StorageType.FPGA_Local,
                             dace.dtypes.StorageType.FPGA_Registers,
-                            dace.dtypes.StorageType.ShiftRegister)):
+                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -530,7 +530,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             elif (nodedesc.storage in (dace.dtypes.StorageType.FPGA_Local,
                                        dace.dtypes.StorageType.FPGA_Registers,
-                                       dace.dtypes.StorageType.ShiftRegister)):
+                                       dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise dace.codegen.codegen.CodegenError(
@@ -570,7 +570,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 else:
                     # Language-specific
                     if (nodedesc.storage ==
-                            dace.dtypes.StorageType.ShiftRegister):
+                            dace.dtypes.StorageType.FPGA_ShiftRegister):
                         self.define_shift_register(
                             dataname, nodedesc, arrsize_vec, veclen,
                             function_stream, result, sdfg, state_id, node)
@@ -683,11 +683,11 @@ class FPGACodeGen(TargetCodeGenerator):
         elif (data_to_data
               and (((src_storage in (dace.dtypes.StorageType.FPGA_Local,
                                      dace.dtypes.StorageType.FPGA_Registers,
-                                     dace.dtypes.StorageType.ShiftRegister))
+                                     dace.dtypes.StorageType.FPGA_ShiftRegister))
                     and dst_storage not in _FPGA_STORAGE_TYPES) or
                    ((dst_storage in (dace.dtypes.StorageType.FPGA_Local,
                                      dace.dtypes.StorageType.FPGA_Registers,
-                                     dace.dtypes.StorageType.ShiftRegister))
+                                     dace.dtypes.StorageType.FPGA_ShiftRegister))
                     and src_storage not in _FPGA_STORAGE_TYPES))):
             raise NotImplementedError(
                 "Copies between host memory and FPGA "
@@ -699,7 +699,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if memlet.wcr is not None:
                 raise NotImplementedError("WCR not implemented for copy edges")
 
-            if src_storage == dace.dtypes.StorageType.ShiftRegister:
+            if src_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 raise NotImplementedError(
                     "Reads from shift registers only supported from tasklets.")
 
@@ -720,7 +720,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Adjust for vectorization length
                 copy_shape[-1] = copy_shape[-1] / memlet.veclen
 
-            if dst_storage == dace.dtypes.StorageType.ShiftRegister:
+            if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 if len(copy_shape) != 1:
                     raise ValueError(
                         "Only single-dimensional writes "
@@ -858,7 +858,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                        is_pack, packing_factor)
 
             # Language specific
-            if dst_storage == dace.dtypes.StorageType.ShiftRegister:
+            if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
                     dst_def_type, ctype, dst_node.label, memlet.veclen,
                     dst_expr, dst_index, read_expr, None, is_unpack,

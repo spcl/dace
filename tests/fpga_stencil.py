@@ -120,7 +120,7 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                    transient=True)
     sdfg.add_array("shift_register", (2 * m + veclen, ),
                    dtype,
-                   storage=dace.StorageType.ShiftRegister,
+                   storage=dace.StorageType.FPGA_ShiftRegister,
                    transient=True)
     sdfg.add_array("output_buffer", (veclen, ),
                    dtype,

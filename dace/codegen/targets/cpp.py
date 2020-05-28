@@ -71,7 +71,7 @@ def copy_expr(
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
 
-    elif def_type == DefinedType.ShiftRegister:
+    elif def_type == DefinedType.FPGA_ShiftRegister:
         return expr
 
     elif def_type in [
