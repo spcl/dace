@@ -213,58 +213,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 desc.storage.name))
         self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
 
-    def _find_shift_register_accesses(self, sdfg, dfg, node, shift_width):
-        name = node.data
-        accesses = set()
-        to_search = list(dfg.out_edges(node))
-        unrolled_indices = {}
-        constants = sdfg.constants
-        for k, v in constants.items():
-            unrolled_indices[k] = [v]
-        while len(to_search) > 0:
-            e = to_search.pop()
-            if isinstance(
-                    e.dst,
-                (dace.sdfg.nodes.Tasklet, dace.sdfg.nodes.AccessNode)):
-                subset = e.data.subset
-                expr = (subset.at([0] * len(subset), subset.strides()) //
-                        shift_width)
-                symbols = [str(s) for s in expr.free_symbols]
-                for perm in itertools.product(*(unrolled_indices[s]
-                                                for s in symbols)):
-                    # Add every index of unrolled maps encountered
-                    accesses.add(
-                        dace.symbolic.evaluate(
-                            expr, {k: v
-                                   for k, v in zip(symbols, perm)}))
-            if isinstance(e.dst, dace.sdfg.nodes.EntryNode):
-                if e.dst.unroll:
-                    for i, rng in zip(e.dst.params, e.dst.range):
-                        unrolled_indices[str(i)] = np.arange(
-                            dace.symbolic.evaluate(rng[0], constants),
-                            dace.symbolic.evaluate(rng[1] + 1, constants),
-                            dace.symbolic.evaluate(rng[2], constants))
-            if isinstance(e.dst, dace.sdfg.nodes.NestedSDFG):
-                raise NotImplementedError("Shift register access inference "
-                                          "not implemented for nested reads.")
-            for ee in dfg.out_edges(e.dst):
-                if ee.data.data == name:
-                    to_search.append(ee)
-        return accesses
-
     def define_shift_register(self, var_name, desc, arrsize, veclen,
                               function_stream, kernel_stream, sdfg, state_id,
-                              node):
-        state = sdfg.find_state(state_id)
-        # The vector length is determined by the write only
-        in_edges = state.in_edges(node)
-        if len(in_edges) != 1:
-            raise ValueError(
-                "Only one write supported for Xilinx shift registers.")
-        shift_width = in_edges[0].data.veclen
-        # We need to track down all accesses to this array
-        accesses = self._find_shift_register_accesses(sdfg, state, node,
-                                                      shift_width)
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
