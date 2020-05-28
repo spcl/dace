@@ -933,6 +933,18 @@ class PipelineEntry(MapEntry):
     def pipeline(self, val):
         self._map = val
 
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        result = super().new_symbols(sdfg, state, symbols)
+        try:
+            result[self.pipeline.init_condition()] = dtypes.bool
+        except ValueError:
+            pass  # Overlaps
+        try:
+            result[self.pipeline.drain_condition()] = dtypes.bool
+        except ValueError:
+            pass  # Overlaps
+        return result
+
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
