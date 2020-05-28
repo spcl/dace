@@ -935,6 +935,9 @@ class PipelineEntry(MapEntry):
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         result = super().new_symbols(sdfg, state, symbols)
+        for param in self.map.params:
+            result[param] = dtypes.int64  # Overwrite params from Map
+        result[self.pipeline.iterator_str()] = dtypes.int64
         try:
             result[self.pipeline.init_condition()] = dtypes.bool
         except ValueError:
