@@ -202,11 +202,15 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write(
                 "#pragma HLS ARRAY_PARTITION variable={} "
                 "complete\n".format(var_name), node, state_id, sdfg)
-        elif len(desc.shape) > 1:
-            kernel_stream.write(
-                "#pragma HLS ARRAY_PARTITION variable={} "
-                "block factor={}\n".format(var_name, desc.shape[-2]), node,
-                state_id, sdfg)
+        elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
+            if len(desc.shape) > 1:
+                kernel_stream.write(
+                    "#pragma HLS ARRAY_PARTITION variable={} "
+                    "block factor={}\n".format(var_name, desc.shape[-2]), node,
+                    state_id, sdfg)
+        else:
+            raise ValueError("Unsupported storage type: {}".format(
+                desc.storage.name))
         self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
 
     def _find_shift_register_accesses(self, sdfg, dfg, node, shift_width):
