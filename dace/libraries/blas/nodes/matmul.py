@@ -1,5 +1,4 @@
 import dace
-import itertools
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 
@@ -13,7 +12,7 @@ def _get_matmul_operands(node,
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
     res_rhs = None
-    for edge in itertools.chain(state.in_edges(node), state.out_edges(node)):
+    for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             subset = dc(edge.data.subset)
             squeezed = subset.squeeze()
