@@ -489,7 +489,7 @@ class SDFG(OrderedDiGraph):
         # Avoid import loops
         from dace.codegen.instrumentation import InstrumentationReport
 
-        path = os.path.join('.dacecache', self.name, 'perf')
+        path = os.path.join(self.build_folder, 'perf')
         return [
             InstrumentationReport(os.path.join(path, fname))
             for fname in os.listdir(path) if fname.startswith('report-')
@@ -503,7 +503,7 @@ class SDFG(OrderedDiGraph):
         :return: A timestamped InstrumentationReport object, or None if does
                  not exist.
         """
-        path = os.path.join('.dacecache', self.name, 'perf')
+        path = os.path.join(self.build_folder, 'perf')
         files = [f for f in os.listdir(path) if f.startswith('report-')]
         if len(files) == 0:
             return None
@@ -516,6 +516,14 @@ class SDFG(OrderedDiGraph):
                          sorted(files, reverse=True)[0]))
 
     ##########################################
+
+    @property
+    def build_folder(self) -> str:
+        """ Returns a relative path to the build cache folder for this SDFG. """
+        if Config.get_bool('testing', 'single_cache'):
+            return os.path.join('.dacecache', 'test')
+        else:
+            return os.path.join('.dacecache', self.name)
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
@@ -1399,8 +1407,8 @@ class SDFG(OrderedDiGraph):
 
         if Config.get_bool("compiler", "use_cache"):
             # Try to see if a cached version of the binary exists
-            # print("looking for cached binary: " + compiler.get_binary_name(self.name))
-            binary_filename = compiler.get_binary_name(self.name)
+            binary_filename = compiler.get_binary_name(self.build_folder,
+                                                       self.name)
             if os.path.isfile(binary_filename):
                 # print("A cached binary was found!")
                 return compiler.load_from_file(self, binary_filename)
@@ -1434,10 +1442,11 @@ class SDFG(OrderedDiGraph):
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(
-            sdfg, program_objects, os.path.join(".dacecache", sdfg.name))
+            sdfg, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder)
+        shared_library = compiler.configure_and_compile(program_folder,
+                                                        sdfg.name)
 
         # If provided, save output to path or filename
         if output_file is not None:

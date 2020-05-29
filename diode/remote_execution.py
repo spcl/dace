@@ -109,7 +109,7 @@ class Executor(object):
 
         # Compile SDFG
         generate_program_folder(sdfg, code_objects, workdir, self._config)
-        configure_and_compile(workdir)
+        configure_and_compile(workdir, sdfg.name)
 
         self.show_output("Running script\n")
 
