@@ -59,7 +59,7 @@ setup(
     },
     include_package_data=True,
     install_requires=[
-        'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml', 'ply',
+        'numpy', 'networkx >= 2.2', 'astunparse', 'sympy == 1.5.1', 'pyyaml', 'ply',
         'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum'
     ],
     extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},

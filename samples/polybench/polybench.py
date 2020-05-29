@@ -64,7 +64,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
         if FLAGS.sequential:
             for state in sdfg.nodes():
                 for node in state.nodes():
-                    if isinstance(node, dace.graph.nodes.MapEntry):
+                    if isinstance(node, dace.sdfg.nodes.MapEntry):
                         node.map.schedule = dace.ScheduleType.Sequential
         if FLAGS.specialize:
             sdfg.specialize(psize)

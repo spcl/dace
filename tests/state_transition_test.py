@@ -147,7 +147,7 @@ if __name__ == "__main__":
     if re.search(else_pattern, code) is None:
         raise RuntimeError("Else not detected in state transitions")
 
-    x_output = dace.ndarray([1], dace.dtypes.int32)
+    x_output = dace.ndarray([1], int)
     x_output[0] = 0
     sdfg(x=x_output)
     x_output = x_output[0]

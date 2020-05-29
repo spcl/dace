@@ -5,7 +5,8 @@ import itertools
 
 from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
-from dace.graph import edges, nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
@@ -27,7 +28,7 @@ class DoubleBuffering(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(DoubleBuffering._map_entry,
+            sdutil.node_path_graph(DoubleBuffering._map_entry,
                                    DoubleBuffering._transient)
         ]
 
@@ -159,7 +160,7 @@ class DoubleBuffering(pattern_matching.Transformation):
         # All instances of the map parameter in this state become the loop start
         sd.replace(initial_state, map_param, map_rstart)
         # Initial writes go to the first buffer
-        sd.replace(initial_state, '__dace_db_param', '0')
+        sd.replace(initial_state, '__dace_db_param', 0)
 
         ##############################
         # Modify main state's memlets
@@ -203,6 +204,10 @@ class DoubleBuffering(pattern_matching.Transformation):
         new_expr = symbolic.pystr_to_symbolic('((%s / %s) + 1) %% 2' %
                                               (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
+
+        # Remove symbol once done
+        del nsdfg_node.sdfg.symbols['__dace_db_param']
+        del nsdfg_node.symbol_mapping['__dace_db_param']
 
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):

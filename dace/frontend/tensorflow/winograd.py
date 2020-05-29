@@ -39,7 +39,7 @@ def add_cublas_cusolver(sdfg: dace.SDFG):
         """)
 
 
-# TODO: Use dace.frontend.common.op_impl
+# TODO: Use library nodes
 
 
 # Make sure C_memlet has a wcr if map_exit is used

@@ -43,17 +43,17 @@ def generate_dummy(sdfg) -> str:
     al = sdfg.arglist()
 
     # first find all scalars and set them to 42
-    for arg in al:
-        if isinstance(al[arg], data.Scalar):
-            allocations += "  " + str(al[arg].signature(
-                name=arg, with_types=True)) + " = 42;\n"
+    for argname, arg in al.items():
+        if isinstance(arg, data.Scalar):
+            allocations += "  " + str(
+                arg.signature(name=argname, with_types=True)) + " = 42;\n"
 
     # allocate the array args using calloc
-    for arg in al:
-        if isinstance(al[arg], data.Array):
-            dims_mul = "*".join(map(str, al[arg].shape))
-            basetype = str(al[arg].dtype)
-            allocations += "  " + str(al[arg].signature(name=arg, with_types=True)) + \
+    for argname, arg in al.items():
+        if isinstance(arg, data.Array):
+            dims_mul = "*".join(map(str, arg.shape))
+            basetype = str(arg.dtype)
+            allocations += "  " + str(arg.signature(name=argname, with_types=True)) + \
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
             deallocations += "  free(" + str(arg) + ");\n"
 
@@ -82,7 +82,7 @@ def generate_code(sdfg) -> List[CodeObject]:
     # Before compiling, validate SDFG correctness
     sdfg.validate()
 
-    if Config.get_bool('experimental', 'test_serialization'):
+    if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
         import filecmp
         sdfg.save('test.sdfg')

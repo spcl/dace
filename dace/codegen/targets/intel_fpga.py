@@ -1,4 +1,5 @@
 import ast
+import functools
 import copy
 import itertools
 import os
@@ -171,17 +172,22 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_stream.write("channel {} {}{}{};".format(
             vec_type, var_name, size_str, depth_attribute))
 
-    def define_local_array(self, dtype, vector_length, var_name, array_size,
-                           storage, shape, function_stream, kernel_stream,
+    def define_local_array(self, var_name, desc, array_size, veclen,
+                           function_stream, kernel_stream,
                            sdfg, state_id, node):
-        vec_type = self.make_vector_type(dtype, vector_length, False)
-        if storage == dace.dtypes.StorageType.FPGA_Registers:
+        vec_type = self.make_vector_type(desc.dtype, veclen, False)
+        if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
             attributes = " __attribute__((register))"
         else:
             attributes = ""
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes,
                                                     var_name,
                                                     cpp.sym2cpp(array_size)))
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+
+    def define_shift_register(self, *args, **kwargs):
+        # Shift registers are just arrays on Intel
+        self.define_local_array(*args, **kwargs)
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
@@ -322,6 +328,26 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
+
+    def make_shift_register_write(self, defined_type, type_str, var_name,
+                                  vector_length, write_expr, index, read_expr,
+                                  wcr, is_unpack, packing_factor):
+        if defined_type != DefinedType.Pointer:
+            raise TypeError("Intel shift register must be an array: "
+                            "{} is {}".format(var_name, defined_type))
+        # Shift array
+        arr_size = functools.reduce(lambda a, b: a * b,
+                                    self._global_sdfg.data(var_name).shape, 1)
+        res = """
+#pragma unroll
+for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
+  {name}[u_{name}] = {name}[u_{name} + {veclen}];
+}}\n""".format(name=var_name, size=arr_size, veclen=vector_length)
+        # Then do write
+        res += self.make_write(defined_type, type_str, var_name, vector_length,
+                               write_expr, index, read_expr, wcr, is_unpack,
+                               packing_factor)
+        return res
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
@@ -480,7 +506,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         scope_dict = subgraph.scope_dict(node_to_children=True)
         top_scopes = [
             n for n in scope_dict[None]
-            if isinstance(n, dace.graph.nodes.EntryNode)
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
         if len(top_scopes) == 1:
@@ -553,7 +579,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                             set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
-            if not isinstance(node, dace.graph.nodes.AccessNode):
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
                 continue
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
@@ -626,7 +652,7 @@ __kernel void \\
                     raise SyntaxError('Duplicates found in memlets')
 
                 # Special case: code->code
-                if isinstance(edge.src, dace.graph.nodes.CodeNode):
+                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -655,7 +681,7 @@ __kernel void \\
                     continue
 
                 # Special case: code->code
-                if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -748,12 +774,12 @@ __kernel void \\
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
 
-        if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+        if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
             # Input memlet
             connector = edge.dst_conn
             is_output = False
             tasklet = edge.dst
-        elif isinstance(edge.src, dace.graph.nodes.CodeNode):
+        elif isinstance(edge.src, dace.sdfg.nodes.CodeNode):
             # Output memlet
             connector = edge.src_conn
             is_output = True
@@ -1008,21 +1034,17 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
-        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()
-                                                 [node]].defined_vars
+        defined_symbols = state_dfg.symbols_defined_at(node)
 
-        # Dtypes is a dictionary containing associations name -> type (ctypes)
-        # Add defined variables
-        defined_symbols = {str(x): x.dtype for x in defined_symbols}
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
+        # TODO: Use connector types
         for connector, (memlet, _, _) in memlets.items():
             if connector is not None:
                 defined_symbols.update(
                     {connector: sdfg.arrays[memlet.data].dtype})
 
-        used_streams = []
         for stmt in body:  # for each statement in tasklet body
             stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
@@ -1037,7 +1059,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                 self.generate_converter(unpack, dtype, veclen, node, state_id,
                                         sdfg, function_stream)
 
-            used_streams.extend(ocl_visitor.used_streams)
             if rk is not None:
                 result = StringIO()
                 cppunparse.CPPUnparser(rk,
@@ -1047,13 +1068,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                        defined_symbols=defined_symbols,
                                        type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
-
-        # In Intel OpenCL is not possible to have multiple access points to the same channel
-        for s in used_streams:
-            if used_streams.count(s) > 1:
-                raise dace.codegen.codegen.CodegenError(
-                    "Multiple access points for stream are forbidden in IntelFPGA (stream \"{}\" "
-                    "in tasklet \"{}\")".format(s, node.name))
 
     def generate_constants(self, sdfg, callsite_stream):
         # Use framecode's generate_constants, but substitute constexpr for
@@ -1166,8 +1180,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 value = value[1:]
             value = "{}({})".format(pack_str, value)
 
-        defined_type = self.defined_vars.get(memlet.data)
-        updated = node
+        defined_type = self.defined_vars.get(target)
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
@@ -1203,7 +1216,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         code_str = "{} = {};".format(target, value)
             updated = ast.Name(id=code_str)
 
-        elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
+        elif (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray):
             if memlet.num_accesses != 1:
                 updated = ast.Name(
                     id="write_channel_intel({}, {});".format(target, value))
@@ -1216,6 +1229,14 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         elif memlet is not None and memlet.num_accesses != 1:
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
+        elif defined_type == DefinedType.Scalar:
+            code_str = "{} = {};".format(target, value)
+            updated = ast.Name(id=code_str)
+        else:
+            raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
+                               "memory size {}, {} accesses".format(
+                                   target, defined_type, veclen_lhs,
+                                   memwidth_lhs, memlet.num_accesses))
 
         return ast.copy_location(updated, node)
 
@@ -1224,7 +1245,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             return self.generic_visit(node)
 
         memlet, nc, wcr = self.memlets[node.id]
-        defined_type = self.defined_vars.get(memlet.data)
+        defined_type = self.defined_vars.get(node.id)
         updated = node
 
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \

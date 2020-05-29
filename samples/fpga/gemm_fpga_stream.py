@@ -78,34 +78,34 @@ def make_read_A_sdfg():
     loop_body = sdfg.add_state("read_memory")
 
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(k_begin, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
 
     sdfg.add_edge(
         n_entry, k_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k < K", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(k_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
     sdfg.add_edge(loop_body, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": "k + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
 
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, k_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k >= K", language=dace.dtypes.Language.Python)))
 
@@ -149,48 +149,48 @@ def make_read_B_sdfg():
     loop_body = sdfg.add_state("read_memory")
 
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(k_begin, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
     sdfg.add_edge(m_begin, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
 
     sdfg.add_edge(
         n_entry, k_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, m_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k < K", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(k_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
     sdfg.add_edge(m_end, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": "k + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
     sdfg.add_edge(loop_body, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
 
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, k_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k >= K", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, m_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
@@ -230,34 +230,34 @@ def make_write_C_sdfg():
     loop_body = sdfg.add_state("write_memory")
 
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(m_begin, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
 
     sdfg.add_edge(
         n_entry, m_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(m_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
     sdfg.add_edge(loop_body, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
 
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, m_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
@@ -320,76 +320,76 @@ def make_compute_sdfg():
 
     # N-loop
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(
         n_entry, k_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
 
     # K-loop
     sdfg.add_edge(k_begin, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
     sdfg.add_edge(
         k_entry, m_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k < K", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, k_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k >= K", language=dace.dtypes.Language.Python)))
 
     # Inner M-loop
     sdfg.add_edge(m_begin, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
     sdfg.add_edge(
         m_entry, state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, m_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
     # Backtrack two loops
     sdfg.add_edge(state, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
     sdfg.add_edge(m_end, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": "k + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
 
     # Continue to next sequential loop
-    sdfg.add_edge(k_end, c_begin, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(k_end, c_begin, dace.sdfg.InterstateEdge())
 
     # Tight C-loop
     sdfg.add_edge(c_begin, c_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
     sdfg.add_edge(
         c_entry, write_c_state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         c_entry, c_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
     # End inner loop
     sdfg.add_edge(write_c_state, c_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
 
     # Backtrack
     sdfg.add_edge(c_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
 
     C_buffer_in = state.add_array("C_buffer", [M],
                                   dtype=dace.float32,
@@ -421,32 +421,30 @@ def make_compute_sdfg():
     compute_state = nested_sdfg.add_state("compute_state")
     nested_sdfg.add_edge(
         if_state_c, then_state_c,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state_c, else_state_c,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k != 0", language=dace.dtypes.Language.Python)))
-    nested_sdfg.add_edge(then_state_c, if_state_a,
-                         dace.graph.edges.InterstateEdge())
-    nested_sdfg.add_edge(else_state_c, if_state_a,
-                         dace.graph.edges.InterstateEdge())
+    nested_sdfg.add_edge(then_state_c, if_state_a, dace.sdfg.InterstateEdge())
+    nested_sdfg.add_edge(else_state_c, if_state_a, dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(
         if_state_a, then_state_a,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state_a, else_state_a,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m != 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(then_state_a, compute_state,
-                         dace.graph.edges.InterstateEdge())
+                         dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(else_state_a, compute_state,
-                         dace.graph.edges.InterstateEdge())
+                         dace.sdfg.InterstateEdge())
 
     compute_tasklet = compute_state.add_tasklet("multiply_add",
                                                 {"a", "b", "c_in"}, {"c_out"},
@@ -753,8 +751,8 @@ def make_sdfg(specialized):
     compute_state = make_fpga_state(sdfg)
     post_state = make_copy_to_host_state(sdfg)
 
-    sdfg.add_edge(pre_state, compute_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(compute_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 

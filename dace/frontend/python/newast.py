@@ -18,8 +18,8 @@ from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 pyexpr_to_symbolic,
                                                 ParseMemlet, inner_eval_ast,
                                                 MemletExpr)
-from dace.graph import nodes
-from dace.graph.labeling import propagate_memlet
+from dace.sdfg import nodes
+from dace.sdfg.propagation import propagate_memlet
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -979,23 +979,15 @@ class ProgramVisitor(ExtNodeVisitor):
         self.inputs = {}
         self.outputs = {}
 
-        # Add symbols
-        for k, v in scope_arrays.items():
-            if isinstance(v, data.Scalar):
-                self.sdfg.add_symbol(k, v.dtype, override_dtype=True)
         # Add constants
         for cstname, cstval in constants.items():
             self.sdfg.add_constant(cstname, cstval)
 
-        # Add symbols. TODO: more elegant way
+        # Add symbols
         for arr in scope_arrays.values():
-            if arr is None:
-                continue
-            for dim in arr.shape:
-                if not hasattr(dim, 'free_symbols'): continue
-                self.scope_vars.update(
-                    {str(k): self.globals[str(k)]
-                     for k in dim.free_symbols})
+            self.scope_vars.update(
+                {str(k): self.globals[str(k)]
+                 for k in arr.free_symbols})
 
         # Disallow keywords
         for stmt in _DISALLOWED_STMTS:
@@ -1056,6 +1048,10 @@ class ProgramVisitor(ExtNodeVisitor):
         #     for k, v in self.variables.items() if v in self.parent_arrays
         # }
         result = {}
+        result.update({
+            k: v
+            for k, v in self.globals.items() if isinstance(v, symbolic.symbol)
+        })
         result.update({
             k: self.sdfg.arrays[v]
             for k, v in self.scope_vars.items() if v in self.sdfg.arrays
@@ -1137,13 +1133,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 'All arguments in primitive %s must be annotated' % node.name)
         return result
 
-    def _parse_subprogram(self, name, node, is_tasklet=False):
-
+    def _parse_subprogram(self,
+                          name,
+                          node,
+                          is_tasklet=False,
+                          extra_symbols=None):
+        extra_symbols = extra_symbols or {}
+        local_vars = {}
+        local_vars.update(self.globals)
+        local_vars.update(extra_symbols)
         pv = ProgramVisitor(name=name,
                             filename=self.filename,
                             line_offset=node.lineno,
                             col_offset=node.col_offset,
-                            global_vars=self.globals,
+                            global_vars=local_vars,
                             constants=self.sdfg.constants,
                             scope_arrays={
                                 **self.scope_arrays,
@@ -1151,13 +1154,58 @@ class ProgramVisitor(ExtNodeVisitor):
                             },
                             scope_vars={
                                 **self.scope_vars,
-                                **self.variables
+                                **self.variables,
                             },
                             other_sdfgs=self.other_sdfgs,
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
 
         return pv.parse_program(node, is_tasklet)
+
+    def _symbols_from_params(
+            self, params: List[Tuple[str, Union[str, dtypes.typeclass]]],
+            memlet_inputs: Dict[str, Memlet]) -> Dict[str, symbolic.symbol]:
+        """
+        Returns a mapping between symbol names to their type, as a symbol 
+        object to maintain compatibility with global symbols. Used to maintain 
+        typed symbols in SDFG scopes (e.g., map, consume).
+        """
+        from dace.codegen.tools.type_inference import infer_expr_type
+        result = {}
+
+        # Add map inputs first
+        dyn_inputs = {}
+        for name, val in memlet_inputs.items():
+            dyn_inputs[name] = symbolic.symbol(
+                name, self.scope_arrays[val.data].dtype)
+        result.update(dyn_inputs)
+
+        for name, val in params:
+            if isinstance(val, dtypes.typeclass):
+                result[name] = symbolic.symbol(name, dtype=val)
+            else:
+                values = str(val).split(':')
+                if len(values) == 2:
+                    result[name] = symbolic.symbol(
+                        name,
+                        dtypes.result_type_of(
+                            infer_expr_type(values[0], {
+                                **self.globals,
+                                **dyn_inputs
+                            }),
+                            infer_expr_type(values[1], {
+                                **self.globals,
+                                **dyn_inputs
+                            })))
+                else:
+                    result[name] = symbolic.symbol(
+                        name,
+                        infer_expr_type(values[0], {
+                            **self.globals,
+                            **dyn_inputs
+                        }))
+
+        return result
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         # Supported decorated function types: map, mapscope, consume,
@@ -1200,6 +1248,10 @@ class ProgramVisitor(ExtNodeVisitor):
             elif 'consume' in dec:
                 (stream_name, stream_elem, PE_tuple, condition,
                  chunksize) = self._parse_consume_inputs(node)
+                params = [
+                    PE_tuple,
+                    (stream_elem, self.sdfg.arrays[stream_name].dtype)
+                ]
                 map_inputs = {}
                 entry, exit = state.add_consume(node.name,
                                                 PE_tuple,
@@ -1207,21 +1259,35 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 chunksize=chunksize)
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
-                sdfg, inputs, outputs = self._parse_subprogram(node.name, node)
+                sdfg, inputs, outputs = self._parse_subprogram(
+                    node.name,
+                    node,
+                    extra_symbols=self._symbols_from_params(
+                        params, map_inputs))
             else:  # Scope + tasklet (e.g., @dace.map)
                 name = "{}_body".format(entry.label)
                 sdfg, inputs, outputs = self._parse_subprogram(
-                    name, node, True)
+                    name,
+                    node,
+                    True,
+                    extra_symbols=self._symbols_from_params(
+                        params, map_inputs))
 
             internal_node = state.add_nested_sdfg(sdfg, self.sdfg,
                                                   set(inputs.keys()),
                                                   set(outputs.keys()))
+            self._add_nested_symbols(internal_node)
 
             # If consume scope, inject stream inputs to the internal SDFG
             if 'consume' in dec:
+                free_symbols_before = copy.copy(sdfg.free_symbols)
                 self._inject_consume_memlets(dec, entry, inputs, internal_node,
                                              sdfg, state, stream_elem,
                                              stream_name)
+                # Remove symbols defined after injection
+                syms_to_remove = free_symbols_before - sdfg.free_symbols
+                for sym in syms_to_remove:
+                    del internal_node.symbol_mapping[sym]
 
             # Connect internal node with scope/access nodes
             self._add_dependencies(state, internal_node, entry, exit, inputs,
@@ -1250,8 +1316,7 @@ class ProgramVisitor(ExtNodeVisitor):
             injected_node_count = 0
             for s in sdfg.nodes():
                 for n in s.nodes():
-                    if (isinstance(n, nodes.Tasklet)
-                            and not isinstance(n, nodes.EmptyTasklet)):
+                    if isinstance(n, nodes.Tasklet):
                         n.add_in_connector(stream_elem)
                         rnode = s.add_read(ntrans)
                         s.add_edge(rnode, None, n, stream_elem,
@@ -1425,7 +1490,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 # variables
                 ctr = 0
                 repldict = {}
-                for expr in symbolic.swalk(pystr_to_symbolic(val)):
+                symval = pystr_to_symbolic(val)
+
+                for atom in symval.free_symbols:
+                    if symbolic.issymbolic(atom, self.sdfg.constants):
+                        # Check for undefined variables
+                        if str(atom) not in self.defined:
+                            raise DaceSyntaxError(
+                                self, node, 'Undefined variable "%s"' % atom)
+                        # Add to global SDFG symbols
+                        if str(atom) not in self.sdfg.symbols:
+                            self.sdfg.add_symbol(str(atom), atom.dtype)
+
+                for expr in symbolic.swalk(symval):
                     if symbolic.is_sympy_userfunction(expr):
                         # If function contains a function
                         if any(
@@ -1758,17 +1835,35 @@ class ProgramVisitor(ExtNodeVisitor):
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
 
+    def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
+        """ 
+        Adds symbols from nested SDFG mapping values (if appear as globals)
+        to current SDFG.
+        """
+        for mv in nsdfg_node.symbol_mapping.values():
+            for sym in mv.free_symbols:
+                if (sym.name not in self.sdfg.symbols
+                        and sym.name in self.globals):
+                    self.sdfg.add_symbol(sym.name, sym.dtype)
+
     def _recursive_visit(self,
                          body: List[ast.AST],
                          name: str,
                          lineno: int,
-                         last_state=True):
+                         last_state=True,
+                         extra_symbols=None):
         """ Visits a subtree of the AST, creating special states before and after the visit.
             Returns the previous state, and the first and last internal states of the
             recursive visit. """
         before_state = self.last_state
         self.last_state = None
         first_internal_state = self._add_state('%s_%d' % (name, lineno))
+
+        # Add iteration variables to recursive visit
+        if extra_symbols:
+            old_globals = self.globals
+            self.globals = copy.copy(self.globals)
+            self.globals.update(extra_symbols)
 
         # Recursive loop processing
         for stmt in body:
@@ -1779,6 +1874,10 @@ class ProgramVisitor(ExtNodeVisitor):
         if last_state:
             self.last_state = None
             self._add_state('end%s_%d' % (name, lineno))
+
+        # Revert new symbols
+        if extra_symbols:
+            self.globals = old_globals
 
         return before_state, first_internal_state, last_internal_state
 
@@ -1804,19 +1903,45 @@ class ProgramVisitor(ExtNodeVisitor):
             me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
                                    ndrange=params)
             # body = SDFG('MapBody')
-            body, inputs, outputs = self._parse_subprogram(self.name, node)
+            body, inputs, outputs = self._parse_subprogram(
+                self.name,
+                node,
+                extra_symbols=self._symbols_from_params(params, map_inputs))
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
+            self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs,
                                    map_inputs)
         elif iterator == 'range':
+            # Create an extra typed symbol for the loop iterate
+            from dace.codegen.tools.type_inference import infer_expr_type
+            extra_syms = {
+                indices[0]:
+                symbolic.symbol(
+                    indices[0],
+                    dtypes.result_type_of(
+                        infer_expr_type(ranges[0][0], self.sdfg.symbols),
+                        infer_expr_type(ranges[0][1], self.sdfg.symbols),
+                        infer_expr_type(ranges[0][2], self.sdfg.symbols)))
+            }
+
+            # Add range symbols as necessary
+            for rng in ranges[0]:
+                rng = pystr_to_symbolic(rng)
+                for atom in rng.free_symbols:
+                    if symbolic.issymbolic(atom, self.sdfg.constants):
+                        # Check for undefined variables
+                        if str(atom) not in self.defined:
+                            raise DaceSyntaxError(
+                                self, node, 'Undefined variable "%s"' % atom)
+                        # Add to global SDFG symbols
+                        if str(atom) not in self.sdfg.symbols:
+                            self.sdfg.add_symbol(str(atom), atom.dtype)
+
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
-            # TODO(later): Take range start/skip into account as well
-            self.sdfg.symbols[indices[0]] = self.sdfg.symbols.get(
-                ranges[0][1], dace.int32)
-            laststate, first_loop_state, last_loop_state = \
-                self._recursive_visit(node.body, 'for', node.lineno)
+            laststate, first_loop_state, last_loop_state = self._recursive_visit(
+                node.body, 'for', node.lineno, extra_symbols=extra_syms)
             end_loop_state = self.last_state
 
             # Add loop to SDFG
@@ -1827,6 +1952,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 ranges[0][0],
                 '%s %s %s' % (indices[0], loop_cond, ranges[0][1]),
                 '%s + %s' % (indices[0], ranges[0][2]), last_loop_state)
+        else:
+            raise DaceSyntaxError(
+                self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
     def visit_While(self, node: ast.While):
         # Add an initial loop state with a None last_state (so as to not
@@ -1988,8 +2116,8 @@ class ProgramVisitor(ExtNodeVisitor):
             op_array = self.sdfg.arrays[op_name]
             op_subset = subsets.Range.from_array(op_array)
 
-        state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
-                                                        c=node.col_offset))
+        state = self._add_state("augassign_{l}_{c}".format(l=node.lineno,
+                                                           c=node.col_offset))
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
@@ -2300,7 +2428,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if output_indirection:
                     self.sdfg.add_edge(self.last_state, output_indirection,
-                                       dace.graph.edges.InterstateEdge())
+                                       dace.sdfg.InterstateEdge())
                     self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):
@@ -2506,7 +2634,7 @@ class ProgramVisitor(ExtNodeVisitor):
             from dace.frontend.python.parser import infer_symbols_from_shapes
 
             # Map internal SDFG symbols by adding keyword arguments
-            symbols = set(sdfg.undefined_symbols(False).keys())
+            symbols = set(sdfg.symbols.keys())
             try:
                 mapping = infer_symbols_from_shapes(
                     sdfg, {
@@ -2698,6 +2826,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             nsdfg = state.add_nested_sdfg(sdfg, self.sdfg, inputs.keys(),
                                           outputs.keys(), mapping)
+            self._add_nested_symbols(nsdfg)
             self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
             if output_slices:

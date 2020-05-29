@@ -8,15 +8,15 @@ import itertools
 import dace.serialize
 from typing import Any, Dict, Set
 from dace.config import Config
-from dace.graph import graph
+from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
-                             RangeProperty, DebugInfoProperty, SetProperty,
-                             make_properties, indirect_properties,
-                             DataProperty, SymbolicProperty, ListProperty,
-                             SDFGReferenceProperty, DictProperty,
-                             LibraryImplementationProperty, CodeBlock)
+from dace.properties import (
+    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
+    SetProperty, make_properties, indirect_properties, DataProperty,
+    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty,
+    LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
+from dace.symbolic import pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -52,7 +52,7 @@ class Node(object):
 
         try:
             scope_entry_node = parent.entry_node(self)
-        except RuntimeError:
+        except (RuntimeError, StopIteration):
             scope_entry_node = None
 
         if scope_entry_node is not None:
@@ -67,7 +67,7 @@ class Node(object):
         if isinstance(self, EntryNode):
             try:
                 scope_exit_node = str(parent.node_id(parent.exit_node(self)))
-            except RuntimeError:
+            except (RuntimeError, StopIteration):
                 scope_exit_node = None
 
         retdict = {
@@ -170,6 +170,16 @@ class Node(object):
             filling connectors when adding edges to scopes. """
         return str(self._next_connector_int() - 1)
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this node's properties. """
+        return set()
+
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        """ Returns a mapping between symbols defined by this node (e.g., for
+            scope entries) to their type. """
+        return {}
+
 
 # ------------------------------------------------------------------------------
 
@@ -178,9 +188,10 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(choices=dtypes.AccessType,
-                      desc="Type of access to this array",
-                      default=dtypes.AccessType.ReadWrite)
+    access = Property(
+        choices=dtypes.AccessType,
+        desc="Type of access to this array",
+        default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -257,6 +268,10 @@ class CodeNode(Node):
         self.label = label
         self.location = location if location is not None else {}
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        return set().union(*[v.free_symbols for v in self.location.values()])
+
 
 @make_properties
 class Tasklet(CodeNode):
@@ -312,28 +327,16 @@ class Tasklet(CodeNode):
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        return self.code.get_free_symbols(self.in_connectors
+                                          | self.out_connectors)
+
     def __str__(self):
         if not self.label:
             return "--Empty--"
         else:
             return self.label
-
-
-@make_properties
-class EmptyTasklet(Tasklet):
-    """ A special tasklet that contains no code. Used for filling empty states
-        in an SDFG. """
-    def __init__(self, label=""):
-        super(EmptyTasklet, self).__init__(label)
-
-    def validate(self, sdfg, state):
-        pass
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        ret = EmptyTasklet("dummylabel")
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
-        return ret
 
 
 # ------------------------------------------------------------------------------
@@ -352,21 +355,23 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="SDFG schedule",
-                        allow_none=True,
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="SDFG schedule",
+        allow_none=True,
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
         desc="Mapping between internal symbols and their values, expressed as "
         "symbolic expressions")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(dtype=bool,
-                            desc="Show this node/scope/state as collapsed",
-                            default=False)
+    is_collapsed = Property(
+        dtype=bool,
+        desc="Show this node/scope/state as collapsed",
+        default=False)
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -408,6 +413,16 @@ class NestedSDFG(CodeNode):
 
         return ret
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        return set().union(
+            *(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.symbol_mapping.values()),
+            *(map(str,
+                  pystr_to_symbolic(v).free_symbols)
+              for v in self.location.values()))
+
     def __str__(self):
         if not self.label:
             return "SDFG"
@@ -438,12 +453,11 @@ class NestedSDFG(CodeNode):
                     % dname)
 
         # Validate undefined symbols
-        symbols = set(k for k in self.sdfg.undefined_symbols(False).keys()
-                      if k not in connectors)
+        symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
-            raise ValueError('Missing symbols on nested SDFG: %s' %
-                             (missing_symbols))
+            raise ValueError(
+                'Missing symbols on nested SDFG: %s' % (missing_symbols))
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -455,6 +469,7 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -465,6 +480,7 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -477,6 +493,7 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -488,9 +505,9 @@ class MapEntry(EntryNode):
         return Map
 
     @classmethod
-    def from_json(clc, json_obj, context=None):
-        m = clc.map_type()("", [], [])
-        ret = clc(map=m)
+    def from_json(cls, json_obj, context=None):
+        m = cls.map_type()("", [], [])
+        ret = cls(map=m)
 
         try:
             # Connection of the scope nodes
@@ -520,12 +537,40 @@ class MapEntry(EntryNode):
     def __str__(self):
         return str(self.map)
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+        return set(k for k in self._map.range.free_symbols
+                   if k not in dyn_inputs)
+
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        from dace.codegen.tools.type_inference import infer_expr_type
+
+        result = {}
+        # Add map params
+        for p, rng in zip(self._map.params, self._map.range):
+            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols),
+                                              infer_expr_type(rng[1], symbols))
+
+        # Add dynamic inputs
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+
+        # TODO: Get connector type from connector
+        for e in state.in_edges(self):
+            if e.dst_conn in dyn_inputs:
+                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+
+        return result
+
 
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -537,16 +582,16 @@ class MapExit(ExitNode):
         return Map
 
     @classmethod
-    def from_json(clc, json_obj, context=None):
+    def from_json(cls, json_obj, context=None):
         try:
             # Set map reference to map entry
             entry_node = context['sdfg_state'].node(
                 int(json_obj['scope_entry']))
 
-            ret = clc(map=entry_node.map)
+            ret = cls(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
-            ret = clc(clc.map_type()('_', [], []))
+            ret = cls(cls.map_type()('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
@@ -590,22 +635,25 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
-    range = RangeProperty(desc="Ranges of map parameters",
-                          default=sbs.Range([]))
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Map schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    range = RangeProperty(
+        desc="Ranges of map parameters", default=sbs.Range([]))
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="Map schedule",
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    collapse = Property(dtype=int,
-                        default=1,
-                        desc="How many dimensions to"
-                        " collapse into the parallel range")
+    collapse = Property(
+        dtype=int,
+        default=1,
+        desc="How many dimensions to"
+        " collapse into the parallel range")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(dtype=bool,
-                            desc="Show this node/scope/state as collapsed",
-                            default=False)
+    is_collapsed = Property(
+        dtype=bool,
+        desc="Show this node/scope/state as collapsed",
+        default=False)
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -660,6 +708,7 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -705,12 +754,40 @@ class ConsumeEntry(EntryNode):
     def __str__(self):
         return str(self.consume)
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+        return ((set(self._consume.num_pes.free_symbols)
+                 | set(self._consume.condition.get_free_symbols())) -
+                dyn_inputs)
+
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        from dace.codegen.tools.type_inference import infer_expr_type
+
+        result = {}
+        # Add PE index
+        result[self._consume.pe_index] = infer_expr_type(
+            self._consume.num_pes, symbols)
+
+        # Add dynamic inputs
+        dyn_inputs = set(c for c in self.in_connectors
+                         if not c.startswith('IN_'))
+
+        # TODO: Get connector type from connector
+        for e in state.in_edges(self):
+            if e.dst_conn in dyn_inputs:
+                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+
+        return result
+
 
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -773,18 +850,21 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Consume schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
-    chunksize = Property(dtype=int,
-                         desc="Maximal size of elements to consume at a time",
-                         default=1)
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="Consume schedule",
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
+    chunksize = Property(
+        dtype=int,
+        desc="Maximal size of elements to consume at a time",
+        default=1)
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(dtype=bool,
-                            desc="Show this node/scope/state as collapsed",
-                            default=False)
+    is_collapsed = Property(
+        dtype=bool,
+        desc="Show this node/scope/state as collapsed",
+        default=False)
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -820,8 +900,8 @@ class Consume(object):
                     (self._label, self.pe_index, self.num_pes,
                      CodeProperty.to_string(self.condition)))
         else:
-            return ("%s [%s=0:%s]" %
-                    (self._label, self.pe_index, self.num_pes))
+            return (
+                "%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
@@ -853,6 +933,21 @@ class PipelineEntry(MapEntry):
     def pipeline(self, val):
         self._map = val
 
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        result = super().new_symbols(sdfg, state, symbols)
+        for param in self.map.params:
+            result[param] = dtypes.int64  # Overwrite params from Map
+        result[self.pipeline.iterator_str()] = dtypes.int64
+        try:
+            result[self.pipeline.init_condition()] = dtypes.bool
+        except ValueError:
+            pass  # Overlaps
+        try:
+            result[self.pipeline.drain_condition()] = dtypes.bool
+        except ValueError:
+            pass  # Overlaps
+        return result
+
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
@@ -876,14 +971,17 @@ class Pipeline(Map):
         initialization and drain phase (e.g., N*M + c iterations), which would
         otherwise need a flattened one-dimensional map.
     """
-    init_size = Property(dtype=int,
-                         desc="Number of initialization iterations.")
+    init_size = SymbolicProperty(
+        default=0, desc="Number of initialization iterations.")
     init_overlap = Property(
-        dtype=int,
+        dtype=bool,
+        default=True,
         desc="Whether to increment regular map indices during initialization.")
-    drain_size = Property(dtype=int, desc="Number of drain iterations.")
+    drain_size = SymbolicProperty(
+        default=1, desc="Number of drain iterations.")
     drain_overlap = Property(
-        dtype=int,
+        dtype=bool,
+        default=True,
         desc="Whether to increment regular map indices during pipeline drain.")
 
     def __init__(self,
@@ -898,7 +996,6 @@ class Pipeline(Map):
         self.init_overlap = init_overlap
         self.drain_size = drain_size
         self.drain_overlap = drain_overlap
-        self.flatten = True
 
     def iterator_str(self):
         return "__" + "".join(self.params)
@@ -918,14 +1015,14 @@ class Pipeline(Map):
     def init_condition(self):
         """Variable that can be checked to see if pipeline is currently in
            initialization phase."""
-        if self.init_size <= 0:
+        if self.init_size == 0:
             raise ValueError("No init condition exists for " + self.label)
         return self.iterator_str() + "_init"
 
     def drain_condition(self):
         """Variable that can be checked to see if pipeline is currently in
            draining phase."""
-        if self.drain_size <= 0:
+        if self.drain_size == 0:
             raise ValueError("No drain condition exists for " + self.label)
         return self.iterator_str() + "_drain"
 
@@ -986,12 +1083,11 @@ class LibraryNode(CodeNode):
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
-            dace.serialize.set_properties_from_json(ret,
-                                                    json_obj,
-                                                    context=context)
+            dace.serialize.set_properties_from_json(
+                ret, json_obj, context=context)
             return ret
 
-    def expand(self, sdfg, *args, **kwargs):
+    def expand(self, sdfg, state, *args, **kwargs):
         """Create and perform the expansion transformation for this library
            node."""
         implementation = self.implementation
@@ -1007,7 +1103,7 @@ class LibraryNode(CodeNode):
             try:
                 config_override = Config.get("library", library_name,
                                              "override")
-                if config_override:
+                if config_override and implementation in self.implementations:
                     if implementation is not None:
                         warnings.warn(
                             "Overriding explicitly specified "
@@ -1034,17 +1130,9 @@ class LibraryNode(CodeNode):
                         raise ValueError("No implementation or default "
                                          "implementation specified.")
         if implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation: " + implementation)
+            raise KeyError("Unknown implementation for node {}: {}".format(
+                type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        states = sdfg.states_for_node(self)
-        if len(states) < 1:
-            raise ValueError("Node \"" + str(self) +
-                             "\" not found in SDFG \"" + str(sdfg) + "\".")
-        if len(states) > 1:
-            raise ValueError("Node \"" + str(self) +
-                             "\" found in multiple states: " +
-                             ", ".join(str(s) for s in states))
-        state = states[0]
         sdfg_id = sdfg.sdfg_list.index(sdfg)
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
@@ -1052,13 +1140,13 @@ class LibraryNode(CodeNode):
         transformation.apply(sdfg, *args, **kwargs)
 
     @classmethod
-    def register_implementation(clc, name, transformation_type):
+    def register_implementation(cls, name, transformation_type):
         """Register an implementation to belong to this library node type."""
-        clc.implementations[name] = transformation_type
+        cls.implementations[name] = transformation_type
         match_node_name = "__" + transformation_type.__name__
         if (hasattr(transformation_type, "_match_node")
                 and transformation_type._match_node != match_node_name):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = clc(match_node_name)
+        transformation_type._match_node = cls(match_node_name)

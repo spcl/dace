@@ -14,8 +14,7 @@ import dace
 from dace.memlet import Memlet, EmptyMemlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
-from dace.graph import labeling
-from dace.graph.nodes import Tasklet, NestedSDFG
+from dace.sdfg.nodes import Tasklet, NestedSDFG
 from dace.symbolic import symstr, SymExpr
 from dace.frontend.tensorflow.winograd import winograd_convolution
 from dace.frontend.tensorflow.transformations.redundant_array import (
@@ -62,8 +61,7 @@ def _tensortype(tensor: tf.Tensor):
             raise NotImplementedError("Type %s is not a valid numpy type" %
                                       str(tensor.dtype))
     except KeyError:
-        raise TypeError("Type %s is not a valid numpy type" %
-                        str(tensor.dtype))
+        raise TypeError("Type %s is not a valid numpy type" % str(tensor.dtype))
 
     if tensor.dtype.is_bool:
         return np.int32
@@ -75,6 +73,25 @@ def _tensorshape(tensor: tf.Tensor):
     if tensor.shape.dims is None or tensor.shape.dims == []:
         return 1  # Scalar
     return tensor.shape
+
+
+def _find_node(state, node_id_or_label):
+    """ Finds a node according to its ID (if integer is
+        provided) or label (if string is provided).
+
+        :param node_id_or_label  Node ID (if int) or label (if str)
+        :return A nodes.Node object
+    """
+
+    if isinstance(node_id_or_label, str):
+        for n in state.nodes():
+            if n.label == node_id_or_label:
+                return n
+        raise LookupError("Node %s not found" % node_id_or_label)
+    elif isinstance(node_id_or_label, int):
+        return state.nodes()[node_id_or_label]
+    else:
+        raise TypeError("node_id_or_label is not an int nor string")
 
 
 def string_builder(string):
@@ -199,23 +216,22 @@ class TFSession:
         self.training = True
 
         # add edges between states
-        sdfg.add_edge(
-            s0, s1,
-            dace.graph.edges.InterstateEdge(assignments=dict(__dacet1=0)))
+        sdfg.add_edge(s0, s1,
+                      dace.sdfg.InterstateEdge(assignments=dict(__dacet1=0)))
         sdfg.add_edge(
             s1,
             reinitState,
-            dace.graph.edges.InterstateEdge(
+            dace.sdfg.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 <" + str(iterations - 1),
                     dace.dtypes.Language.Python),
                 assignments={"__dacet1": "__dacet1+1"},
             ),
         )
-        sdfg.add_edge(reinitState, s1, dace.graph.edges.InterstateEdge())
+        sdfg.add_edge(reinitState, s1, dace.sdfg.InterstateEdge())
         sdfg.add_edge(
             s1, s2,
-            dace.graph.edges.InterstateEdge(
+            dace.sdfg.InterstateEdge(
                 condition=dace.properties.CodeProperty.from_string(
                     "__dacet1 >= " +
                     str(iterations - 1), dace.dtypes.Language.Python)))
@@ -255,9 +271,7 @@ class TFSession:
         # Visit initializer and create subgraph for init state
         # If only one node was given, construct a list from it
 
-        init = [
-            i if isinstance(i, tf.Operation) else i.op for i in initializer
-        ]
+        init = [i if isinstance(i, tf.Operation) else i.op for i in initializer]
         self.visit_backwards(init)
 
         # Visit the rest of the nodes
@@ -282,7 +296,7 @@ class TFSession:
                     state.remove_node(node)
                     if node.label in self.constDict:
                         del self.constDict[node.label]
-                elif isinstance(node, dace.graph.nodes.AccessNode):
+                elif isinstance(node, dace.sdfg.nodes.AccessNode):
                     node_types[node.data] = node.desc(self.graph).dtype.type
         ############################
         # Set up arguments
@@ -405,8 +419,7 @@ class TFSession:
             total_nodes.extend(nodes)
             output_names = output_type(_name(node) for node in nodes)
         else:
-            raise TypeError("Unsupported type for fetches: " +
-                            str(type(nodes)))
+            raise TypeError("Unsupported type for fetches: " + str(type(nodes)))
 
         total_output_names = [
             string_builder(node.name)
@@ -414,119 +427,102 @@ class TFSession:
             for node in total_nodes
         ]
 
-        if Config.get_bool("compiler", "use_cache"):
-            sdfg_filename = os.path.join(".dacecache", name, "program.sdfg")
-            sdfg_args_filename = os.path.join(".dacecache", name,
-                                              "sdfg_args.pickle")
-            assert os.path.isfile(sdfg_filename)
-            self.graph = SDFG.from_file(sdfg_filename)
-            handle = open(sdfg_args_filename, "rb")
-            sdfg_args = pickle.load(handle)
-            compiled_sdfg = self.graph.compile(optimizer=False)
-            ############################
-            # Create output numpy arrays
+        # Initialize a new SDFG
+        self.graph = SDFG(name)
+        self.graph.propagate = False
+        self.reinitState = self.graph.add_state("reinitialization")
+        self.state = self.graph.add_state_after(self.reinitState, "s0")
+        self.visitedNodes.clear()
+        ############################
 
-            outputs = {
-                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-                for node, name in zip(total_nodes, total_output_names)
-                if name is not None and name not in sdfg_args
-            }
-            outputs.update({
-                k: v
-                for k, v in sdfg_args.items() if k in total_output_names
-            })
-        else:
-            # Initialize a new SDFG
-            self.graph = SDFG(name)
-            self.graph.propagate = False
-            self.reinitState = self.graph.add_state("reinitialization")
-            self.state = self.graph.add_state_after(self.reinitState, "s0")
-            self.visitedNodes.clear()
-            ############################
+        ops = [
+            node if isinstance(node, tf.Operation) else node.op
+            for node in total_nodes
+        ]
+        self.kill = False
+        self.visit_backwards(ops)
+        if self.kill:
+            raise NotImplementedError("Nodes listed above are not implemented")
+        ############################
 
-            ops = [
-                node if isinstance(node, tf.Operation) else node.op
-                for node in total_nodes
-            ]
-            self.kill = False
-            self.visit_backwards(ops)
-            if self.kill:
-                raise NotImplementedError(
-                    "Nodes listed above are not implemented")
-            ############################
+        # Remove orphan nodes and register node types
+        node_types = {}
+        for state in self.graph.nodes():
+            for node in state.nodes():
+                if state.in_degree(node) + state.out_degree(node) == 0:
+                    state.remove_node(node)
+                    if node.label in self.constDict:
+                        del self.constDict[node.label]
+                elif isinstance(node, dace.sdfg.nodes.AccessNode):
+                    node_types[node.data] = node.desc(self.graph).dtype.type
 
-            # Remove orphan nodes and register node types
-            node_types = {}
-            for state in self.graph.nodes():
-                for node in state.nodes():
-                    if state.in_degree(node) + state.out_degree(node) == 0:
-                        state.remove_node(node)
-                        if node.label in self.constDict:
-                            del self.constDict[node.label]
-                    elif isinstance(node, dace.graph.nodes.AccessNode):
-                        node_types[node.data] = node.desc(
-                            self.graph).dtype.type
-            self.graph._arg_types.update(self.callbackTypeDict)
-            self.graph.fill_scope_connectors()
-            ############################
-            # Set up arguments
-            sdfg_args = {}
-            sdfg_args.update(self.constDict)
-            sdfg_args.update(self.varDict)
-            sdfg_args.update(self.inpDict)
-            sdfg_args.update(self.initDict)
-            # Set scalar arguments to appropriate arrays of size 1
-            sdfg_args.update({
-                k: (v if isinstance(v, np.ndarray) else np.array(
-                    v, dtype=node_types[k]))
-                for k, v in sdfg_args.items()
-            })
+        # Remove arrays that were not used by other access nodes
+        for name, desc in list(self.graph.arrays.items()):
+            if name not in node_types and not isinstance(desc, Scalar):
+                del self.graph.arrays[name]
 
-            ############################
-            # Create output numpy arrays
-            outputs = {
-                name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
-                for node, name in zip(total_nodes, total_output_names)
-                if name is not None and name not in sdfg_args
-            }
-            outputs.update({
-                k: v
-                for k, v in sdfg_args.items() if k in total_output_names
-            })
-            sdfg_args.update(outputs)
-            ############################
-            # Mark outputs as non-transients
-            for output in outputs:
+        self.graph._arg_types.update(self.callbackTypeDict)
+        self.graph.fill_scope_connectors()
+        ############################
+        # Set up arguments
+        sdfg_args = {}
+        sdfg_args.update(self.constDict)
+        sdfg_args.update(self.varDict)
+        sdfg_args.update(self.inpDict)
+        sdfg_args.update(self.initDict)
+        # Set scalar arguments to appropriate arrays of size 1
+        sdfg_args.update({
+            k:
+            (v if isinstance(v, np.ndarray) else np.array(v,
+                                                          dtype=node_types[k]))
+            for k, v in sdfg_args.items()
+        })
+
+        ############################
+        # Create output numpy arrays
+        outputs = {
+            name: np.zeros(_tensorshape(node), dtype=_tensortype(node))
+            for node, name in zip(total_nodes, total_output_names)
+            if name is not None and name not in sdfg_args
+        }
+        outputs.update(
+            {k: v
+             for k, v in sdfg_args.items() if k in total_output_names})
+        sdfg_args.update(outputs)
+        ############################
+        # Mark outputs as non-transients
+        for output in outputs:
+            if output in self.graph.arrays:
                 self.graph.arrays[output].transient = False
-            ############################
-            # Compile the SDFG
-            if gpu:
-                #    self.graph.apply_gpu_transformations()
-                for aname, array in self.graph.arrays.items():
-                    if array is None:
-                        continue
-                    if array.storage in [
-                            dace.StorageType.Default,
-                            dace.StorageType.CPU_Heap,
-                    ]:
-                        array.storage = dace.StorageType.CPU_Pinned
+        ############################
+        # Compile the SDFG
+        if gpu:
+            #    self.graph.apply_gpu_transformations()
+            for aname, array in self.graph.arrays.items():
+                if array is None:
+                    continue
+                if array.storage in [
+                        dace.StorageType.Default,
+                        dace.StorageType.CPU_Heap,
+                ]:
+                    array.storage = dace.StorageType.CPU_Pinned
 
-                # Modify sdfg_args
-                # import numba.cuda
+            # Modify sdfg_args
+            # import numba.cuda
 
-                # for aname, arg in sdfg_args.items():
-                #    if isinstance(arg, np.ndarray):
-                #        sdfg_args[aname] = numba.cuda.pinned_array(
-                #            arg.shape, dtype=arg.dtype, strides=arg.strides
-                #        )
-                #        sdfg_args[aname][:] = arg
+            # for aname, arg in sdfg_args.items():
+            #    if isinstance(arg, np.ndarray):
+            #        sdfg_args[aname] = numba.cuda.pinned_array(
+            #            arg.shape, dtype=arg.dtype, strides=arg.strides
+            #        )
+            #        sdfg_args[aname][:] = arg
 
-            if patterns and len(patterns) > 0:
-                self.graph.apply_transformations(patterns,
-                                                 validate=validate,
-                                                 strict=strict)
-            compiled_sdfg = self.graph.compile(optimizer=False)
-            sdfg_args.update(self.callbackFunctionDict)
+        if patterns and len(patterns) > 0:
+            self.graph.apply_transformations(patterns,
+                                             validate=validate,
+                                             strict=strict)
+        compiled_sdfg = self.graph.compile(optimizer=False)
+        sdfg_args.update(self.callbackFunctionDict)
 
         ############################
         # Create the function that invokes the SDFG
@@ -685,8 +681,8 @@ class TFSession:
 
         num_outputs = 0
         # Add outputs as inputs so that the tasklet can modify them in-place
-        for _insertpos, (_outp,
-                         _dims) in enumerate(zip(outputList, outputDims)):
+        for _insertpos, (_outp, _dims) in enumerate(zip(outputList,
+                                                        outputDims)):
             if _dims == ["0:1"]:
                 # If the output is a scalar, there should be only one output
                 assert len(outputList) == 1
@@ -709,9 +705,7 @@ class TFSession:
             newGraph = tf.Graph()
             with newGraph.as_default():
                 newInputs = [tf.constant(_np_inp) for _np_inp in real_inputs]
-                newOp = tf.Operation(tf_op.node_def,
-                                     newGraph,
-                                     inputs=newInputs)
+                newOp = tf.Operation(tf_op.node_def, newGraph, inputs=newInputs)
             outputs_tf = tf.Session(graph=newGraph).run(newOp.outputs)
             if num_outputs == 0:
                 return outputs_tf[0]
@@ -741,8 +735,7 @@ class TFSession:
         self.callbackFunctionDict[node_name] = tensorflow_callback
 
         # Register callback in SDFG
-        self.graph.add_symbol(node_name,
-                              self.callbackTypeDict[node_name].dtype)
+        self.graph.add_scalar(node_name, self.callbackTypeDict[node_name].dtype)
 
         callback_tasklet = self.state.add_tasklet(
             node_name,
@@ -834,14 +827,12 @@ class TFSession:
         shape = dace.properties.ShapeProperty.from_string(
             str(_tensorshape(node.outputs[0])))
         # Create np array from tensor value
-        npArray = tensor_util.MakeNdarray(
-            node.get_attr("value")).reshape(shape)
+        npArray = tensor_util.MakeNdarray(node.get_attr("value")).reshape(shape)
 
         # Add to constDict so that it can be fed to the program
         self.constDict[label] = npArray.astype(_tensortype(node))
 
-        nodeArray = list(filter(lambda a: a.label == label,
-                                self.state.nodes()))
+        nodeArray = list(filter(lambda a: a.label == label, self.state.nodes()))
 
         # If node already present set it non transient, otherwise add node
         if not nodeArray:
@@ -873,7 +864,7 @@ class TFSession:
             str(_tensorshape(node.outputs[0])))
 
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node))
@@ -893,7 +884,7 @@ class TFSession:
         state = self.state
         label = string_builder(node.inputs[1].name)
         try:
-            fillNode = state.find_node(label)
+            fillNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -906,7 +897,7 @@ class TFSession:
 
         label = string_builder(node.inputs[0].name)
         try:
-            emptyNode = state.find_node(string_builder(node.inputs[0].name))
+            emptyNode = _find_node(state, string_builder(node.inputs[0].name))
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[1]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -939,7 +930,7 @@ class TFSession:
 
         # Check if the node is already in the graph and get as a list
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
 
         except (LookupError):
             outputNode = self.create_and_add_output_node(node)
@@ -1018,7 +1009,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1037,7 +1028,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
 
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1054,7 +1045,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1073,7 +1064,7 @@ class TFSession:
         label = string_builder(node.name + "_0")
         # Check if already in graph, set non-transient. Otherwise add to graph.
         try:
-            outputNode = state.find_node(label)
+            outputNode = _find_node(state, label)
             outputNode.desc(self.graph).transient = False
 
         except (LookupError):
@@ -1151,8 +1142,7 @@ class TFSession:
     def visit_Mean(self, node):
         outputNode = self.create_and_add_output_node(node)[0]
         outputDims = self.get_default_dims(node.outputs[0])
-        inputNode, params, dims = self.create_and_add_input_node(
-            node.inputs[0])
+        inputNode, params, dims = self.create_and_add_input_node(node.inputs[0])
         reduction_axes = self._internal_session.run(node.inputs[1])
         reduction_axes.sort()
         norm = 1
@@ -1337,11 +1327,9 @@ class TFSession:
             node.inputs[0])
         inputData, inputParams, inputDims = self.create_and_add_input_node(
             node.inputs[1])
-        gammaNode, _, gammaDims = self.create_and_add_input_node(
-            node.inputs[2])
+        gammaNode, _, gammaDims = self.create_and_add_input_node(node.inputs[2])
         meanNode, _, meanDims = self.create_and_add_input_node(node.inputs[3])
-        stdevNode, _, stdevDims = self.create_and_add_input_node(
-            node.inputs[4])
+        stdevNode, _, stdevDims = self.create_and_add_input_node(node.inputs[4])
         #############################OUTPUTS#############################################
         outputList = self.create_and_add_output_node(node)
         imageGrads = outputList[0]
@@ -1618,7 +1606,7 @@ class TFSession:
 
             label = string_builder(inp.name)
             try:
-                inputNode = state.find_node(label)
+                inputNode = _find_node(state, label)
             except (LookupError):
 
                 inputNode = self.create_and_add_input_node(inp)[0]
@@ -1666,7 +1654,7 @@ class TFSession:
         inp = node.inputs[0]
         label = string_builder(inp.name)
         try:
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.outputs[0]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -1800,7 +1788,7 @@ class TFSession:
         inp = node.inputs[0]
         label = string_builder(inp.name)
         try:
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             dtype = dace.typeclass(_tensortype(node.inputs[2]))
             shape = dace.properties.ShapeProperty.from_string(
@@ -2029,10 +2017,8 @@ class TFSession:
             outputParams.append(["i0", "i1", "i2", "i3"])
             # create conv dims
             for i in range(0, ndims):
-                inputDims[0].append(
-                    str(0) + ":" + str(node.inputs[0].shape[i]))
-                inputDims[1].append(
-                    str(0) + ":" + str(node.inputs[1].shape[i]))
+                inputDims[0].append(str(0) + ":" + str(node.inputs[0].shape[i]))
+                inputDims[1].append(str(0) + ":" + str(node.inputs[1].shape[i]))
                 outputDims[0].append(
                     str(0) + ":" + str(node.outputs[0].shape[i]))
             # add a padding map for same padding(zero padding so that input and
@@ -2442,7 +2428,7 @@ class TFSession:
             self.constDict[label] = shape
             # Make outputs as non transients
             try:
-                outpNode = self.state.find_node(label)
+                outpNode = _find_node(self.state, label)
             except (LookupError):
                 outpNode = self.state.add_array(
                     label,
@@ -2454,15 +2440,13 @@ class TFSession:
 
     def visit_Reshape(self, node):
 
-        inputNode, params, dims = self.create_and_add_input_node(
-            node.inputs[0])
+        inputNode, params, dims = self.create_and_add_input_node(node.inputs[0])
         outputList = self.create_and_add_output_node(node)
         outputParams = [self.get_default_params(node.outputs[0])]
         outputDims = [self.get_default_dims(node.outputs[0])]
         memlet_reshape = Memlet.simple(inputNode,
                                        ",".join(dims),
-                                       other_subset_str=",".join(
-                                           outputDims[0]))
+                                       other_subset_str=",".join(outputDims[0]))
         self.state.add_edge(inputNode, None, outputList[0], None,
                             memlet_reshape)
 
@@ -2532,8 +2516,7 @@ class TFSession:
         )
         innerParams = []
         innerParams.append(
-            ["i0",
-             str(strides) + "*i1+i4",
+            ["i0", str(strides) + "*i1+i4",
              str(strides) + "*i2+i5", "i3"])
         innerParams.append(["i0", "i1", "i2", "i3"])
         innerParams.append(["i0", "i1", "i2", "i3"])
@@ -2654,9 +2637,8 @@ class TFSession:
 
         mapEntry, mapExit = state.add_map(mapLabel,
                                           dict(zip(mapParams, mapRange)))
-        tasklet = state.add_tasklet(
-            mapLabel, {"j0", "j1"}, {"out"},
-            "if (j1>0):\n\tout = j0\nelse:\n\tout = 0")
+        tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
+                                    "if (j1>0):\n\tout = j0\nelse:\n\tout = 0")
         self.add_out_memlets(outputList, mapExit, tasklet, outputDims,
                              outputParams)
         self.add_in_memlets(inputNodes, mapEntry, tasklet, inputDims,
@@ -2723,8 +2705,8 @@ class TFSession:
 
         ksize = int(node.inputs[1].shape[0])
         if str(node.get_attr("padding"))[2:-1] == "SAME":
-            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
-                          ksize - int(outputList[0].desc(self.graph).shape[1]))
+            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) + ksize -
+                          int(outputList[0].desc(self.graph).shape[1]))
         else:
             padding = 0
 
@@ -2930,8 +2912,8 @@ class TFSession:
         # Input, filtersizes, out_backprop
         ksize = int(node.outputs[0].shape[0])
         if str(node.get_attr("padding"))[2:-1] == "SAME":
-            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) +
-                          ksize - int(node.inputs[0].shape[1]))
+            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) + ksize -
+                          int(node.inputs[0].shape[1]))
         else:
             padding = 0
 
@@ -3076,7 +3058,7 @@ class TFSession:
         for out in node.outputs:
             label = string_builder(out.name)
             try:
-                outputNode = state.find_node(label)
+                outputNode = _find_node(state, label)
             except (LookupError):
                 dtype = dace.typeclass(_tensortype(node))
                 shape = dace.properties.ShapeProperty.from_string(
@@ -3097,11 +3079,10 @@ class TFSession:
         shape = dace.properties.ShapeProperty.from_string(
             str(inputList[1].shape))
 
-        temp1Node = state.add_transient(
-            mapLabel + "_max_tmp",
-            shape,
-            dtype,
-            lifetime=dtypes.AllocationLifetime.SDFG)
+        temp1Node = state.add_transient(mapLabel + "_max_tmp",
+                                        shape,
+                                        dtype,
+                                        lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_max",
             dict(zip(mapParams, mapRange)),
@@ -3124,11 +3105,10 @@ class TFSession:
         )
 
         # 2nd map, calculate the denominator sum
-        temp2Node = state.add_transient(
-            mapLabel + "_denominator_tmp",
-            shape,
-            dtype,
-            lifetime=dtypes.AllocationLifetime.SDFG)
+        temp2Node = state.add_transient(mapLabel + "_denominator_tmp",
+                                        shape,
+                                        dtype,
+                                        lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(
             mapLabel + "_denominator",
             dict(zip(mapParams, mapRange)),
@@ -3154,11 +3134,10 @@ class TFSession:
         # 3rd map, calculate the sofmax
         shape = dace.properties.ShapeProperty.from_string(
             str(inputList[0].shape))
-        temp3Node = state.add_transient(
-            mapLabel + "_softmax_tmp",
-            shape,
-            dtype,
-            lifetime=dtypes.AllocationLifetime.SDFG)
+        temp3Node = state.add_transient(mapLabel + "_softmax_tmp",
+                                        shape,
+                                        dtype,
+                                        lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(mapLabel + "_softmax",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(mapLabel + "_softmax", {"j0", "j1", "j2"},
@@ -3320,10 +3299,10 @@ class TFSession:
                                      shortAccesses,
                                      _tensortype(node),
                                      lifetime=dtypes.AllocationLifetime.SDFG)
-        mapEntry, mapExit = state.add_map(label,
-                                          dict(zip(longParams, longDims)))
-        taskletCode = ("if (i4==" + depth_radius + "){\n out = pow(j2," +
-                       beta + ")-2*" + alpha + "*" + beta +
+        mapEntry, mapExit = state.add_map(label, dict(zip(longParams,
+                                                          longDims)))
+        taskletCode = ("if (i4==" + depth_radius + "){\n out = pow(j2," + beta +
+                       ")-2*" + alpha + "*" + beta +
                        "*j1*j0/j2;}\n else{\n out = -2*" + alpha + "*" + beta +
                        "*j1*j0/j2;}")
         tasklet = state.add_tasklet(label, {"j0", "j1", "j2"}, {"out"},
@@ -3472,11 +3451,10 @@ class TFSession:
         dtype = dace.typeclass(_tensortype(node))
         shape = dace.properties.ShapeProperty.from_string(",".join(
             inputAccesses[1]))
-        temp1Node = state.add_transient(
-            mapLabel + "_max_tmp",
-            shape,
-            dtype,
-            lifetime=dtypes.AllocationLifetime.SDFG)
+        temp1Node = state.add_transient(mapLabel + "_max_tmp",
+                                        shape,
+                                        dtype,
+                                        lifetime=dtypes.AllocationLifetime.SDFG)
 
         tasklet = state.add_tasklet(mapLabel + "_max", {"j0"}, {"out"},
                                     "out = j0")
@@ -3631,11 +3609,10 @@ class TFSession:
         dtype = dace.typeclass(_tensortype(node))
         shape = dace.properties.ShapeProperty.from_string(
             str(node.inputs[0].shape.dims[0]))
-        temp1Node = state.add_transient(
-            mapLabel + "_max_tmp",
-            shape,
-            dtype,
-            lifetime=dtypes.AllocationLifetime.SDFG)
+        temp1Node = state.add_transient(mapLabel + "_max_tmp",
+                                        shape,
+                                        dtype,
+                                        lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(mapLabel + "_max",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(mapLabel + "_max", {"j0"}, {"out"},
@@ -3655,11 +3632,10 @@ class TFSession:
         )
 
         # 2nd map, calculate the denominator sum
-        temp2Node = state.add_transient(
-            mapLabel + "_denominator_tmp",
-            shape,
-            dtype,
-            lifetime=dtypes.AllocationLifetime.SDFG)
+        temp2Node = state.add_transient(mapLabel + "_denominator_tmp",
+                                        shape,
+                                        dtype,
+                                        lifetime=dtypes.AllocationLifetime.SDFG)
         mapEntry, mapExit = state.add_map(mapLabel + "_denominator",
                                           dict(zip(mapParams, mapRange)))
         tasklet = state.add_tasklet(mapLabel + "_denominator", {"j0", "j1"},
@@ -3855,7 +3831,7 @@ class TFSession:
         # Try to find node in DaCe graph
         try:
             # If successful, use the existing node
-            inputNode = state.find_node(label)
+            inputNode = _find_node(state, label)
         except (LookupError):
             # Get type and shape of the input tensor
             try:
@@ -3895,7 +3871,7 @@ class TFSession:
             # Try to find node in DaCe graph
             try:
                 # If successful, use the existing node
-                outputNode = state.find_node(label)
+                outputNode = _find_node(state, label)
             except (LookupError):
                 # Get type and shape of the tensor
                 dtype = dace.typeclass(_tensortype(out))
@@ -3919,8 +3895,8 @@ class TFSession:
         data = self.graph.arrays[arrname]
 
         if isinstance(data, Scalar):
-            state.add_mapped_tasklet('reinit_%s' % arrname,
-                                     [('unused', '0:1')], {},
+            state.add_mapped_tasklet('reinit_%s' % arrname, [('unused', '0:1')],
+                                     {},
                                      'out = %s' % value,
                                      {'out': dace.Memlet.simple(arrname, '0')},
                                      external_edges=True)

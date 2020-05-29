@@ -8,8 +8,8 @@ import time
 
 import dace
 from dace.config import Config
-from dace.graph import labeling
-from dace.graph.graph import SubgraphView
+from dace.sdfg import propagation
+from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
 
 # This import is necessary since it registers all the patterns
@@ -277,7 +277,7 @@ class SDFGOptimizer(Optimizer):
                 self.sdfg.save(os.path.join('_dacegraphs', filename + '.sdfg'))
 
             if not pattern_match.annotates_memlets():
-                labeling.propagate_labels_sdfg(self.sdfg)
+                propagation.propagate_memlets_sdfg(self.sdfg)
 
             if True:
                 pattern_counter += 1

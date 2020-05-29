@@ -117,8 +117,8 @@ def make_nested_sdfg(parent):
 
     state = sdfg.add_state("compute_cols")
 
-    sdfg.add_edge(set_zero_state, state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(state, write_back_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(set_zero_state, state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(state, write_back_state, dace.sdfg.InterstateEdge())
 
     compute_entry, compute_exit = state.add_map("compute_col",
                                                 {"j": "rowptr:rowend"})
@@ -201,9 +201,7 @@ def make_nested_sdfg(parent):
                           b_buffer,
                           src_conn="out",
                           memlet=dace.memlet.Memlet.simple(
-                              b_buffer,
-                              "0",
-                              wcr_str="lambda a, b: a + b"))
+                              b_buffer, "0", wcr_str="lambda a, b: a + b"))
 
     return sdfg
 
@@ -321,8 +319,8 @@ def make_sdfg(specialize):
     main_state = make_main_state(sdfg)
     post_state = make_post_state(sdfg)
 
-    sdfg.add_edge(pre_state, main_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(main_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, main_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(main_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
