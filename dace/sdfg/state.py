@@ -32,11 +32,11 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
 
 
 class StateGraphView(object):
-    """ 
+    """
     Read-only view interface of an SDFG state, containing methods for memlet
     tracking, traversal, subgraph creation, queries, and replacements.
     ``SDFGState`` and ``StateSubgraphView`` inherit from this class to share
-    methods. 
+    methods.
     """
     def __init__(self, *args, **kwargs):
         self._clear_scopedict_cache()
@@ -222,7 +222,7 @@ class StateGraphView(object):
     # Scope-related methods
 
     def _clear_scopedict_cache(self):
-        """ 
+        """
         Clears the cached results for the scope_dict function.
         For use when the graph mutates (e.g., new edges/nodes, deletions).
         """
@@ -336,8 +336,8 @@ class StateGraphView(object):
 
     @property
     def free_symbols(self) -> Set[str]:
-        """ 
-        Returns a set of symbol names that are used, but not defined, in 
+        """
+        Returns a set of symbol names that are used, but not defined, in
         this graph view (SDFG state or subgraph thereof).
         :note: Assumes that the graph is valid (i.e., without undefined or
                overlapping symbols).
@@ -402,10 +402,10 @@ class StateGraphView(object):
         return defined_syms
 
     def arglist(self) -> Dict[str, dt.Data]:
-        """ 
-        Returns an ordered dictionary of arguments (names and types) required 
+        """
+        Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG state or subgraph thereof.
-        
+
         The arguments differ from SDFG.arglist, but follow the same order,
         namely: <sorted data arguments>, <sorted scalar arguments>.
 
@@ -414,18 +414,18 @@ class StateGraphView(object):
             * All used transient data containers that were allocated outside.
               This includes data from memlets, transients shared across multiple
               states, and transients that could not be allocated within the
-              subgraph (due to their ``AllocationLifetime`` or according to the 
+              subgraph (due to their ``AllocationLifetime`` or according to the
               ``dtypes.can_allocate`` function).
-        
+
         Scalar arguments contain:
             * Free symbols in this state/subgraph.
             * All transient and non-transient scalar data containers used in
               this subgraph.
-        
+
         This structure will create a sorted list of pointers followed by a
         sorted list of PoDs and structs.
 
-        :return: An ordered dictionary of (name, data descriptor type) of all 
+        :return: An ordered dictionary of (name, data descriptor type) of all
                  the arguments, sorted as defined here.
         """
         sdfg: 'dace.sdfg.SDFG' = self.parent
@@ -523,7 +523,7 @@ class StateGraphView(object):
         return result
 
     def signature_arglist(self, with_types=True, for_call=False):
-        """ Returns a list of arguments necessary to call this state or 
+        """ Returns a list of arguments necessary to call this state or
             subgraph, formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
@@ -777,7 +777,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return sdfg._repr_html_()
 
     def symbols_defined_at(self, node: nd.Node) -> Dict[str, dtypes.typeclass]:
-        """ 
+        """
         Returns all symbols available to a given node.
         The symbols a node can access are a combination of the global SDFG
         symbols, symbols defined in inter-state paths to its state,
@@ -951,28 +951,16 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
         return s
 
-    def _map_from_ndrange(self,
-                          name,
-                          schedule,
-                          unroll,
-                          ndrange,
-                          debuginfo=None):
+    def _make_iterators(self, ndrange):
         # Input can either be a dictionary or a list of pairs
         if isinstance(ndrange, list):
             params = [k for k, v in ndrange]
             ndrange = {k: v for k, v in ndrange}
         else:
             params = list(ndrange.keys())
-
         map_range = SubsetProperty.from_string(", ".join(
             [ndrange[p] for p in params]))
-        map = nd.Map(name,
-                     params,
-                     map_range,
-                     schedule,
-                     unroll,
-                     debuginfo=debuginfo)
-        return map
+        return params, map_range
 
     def add_map(
             self,
@@ -992,11 +980,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = _getdebuginfo(debuginfo)
-        map = self._map_from_ndrange(name,
-                                     schedule,
-                                     unroll,
-                                     ndrange,
-                                     debuginfo=debuginfo)
+        map = nd.Map(name,
+                     *self._make_iterators(ndrange),
+                     schedule=schedule,
+                     unroll=unroll,
+                     debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, map_exit])
@@ -1102,11 +1090,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             location=location,
             debuginfo=debuginfo,
         )
-        map = self._map_from_ndrange(map_name,
-                                     schedule,
-                                     unroll_map,
-                                     map_ranges,
-                                     debuginfo=debuginfo)
+        map = nd.Map(map_name,
+                     *self._make_iterators(map_ranges),
+                     schedule=schedule,
+                     unroll=unroll_map,
+                     debuginfo=debuginfo)
         map_entry = nd.MapEntry(map)
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, tasklet, map_exit])
@@ -1225,6 +1213,52 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                                debuginfo=debuginfo)
         self.add_node(result)
         return result
+
+    def add_pipeline(
+            self,
+            name,
+            ndrange,
+            init_size=0,
+            init_overlap=False,
+            drain_size=0,
+            drain_overlap=False,
+            schedule=dtypes.ScheduleType.FPGA_Device,
+            debuginfo=None,
+            **kwargs
+    ) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
+        """ Adds a pipeline entry and pipeline exit. These are used for FPGA
+            kernels to induce distinct behavior between an "initialization"
+            phase, a main streaming phase, and a "draining" phase, which require
+            a additive number of extra loop iterations (i.e., N*M + I + D),
+            where I and D are the number of initialization/drain iterations.
+            The code can detect which phase it is in by querying the
+            init_condition() and drain_condition() boolean variable.
+
+            :param name:          Pipeline label
+            :param ndrange:       Mapping between range variable names and
+                                  their subsets (parsed from strings)
+            :param init_size:     Number of iterations of initialization phase.
+            :param init_overlap:  Whether the initialization phase overlaps
+                                  with the "main" streaming phase of the loop.
+            :param drain_size:    Number of iterations of draining phase.
+            :param drain_overlap: Whether the draining phase overlaps with
+                                  the "main" streaming phase of the loop.
+            :return: (map_entry, map_exit) node 2-tuple
+        """
+        debuginfo = _getdebuginfo(debuginfo)
+        pipeline = nd.Pipeline(name,
+                               *self._make_iterators(ndrange),
+                               init_size=init_size,
+                               init_overlap=init_overlap,
+                               drain_size=drain_size,
+                               drain_overlap=drain_overlap,
+                               schedule=schedule,
+                               debuginfo=debuginfo,
+                               **kwargs)
+        pipeline_entry = nd.PipelineEntry(pipeline)
+        pipeline_exit = nd.PipelineExit(pipeline)
+        self.add_nodes_from([pipeline_entry, pipeline_exit])
+        return pipeline_entry, pipeline_exit
 
     def add_edge_pair(
         self,
