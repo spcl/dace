@@ -9,11 +9,11 @@ import sympy as sp
 import numpy as np
 
 import dace
-from dace import subsets
+from dace import subsets, data as dt
 from dace.dtypes import deduplicate
 from dace.config import Config
 from dace.frontend import operations
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
@@ -180,7 +180,7 @@ class FPGACodeGen(TargetCodeGenerator):
             seen = {}
             for sg in subgraphs:
                 for node in sg:
-                    if isinstance(node, dace.graph.nodes.AccessNode):
+                    if isinstance(node, dace.sdfg.nodes.AccessNode):
                         if node.data in seen:
                             if seen[node.data] != sg:
                                 shared.add(node.data)
@@ -197,7 +197,8 @@ class FPGACodeGen(TargetCodeGenerator):
         shared_data = cls.shared_data(subgraphs)
 
         # Find scalar parameters (to filter out from data parameters)
-        scalar_parameters = sdfg.scalar_parameters(False)
+        scalar_parameters = [(k, v) for k, v in sdfg.arrays.items()
+                             if isinstance(v, dt.Scalar) and not v.transient]
         scalar_set = set(p[0] for p in scalar_parameters)
 
         # For some reason the array allocation dispatcher takes nodes, not
@@ -215,7 +216,7 @@ class FPGACodeGen(TargetCodeGenerator):
             data_to_node.update({
                 node.data: node
                 for node in subgraph.nodes()
-                if isinstance(node, dace.graph.nodes.AccessNode)
+                if isinstance(node, dace.sdfg.nodes.AccessNode)
             })
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
@@ -229,7 +230,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
-                if isinstance(n, dace.graph.nodes.AccessNode):
+                if isinstance(n, dace.sdfg.nodes.AccessNode):
                     # Add nodes if they are outer-level, or an inner-level
                     # transient (inner-level inputs/outputs are just connected
                     # to data in the outer layers, whereas transients can be
@@ -294,7 +295,10 @@ class FPGACodeGen(TargetCodeGenerator):
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
         top_level_local_data = [data_to_node[n] for n in top_level_local_data]
 
-        symbol_parameters = sdfg.undefined_symbols(False)
+        symbol_parameters = {
+            k: dt.Scalar(v)
+            for k, v in sdfg.symbols.items() if k not in sdfg.constants
+        }
 
         return (global_data_parameters, top_level_local_data,
                 subgraph_parameters, scalar_parameters, symbol_parameters,
@@ -327,7 +331,7 @@ class FPGACodeGen(TargetCodeGenerator):
             q.extendleft((n, state, parent_sdfg) for n in state.nodes())
         while len(q) > 0:
             node, state, sdfg = q.pop()
-            if isinstance(node, dace.graph.nodes.NestedSDFG):
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG):
                 nested_sdfg = node.sdfg
                 for nested_state in nested_sdfg.nodes():
                     q.extendleft((n, nested_state, nested_sdfg)
@@ -344,7 +348,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if memlet_data is not None:
                         alias[(edge.src_conn, nested_sdfg)] = (memlet_data,
                                                                sdfg)
-            elif isinstance(node, dace.graph.nodes.AccessNode):
+            elif isinstance(node, dace.sdfg.nodes.AccessNode):
                 if node in seen:
                     continue
                 seen.add(node)
@@ -359,8 +363,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     if (isinstance(edge.data, dace.memlet.EmptyMemlet)
                             or edge.data.data is None):
                         continue
-                    if (isinstance(edge.src, dace.graph.nodes.AccessNode) and
-                            isinstance(edge.dst, dace.graph.nodes.AccessNode)
+                    if (isinstance(edge.src, dace.sdfg.nodes.AccessNode) and
+                            isinstance(edge.dst, dace.sdfg.nodes.AccessNode)
                             and edge.data.veclen == 1):
                         # Consistent vectorization is not enforced for
                         # memcopies, but if this memory is not found anywhere
@@ -407,7 +411,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # kernel launch
             subgraphs = [dfg_scope]
             return self.generate_kernel(
-                sdfg, sdfg.find_state(state_id),
+                sdfg, sdfg.node(state_id),
                 dfg_scope.source_nodes()[0].map.label.replace(" ", "_"),
                 subgraphs, function_stream, callsite_stream)
 
@@ -594,17 +598,17 @@ class FPGACodeGen(TargetCodeGenerator):
         # Determine directionality
         if isinstance(
                 src_node,
-                dace.graph.nodes.AccessNode) and memlet.data == src_node.data:
+                dace.sdfg.nodes.AccessNode) and memlet.data == src_node.data:
             outgoing_memlet = True
         elif isinstance(
                 dst_node,
-                dace.graph.nodes.AccessNode) and memlet.data == dst_node.data:
+                dace.sdfg.nodes.AccessNode) and memlet.data == dst_node.data:
             outgoing_memlet = False
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
-        data_to_data = (isinstance(src_node, dace.graph.nodes.AccessNode)
-                        and isinstance(dst_node, dace.graph.nodes.AccessNode))
+        data_to_data = (isinstance(src_node, dace.sdfg.nodes.AccessNode)
+                        and isinstance(dst_node, dace.sdfg.nodes.AccessNode))
 
         host_to_device = (data_to_data and src_storage in cpu_storage_types and
                           dst_storage == dace.dtypes.StorageType.FPGA_Global)
@@ -868,7 +872,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # Get all scopes from the same level
         all_scopes = [
             node for node in parent_scope.topological_sort()
-            if isinstance(node, dace.graph.nodes.EntryNode)
+            if isinstance(node, dace.sdfg.nodes.EntryNode)
         ]
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
@@ -897,7 +901,7 @@ class FPGACodeGen(TargetCodeGenerator):
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
 
-        if isinstance(src_node, dace.graph.nodes.CodeNode):
+        if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dace.dtypes.StorageType.Register
             try:
                 src_parent = dfg.scope_dict()[src_node]
@@ -908,7 +912,7 @@ class FPGACodeGen(TargetCodeGenerator):
         else:
             src_storage = src_node.desc(sdfg).storage
 
-        if isinstance(dst_node, dace.graph.nodes.CodeNode):
+        if isinstance(dst_node, dace.sdfg.nodes.CodeNode):
             dst_storage = dace.dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
@@ -935,7 +939,7 @@ class FPGACodeGen(TargetCodeGenerator):
             x = to_search.pop()
             if (isinstance(
                     x,
-                (dace.graph.nodes.MapEntry, dace.graph.nodes.PipelineEntry))):
+                (dace.sdfg.nodes.MapEntry, dace.sdfg.nodes.PipelineEntry))):
                 # Degenerate loops should not be pipelined
                 fully_degenerate = True
                 for begin, end, skip in x.map.range:
@@ -947,7 +951,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if not x.unroll and not fully_degenerate:
                     return False
                 to_search += scope_dict[x]
-            elif isinstance(x, dace.graph.nodes.NestedSDFG):
+            elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
                 for state in x.sdfg:
                     if not self._is_innermost(state.nodes(),
                                               state.scope_dict(True), x.sdfg):
@@ -989,7 +993,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
-            if isinstance(node, dace.graph.nodes.PipelineEntry):
+            if isinstance(node, dace.sdfg.nodes.PipelineEntry):
                 for i in range(len(node.map.range)):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
@@ -1013,7 +1017,7 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
 
             # Generate nested loops
-            if not isinstance(node, dace.graph.nodes.PipelineEntry):
+            if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
                 if is_innermost and not fully_degenerate:
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
@@ -1097,12 +1101,11 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg,
-                                                 sdfg.find_state(state_id),
+        to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
                                                  node)
         allocated = set()
         for child in dfg.scope_dict(node_to_children=True)[node]:
-            if not isinstance(child, dace.graph.nodes.AccessNode):
+            if not isinstance(child, dace.sdfg.nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
                 continue
@@ -1121,7 +1124,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # This was generated as unrolled processing elements, no need to
             # generate anything here
             return
-        if isinstance(node, dace.graph.nodes.PipelineExit):
+        if isinstance(node, dace.sdfg.nodes.PipelineExit):
             flat_it = node.pipeline.iterator_str()
             bound = node.pipeline.loop_bound_str()
             pipeline = node.pipeline
@@ -1188,11 +1191,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 if n in seen:
                     continue
                 seen.add(n)
-                if (isinstance(n, dace.graph.nodes.Tasklet)
-                        or isinstance(n, dace.graph.nodes.NestedSDFG)):
+                if (isinstance(n, dace.sdfg.nodes.Tasklet)
+                        or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
                     tasklet_list.append(n)
                 else:
-                    if isinstance(n, dace.graph.nodes.AccessNode):
+                    if isinstance(n, dace.sdfg.nodes.AccessNode):
                         access_nodes.append(n)
                     for e in subgraph.out_edges(n):
                         if e.dst not in seen:

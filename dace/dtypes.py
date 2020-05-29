@@ -30,9 +30,12 @@ class StorageType(aenum.AutoNumberEnum):
 @extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
+    # TODO: Address different targets w.r.t. sequential
+    # TODO: Add per-type properties for scope nodes. Consider TargetType enum
+    #       and a MapScheduler class
 
     Default = ()  # Scope-default parallel schedule
-    Sequential = ()  # Sequential code (single-core)
+    Sequential = ()  # Sequential code (single-thread)
     MPI = ()  # MPI processes
     CPU_Multicore = ()  # OpenMP
     GPU_Device = ()  # Kernel
@@ -200,41 +203,6 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
-_LIMITS = {
-    'int': "INT_{}",
-    'float': "FLT_{}",
-    'char': "CHAR_{}",
-    'short': "SHRT_{}",
-    'long long': "LLONG_{}",
-    'unsigned char': "UCHAR_{}",
-    'unsigned short': "USHRT_{}",
-    'unsigned int': "UINT_{}",
-    'unsigned long long': "ULLONG_{}",
-    'double': "DBL_{}",
-}
-
-
-def max_value(dtype):
-    """Get a max value literal for `dtype`."""
-    ctype = dtype.ctype
-    if ctype == "bool":
-        return "true"
-    elif ctype == "dace::float16":
-        return "65504.0"
-    else:
-        return _LIMITS[ctype].format("MAX")
-
-def min_value(dtype):
-    """Get a min value literal for `dtype`."""
-    ctype = dtype.ctype
-    if ctype == "bool":
-        return "false"
-    elif ctype in ["double", "float", "dace::float16"]:
-        # use the sign bit for floats
-        return "-" + max_value(dtype)
-    else:
-        return _LIMITS[ctype].format("MIN")
-
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -259,14 +227,18 @@ class typeclass(object):
             elif config_data_types.lower() == 'c':
                 wrapped_type = numpy.int32
             else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
         elif wrapped_type is float:
             if config_data_types.lower() == 'python':
                 wrapped_type = numpy.float64
             elif config_data_types.lower() == 'c':
                 wrapped_type = numpy.float32
             else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
         elif wrapped_type is complex:
             wrapped_type = numpy.complex128
 
@@ -299,6 +271,10 @@ class typeclass(object):
     def to_json(self):
         return self.type.__name__
 
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return json_to_typeclass(json_obj, context)
+
     # Create a new type
     def __call__(self, *args, **kwargs):
         return self.type(*args, **kwargs)
@@ -324,15 +300,58 @@ class typeclass(object):
         return self.ctype
 
 
-def result_type_of(lhs, rhs):
-    """Returns the largest between two types (dace.types.typeclass) according
-       to C semantics."""
+def max_value(dtype: typeclass):
+    """Get a max value literal for `dtype`."""
+    nptype = dtype.as_numpy_dtype()
+    if nptype == numpy.bool:
+        return True
+    elif numpy.issubdtype(nptype, numpy.integer):
+        return numpy.iinfo(nptype).max
+    elif numpy.issubdtype(nptype, numpy.floating):
+        return numpy.finfo(nptype).max
+
+    raise TypeError('Unsupported type "%s" for maximum' % dtype)
+
+
+def min_value(dtype: typeclass):
+    """Get a min value literal for `dtype`."""
+    nptype = dtype.as_numpy_dtype()
+    if nptype == numpy.bool:
+        return False
+    elif numpy.issubdtype(nptype, numpy.integer):
+        return numpy.iinfo(nptype).min
+    elif numpy.issubdtype(nptype, numpy.floating):
+        return numpy.finfo(nptype).min
+
+    raise TypeError('Unsupported type "%s" for minimum' % dtype)
+
+
+def result_type_of(lhs, *rhs):
+    """ 
+    Returns the largest between two or more types (dace.types.typeclass) 
+    according to C semantics.
+    """
+    if len(rhs) == 0:
+        rhs = None
+    elif len(rhs) > 1:
+        result = lhs
+        for r in rhs:
+            result = result_type_of(result, r)
+        return result
+
+    rhs = rhs[0]
+
+    # Extract the type if symbolic
+    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
+    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+
     if lhs == rhs:
         return lhs  # Types are the same, return either
     if lhs == None:
         return rhs  # Use RHS even if it's None
     if rhs == None:
         return lhs  # Use LHS
+
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
     rhs_ = rhs.type if isinstance(rhs, typeclass) else rhs
@@ -388,7 +407,7 @@ class pointer(typeclass):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
-        return pointer(json_to_typeclass(json_obj['dtype']))
+        return pointer(json_to_typeclass(json_obj['dtype'], context))
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -447,7 +466,7 @@ class struct(typeclass):
 
         ret = struct(json_obj['name'])
         ret._data = {
-            k: json_to_typeclass(v)
+            k: json_to_typeclass(v, context)
             for k, v in json_obj['data'].items()
         }
         ret._length = {k: v for k, v in json_obj['length'].items()}
@@ -644,7 +663,8 @@ class callback(typeclass):
 
         return callback(
             json_to_typeclass(rettype) if rettype else None,
-            *(dace.serialize.from_json(arg) for arg in json_obj['arguments']))
+            *(dace.serialize.from_json(arg, context)
+              for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"
@@ -847,14 +867,14 @@ class DebugInfo:
 # Static (utility) functions
 
 
-def json_to_typeclass(obj):
+def json_to_typeclass(obj, context=None):
     # TODO: this does two different things at the same time. Should be split
     # into two separate functions.
     from dace.serialize import get_serializer
     if isinstance(obj, str):
         return get_serializer(obj)
     elif isinstance(obj, dict) and "type" in obj:
-        return get_serializer(obj["type"]).from_json(obj)
+        return get_serializer(obj["type"]).from_json(obj, context)
     else:
         raise ValueError("Cannot resolve: {}".format(obj))
 
@@ -893,4 +913,42 @@ def validate_name(name):
         return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
+    return True
+
+
+def can_allocate(storage: StorageType, schedule: ScheduleType):
+    """ 
+    Identifies whether a container of a storage type can be allocated in a
+    specific schedule. Used to determine arguments to subgraphs by the 
+    innermost scope that a container can be allocated in. For example, 
+    FPGA_Global memory cannot be allocated from within the FPGA scope, or
+    GPU shared memory cannot be allocated outside of device-level code.
+
+    :param storage: The storage type of the data container to allocate.
+    :param schedule: The scope schedule to query.
+    :return: True if the container can be allocated, False otherwise.
+    """
+    # Host-only allocation
+    if storage in [
+            StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
+            StorageType.GPU_Global
+    ]:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI
+        ]
+
+    # FPGA-local memory
+    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
+        return schedule == ScheduleType.FPGA_Device
+
+    # GPU-local memory
+    if storage == StorageType.GPU_Shared:
+        return schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic
+        ]
+
+    # The rest (Registers) can be allocated everywhere
     return True

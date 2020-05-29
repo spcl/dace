@@ -3,8 +3,9 @@
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
-from dace.graph import nodes, nxutil
-from dace.graph.graph import OrderedDiGraph
+from dace.sdfg import nodes, graph as gr
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import OrderedDiGraph
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pattern_matching, helpers
 from typing import List, Optional, Tuple
@@ -41,8 +42,8 @@ class MapFission(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(MapFission._map_entry, ),
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(MapFission._map_entry, ),
+            sdutil.node_path_graph(
                 MapFission._map_entry,
                 MapFission._nested_sdfg,
             )
@@ -50,7 +51,7 @@ class MapFission(pattern_matching.Transformation):
 
     @staticmethod
     def _components(
-            subgraph: sd.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+            subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -71,7 +72,7 @@ class MapFission(pattern_matching.Transformation):
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
         sdict = subgraph.scope_dict(node_to_children=True)
-        subset = sd.SubgraphView(parent, sdict[None])
+        subset = gr.SubgraphView(parent, sdict[None])
         if nested:
             return set(node.data for node in subset.nodes()
                        if isinstance(node, nodes.AccessNode)
@@ -224,11 +225,17 @@ class MapFission(pattern_matching.Transformation):
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-            for symname, sym in map_syms.items():
+            for sym in map_syms:
+                symname = str(sym)
                 if symname in outer_map.params:
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
+
+            # Remove map symbols from nested mapping
+            for name in outer_map.params:
+                if str(name) in nsdfg_node.symbol_mapping:
+                    del nsdfg_node.symbol_mapping[str(name)]
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)

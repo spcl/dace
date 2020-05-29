@@ -108,14 +108,6 @@ def parse_from_function(function, *compilation_args, strict=None):
     # Obtain DaCe program as SDFG
     sdfg = function.generate_pdp(*compilation_args)
 
-    # No need at this point
-    # Fill in scope entry/exit connectors
-    #sdfg.fill_scope_connectors()
-    # Memlet propagation
-    #if sdfg.propagate:
-    #    labeling.propagate_labels_sdfg(sdfg)
-    ########################
-
     # Apply strict transformations automatically
     if (strict == True or (strict is None and Config.get_bool(
             'optimizer', 'automatic_strict_transformations'))):

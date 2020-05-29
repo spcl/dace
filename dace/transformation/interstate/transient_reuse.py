@@ -1,5 +1,5 @@
 from dace import registry, sdfg as sd
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 import networkx as nx
@@ -12,7 +12,6 @@ class TransientReuse(pattern_matching.Transformation):
         Finds all possible reuses of arrays,
         decides for a valid combination and changes sdfg accordingly.
     """
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         return True
@@ -60,7 +59,9 @@ class TransientReuse(pattern_matching.Transformation):
             scope_dict = state.scope_dict(node_to_children=True)
             for n in scope_dict[None]:
                 if isinstance(n, nodes.EntryNode):
-                    G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_node(n))])
+                    G.add_edges_from([
+                        (n, x) for (y, x) in G.out_edges(state.exit_node(n))
+                    ])
                     G.remove_nodes_from(scope_dict[n])
 
             # Remove all nodes that are not AccessNodes or have incoming wcr edges
@@ -99,8 +100,9 @@ class TransientReuse(pattern_matching.Transformation):
                     if n is not m and n.data in transients and m.data in transients:
                         if n.data == m.data:
                             transients.remove(n.data)
-                        if (sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data])
-                                and n in ancestors[m] and successors[n].issubset(ancestors[m])):
+                        if (sdfg.arrays[n.data].is_equivalent(
+                                sdfg.arrays[m.data]) and n in ancestors[m]
+                                and successors[n].issubset(ancestors[m])):
                             mappings[n.data].add(m.data)
 
             # Find a final mapping, greedy coloring algorithm to find a mapping.
@@ -134,7 +136,9 @@ class TransientReuse(pattern_matching.Transformation):
             for i in range(len(buckets)):
                 if len(buckets[i]) > 1:
                     array = sdfg.arrays[buckets[i][0]]
-                    name = sdfg.add_datadesc("transient_reuse", array.clone(), find_new_name=True)
+                    name = sdfg.add_datadesc("transient_reuse",
+                                             array.clone(),
+                                             find_new_name=True)
                     buckets[i].insert(0, name)
 
             # Construct final mapping (transient_reuse_i, some_transient)

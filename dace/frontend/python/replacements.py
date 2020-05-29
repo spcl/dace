@@ -293,6 +293,7 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('exp')
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
+@oprepo.replaces('math.exp')
 def _exp(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'exp')
 
@@ -300,6 +301,7 @@ def _exp(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('sin')
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
+@oprepo.replaces('math.sin')
 def _sin(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sin')
 
@@ -307,6 +309,7 @@ def _sin(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('cos')
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
+@oprepo.replaces('math.cos')
 def _cos(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'cos')
 
@@ -314,6 +317,7 @@ def _cos(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('sqrt')
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
+@oprepo.replaces('math.sqrt')
 def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sqrt')
 
@@ -321,6 +325,7 @@ def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('log')
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
+@oprepo.replaces('math.log')
 def _log(sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
@@ -516,20 +521,22 @@ def _argminmax(sdfg: SDFG,
             inputs={
                 '__in':
                 Memlet.simple(
-                    reduced_structs, ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
+                    reduced_structs, ','.join('__i%d' % i
+                                              for i in range(len(a_arr.shape))
+                                              if i != axis))
             },
             code="__out_val = __in.val\n__out_idx = __in.idx",
             outputs={
                 '__out_val':
                 Memlet.simple(
-                    outval,
-                    ','.join('__i%d' % i for i in range(len(a_arr.shape))
-                             if i != axis)),
+                    outval, ','.join('__i%d' % i
+                                     for i in range(len(a_arr.shape))
+                                     if i != axis)),
                 '__out_idx':
                 Memlet.simple(
-                    outidx,
-                    ','.join('__i%d' % i for i in range(len(a_arr.shape))
-                             if i != axis))
+                    outidx, ','.join('__i%d' % i
+                                     for i in range(len(a_arr.shape))
+                                     if i != axis))
             },
             external_edges=True)
 
@@ -829,26 +836,54 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 @oprepo.replaces_operator('Array', 'MatMult')
 def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+
+    from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
+
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
-    # TODO: Apply numpy broadcast rules
-    if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-        raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
-                          'not supported')
-    if arr1.shape[-1] != arr2.shape[-2]:
-        raise SyntaxError('Matrix dimension mismatch %s != %s' %
-                          (arr1.shape[-1], arr2.shape[-2]))
 
-    import dace.libraries.blas as blas  # Avoid import loop
-    from dace.libraries.blas.nodes.matmul import get_batchmm_opts
+    if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
-    # Determine batched multiplication
-    bopt = get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides,
-                            None, None)
-    if bopt:
-        output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
-    else:
-        output_shape = (arr1.shape[-2], arr2.shape[-1])
+        if len(arr1.shape) > 3 or len(arr2.shape) > 3:
+            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
+                              'not supported')
+
+        if arr1.shape[-1] != arr2.shape[-2]:
+            raise SyntaxError('Matrix dimension mismatch %s != %s' %
+                              (arr1.shape[-1], arr2.shape[-2]))
+
+        from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
+
+        # Determine batched multiplication
+        bopt = _get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape,
+                                 arr2.strides, None, None)
+        if bopt:
+            output_shape = (bopt['b'], arr1.shape[-2], arr2.shape[-1])
+        else:
+            output_shape = (arr1.shape[-2], arr2.shape[-1])
+
+    elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
+
+        if arr1.shape[1] != arr2.shape[0]:
+            raise SyntaxError("Number of matrix columns {} must match"
+                              "size of vector {}.".format(
+                                  arr1.shape[1], arr2.shape[0]))
+
+        output_shape = (arr1.shape[0], )
+
+    elif len(arr1.shape) == 1 and len(arr2.shape) == 1: # vector * vector
+
+        if arr1.shape[0] != arr2.shape[0]:
+            raise SyntaxError("Vectors in vector product must have same size: "
+                              "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
+
+        output_shape = (1, )
+
+    else:  # Dunno what this is, bail
+
+        raise SyntaxError(
+            "Cannot multiply arrays with shapes: {} and {}".format(
+                arr1.shape, arr2.shape))
 
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
@@ -860,7 +895,7 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
 
-    tasklet = blas.MatMul('_MatMult_', restype)
+    tasklet = MatMul('_MatMult_', restype)
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_a',
                    dace.Memlet.from_array(op1, arr1))

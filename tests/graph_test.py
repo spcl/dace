@@ -1,5 +1,5 @@
 import unittest
-from dace.graph.graph import *
+from dace.sdfg.graph import *
 
 
 class TestOrderedGraphs(unittest.TestCase):

@@ -6,7 +6,7 @@ import re
 import dace
 from dace import registry
 from dace.config import Config
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
@@ -348,8 +348,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 is_output, True)
             if kernel_arg:
                 array_args.append(kernel_arg)
-        kernel_args = array_args + [v.signature(with_types=True, name=k)
-                                    for k, v in scalars]
+        kernel_args = array_args + [
+            v.signature(with_types=True, name=k) for k, v in scalars
+        ]
 
         kernel_args = dace.dtypes.deduplicate(kernel_args)
 
@@ -483,7 +484,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         scope_dict = subgraph.scope_dict(node_to_children=True)
         top_scopes = [
             n for n in scope_dict[None]
-            if isinstance(n, dace.graph.nodes.EntryNode)
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
         if len(top_scopes) == 1:
@@ -569,7 +570,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                             set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
-            if not isinstance(node, dace.graph.nodes.AccessNode):
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
                 continue
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
@@ -703,7 +704,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     raise SyntaxError('Duplicates found in memlets')
 
                 # Special case: code->code
-                if isinstance(edge.src, dace.graph.nodes.CodeNode):
+                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
@@ -732,7 +733,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                     continue
 
                 # Special case: code->code
-                if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
                     raise NotImplementedError(
                         "Tasklet to tasklet memlets not implemented")
 
