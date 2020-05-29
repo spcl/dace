@@ -747,6 +747,9 @@ class SDFG(OrderedDiGraph):
         defined_syms = set()
         free_syms = set()
 
+        # Start with the set of SDFG free symbols
+        free_syms |= set(self.symbols.keys())
+
         # Add free data symbols and exclude data descriptor names
         for name, desc in self.arrays.items():
             free_syms |= set(map(str, desc.free_symbols))
@@ -1254,9 +1257,8 @@ class SDFG(OrderedDiGraph):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1334,8 +1336,7 @@ class SDFG(OrderedDiGraph):
         else:
             cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, InterstateEdge(cond_ast))
-        self.add_edge(guard, after_state,
-                      InterstateEdge(negate_expr(cond_ast)))
+        self.add_edge(guard, after_state, InterstateEdge(negate_expr(cond_ast)))
 
         # Loop incrementation
         incr = None if increment_expr is None else {loop_var: increment_expr}
@@ -1786,8 +1787,8 @@ class SDFG(OrderedDiGraph):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     node.expand(self, state)
-                    print("Automatically expanded library node \"" +
-                          str(node) + "\".")
+                    print("Automatically expanded library node \"" + str(node) +
+                          "\".")
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     expanded_something = True
