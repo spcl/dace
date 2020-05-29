@@ -798,15 +798,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         memlet = edge.data
         if (self._dispatcher.defined_vars.get(
                 memlet.data) == DefinedType.FPGA_ShiftRegister):
-            subset = memlet.subset
-            memory_width = self._memory_widths[(memlet.data, sdfg)]
-            expr = subset.at([0] * len(subset), subset.strides())
-            i_outer = expr // memory_width
-            i_inner = expr % memory_width
-            callsite_stream.write(
-                "dace::vec<{}, {}> {} = {}.Get({})[{}];".format(
-                    sdfg.data(edge.data.data).dtype.ctype, edge.data.veclen,
-                    edge.dst_conn, edge.data.data, i_outer, i_inner))
+            raise NotImplementedError("Shift register for Xilinx NYI")
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
                                           dst_node, edge, None,
