@@ -213,8 +213,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 desc.storage.name))
         self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
 
-    def define_shift_register(self, var_name, desc, arrsize, veclen,
-                              function_stream, kernel_stream, sdfg, state_id,
+    def define_shift_register(*args, **kwargs):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
