@@ -29,12 +29,16 @@ if __name__ == '__main__':
     B = state.add_array('B', [N, M], dp.float32)
 
     state.add_edge(A, None, Atrans, None, Memlet.simple(A, fullrange))
-    _, me, mx = state.add_mapped_tasklet(
-        'compute', dict(i=irange, j=jrange),
-        dict(a=Memlet.simple(Atrans, 'i-1,j')), 'b = math.exp(a)',
-        dict(b=Memlet.simple(B, 'i,j')))
+    _, me, mx = state.add_mapped_tasklet('compute', dict(i=irange, j=jrange),
+                                         dict(a=Memlet.simple(Atrans, 'i-1,j')),
+                                         'b = math.exp(a)',
+                                         dict(b=Memlet.simple(B, 'i,j')))
     state.add_edge(Atrans, None, me, None, Memlet.simple(Atrans, fullrange))
     state.add_edge(mx, None, B, None, Memlet.simple(B, fullrange))
+
+    spec_sdfg.fill_scope_connectors()
+    dp.propagate_memlets_sdfg(spec_sdfg)
+    spec_sdfg.validate()
     ##########################################################################
 
     code_nonspec = spec_sdfg.generate_code()
