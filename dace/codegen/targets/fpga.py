@@ -1049,7 +1049,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             if end_type is not None:
                                 if np.dtype(end_type.dtype.type) > np.dtype(
                                         'uint32'):
-                                    loop_var_type = end.ctype
+                                    loop_var_type = end_type.ctype
                                 elif np.issubdtype(
                                         np.dtype(end_type.dtype.type),
                                         np.unsignedinteger):
