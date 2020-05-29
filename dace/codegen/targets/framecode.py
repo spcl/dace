@@ -158,7 +158,7 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name,
+                'dace::perf::report.save("%s/perf");' % sdfg.build_folder,
                 sdfg)
 
         # Write closing brace of program

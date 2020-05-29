@@ -26,6 +26,7 @@ script:
   - export PYTHONPATH=`pwd`:$PYTHONPATH
   - export COVERAGE_RCFILE=`pwd`/.coveragerc
   - export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+  - export DACE_optimizer_interface=" "
   - ./test_all.sh
   - cd tests; coverage combine . */; coverage report; coverage xml
 
