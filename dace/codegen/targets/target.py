@@ -163,6 +163,7 @@ class DefinedType(aenum.AutoNumberEnum):
     Stream = ()
     StreamArray = ()
     StreamView = ()
+    FPGA_ShiftRegister = ()
 
 
 class DefinedMemlets:

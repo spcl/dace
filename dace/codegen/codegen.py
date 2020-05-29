@@ -82,7 +82,7 @@ def generate_code(sdfg) -> List[CodeObject]:
     # Before compiling, validate SDFG correctness
     sdfg.validate()
 
-    if Config.get_bool('experimental', 'test_serialization'):
+    if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
         import filecmp
         sdfg.save('test.sdfg')
