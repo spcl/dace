@@ -29,7 +29,7 @@ def _get_transpose_output(node, state, sdfg):
             subset.squeeze()
             size = subset.size()
             outer_array = sdfg.data(
-                dace.sdfg.find_input_arraynode(state, edge).data)
+                dace.sdfg.find_output_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1])
     raise ValueError("Transpose output connector \"_out\" not found.")
 
