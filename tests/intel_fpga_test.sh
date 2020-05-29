@@ -83,9 +83,6 @@ run_all() {
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 
-    # histogram (WCR on array)
-    run_sample ../samples/simple/histogram histogram "FPGATransformSDFG\$0\n"
-
     # #### REDUCE ####
     # Simple reduce
     run_sample intel_fpga/vector_reduce vector_reduce "FPGATransformSDFG\$0\n"

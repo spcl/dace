@@ -1230,8 +1230,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
-            code_str = "{} = {};".format(target, value)
-            updated = ast.Name(id=code_str)
+            updated = node  # No change
         else:
             raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
                                "memory size {}, {} accesses".format(
