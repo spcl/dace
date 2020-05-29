@@ -46,14 +46,13 @@ class ExpandGemmPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a, strides_a),
-         (edge_b, outer_array_b, shape_b,
-          strides_b), _) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b,
+                                                       shape_b, strides_b),
+         cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a,
-                                                         dtype_b).type]
+        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_b).type]
 
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
@@ -75,9 +74,21 @@ class ExpandGemmPure(ExpandTransformation):
             raise ValueError("Input matrices must have same storage")
         storage = outer_array_a.storage
 
-        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, storage=storage)
-        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, storage=storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, storage=storage)
+        _, array_a = sdfg.add_array("_a",
+                                    shape_a,
+                                    dtype_a,
+                                    strides=strides_a,
+                                    storage=storage)
+        _, array_b = sdfg.add_array("_b",
+                                    shape_b,
+                                    dtype_b,
+                                    strides=strides_b,
+                                    storage=storage)
+        _, array_c = sdfg.add_array("_c",
+                                    shape_c,
+                                    dtype_c,
+                                    strides=cdata[-1],
+                                    storage=storage)
 
         if node.alpha == 1.0:
             mul_program = "__out = __a * __b"
@@ -106,8 +117,8 @@ class ExpandGemmPure(ExpandTransformation):
             'out = 0', {
                 'out':
                 dace.Memlet.simple(
-                    mul_out, ','.join(
-                        ['_o%d' % i for i in range(len(shape_c))]))
+                    mul_out, ','.join(['_o%d' % i
+                                       for i in range(len(shape_c))]))
             },
             external_edges=True)
 
@@ -406,8 +417,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
         if len(size0) != 2 or len(size1) != 2:
-            raise ValueError(
-                "matrix-matrix product only supported on matrices")
+            raise ValueError("matrix-matrix product only supported on matrices")
         if size0[1] != size1[0]:
             raise ValueError("Inputs to matrix-matrix product "
                              "must agree in the k-dimension")
@@ -415,8 +425,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         out_subset.squeeze()
         size3 = out_subset.size()
         if len(size3) != 2:
-            raise ValueError(
-                "matrix-matrix product only supported on matrices")
+            raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2 and list(size3) != [size0[-2], size1[-1]]:
             raise ValueError(
                 "Output to matrix-matrix product must agree in the m and n "

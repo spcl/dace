@@ -18,19 +18,18 @@ class ExpandGemvPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a, strides_a),
-         (edge_x, outer_array_x, shape_x, _), _) = _get_matmul_operands(
-             node,
-             parent_state,
-             parent_sdfg,
-             name_lhs="_a",
-             name_rhs="_x",
-             name_out="_y")
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
+                                                       shape_x, _),
+         _) = _get_matmul_operands(node,
+                                   parent_state,
+                                   parent_sdfg,
+                                   name_lhs="_a",
+                                   name_rhs="_x",
+                                   name_out="_y")
 
         dtype_a = outer_array_a.dtype.type
         dtype_x = outer_array_x.dtype.type
-        dtype_y = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a,
-                                                         dtype_x).type]
+        dtype_y = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_x).type]
 
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
@@ -49,7 +48,11 @@ class ExpandGemvPure(ExpandTransformation):
             raise ValueError("Input matrices must have same storage")
         storage = outer_array_a.storage
 
-        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, storage=storage)
+        _, array_a = sdfg.add_array("_a",
+                                    shape_a,
+                                    dtype_a,
+                                    strides=strides_a,
+                                    storage=storage)
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, storage=storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, storage=storage)
 
@@ -80,22 +83,22 @@ class ExpandGemvPure(ExpandTransformation):
             "out = 0", {
                 "out":
                 dace.Memlet.simple(
-                    mul_out, ",".join(
-                        ["_o%d" % i for i in range(len(shape_y))]))
+                    mul_out, ",".join(["_o%d" % i
+                                       for i in range(len(shape_y))]))
             },
             external_edges=True)
 
         # Multiplication map
         state.add_mapped_tasklet(
             "_GEMV_", {"__i%d" % i: "0:%s" % s
-                       for i, s in enumerate([N, M])}, {
-                           "__a":
-                           dace.Memlet.simple(
-                               "_a", "__i1, __i0"
-                               if node.transA else "__i0, __i1"),
-                           "__x":
-                           dace.Memlet.simple("_x", "__i1")
-                       },
+                       for i, s in enumerate([N, M])},
+            {
+                "__a":
+                dace.Memlet.simple(
+                    "_a", "__i1, __i0" if node.transA else "__i0, __i1"),
+                "__x":
+                dace.Memlet.simple("_x", "__i1")
+            },
             mul_program, {
                 "__out":
                 dace.Memlet.simple(
@@ -145,16 +148,15 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    transA = Property(
-        dtype=bool, desc="Whether to transpose A before multiplying")
+    transA = Property(dtype=bool,
+                      desc="Whether to transpose A before multiplying")
     alpha = Property(
         dtype=tuple(dace.dtypes._CONSTANT_TYPES),
         default=1,
         desc="A scalar which will be multiplied with A @ x before adding y")
-    beta = Property(
-        dtype=tuple(dace.dtypes._CONSTANT_TYPES),
-        default=1,
-        desc="A scalar which will be multiplied with y")
+    beta = Property(dtype=tuple(dace.dtypes._CONSTANT_TYPES),
+                    default=1,
+                    desc="A scalar which will be multiplied with y")
 
     def __init__(self,
                  name,
@@ -163,8 +165,10 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                  transA=False,
                  alpha=1,
                  beta=0):
-        super().__init__(
-            name, location=location, inputs={"_a", "_x"}, outputs={"_y"})
+        super().__init__(name,
+                         location=location,
+                         inputs={"_a", "_x"},
+                         outputs={"_y"})
         self.dtype = dtype
         self.transA = transA
         self.alpha = alpha

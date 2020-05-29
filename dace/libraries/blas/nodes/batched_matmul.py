@@ -21,13 +21,13 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
         # Get metadata from parent SDFG
-        ((edge_a, outer_array_a, shape_a, strides_a),
-         (edge_b, outer_array_b, shape_b,
-          strides_b), _) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b,
+                                                       shape_b, strides_b),
+         cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
         outedge = parent_state.out_edges(node)[0]
         cdesc = parent_sdfg.arrays[outedge.data.data]
         bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b,
-                                cdesc.shape, cdesc.strides)
+                                 cdesc.shape, cdesc.strides)
 
         if shape_a[-1] != shape_b[-2]:
             raise SyntaxError('Matrix sizes must match')
@@ -47,9 +47,21 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         # Create replacement SDFG
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, storage=storage)
-        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, storage=storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, storage=storage)
+        _, array_a = sdfg.add_array("_a",
+                                    shape_a,
+                                    dtype_a,
+                                    strides=strides_a,
+                                    storage=storage)
+        _, array_b = sdfg.add_array("_b",
+                                    shape_b,
+                                    dtype_b,
+                                    strides=strides_b,
+                                    storage=storage)
+        _, array_c = sdfg.add_array("_c",
+                                    shape_c,
+                                    dtype_c,
+                                    strides=cdata[-1],
+                                    storage=storage)
 
         # Add an initialization state
         init_state = sdfg.add_state()
@@ -75,11 +87,11 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
                 ])
             }, {
                 '__a':
-                dace.Memlet.simple("_a", ('__i1, __i3' if len(array_a.shape)
-                                          == 2 else '__i0, __i1, __i3')),
+                dace.Memlet.simple("_a", ('__i1, __i3' if len(
+                    array_a.shape) == 2 else '__i0, __i1, __i3')),
                 '__b':
-                dace.Memlet.simple("_b", ('__i3, __i2' if len(array_b.shape)
-                                          == 2 else '__i0, __i3, __i2'))
+                dace.Memlet.simple("_b", ('__i3, __i2' if len(
+                    array_b.shape) == 2 else '__i0, __i3, __i2'))
             },
             '__c = __a * __b', {
                 '__c':
