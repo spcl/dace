@@ -201,13 +201,12 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
             kernel_stream.write(
                 "#pragma HLS ARRAY_PARTITION variable={} "
-                "complete\n".format(var_name), node, state_id, sdfg)
+                "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             if len(desc.shape) > 1:
                 kernel_stream.write(
                     "#pragma HLS ARRAY_PARTITION variable={} "
-                    "block factor={}\n".format(var_name, desc.shape[-2]), node,
-                    state_id, sdfg)
+                    "block factor={}\n".format(var_name, desc.shape[-2]))
         else:
             raise ValueError("Unsupported storage type: {}".format(
                 desc.storage.name))
