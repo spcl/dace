@@ -35,9 +35,9 @@ if __name__ == "__main__":
 
     # This should create two libraries for the two SDFGs, as they compile over
     # the same folder
-    func1 = dace.compile(prog_one)
+    func1 = prog_one.compile()
     try:
-        func2 = dace.compile(prog_two)
+        func2 = prog_two.compile()
     except CompilationError:
         # On some systems (e.g., Windows), the file will be locked, so
         # compilation will fail

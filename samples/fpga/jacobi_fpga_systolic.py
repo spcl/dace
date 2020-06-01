@@ -75,50 +75,50 @@ def make_compute_sdfg():
     post_shift = sdfg.add_state("post_shift")
 
     sdfg.add_edge(time_begin, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"t": 0}))
     sdfg.add_edge(y_begin, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": 1}))
+                  dace.sdfg.InterstateEdge(assignments={"y": 1}))
     sdfg.add_edge(x_begin, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": 1}))
+                  dace.sdfg.InterstateEdge(assignments={"x": 1}))
 
     sdfg.add_edge(
         time_entry, y_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t < T / P", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, x_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y < H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, pre_shift,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x < W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(y_end, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": "t + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"t": "t + 1"}))
     sdfg.add_edge(x_end, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": "y + 1"}))
-    sdfg.add_edge(pre_shift, loop_body, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(loop_body, post_shift, dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge(assignments={"y": "y + 1"}))
+    sdfg.add_edge(pre_shift, loop_body, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(loop_body, post_shift, dace.sdfg.InterstateEdge())
     sdfg.add_edge(post_shift, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": "x + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"x": "x + 1"}))
 
     sdfg.add_edge(
         time_entry, time_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t >= T / P", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, y_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x >= W", language=dace.dtypes.Language.Python)))
 
@@ -268,48 +268,48 @@ def make_read_sdfg():
     loop_body = sdfg.add_state("read_memory")
 
     sdfg.add_edge(time_begin, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"t": 0}))
     sdfg.add_edge(y_begin, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": 1}))
+                  dace.sdfg.InterstateEdge(assignments={"y": 1}))
     sdfg.add_edge(x_begin, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": 1}))
+                  dace.sdfg.InterstateEdge(assignments={"x": 1}))
 
     sdfg.add_edge(
         time_entry, y_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t < T / P", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, x_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y < H - 1", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x < W - 1", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(y_end, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": "t + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"t": "t + 1"}))
     sdfg.add_edge(x_end, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": "y + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"y": "y + 1"}))
     sdfg.add_edge(loop_body, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": "x + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"x": "x + 1"}))
 
     sdfg.add_edge(
         time_entry, time_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t >= T / P", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, y_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x >= W", language=dace.dtypes.Language.Python)))
 
@@ -351,48 +351,48 @@ def make_write_sdfg():
     loop_body = sdfg.add_state("write_memory")
 
     sdfg.add_edge(time_begin, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"t": 0}))
     sdfg.add_edge(y_begin, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": 1}))
+                  dace.sdfg.InterstateEdge(assignments={"y": 1}))
     sdfg.add_edge(x_begin, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": 1}))
+                  dace.sdfg.InterstateEdge(assignments={"x": 1}))
 
     sdfg.add_edge(
         time_entry, y_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t < T / P", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, x_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y < H - 1", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x < W - 1", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(y_end, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": "t + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"t": "t + 1"}))
     sdfg.add_edge(x_end, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": "y + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"y": "y + 1"}))
     sdfg.add_edge(loop_body, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": "x + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"x": "x + 1"}))
 
     sdfg.add_edge(
         time_entry, time_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t >= T / P", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, y_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x >= W", language=dace.dtypes.Language.Python)))
 
@@ -524,6 +524,7 @@ def make_sdfg(specialize_all):
         ("T" if not specialize_all else T.get()))
 
     sdfg = dace.SDFG(name)
+    sdfg.add_symbol('T', dace.int32)
     init_state = make_init_state(sdfg)
 
     fpga_state = make_outer_compute_state(sdfg)
@@ -531,15 +532,15 @@ def make_sdfg(specialize_all):
     finalize_even = make_finalize_state(sdfg, True)
     finalize_odd = make_finalize_state(sdfg, False)
 
-    sdfg.add_edge(init_state, fpga_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(init_state, fpga_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(
         fpga_state, finalize_even,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "(T / P) % 2 == 0", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         fpga_state, finalize_odd,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "(T / P) % 2 == 1", language=dace.dtypes.Language.Python)))
 

@@ -2,7 +2,8 @@
 """
 
 from dace import registry, subsets
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching as pm
 from dace.config import Config
 
@@ -20,7 +21,7 @@ class RedundantArray(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArray._in_array,
+            sdutil.node_path_graph(RedundantArray._in_array,
                                    RedundantArray._out_array)
         ]
 
@@ -115,7 +116,7 @@ class RedundantSecondArray(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantSecondArray._in_array,
+            sdutil.node_path_graph(RedundantSecondArray._in_array,
                                    RedundantSecondArray._out_array)
         ]
 

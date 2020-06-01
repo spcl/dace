@@ -42,5 +42,5 @@ def control_flow_test(A, B, tol):
 
 
 if __name__ == '__main__':
-    dace.compile(control_flow_test, dace.float32[W, H], dace.float32[H, W],
-                 dace.float32[1])
+    control_flow_test.compile(dace.float32[W, H], dace.float32[H, W],
+                              dace.float32[1])

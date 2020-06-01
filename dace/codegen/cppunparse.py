@@ -313,9 +313,9 @@ class CPPUnparser:
                 if self.type_inference is True:
                     # Perform type inference
                     # Build dictionary with symbols
-                    def_symbols = self.defined_symbols.copy()
-                    def_symbols.update(
-                        self.locals.get_name_type_associations())
+                    def_symbols = {}
+                    def_symbols.update(self.locals.get_name_type_associations())
+                    def_symbols.update(self.defined_symbols)
                     inferred_symbols = type_inference.infer_types(
                         t, def_symbols)
                     inferred_type = inferred_symbols[target.id]

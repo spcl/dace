@@ -1,6 +1,6 @@
 import copy
 import dace
-import dace.graph.nodes
+import dace.sdfg.nodes
 import numpy as np
 
 # Python version of the SDFG below
@@ -38,7 +38,7 @@ def test_offset_reduce_sequential():
     sdfg = copy.deepcopy(reduce_with_offsets)
     sdfg.expand_library_nodes()
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.graph.nodes.MapEntry):
+        if isinstance(node, dace.sdfg.nodes.MapEntry):
             node.map.schedule = dace.ScheduleType.Sequential
 
     sdfg(A=A, B=B)

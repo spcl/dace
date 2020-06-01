@@ -9,12 +9,12 @@ import sys
 
 W = dace.symbol()
 H = dace.symbol()
-MAXITER = dace.symbol()
+MAXITER = dace.symbol('MAXITER')
 d = dace.symbol()
 
 
 @dace.program
-def mandelbrot(output: dace.uint16[H, W], maxiter: dace.uint32):
+def mandelbrot(output: dace.uint16[H, W]):
     @dace.map(_[0:H, 0:W])
     def compute_pixel(py, px):
         out >> output[py, px]
@@ -24,7 +24,7 @@ def mandelbrot(output: dace.uint16[H, W], maxiter: dace.uint32):
         x = 0.0
         y = 0.0
         iteration = 0
-        while (x * x + y * y < 2 * 2 and iteration < maxiter):
+        while (x * x + y * y < 2 * 2 and iteration < MAXITER):
             xtemp = x * x - y * y + x0
             y = 2 * x * y + y0
             x = xtemp
@@ -54,9 +54,8 @@ def printmatrix(mat, image_width=20, aspect_ratio=0.5):
     # Subsampling
     for y in range(image_height):
         for x in range(image_width):
-            printcolor(
-                (mat[int(y / (ratio * aspect_ratio)
-                         ), int(x / ratio)] - mn) / float(mx - mn))
+            printcolor((mat[int(y / (ratio * aspect_ratio)),
+                            int(x / ratio)] - mn) / float(mx - mn))
         sys.stdout.write('\n')
     sys.stdout.flush()
 
@@ -80,7 +79,7 @@ if __name__ == "__main__":
     out[:] = dace.uint32(0)
 
     # Run DaCe program
-    mandelbrot(out, MAXITER)
+    mandelbrot(out, MAXITER=MAXITER)
 
     print('Result:')
     printmatrix(out)

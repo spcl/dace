@@ -2,7 +2,8 @@
 
 import dace
 from dace import registry
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.symbolic import symlist
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
@@ -22,7 +23,7 @@ class MapInterchange(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(MapInterchange._outer_map_entry,
+            sdutil.node_path_graph(MapInterchange._outer_map_entry,
                                    MapInterchange._inner_map_entry)
         ]
 
@@ -120,14 +121,10 @@ class MapInterchange(pattern_matching.Transformation):
             graph.remove_edge(e)
 
         # Change source and destination of edges.
-        dace.graph.nxutil.change_edge_dest(graph, outer_map_entry,
-                                           inner_map_entry)
-        dace.graph.nxutil.change_edge_src(graph, inner_map_entry,
-                                          outer_map_entry)
-        dace.graph.nxutil.change_edge_dest(graph, inner_map_exit,
-                                           outer_map_exit)
-        dace.graph.nxutil.change_edge_src(graph, outer_map_exit,
-                                          inner_map_exit)
+        sdutil.change_edge_dest(graph, outer_map_entry, inner_map_entry)
+        sdutil.change_edge_src(graph, inner_map_entry, outer_map_entry)
+        sdutil.change_edge_dest(graph, inner_map_exit, outer_map_exit)
+        sdutil.change_edge_src(graph, outer_map_exit, inner_map_exit)
 
         # Add edges between the map entries and exits.
         for e in entry_edges + exit_edges:

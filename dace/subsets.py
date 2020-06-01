@@ -3,7 +3,8 @@ from dace import data, symbolic, dtypes
 import re
 import sympy as sp
 from functools import reduce
-from sympy.core.sympify import SympifyError
+import sympy.core.sympify
+from typing import Set
 import warnings
 
 
@@ -61,6 +62,12 @@ class Subset(object):
                      `data_dims()`, may be larger than `dims()`).
         """
         raise NotImplementedError
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of undefined symbols in this subset. """
+        raise NotImplementedError('free_symbols not implemented by "%s"' %
+                                  type(self).__name__)
 
 
 def _simplified_str(val):
@@ -310,11 +317,11 @@ class Range(Subset):
         return "[" + ", ".join(map(Range._range_pystr, self.ranges)) + "]"
 
     @property
-    def free_symbols(self):
-        result = {}
+    def free_symbols(self) -> Set[str]:
+        result = set()
         for dim in self.ranges:
             for d in dim:
-                result.update(symbolic.symlist(d))
+                result |= symbolic.symlist(d).keys()
         return result
 
     def reorder(self, order):
@@ -457,7 +464,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except SympifyError:
+            except sympy.core.sympify.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -697,10 +704,10 @@ class Indices(Subset):
         return ", ".join(map(str, self.indices))
 
     @property
-    def free_symbols(self):
-        result = {}
+    def free_symbols(self) -> Set[str]:
+        result = set()
         for dim in self.indices:
-            result.update(symbolic.symlist(dim))
+            result |= symbolic.symlist(dim).keys()
         return result
 
     @staticmethod
