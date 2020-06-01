@@ -755,6 +755,9 @@ class SDFG(OrderedDiGraph):
         defined_syms = set()
         free_syms = set()
 
+        # Start with the set of SDFG free symbols
+        free_syms |= set(self.symbols.keys())
+
         # Add free data symbols and exclude data descriptor names
         for name, desc in self.arrays.items():
             free_syms |= set(map(str, desc.free_symbols))
