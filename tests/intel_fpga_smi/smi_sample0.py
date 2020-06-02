@@ -118,7 +118,7 @@ out = inp_stream + inp_mem
                                  memlet=dace.Memlet.simple(stream_wr.data, '0:N'),
                                  src_conn="stream_out")
 
-    parent_sdfg.add_edge(copy_in_state, parent_nested_axpy, dace.graph.edges.InterstateEdge())
+    parent_sdfg.add_edge(copy_in_state, parent_nested_axpy, dace.sdfg.edges.InterstateEdge())
     parent_sdfg.validate()
 
     return parent_sdfg
@@ -302,8 +302,8 @@ out = inp_A + inp_B
                                        memlet=dace.Memlet.simple(out_data.data, '0:N'),
                                        src_conn="mem")
 
-    parent_sdfg.add_edge(copy_in_state, parent_nested_axpy, dace.graph.edges.InterstateEdge())
-    parent_sdfg.add_edge(parent_nested_axpy, copy_out_state, dace.graph.edges.InterstateEdge())
+    parent_sdfg.add_edge(copy_in_state, parent_nested_axpy, dace.sdfg.edges.InterstateEdge())
+    parent_sdfg.add_edge(parent_nested_axpy, copy_out_state, dace.sdfg.edges.InterstateEdge())
 
     parent_sdfg.validate()
 
