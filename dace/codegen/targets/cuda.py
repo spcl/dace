@@ -63,7 +63,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._grid_dims = None
         self._kernel_map = None
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda', '', 'cu',
-                                      CUDACodeGen, 'CUDA', target_name=self.target_name)
+                                      CUDACodeGen, 'CUDA')
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
