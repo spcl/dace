@@ -129,24 +129,21 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                           for (name, code) in self._host_codes
                       ])))
 
-        host_code_obj = CodeObject(
-            self._program_name,
-            host_code.getvalue(),
-            "cpp",
-            XilinxCodeGen,
-            "Xilinx",
-            target_name=self.target_name,
-            target_type="host")
+        host_code_obj = CodeObject(self._program_name,
+                                   host_code.getvalue(),
+                                   "cpp",
+                                   XilinxCodeGen,
+                                   "Xilinx",
+                                   target_name=self.target_name,
+                                   target_type="host")
 
         kernel_code_objs = [
-            CodeObject(
-                kernel_name,
-                code,
-                "cpp",
-                XilinxCodeGen,
-                "Xilinx",
-                target_name=self.target_name,
-                target_type="device")
+            CodeObject(kernel_name,
+                       code,
+                       "cpp",
+                       XilinxCodeGen,
+                       "Xilinx",
+                       target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
 
@@ -186,7 +183,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def define_stream(dtype, vector_length, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream, storage, sdfg, dfg, node):
+                      function_stream, kernel_stream, storage, sdfg, dfg,
+                      node):
         """
            Defines a stream.
            For Xilinx, remote streams are not supported
@@ -211,14 +209,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
             desc.dtype.ctype, veclen, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write(
-                "#pragma HLS ARRAY_PARTITION variable={} "
-                "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             if len(desc.shape) > 1:
-                kernel_stream.write(
-                    "#pragma HLS ARRAY_PARTITION variable={} "
-                    "block factor={}\n".format(var_name, desc.shape[-2]))
+                kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                    "block factor={}\n".format(
+                                        var_name, desc.shape[-2]))
         else:
             raise ValueError("Unsupported storage type: {}".format(
                 desc.storage.name))

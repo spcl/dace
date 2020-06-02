@@ -92,8 +92,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
+        autobuild = ("ON" if Config.get_bool(
+            "compiler", "autobuild_bitstreams") else "OFF")
         #Here we have to get also SMI related options (even if we don't use them)
         smi_ranks = Config.get("compiler", "intel_fpga", "smi_ranks")
         smi_rendezvous = ("ON" if Config.get_bool("compiler", "intel_fpga",
@@ -111,8 +111,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # Override Intel FPGA OpenCL installation directory
         if Config.get("compiler", "intel_fpga", "path"):
             options.append("-DINTELFPGAOCL_ROOT_DIR=\"{}\"".format(
-                Config.get("compiler", "intel_fpga", "path").replace("\\",
-                                                                     "/")))
+                Config.get("compiler", "intel_fpga",
+                           "path").replace("\\", "/")))
         return options
 
     def get_generated_codeobjects(self):
@@ -216,10 +216,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
                           "{separator}\n// Kernel: {kernel_name}"
-                          "\n{separator}\n\n{code}\n\n".format(separator="/" *
-                                                               79,
-                                                               kernel_name=name,
-                                                               code=code)
+                          "\n{separator}\n\n{code}\n\n".format(
+                              separator="/" * 79, kernel_name=name, code=code)
                           for (name, code) in self._host_codes
                       ])))
 
@@ -239,8 +237,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                        "cl",
                        IntelFPGACodeGen,
                        "Intel FPGA",
-                       target_name="intel_fpga_smi"
-                       if self.enable_smi else "intel_fpga",
                        target_type="device",
                        additional_compiler_kwargs={"smi": self.enable_smi})
             for (kernel_name, code) in self._kernel_codes
@@ -249,8 +245,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         return [host_code_obj] + kernel_code_objs
 
     def define_stream(self, dtype, vector_length, buffer_size, var_name,
-                      array_size, function_stream, kernel_stream, storage, sdfg,
-                      dfg, node):
+                      array_size, function_stream, kernel_stream, storage,
+                      sdfg, dfg, node):
         """
         Defines a stream.
         """
@@ -596,7 +592,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     kernel_name))
             host_code_body_stream.write("MPI_Barrier(MPI_COMM_WORLD);")
 
-        self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
+        self.generate_host_function_prologue(sdfg, state,
+                                             host_code_body_stream)
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
                               symbol_parameters, kernel_stream_body,
@@ -610,7 +607,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_stream.write(kernel_stream_header.getvalue() +
                             kernel_stream_body.getvalue())
 
-        self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
+        self.generate_host_function_epilogue(sdfg, state,
+                                             host_code_body_stream)
 
         # Store code to be passed to compilation phase
         self._host_codes.append(
@@ -628,7 +626,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         host_stream.write(
             "const auto start = std::chrono::high_resolution_clock::now();",
             sdfg, state_id)
-        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+        launch_async = Config.get_bool("compiler", "intel_fpga",
+                                       "launch_async")
         if launch_async:
             # hlslib uses std::async to launch each kernel launch as an
             # asynchronous task in a separate C++ thread. This seems to cause
@@ -763,7 +762,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 host_body_stream.write(
                     "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
                     format(
-                        module_function_name, ", ".join([""] + kernel_args_call)
+                        module_function_name,
+                        ", ".join([""] + kernel_args_call)
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
         else:
             # We will generate a separate kernel for each PE. Adds host call
@@ -804,9 +804,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     "__attribute__((max_global_work_dim(0)))\n"
                     "__attribute__((autorun))")
             module_body_stream.write(
-                "__kernel void {}({}) {{".format(module_function_name,
-                                                 ", ".join(kernel_args_opencl)),
-                sdfg, state_id)
+                "__kernel void {}({}) {{".format(
+                    module_function_name, ", ".join(kernel_args_opencl)), sdfg,
+                state_id)
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
@@ -959,8 +959,9 @@ __kernel void \\
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
                  or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn, callsite_stream,
-                                                 sdfg, state_id, node)
+                self.generate_no_dependence_post(edge.src_conn,
+                                                 callsite_stream, sdfg,
+                                                 state_id, node)
 
         callsite_stream.write('}\n', sdfg, state_id, node)
         self._dispatcher.defined_vars.exit_scope(node)
@@ -979,13 +980,13 @@ __kernel void \\
         for edge in state_dfg.in_edges(node):
             src_node = find_input_arraynode(state_dfg, edge)
             self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                           state_dfg, state_id, function_stream,
-                                           callsite_stream)
+                                           state_dfg, state_id,
+                                           function_stream, callsite_stream)
         for edge in state_dfg.out_edges(node):
             dst_node = find_output_arraynode(state_dfg, edge)
             self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                           state_dfg, state_id, function_stream,
-                                           callsite_stream)
+                                           state_dfg, state_id,
+                                           function_stream, callsite_stream)
 
         callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
                               node)
@@ -1053,7 +1054,8 @@ __kernel void \\
                     init = ""
 
                     result += "{} {}{};".format(memlet_type, connector, init)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector,
+                                                  DefinedType.Scalar)
             else:
                 # Variable number of reads or writes
                 result += "{} *{} = &{};".format(memlet_type, connector,
@@ -1067,7 +1069,8 @@ __kernel void \\
                 else:
                     result += "{} {} = {}[{}];".format(memlet_type, connector,
                                                        data_name, offset)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector,
+                                                  DefinedType.Scalar)
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
                     qualifiers = "__global volatile "
@@ -1085,12 +1088,14 @@ __kernel void \\
                 else:
                     result += "{} {} = read_channel_intel({});".format(
                         memlet_type, connector, data_name)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector,
+                                                  DefinedType.Scalar)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
                     connector, data_name)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Stream)
+                self._dispatcher.defined_vars.add(connector,
+                                                  DefinedType.Stream)
         elif def_type == DefinedType.RemoteStream:
             if memlet.num_accesses == 1:
                 if is_output:
@@ -1116,7 +1121,8 @@ __kernel void \\
                     else:
                         result += "{} {} = read_channel_intel({});".format(
                             memlet_type, connector, data_name)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector,
+                                                  DefinedType.Scalar)
             else:
                 # Must happen directly in the code
                 # Here we create a macro which take the proper channel
@@ -1225,8 +1231,8 @@ __kernel void \\
                         callsite_stream.write("#undef {}".format(memlet_name),
                                               sdfg, sdfg.node_id(dfg), node)
 
-    def generate_converter(self, is_unpack, dtype, veclen, node, state_id, sdfg,
-                           function_stream):
+    def generate_converter(self, is_unpack, dtype, veclen, node, state_id,
+                           sdfg, function_stream):
         if (is_unpack, dtype, veclen) in self.converters_generated:
             return
         if is_unpack:
@@ -1266,8 +1272,8 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         if node.language != dtypes.Language.Python:
             if node.language != dtypes.Language.CPP:
                 raise ValueError(
-                    "Only Python or C++ code supported in CPU codegen, got: {}".
-                    format(node.language))
+                    "Only Python or C++ code supported in CPU codegen, got: {}"
+                    .format(node.language))
             callsite_stream.write(
                 type(node).__properties__["code"].to_string(node.code), sdfg,
                 state_id, node)
@@ -1284,7 +1290,8 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
             u, uconn, v, vconn, memlet = edge
             if u == node:
                 # this could be a wcr
-                memlets[uconn] = (memlet, edge.data.wcr_conflict, edge.data.wcr)
+                memlets[uconn] = (memlet, edge.data.wcr_conflict,
+                                  edge.data.wcr)
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
 
@@ -1481,7 +1488,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         code_str = unpack_str + "({}, {});".format(
                             value, target)
                     else:
-                        if self.defined_vars.get(target) == DefinedType.Pointer:
+                        if self.defined_vars.get(
+                                target) == DefinedType.Pointer:
                             code_str = "*{} = {};".format(target, value)
                         else:
                             code_str = "{} = {};".format(target, value)
