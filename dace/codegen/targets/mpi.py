@@ -3,7 +3,7 @@ from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.config import Config
 
 from dace.codegen import cppunparse
@@ -124,9 +124,6 @@ void __dace_exit_mpi({params}) {{
             self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
                                                child, function_stream,
                                                callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,

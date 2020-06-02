@@ -10,10 +10,9 @@ import pdb
 import select
 import sys
 
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, InterstateEdge
 from dace.memlet import Memlet
-from dace.graph.edges import InterstateEdge
-from dace.dtypes import ScheduleType, StorageType, Language
+from dace.dtypes import AllocationLifetime, ScheduleType, StorageType, Language
 from dace.properties import CodeProperty
 
 W = dace.symbol('W')
@@ -193,7 +192,7 @@ def make_iteration_space(sdfg):
         "row_begin",
         itype,
         transient=True,
-        toplevel=True,
+        lifetime=AllocationLifetime.SDFG,
         storage=StorageType.FPGA_Registers)
     shift_rowptr.add_memlet_path(row_end_shift,
                                  row_begin_shift,
@@ -837,8 +836,8 @@ def make_sdfg(specialize):
     main_state = make_main_state(sdfg)
     post_state = make_post_state(sdfg)
 
-    sdfg.add_edge(pre_state, main_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(main_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, main_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(main_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
@@ -905,7 +904,6 @@ if __name__ == "__main__":
     spmv = make_sdfg(args["specialize"])
     if args["specialize"]:
         spmv.specialize(dict(H=H, W=W, nnz=nnz))
-    spmv.draw_to_file()
     spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 
     if dace.Config.get_bool('profiling'):

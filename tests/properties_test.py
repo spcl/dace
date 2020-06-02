@@ -1,4 +1,4 @@
-"""Unit tests for dace.graph.properties module."""
+"""Unit tests for dace.sdfg.properties module."""
 
 import unittest
 import sympy as sp
@@ -7,18 +7,18 @@ from collections import OrderedDict
 
 
 class PropertyTests(unittest.TestCase):
-    """Implements unit tests for dace.graph.properties.Property class."""
+    """Implements unit tests for dace.sdfg.properties.Property class."""
     def test_indirect_properties(self):
 
-        m = dace.graph.nodes.Map(
+        m = dace.sdfg.nodes.Map(
             "test_map", ['i', 'j', 'k'],
             dace.subsets.Range([(0, 10, 1), (0, sp.Symbol("N"), 4),
                                 (0, sp.Symbol("M"), None)]))
 
-        entry = dace.graph.nodes.MapEntry(m)
+        entry = dace.sdfg.nodes.MapEntry(m)
 
-        to_string = dace.graph.nodes.Map.__properties__["params"].to_string
-        from_string = dace.graph.nodes.Map.__properties__["params"].from_string
+        to_string = dace.sdfg.nodes.Map.__properties__["params"].to_string
+        from_string = dace.sdfg.nodes.Map.__properties__["params"].from_string
 
         self.assertTrue(to_string(m.params) == "['i', 'j', 'k']")
         self.assertTrue(to_string(entry.params) == "['i', 'j', 'k']")
@@ -30,15 +30,15 @@ class PropertyTests(unittest.TestCase):
 
     def test_range_property(self):
 
-        m = dace.graph.nodes.Map(
+        m = dace.sdfg.nodes.Map(
             "test_map",
             [sp.Symbol("i"), sp.Symbol("j"),
              sp.Symbol("k")],
             dace.subsets.Range([(0, 9, 1), (0, sp.Symbol("N") - 1, 4),
                                 (1, sp.Symbol("M") - 1, None)]))
 
-        to_string = dace.graph.nodes.Map.__properties__["range"].to_string
-        from_string = dace.graph.nodes.Map.__properties__["range"].from_string
+        to_string = dace.sdfg.nodes.Map.__properties__["range"].to_string
+        from_string = dace.sdfg.nodes.Map.__properties__["range"].from_string
 
         self.assertTrue("0:10, 0:N:4, 1:M" in to_string(m.range))
 
@@ -59,13 +59,13 @@ class PropertyTests(unittest.TestCase):
         sdfg.add_node(state1)
 
         _, arr0 = sdfg.add_array("arr0", (16, 16), dace.dtypes.float32)
-        data0 = dace.graph.nodes.AccessNode('arr0')
+        data0 = dace.sdfg.nodes.AccessNode('arr0')
 
         state0.add_node(data0)
         sdfg.add_array("arr1", (16, 16), dace.dtypes.float32)
-        state0.add_node(dace.graph.nodes.AccessNode('arr1'))
+        state0.add_node(dace.sdfg.nodes.AccessNode('arr1'))
         sdfg.add_array("arr2", (16, 16), dace.dtypes.float32)
-        state1.add_node(dace.graph.nodes.AccessNode('arr2'))
+        state1.add_node(dace.sdfg.nodes.AccessNode('arr2'))
 
         memlet = dace.memlet.Memlet('arr2', 1, "0:N", 1)
 

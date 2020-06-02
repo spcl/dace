@@ -2,7 +2,8 @@
 
 from dace import dtypes, registry
 from dace.sdfg import has_dynamic_map_inputs
-from dace.graph import nodes, nxutil
+from dace.sdfg import utils as sdutil
+from dace.sdfg import nodes
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 
@@ -57,7 +58,7 @@ class MPITransformMap(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MPITransformMap._map_entry)]
+        return [sdutil.node_path_graph(MPITransformMap._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -88,7 +89,7 @@ class MPITransformMap(pattern_matching.Transformation):
             return False
 
         # MPI schedules currently do not support WCR
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
         if any(e.data.wcr for e in graph.out_edges(map_exit)):
             return False
 
@@ -149,10 +150,8 @@ class MPITransformMap(pattern_matching.Transformation):
             in_local_storage.apply(sdfg)
 
         # Transform OutLocalStorage for each output of the MPI map
-        in_map_exits = graph.exit_nodes(map_entry)
-        out_map_exits = graph.exit_nodes(outer_map)
-        in_map_exit = in_map_exits[0]
-        out_map_exit = out_map_exits[0]
+        in_map_exit = graph.exit_node(map_entry)
+        out_map_exit = graph.exit_node(outer_map)
 
         for e in graph.out_edges(out_map_exit):
             name = e.data.data

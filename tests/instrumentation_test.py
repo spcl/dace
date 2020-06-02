@@ -5,15 +5,15 @@ import numpy as np
 import sys
 
 import dace
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.transformation.interstate import GPUTransformSDFG
 
 N = dace.symbol('N')
 
 
 @dace.program
-def slowmm(A: dace.float64[N, N], B: dace.float64[N, N],
-           C: dace.float64[N, N]):
+def slowmm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N,
+                                                                         N]):
     for t in range(20):
 
         @dace.map

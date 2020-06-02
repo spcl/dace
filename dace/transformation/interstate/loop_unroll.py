@@ -7,7 +7,8 @@ from typing import List, Optional, Tuple
 
 from dace import dtypes, registry, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.graph import edges, graph as gr, nodes, nxutil
+from dace.sdfg import graph as gr, nodes
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import DetectLoop
 
@@ -133,7 +134,7 @@ class LoopUnroll(DetectLoop):
 
         # Get loop states
         loop_states = list(
-            nxutil.dfs_topological_sort(
+            sdutil.dfs_topological_sort(
                 sdfg,
                 sources=[begin],
                 condition=lambda _, child: child != guard))
@@ -166,7 +167,7 @@ class LoopUnroll(DetectLoop):
                 dst = new_states[loop_states.index(edge.dst)]
 
                 # Replace conditions in subgraph edges
-                data: edges.InterstateEdge = copy.deepcopy(edge.data)
+                data: sd.InterstateEdge = copy.deepcopy(edge.data)
                 if data.condition:
                     # TODO: Condition seems to sometimes be a list, even
                     # though this should always be a single expression.
@@ -181,16 +182,16 @@ class LoopUnroll(DetectLoop):
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
                 sdfg.add_edge(unrolled_states[-1][1], new_states[first_id],
-                              edges.InterstateEdge())
+                              sd.InterstateEdge())
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
         # Connect new states to before and after states without conditions
         if unrolled_states:
             sdfg.add_edge(before_state, unrolled_states[0][0],
-                          edges.InterstateEdge())
+                          sd.InterstateEdge())
             sdfg.add_edge(unrolled_states[-1][1], after_state,
-                          edges.InterstateEdge())
+                          sd.InterstateEdge())
 
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)

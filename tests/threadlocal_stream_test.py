@@ -31,7 +31,6 @@ state.add_nedge(globalstream, globalarr,
                 Memlet.from_array(globalarr.data, globalarr.desc(sdfg)))
 
 sdfg.fill_scope_connectors()
-sdfg.draw_to_file()
 
 if __name__ == '__main__':
     print('Thread-local stream test')
@@ -47,7 +46,7 @@ if __name__ == '__main__':
         print('ERROR: Thread-local stream was not created')
         exit(1)
 
-    func = dp.compile(sdfg)
+    func = sdfg.compile()
     func(ga=output, N=N)
 
     output = np.sort(output)

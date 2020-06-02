@@ -3,8 +3,9 @@
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
-from dace.graph import nodes, nxutil
-from dace.graph.graph import OrderedDiGraph
+from dace.sdfg import nodes, graph as gr
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import OrderedDiGraph
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import pattern_matching, helpers
 from typing import List, Optional, Tuple
@@ -41,8 +42,8 @@ class MapFission(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(MapFission._map_entry, ),
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(MapFission._map_entry, ),
+            sdutil.node_path_graph(
                 MapFission._map_entry,
                 MapFission._nested_sdfg,
             )
@@ -50,7 +51,7 @@ class MapFission(pattern_matching.Transformation):
 
     @staticmethod
     def _components(
-            subgraph: sd.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+            subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
@@ -59,8 +60,7 @@ class MapFission(pattern_matching.Transformation):
         graph = (subgraph
                  if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
         sdict = subgraph.scope_dict(node_to_children=True)
-        ns = [(n,
-               graph.exit_nodes(n)[0]) if isinstance(n, nodes.EntryNode) else
+        ns = [(n, graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else
               (n, n) for n in sdict[None]
               if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
@@ -72,7 +72,7 @@ class MapFission(pattern_matching.Transformation):
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
         sdict = subgraph.scope_dict(node_to_children=True)
-        subset = sd.SubgraphView(parent, sdict[None])
+        subset = gr.SubgraphView(parent, sdict[None])
         if nested:
             return set(node.data for node in subset.nodes()
                        if isinstance(node, nodes.AccessNode)
@@ -196,7 +196,7 @@ class MapFission(pattern_matching.Transformation):
     def apply(self, sdfg: sd.SDFG):
         graph: sd.SDFGState = sdfg.nodes()[self.state_id]
         map_entry = graph.node(self.subgraph[MapFission._map_entry])
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
         nsdfg_node: Optional[nodes.NestedSDFG] = None
 
         # Obtain subgraph to perform fission to
@@ -225,11 +225,19 @@ class MapFission(pattern_matching.Transformation):
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-            for symname, sym in map_syms.items():
+            for sym in map_syms:
+                symname = str(sym)
                 if symname in outer_map.params:
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
+
+            # Remove map symbols from nested mapping
+            for name in outer_map.params:
+                if str(name) in nsdfg_node.symbol_mapping:
+                    del nsdfg_node.symbol_mapping[str(name)]
+                if str(name) in nsdfg_node.sdfg.symbols:
+                    del nsdfg_node.sdfg.symbols[str(name)]
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
@@ -296,7 +304,7 @@ class MapFission(pattern_matching.Transformation):
                     mapsize,
                     desc.dtype,
                     desc.storage,
-                    toplevel=desc.toplevel,
+                    lifetime=desc.lifetime,
                     debuginfo=desc.debuginfo,
                     allow_conflicts=desc.allow_conflicts,
                     find_new_name=True)
@@ -309,12 +317,10 @@ class MapFission(pattern_matching.Transformation):
                     sbs.offset([r[0] for r in outer_map.range], True)
                     state.add_edge(
                         edge.src, edge.src_conn, anode, None,
-                        mm.Memlet(name, outer_map.range.num_elements(), sbs,
-                                  1))
+                        mm.Memlet(name, outer_map.range.num_elements(), sbs, 1))
                     state.add_edge(
                         anode, None, edge.dst, edge.dst_conn,
-                        mm.Memlet(name, outer_map.range.num_elements(), sbs,
-                                  1))
+                        mm.Memlet(name, outer_map.range.num_elements(), sbs, 1))
                     state.remove_edge(edge)
 
             # Add extra maps around components

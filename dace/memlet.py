@@ -1,7 +1,7 @@
 import ast
 from functools import reduce
 import operator
-from typing import List
+from typing import List, Set
 
 import dace
 import dace.serialize
@@ -29,7 +29,6 @@ class Memlet(object):
     data = DataProperty()
     debuginfo = DebugInfoProperty()
     wcr = LambdaProperty(allow_none=True)
-    wcr_identity = Property(dtype=object, default=None, allow_none=True)
     wcr_conflict = Property(dtype=bool, default=True)
     allow_oob = Property(dtype=bool,
                          default=False,
@@ -41,7 +40,6 @@ class Memlet(object):
                  subset,
                  vector_length,
                  wcr=None,
-                 wcr_identity=None,
                  other_subset=None,
                  debuginfo=None,
                  wcr_conflict=True):
@@ -63,9 +61,6 @@ class Memlet(object):
                         are resolved. The syntax of the lambda function receives two elements: `current` value and `new` value,
                         and returns the value after resolution. For example,
                         summation is `lambda cur, new: cur + new`.
-            :param wcr_identity: Identity value used for the first write
-                                 conflict. B{Note:} this parameter will soon
-                                 be deprecated.
             :param other_subset: The reindexing of `subset` on the other
                                  connected data.
             :param debuginfo: Source-code information (e.g., line, file)
@@ -86,7 +81,6 @@ class Memlet(object):
 
         # Annotates memlet with _how_ writing is performed in case of conflict
         self.wcr = wcr
-        self.wcr_identity = wcr_identity
         self.wcr_conflict = wcr_conflict
 
         # The subset of the other endpoint we are copying from/to (note:
@@ -118,7 +112,6 @@ class Memlet(object):
                subset_str,
                veclen=1,
                wcr_str=None,
-               wcr_identity=None,
                other_subset_str=None,
                wcr_conflict=True,
                num_accesses=None,
@@ -139,9 +132,6 @@ class Memlet(object):
                             and returns the value after resolution. For
                             example, summation is
                             `'lambda cur, new: cur + new'`.
-            :param wcr_identity: Identity value used for the first write
-                                 conflict. B{Note:} this parameter will soon
-                                 be deprecated.
             :param other_subset_str: The reindexing of `subset` on the other
                                      connected data (as a string).
             :param wcr_conflict: If False, forces non-locked conflict
@@ -182,7 +172,6 @@ class Memlet(object):
                       subset,
                       veclen,
                       wcr=wcr,
-                      wcr_identity=wcr_identity,
                       other_subset=other_subset,
                       wcr_conflict=wcr_conflict,
                       debuginfo=debuginfo)
@@ -200,14 +189,13 @@ class Memlet(object):
 
     def __hash__(self):
         return hash((self.data, self.num_accesses, self.subset, self.veclen,
-                     str(self.wcr), self.wcr_identity, self.other_subset))
+                     str(self.wcr), self.other_subset))
 
     def __eq__(self, other):
         return all([
             self.data == other.data, self.num_accesses == other.num_accesses,
             self.subset == other.subset, self.veclen == other.veclen,
-            self.wcr == other.wcr, self.wcr_identity == other.wcr_identity,
-            self.other_subset == other.other_subset
+            self.wcr == other.wcr, self.other_subset == other.other_subset
         ])
 
     def num_elements(self):
@@ -225,6 +213,18 @@ class Memlet(object):
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this edge's properties. """
+        # Symbolic properties are in num_accesses, and the two subsets
+        result = set()
+        result |= set(map(str, self.num_accesses.free_symbols))
+        if self.subset:
+            result |= self.subset.free_symbols
+        if self.other_subset:
+            result |= self.other_subset.free_symbols
+        return result
 
     def __label__(self, sdfg, state):
         """ Returns a string representation of the memlet for display in a
@@ -258,7 +258,7 @@ class Memlet(object):
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:
-                # Don't draw array if we're accessing a single element and it's zero
+                # Don't mention array if we're accessing a single element and it's zero
                 if all(s == 0 for s in self.subset.min_element()):
                     arrayNotation = False
         except TypeError:
@@ -275,10 +275,7 @@ class Memlet(object):
                 wcrstr = str(redtype)
                 wcrstr = wcrstr[wcrstr.find('.') + 1:]  # Skip "ReductionType."
 
-            result += ' (CR: %s' % wcrstr
-            if self.wcr_identity is not None:
-                result += ', id: %s' % str(self.wcr_identity)
-            result += ')'
+            result += ' (CR: %s)' % wcrstr
 
         if self.other_subset is not None:
             result += ' -> [%s]' % str(self.other_subset)
@@ -311,8 +308,11 @@ class MemletTree(object):
         multiple inputs from the same access node are used.
     """
     def __init__(
-            self, edge, parent=None, children=None
-    ):  # type: (dace.graph.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+        self,
+        edge,
+        parent=None,
+        children=None
+    ):  # type: (dace.sdfg.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
         self.edge = edge
         self.parent = parent
         self.children = children or []
