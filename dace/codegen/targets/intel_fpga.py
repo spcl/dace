@@ -555,7 +555,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Remote stream are handled here
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream, kernel_stream)
+                                               callsite_stream,
+                                               kernel_stream_body)
 
         # Check if we are going to use any remote stream. If yes, enable SMI
         for node in state.data_nodes():
