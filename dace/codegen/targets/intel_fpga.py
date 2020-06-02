@@ -419,13 +419,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr, is_unpack, packing_factor):
-        """
-        Creates write expression, taking into account wcr if present.
-        Optional parameters are useful if remote streams are used:
-        :param data_desc: desc of target data
-        :param src_node_desc: desc of source node
-        """
+                   index, read_expr, wcr, is_unpack, packing_factor,
+                   src_node_desc):
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
@@ -1170,7 +1165,7 @@ __kernel void \\
             # TODO: implement vector conversion
             write_expr = self.make_write(dst_def_type, memlet_type, data_name,
                                          memory_width, data_name, offset,
-                                         read_expr, memlet.wcr, False, 1)
+                                         read_expr, memlet.wcr, False, 1, None)
 
             if isinstance(data_desc, dace.data.Scalar):
                 if memlet.num_accesses == 1:

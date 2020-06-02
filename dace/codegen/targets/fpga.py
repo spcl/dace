@@ -858,7 +858,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 write_expr = self.make_write(dst_def_type, ctype,
                                              dst_node.label, memlet.veclen,
                                              dst_expr, dst_index, read_expr,
-                                             None, is_unpack, packing_factor)
+                                             None, is_unpack, packing_factor,
+                                             src_node.desc(sdfg))
 
             callsite_stream.write(write_expr)
 

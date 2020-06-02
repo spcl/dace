@@ -301,7 +301,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr, is_unpack, packing_factor):
+                   index, read_expr, wcr, is_unpack, packing_factor,
+                   src_node_desc):
         if defined_type in [
                 DefinedType.Stream, DefinedType.StreamView,
                 DefinedType.StreamArray
