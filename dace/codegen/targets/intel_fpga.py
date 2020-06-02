@@ -222,14 +222,12 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                       ])))
 
         # Since CodeObject defines target_name, I have to explicitely indicate intel_fpga_smi if remote streams are used
-        host_code_obj = CodeObject(
-            self._program_name,
-            host_code.getvalue(),
-            "cpp",
-            IntelFPGACodeGen,
-            "Intel FPGA",
-            target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
-            target_type="host")
+        host_code_obj = CodeObject(self._program_name,
+                                   host_code.getvalue(),
+                                   "cpp",
+                                   IntelFPGACodeGen,
+                                   "Intel FPGA",
+                                   target_type="host")
 
         kernel_code_objs = [
             CodeObject(kernel_name,
