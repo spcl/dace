@@ -362,10 +362,12 @@ class TargetDispatcher(object):
                          implementation of data memory management functions.
             @see: TargetCodeGenerator
         """
-        if isinstance(storage_type, list):
+        try:
             for stype in storage_type:
                 self.register_array_dispatcher(stype, func)
             return
+        except TypeError:  # Not iterable
+            pass
 
         if not isinstance(storage_type, dtypes.StorageType): raise TypeError
         if not isinstance(func, TargetCodeGenerator): raise TypeError
