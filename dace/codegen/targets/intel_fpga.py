@@ -1097,8 +1097,7 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Stream)
         elif def_type == DefinedType.RemoteStream:
-            # TODO: handle dynamic number of accesses
-            if memlet.num_accesses == 1 or memlet.num_accesses == -1:
+            if memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
@@ -1530,13 +1529,20 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 newnode = ast.Name(id="*{} = {}; ".format(target, value))
                 return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
-            code_str = "{} = {};".format(target, value)
-            updated = ast.Name(id=code_str)
+            if isinstance(node.value, ast.Name) and self.defined_vars.get_if_defined(node.value.id) \
+                    == DefinedType.RemoteStream and self.memlets[node.value.id][0].num_accesses != 1:
+                # read from a remote stream in the right part of the assignment
+                # Corner case: if we are dealing with vectors, target is already a pointer
+                updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
+                    value, "&" if veclen == 1 else "", target))
+            else:
+                code_str = "{} = {};".format(target, value)
+                updated = ast.Name(id=code_str)
         else:
             raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
                                "memory size {}, {} accesses".format(
-                                   target, defined_type, veclen_lhs,
-                                   memwidth_lhs, memlet.num_accesses))
+                target, defined_type, veclen_lhs,
+                memwidth_lhs, memlet.num_accesses))
 
         return ast.copy_location(updated, node)
 
