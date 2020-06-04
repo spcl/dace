@@ -390,7 +390,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     @staticmethod
     def make_read(defined_type, type_str, var_name, vector_length, expr, index,
-                  is_pack, packing_factor):
+                  is_pack, packing_factor, src_node_desc=None):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
@@ -1097,7 +1097,8 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Stream)
         elif def_type == DefinedType.RemoteStream:
-            if memlet.num_accesses == 1:
+            # TODO: handle dynamic number of accesses
+            if memlet.num_accesses == 1 or memlet.num_accesses == -1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
@@ -1476,9 +1477,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # If the value is a Name, we should check whether it is a remote stream and the number of accesses
                 if isinstance(node.value,
                               ast.Name) and self.defined_vars.get_if_defined(
-                                  node.value.id
-                              ) == DefinedType.RemoteStream and self.memlets[
-                                  node.value.id][0].num_accesses != 1:
+                    node.value.id
+                ) == DefinedType.RemoteStream and self.memlets[
+                    node.value.id][0].num_accesses != 1:
                     # read from a remote stream in the right part of the assignment
                     # Corner case: if we are dealing with vectors, target is already a pointer
                     updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
