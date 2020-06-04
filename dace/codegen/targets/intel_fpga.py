@@ -481,17 +481,17 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
-                if isinstance(
-                        src_node_desc, dace.data.Stream
-                ) is False or src_node_desc.storage != dace.dtypes.StorageType.FPGA_Remote:
+                if (isinstance(src_node_desc, dace.data.Stream)
+                        and src_node_desc.storage
+                        == dace.dtypes.StorageType.FPGA_Remote):
+                    return "SMI_Pop(&{},(void *)&{})".format(
+                        read_expr, var_name)
+                else:
                     if is_unpack:
                         return "unpack_{}{}({}, {});".format(
                             type_str, packing_factor, read_expr, var_name)
                     else:
                         return "{} = {};".format(var_name, read_expr)
-                else:
-                    return "SMI_Pop(&{},(void *)&{})".format(
-                        read_expr, var_name)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
 
@@ -512,7 +512,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Then do write
         res += self.make_write(defined_type, type_str, var_name, vector_length,
                                write_expr, index, read_expr, wcr, is_unpack,
-                               packing_factor)
+                               packing_factor, None)
         return res
 
     @staticmethod
