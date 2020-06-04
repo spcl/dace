@@ -227,6 +227,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                                    "cpp",
                                    IntelFPGACodeGen,
                                    "Intel FPGA",
+                                   target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
                                    target_type="host")
 
         kernel_code_objs = [
@@ -236,6 +237,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                        IntelFPGACodeGen,
                        "Intel FPGA",
                        target_type="device",
+                       target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
                        additional_compiler_kwargs={"smi": self.enable_smi})
             for (kernel_name, code) in self._kernel_codes
         ]

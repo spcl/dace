@@ -16,6 +16,11 @@ class CodeObject(object):
         dtype=str,
         desc="Sub-target within target (e.g., host or device code)",
         default="")
+    target_name = Property(
+        dtype=str,
+        desc="Target name",
+        default="")
+
     title = Property(dtype=str, desc="Title of code for GUI")
     extra_compiler_kwargs = DictProperty(key_type=str,
                                          value_type=str,
@@ -36,6 +41,7 @@ class CodeObject(object):
                  target,
                  title,
                  target_type="",
+                 target_name="",
                  additional_compiler_kwargs=None,
                  linkable=True,
                  environments=set()):
@@ -46,6 +52,7 @@ class CodeObject(object):
         self.language = language
         self.target = target
         self.target_type = target_type
+        self.target_name = target_name
         self.title = title
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable

@@ -413,7 +413,7 @@ def generate_program_folder(sdfg,
 
         name = code_object.name
         extension = code_object.language
-        target_name = code_object.target.target_name
+        target_name = code_object.target_name
         target_type = code_object.target_type
 
         # Create target folder
@@ -509,7 +509,7 @@ def configure_and_compile(program_folder,
         files.append(path)
         targets[target_name] = next(
             k for k, v in TargetCodeGenerator.extensions().items()
-            if v['name'] == target_name)
+            if v['name'] == target_name or target_name in v['name'])
 
     # Windows-only workaround: Override Visual C++'s linker to use
     # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
