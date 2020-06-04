@@ -61,7 +61,7 @@ class NameTooLongError(ValueError):
     pass
 
 
-@registry.autoregister_params(name='intel_fpga')
+@registry.autoregister_params(name=['intel_fpga', 'intel_fpga_smi'])
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
     title = 'Intel FPGA'
@@ -266,17 +266,17 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 connector = dfg.in_edges(node)[0].src_conn
                 memlet = dfg.in_edges(node)[0].data
                 rcv_rank = node.desc(sdfg).location["rcv_rank"]
-                port = node.desc(sdfg).location["port"]
-                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdigit(
-                ):
+                port = node.desc(sdfg).location["port"][0]
+                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not isinstance(rcv_rank, dace.sympy.numbers.Integer):
                     raise dace.codegen.codegen.CodegenError(
                         "Receiver rank for remote stream {} must be a constant, a symbol or a number"
-                        .format(dst_node.label))
+                        .format(node.label))
+
                 if not isinstance(port, int) and (port not in sdfg.constants
-                                                  and not port.isdigit()):
+                                                  and not isinstance(port, dace.sympy.numbers.Integer)):
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
-                        .format(dst_node.label))
+                        .format(node.label))
                 # TODO handle dynamic number of accesses in SMI
                 #message_size = memlet.num_accesses / vector_length
                 message_size = memlet.num_accesses  # TODO: temp fix for stencilflow
@@ -293,15 +293,14 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 connector = dfg.out_edges(node)[0].dst_conn
                 memlet = dfg.out_edges(node)[0].data
                 snd_rank = node.desc(sdfg).location["snd_rank"]
-                port = node.desc(sdfg).location["port"]
-                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdigit(
-                ):
+                port = node.desc(sdfg).location["port"][0]
+                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not isinstance(snd_rank, dace.sympy.numbers.Integer):
                     raise dace.codegen.codegen.CodegenError(
                         "Sender rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
 
                 if not isinstance(port, int) and (port not in sdfg.constants
-                                                  and not port.isdigit()):
+                                                  and not isinstance(port, dace.sympy.numbers.Integer)):
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
