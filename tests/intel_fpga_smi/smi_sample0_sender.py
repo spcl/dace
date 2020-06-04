@@ -2,7 +2,6 @@
 #   - the first addiction is computed on rank sender
 #   - the second in rank_receiver who send the result back to rank sender
 
-
 import argparse
 import dace
 import numpy as np
@@ -23,23 +22,20 @@ def make_sdfg():
     parent_sdfg.add_array("in_B", [N], dtype=dace.float32)
     in_host_B = copy_in_state.add_read("in_B")
 
-    parent_sdfg.add_array(
-        "in_device_A", [N],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    parent_sdfg.add_array("in_device_A", [N],
+                          dtype=dace.float32,
+                          transient=True,
+                          storage=dace.dtypes.StorageType.FPGA_Global)
 
-    parent_sdfg.add_array(
-        "in_device_B", [N],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    parent_sdfg.add_array("in_device_B", [N],
+                          dtype=dace.float32,
+                          transient=True,
+                          storage=dace.dtypes.StorageType.FPGA_Global)
 
-    parent_sdfg.add_array(
-        "in_device_C", [N],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    parent_sdfg.add_array("in_device_C", [N],
+                          dtype=dace.float32,
+                          transient=True,
+                          storage=dace.dtypes.StorageType.FPGA_Global)
 
     in_device_A = copy_in_state.add_write("in_device_A")
     in_device_B = copy_in_state.add_write("in_device_B")
@@ -54,11 +50,10 @@ def make_sdfg():
 
     copy_out_state = parent_sdfg.add_state("copy_to_host")
 
-    parent_sdfg.add_array(
-        "out_device", [N],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    parent_sdfg.add_array("out_device", [N],
+                          dtype=dace.float32,
+                          transient=True,
+                          storage=dace.dtypes.StorageType.FPGA_Global)
 
     out_device = copy_out_state.add_read("out_device")
 
@@ -75,41 +70,55 @@ def make_sdfg():
     nested_axpy_1_sdfg = dace.SDFG('compute_axpy_1')
     nested_axpy_1_state = nested_axpy_1_sdfg.add_state("nested_axpy_1_state")
 
-    nested_axpy_1_sdfg.add_array("mem_A", shape=[N], dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Global)
+    nested_axpy_1_sdfg.add_array("mem_A",
+                                 shape=[N],
+                                 dtype=dace.float32,
+                                 storage=dace.dtypes.StorageType.FPGA_Global)
     in_read_A = nested_axpy_1_state.add_read("mem_A")
-    nested_axpy_1_sdfg.add_array("mem_B", shape=[N], dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Global)
+    nested_axpy_1_sdfg.add_array("mem_B",
+                                 shape=[N],
+                                 dtype=dace.float32,
+                                 storage=dace.dtypes.StorageType.FPGA_Global)
     in_read_B = nested_axpy_1_state.add_read("mem_B")
-    nested_axpy_1_sdfg.add_stream('stream_out', dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Remote)
+    nested_axpy_1_sdfg.add_stream('stream_out',
+                                  dtype=dace.float32,
+                                  storage=dace.dtypes.StorageType.FPGA_Remote)
     stream_write = nested_axpy_1_state.add_write("stream_out")
 
     tasklet, map_entry, map_exit = nested_axpy_1_state.add_mapped_tasklet(
         'read',  # name
         dict(i='0:N'),  # map range
-        dict(inp_A=dace.Memlet.simple(in_read_A.data, 'i'),  # input memlets
-             inp_B=dace.Memlet.simple(in_read_B.data, 'i')),
+        dict(
+            inp_A=dace.Memlet.simple(in_read_A.data, 'i'),  # input memlets
+            inp_B=dace.Memlet.simple(in_read_B.data, 'i')),
         '''                                                 # code
 out = inp_A + inp_B
         ''',
         dict(out=dace.Memlet.simple(stream_write.data, 'i')),  # output memlets,
-        schedule=dace.dtypes.ScheduleType.FPGA_Device
-    )
+        schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
     # Add edges to map
 
-    nested_axpy_1_state.add_edge(
-        in_read_A, None,
-        map_entry, None,
-        memlet=dace.Memlet.simple(in_read_A.data, '0:N'))
-    nested_axpy_1_state.add_edge(
-        in_read_B, None,
-        map_entry, None,
-        memlet=dace.Memlet.simple(in_read_B.data, '0:N'))
+    nested_axpy_1_state.add_edge(in_read_A,
+                                 None,
+                                 map_entry,
+                                 None,
+                                 memlet=dace.Memlet.simple(
+                                     in_read_A.data, '0:N'))
+    nested_axpy_1_state.add_edge(in_read_B,
+                                 None,
+                                 map_entry,
+                                 None,
+                                 memlet=dace.Memlet.simple(
+                                     in_read_B.data, '0:N'))
 
     # Add output path (exit->dst)
-    nested_axpy_1_state.add_edge(
-        map_exit, None,
-        stream_write, None,
-        memlet=dace.Memlet.simple(stream_write.data, '0:N'))
+    nested_axpy_1_state.add_edge(map_exit,
+                                 None,
+                                 stream_write,
+                                 None,
+                                 memlet=dace.Memlet.simple(
+                                     stream_write.data, '0:N'))
 
     nested_axpy_1_sdfg.fill_scope_connectors()
     nested_axpy_1_sdfg.validate()
@@ -118,35 +127,42 @@ out = inp_A + inp_B
     #
     store_sdfg = dace.SDFG('store')
     store_state = store_sdfg.add_state("store_state")
-    store_sdfg.add_stream("stream_in", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Remote)
+    store_sdfg.add_stream("stream_in",
+                          dtype=dace.float32,
+                          storage=dace.dtypes.StorageType.FPGA_Remote)
     stream_read = store_state.add_read("stream_in")
 
-    store_sdfg.add_array("mem", shape=[N], dtype=dace.float32,
-                                 storage=dace.dtypes.StorageType.FPGA_Global)
+    store_sdfg.add_array("mem",
+                         shape=[N],
+                         dtype=dace.float32,
+                         storage=dace.dtypes.StorageType.FPGA_Global)
     out_write = store_state.add_write("mem")
 
-    store_state.add_edge(
-        stream_read, None,
-        out_write, None,
-        memlet=dace.Memlet.simple(stream_read.data, '0:N'))
+    store_state.add_edge(stream_read,
+                         None,
+                         out_write,
+                         None,
+                         memlet=dace.Memlet.simple(stream_read.data, '0:N'))
 
     store_sdfg.fill_scope_connectors()
     store_sdfg.validate()
-
 
     ##### make fpga state and nest SDFGs
 
     parent_nested_axpy = parent_sdfg.add_state("axpy_and_store")
 
     ### AXPY PART
-    nested_axpy_1_node = parent_nested_axpy.add_nested_sdfg(nested_axpy_1_sdfg, parent_sdfg, {"mem_A", "mem_B"},
-                                                            {"stream_out"})
+    nested_axpy_1_node = parent_nested_axpy.add_nested_sdfg(
+        nested_axpy_1_sdfg, parent_sdfg, {"mem_A", "mem_B"}, {"stream_out"})
 
     # parent_sdfg.add_array("in_device", shape=[N], dtype=dace.float32, transient=True, storage=dace.dtypes.StorageType.FPGA_Global)
     in_data_A = parent_nested_axpy.add_read("in_device_A")
     in_data_B = parent_nested_axpy.add_read("in_device_B")
-    _, stream_node = parent_sdfg.add_stream("stream", dtype=dace.float32, transient=True,
-                                            storage=dace.dtypes.StorageType.FPGA_Remote)
+    _, stream_node = parent_sdfg.add_stream(
+        "stream",
+        dtype=dace.float32,
+        transient=True,
+        storage=dace.dtypes.StorageType.FPGA_Remote)
     #####################################################
     # set SMI properties
     stream_node.location["rcv_rank"] = "1"
@@ -155,25 +171,31 @@ out = inp_A + inp_B
     stream_wr = parent_nested_axpy.add_write("stream")
     parent_nested_axpy.add_memlet_path(in_data_A,
                                        nested_axpy_1_node,
-                                       memlet=dace.Memlet.simple(in_data_A.data, '0:N'),
+                                       memlet=dace.Memlet.simple(
+                                           in_data_A.data, '0:N'),
                                        dst_conn="mem_A")
     parent_nested_axpy.add_memlet_path(in_data_B,
                                        nested_axpy_1_node,
-                                       memlet=dace.Memlet.simple(in_data_B.data, '0:N'),
+                                       memlet=dace.Memlet.simple(
+                                           in_data_B.data, '0:N'),
                                        dst_conn="mem_B")
     parent_nested_axpy.add_memlet_path(nested_axpy_1_node,
                                        stream_wr,
-                                       memlet=dace.Memlet.simple(stream_wr.data, '0:N'),
+                                       memlet=dace.Memlet.simple(
+                                           stream_wr.data, '0:N'),
                                        src_conn="stream_out")
-
 
     #### STORE PART#############
 
-    store_node = parent_nested_axpy.add_nested_sdfg(store_sdfg, parent_sdfg, {"stream_in"}, {"mem"})
+    store_node = parent_nested_axpy.add_nested_sdfg(store_sdfg, parent_sdfg,
+                                                    {"stream_in"}, {"mem"})
     out_data = parent_nested_axpy.add_write("out_device")
 
-    _, stream_node = parent_sdfg.add_stream("stream_rcv", dtype=dace.float32, transient=True,
-                                            storage=dace.dtypes.StorageType.FPGA_Remote)
+    _, stream_node = parent_sdfg.add_stream(
+        "stream_rcv",
+        dtype=dace.float32,
+        transient=True,
+        storage=dace.dtypes.StorageType.FPGA_Remote)
     #####################################################
     # set SMI properties
     stream_node.location["snd_rank"] = "1"
@@ -182,15 +204,19 @@ out = inp_A + inp_B
     stream_rd = parent_nested_axpy.add_read("stream_rcv")
     parent_nested_axpy.add_memlet_path(stream_rd,
                                        store_node,
-                                       memlet=dace.Memlet.simple(stream_rd.data, '0:N'),
+                                       memlet=dace.Memlet.simple(
+                                           stream_rd.data, '0:N'),
                                        dst_conn="stream_in")
     parent_nested_axpy.add_memlet_path(store_node,
                                        out_data,
-                                       memlet=dace.Memlet.simple(out_data.data, '0:N'),
+                                       memlet=dace.Memlet.simple(
+                                           out_data.data, '0:N'),
                                        src_conn="mem")
 
-    parent_sdfg.add_edge(copy_in_state, parent_nested_axpy, dace.sdfg.edges.InterstateEdge())
-    parent_sdfg.add_edge(parent_nested_axpy, copy_out_state, dace.sdfg.edges.InterstateEdge())
+    parent_sdfg.add_edge(copy_in_state, parent_nested_axpy,
+                         dace.sdfg.sdfg.InterstateEdge())
+    parent_sdfg.add_edge(parent_nested_axpy, copy_out_state,
+                         dace.sdfg.sdfg.InterstateEdge())
 
     parent_sdfg.validate()
 
@@ -232,5 +258,3 @@ if __name__ == "__main__":
     else:
         print("Results verified successfully.")
     exit(0)
-
-
