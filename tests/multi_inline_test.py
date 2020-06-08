@@ -25,4 +25,4 @@ def myprogram(A, B):
 
 
 if __name__ == '__main__':
-    dp.compile(myprogram, dp.float32[W, H], dp.float32[H, W])
+    myprogram.compile(dp.float32[W, H], dp.float32[H, W])

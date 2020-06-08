@@ -3,7 +3,7 @@ import functools
 from dace import data, registry, subsets, symbolic, dtypes
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.cpp import cpp_array_expr, sym2cpp
-from dace.graph import nodes
+from dace.sdfg import nodes
 
 from dace.codegen import cppunparse
 
@@ -29,7 +29,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
 
         cpu_storage = [
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
-            dtypes.StorageType.CPU_Stack, dtypes.StorageType.Register
+            dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register
         ]
         for storage_type in cpu_storage:
             dispatcher.register_copy_dispatcher(dtypes.StorageType.Immaterial,
@@ -52,11 +52,6 @@ class ImmaterialCodeGen(TargetCodeGenerator):
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
         callsite_stream.write("// allocate array\n", sdfg, state_id, node)
-
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        callsite_stream.write("// initialize_array " + node.data + "\n", sdfg,
-                              state_id, node)
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):

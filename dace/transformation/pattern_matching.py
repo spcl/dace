@@ -7,9 +7,11 @@ import dace
 import inspect
 from typing import Dict
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import utils as sdutil, propagation
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
-from dace.graph import labeling, graph as gr, nodes as nd, nxutil
+from dace.sdfg import graph as gr, nodes as nd
+from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Dict, List, Tuple, Type, Union
@@ -97,7 +99,7 @@ class Transformation(object):
                               Transformation.
             :raise TypeError: When state_id is not instance of int.
             :raise TypeError: When subgraph is not a dict of
-                              dace.graph.nodes.Node : int.
+                              dace.sdfg.nodes.Node : int.
         """
 
         self.sdfg_id = sdfg_id
@@ -152,7 +154,7 @@ class Transformation(object):
         """ Applies this transformation on the given SDFG. """
         self.apply(sdfg)
         if not self.annotates_memlets():
-            labeling.propagate_labels_sdfg(sdfg)
+            propagation.propagate_memlets_sdfg(sdfg)
 
     def __str__(self):
         return type(self).__name__
@@ -184,11 +186,11 @@ class ExpandTransformation(Transformation):
     """
     @classmethod
     def expressions(clc):
-        return [nxutil.node_path_graph(clc._match_node)]
+        return [sdutil.node_path_graph(clc._match_node)]
 
     @staticmethod
-    def can_be_applied(graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[dace.graph.nodes.Node, int],
+    def can_be_applied(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+                       candidate: Dict[dace.sdfg.nodes.Node, int],
                        expr_index: int,
                        sdfg,
                        strict: bool = False):
@@ -196,8 +198,8 @@ class ExpandTransformation(Transformation):
         return True
 
     @classmethod
-    def match_to_str(clc, graph: dace.graph.graph.OrderedMultiDiConnectorGraph,
-                     candidate: Dict[dace.graph.nodes.Node, int]):
+    def match_to_str(clc, graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+                     candidate: Dict[dace.sdfg.nodes.Node, int]):
         node = graph.nodes()[candidate[clc._match_node]]
         return str(node)
 
@@ -214,20 +216,28 @@ class ExpandTransformation(Transformation):
         node = state.nodes()[self.subgraph[type(self)._match_node]]
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, dace.SDFG):
+            # Modify internal schedules according to node schedule
+            if node.schedule != ScheduleType.Default:
+                for nstate in expansion.nodes():
+                    topnodes = nstate.scope_dict(node_to_children=True)[None]
+                    for topnode in topnodes:
+                        if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
+                            topnode.schedule = node.schedule
+
             expansion = state.add_nested_sdfg(expansion,
                                               sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name)
-        elif isinstance(expansion, dace.graph.nodes.CodeNode):
+        elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
             pass
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(
             set(map(lambda a: a.__name__,
                     type(self).environments)))
-        dace.graph.nxutil.change_edge_dest(state, node, expansion)
-        dace.graph.nxutil.change_edge_src(state, node, expansion)
+        sdutil.change_edge_dest(state, node, expansion)
+        sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
 
@@ -248,8 +258,9 @@ def collapse_multigraph_to_nx(
   """
 
     # Create the digraph nodes.
-    digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = (
-        [None] * graph.number_of_nodes())
+    digraph_nodes: List[Tuple[int, Dict[str,
+                                        nd.Node]]] = ([None] *
+                                                      graph.number_of_nodes())
     node_id = {}
     for i, node in enumerate(graph.nodes()):
         digraph_nodes[i] = (i, {'node': node})

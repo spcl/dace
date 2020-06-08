@@ -1,6 +1,6 @@
 import copy
 import dace
-import dace.graph.nodes
+import dace.sdfg.nodes
 import numpy as np
 
 # Python version of the SDFG below
@@ -36,9 +36,10 @@ def test_offset_reduce_sequential():
     B = np.random.rand(25)
 
     sdfg = copy.deepcopy(reduce_with_offsets)
+    sdfg.expand_library_nodes()
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.graph.nodes.Reduce):
-            node.schedule = dace.ScheduleType.Sequential
+        if isinstance(node, dace.sdfg.nodes.MapEntry):
+            node.map.schedule = dace.ScheduleType.Sequential
 
     sdfg(A=A, B=B)
 
@@ -57,7 +58,7 @@ def test_offset_reduce_indices():
     state = reduce_with_indices.add_state()
     node_a = state.add_read('A')
     node_b = state.add_write('B')
-    red = state.add_reduce('lambda a,b: max(a,b)', [3])
+    red = state.add_reduce('lambda a,b: max(a,b)', [0, 1, 2, 3])
     state.add_nedge(node_a, red, dace.Memlet.simple('A', '0, 1, 2, 0:10'))
     state.add_nedge(red, node_b, dace.Memlet.simple('B', '0'))
 

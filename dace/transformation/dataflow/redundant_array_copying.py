@@ -1,7 +1,8 @@
 """ Contains redundant array removal transformations. """
 
 from dace import registry
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching as pm
 from dace.config import Config
 
@@ -20,7 +21,7 @@ class RedundantArrayCopying(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(
                 RedundantArrayCopying._in_array,
                 RedundantArrayCopying._med_array,
                 RedundantArrayCopying._out_array,
@@ -123,7 +124,7 @@ class RedundantArrayCopying2(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArrayCopying2._in_array,
+            sdutil.node_path_graph(RedundantArrayCopying2._in_array,
                                    RedundantArrayCopying2._out_array)
         ]
 
@@ -182,7 +183,7 @@ class RedundantArrayCopying3(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(RedundantArrayCopying3._map_entry,
+            sdutil.node_path_graph(RedundantArrayCopying3._map_entry,
                                    RedundantArrayCopying3._out_array)
         ]
 

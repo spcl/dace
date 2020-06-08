@@ -7,7 +7,8 @@ import json
 
 import dace
 from dace.frontend.octave import parse
-from dace.graph.nodes import AccessNode
+from dace.sdfg.nodes import AccessNode
+
 
 def compile(inputfile):
     buf = open(inputfile).read()
@@ -15,7 +16,7 @@ def compile(inputfile):
     print("After Parsing")
     print(str(statements))
     print("===============")
-    statements.provide_parents() 
+    statements.provide_parents()
     statements.specialize()
     print("After Specialization:")
     print(str(statements))
@@ -27,8 +28,8 @@ def compile(inputfile):
     # Clean isolated nodes
     for state in sdfg.nodes():
         for node in state.nodes():
-            if (isinstance(node, AccessNode) and
-                    (state.in_degree(node) + state.out_degree(node) == 0)):
+            if (isinstance(node, AccessNode)
+                    and (state.in_degree(node) + state.out_degree(node) == 0)):
                 state.remove_node(node)
 
     return sdfg
@@ -36,22 +37,22 @@ def compile(inputfile):
 
 def main():
     argparser = argparse.ArgumentParser(
-        description="dacelab: An Octave to SDFG compiler"
-    )
+        description="dacelab: An Octave to SDFG compiler")
     argparser.add_argument("infile",
-                        metavar='infile',
-                        type=argparse.FileType('r'),
-                        help="Input file (Octave code)")
-    argparser.add_argument("-o", "--outfile",
-                        metavar='outfile',
-                        type=argparse.FileType('w'),
-                        default="out.sdfg",
-                        help="Output file, defaults to out.sdfg")
+                           metavar='infile',
+                           type=argparse.FileType('r'),
+                           help="Input file (Octave code)")
+    argparser.add_argument("-o",
+                           "--outfile",
+                           metavar='outfile',
+                           type=argparse.FileType('w'),
+                           default="out.sdfg",
+                           help="Output file, defaults to out.sdfg")
     args = argparser.parse_args()
     sdfg = compile(args.infile.name)
     sdfg.save(args.outfile.name)
     print("SDFG Generation finished")
 
+
 if __name__ == "__main__":
     main()
-

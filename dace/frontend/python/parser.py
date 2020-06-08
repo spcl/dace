@@ -108,22 +108,13 @@ def parse_from_function(function, *compilation_args, strict=None):
     # Obtain DaCe program as SDFG
     sdfg = function.generate_pdp(*compilation_args)
 
-    # No need at this point
-    # Fill in scope entry/exit connectors
-    #sdfg.fill_scope_connectors()
-    # Memlet propagation
-    #if sdfg.propagate:
-    #    labeling.propagate_labels_sdfg(sdfg)
-    ########################
-
     # Apply strict transformations automatically
     if (strict == True or (strict is None and Config.get_bool(
             'optimizer', 'automatic_strict_transformations'))):
         sdfg.apply_strict_transformations()
 
-    # Drawing the SDFG (again) to a .dot file
-    sdfg.draw_to_file(recursive=True)
-    sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+    # Save the SDFG (again)
+    sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()
