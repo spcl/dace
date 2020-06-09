@@ -458,7 +458,6 @@ class TargetDispatcher(object):
                                     state_id, function_stream, callsite_stream)
 
                 # Skip scope subgraph nodes
-                #print(scope_subgraph.nodes())
                 nodes_to_skip.update(scope_subgraph.nodes())
             else:
                 self.dispatch_node(sdfg, dfg, state_id, v, function_stream,
