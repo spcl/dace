@@ -21,6 +21,19 @@ def _get_transpose_input(node, state, sdfg):
     raise ValueError("Transpose input connector \"_inp\" not found.")
 
 
+def _get_transpose_output(node, state, sdfg):
+    """Returns the transpose output edge, array, and shape."""
+    for edge in state.out_edges(node):
+        if edge.src_conn == "_out":
+            subset = dc(edge.data.subset)
+            subset.squeeze()
+            size = subset.size()
+            outer_array = sdfg.data(
+                dace.sdfg.find_output_arraynode(state, edge).data)
+            return edge, outer_array, (size[0], size[1])
+    raise ValueError("Transpose output connector \"_out\" not found.")
+
+
 @dace.library.expansion
 class ExpandTransposePure(ExpandTransformation):
 
@@ -29,9 +42,10 @@ class ExpandTransposePure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
 
-        in_edge, outer_array, in_shape = _get_transpose_input(
+        in_edge, in_outer_array, in_shape = _get_transpose_input(
             node, parent_state, parent_sdfg)
-        out_shape = (in_shape[1], in_shape[0])
+        out_edge, out_outer_array, out_shape = _get_transpose_output(
+            node, parent_state, parent_sdfg)
         dtype = node.dtype
 
         sdfg = dace.SDFG(node.label + "_sdfg")
@@ -40,11 +54,13 @@ class ExpandTransposePure(ExpandTransformation):
         _, in_array = sdfg.add_array("_inp",
                                      in_shape,
                                      dtype,
-                                     storage=outer_array.storage)
+                                     strides=in_outer_array.strides,
+                                     storage=in_outer_array.storage)
         _, out_array = sdfg.add_array("_out",
                                       out_shape,
                                       dtype,
-                                      storage=outer_array.storage)
+                                      strides=out_outer_array.strides,
+                                      storage=out_outer_array.storage)
 
         num_elements = functools.reduce(lambda x, y: x * y, in_array.shape)
         if num_elements == 1:
@@ -55,7 +71,7 @@ class ExpandTransposePure(ExpandTransformation):
             state.add_edge(inp, None, tasklet, "__inp",
                            dace.memlet.Memlet.from_array("_inp", in_array))
             state.add_edge(tasklet, "__out", out, None,
-                           dace.memlet.Memlet.from_array("_out", outarr))
+                           dace.memlet.Memlet.from_array("_out", out_array))
         else:
             state.add_mapped_tasklet(
                 name="transpose",

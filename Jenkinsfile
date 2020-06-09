@@ -11,7 +11,8 @@ pipeline {
                     echo "Installing additional dependencies"
                     pip3 install --upgrade --user tensorflow-gpu==1.14.0
                     echo "Installing DaCe"
-                    pip3 install --ignore-installed --upgrade --user ".[testing]" .
+                    pip3 uninstall -y dace
+                    pip3 install --upgrade --user ".[testing]" .
                     pip3 install --user cmake
                     pip3 install --user coverage
                 '''

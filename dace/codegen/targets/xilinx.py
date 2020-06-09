@@ -2,6 +2,7 @@ import collections
 import itertools
 import os
 import re
+import numpy as np
 
 import dace
 from dace import registry
@@ -93,9 +94,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -193,19 +193,27 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
-    @staticmethod
-    def define_local_array(dtype, vector_length, var_name, array_size, storage,
-                           shape, function_stream, kernel_stream, sdfg,
-                           state_id, node):
+    def define_local_array(self, var_name, desc, array_size, veclen,
+                           function_stream, kernel_stream, sdfg, state_id,
+                           node):
         kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
-            dtype.ctype, vector_length, var_name, cpp.sym2cpp(array_size)))
-        if storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "complete\n".format(var_name))
-        elif len(shape) > 1:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "block factor={}\n".format(
-                                    var_name, shape[-2]))
+            desc.dtype.ctype, veclen, var_name, cpp.sym2cpp(array_size)))
+        if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
+            kernel_stream.write(
+                "#pragma HLS ARRAY_PARTITION variable={} "
+                "complete\n".format(var_name))
+        elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
+            if len(desc.shape) > 1:
+                kernel_stream.write(
+                    "#pragma HLS ARRAY_PARTITION variable={} "
+                    "block factor={}\n".format(var_name, desc.shape[-2]))
+        else:
+            raise ValueError("Unsupported storage type: {}".format(
+                desc.storage.name))
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+
+    def define_shift_register(*args, **kwargs):
+        raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
@@ -225,8 +233,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         else:
             return data.signature(with_types=True, name=var_name)
 
-    @staticmethod
-    def generate_unroll_loop_pre(kernel_stream, factor, sdfg, state_id, node):
+    def generate_unroll_loop_pre(self, kernel_stream, factor, sdfg, state_id,
+                                 node):
         pass
 
     @staticmethod
@@ -306,6 +314,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             else:
                 return "dace::Write<{}, {}>({}, {});".format(
                     type_str, vector_length, write_expr, read_expr)
+
+    def make_shift_register_write(self, defined_type, type_str, var_name,
+                                  vector_length, write_expr, index, read_expr,
+                                  wcr, is_unpack, packing_factor):
+        raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
@@ -780,5 +793,11 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
-        self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node,
-                                      edge, None, callsite_stream)
+        memlet = edge.data
+        if (self._dispatcher.defined_vars.get(
+                memlet.data) == DefinedType.FPGA_ShiftRegister):
+            raise NotImplementedError("Shift register for Xilinx NYI")
+        else:
+            self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
+                                          dst_node, edge, None,
+                                          callsite_stream)

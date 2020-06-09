@@ -18,14 +18,10 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
     state = sdfg.add_state()
     A, A_arr = sdfg.add_array("A", A_shape, dtype)
     B, B_arr = sdfg.add_array("B", B_shape, dtype)
-    if C_shape is not None:
-        C, C_arr = sdfg.add_array("C", C_shape, dtype)
     Y, Y_arr = sdfg.add_array("Y", Y_shape, dtype)
 
     rA = state.add_read("A")
     rB = state.add_read("B")
-    if C_shape is not None:
-        rC = state.add_read("C")
     wY = state.add_write("Y")
 
     tasklet = Gemm('_Gemm_',
@@ -35,15 +31,10 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
                    alpha=alpha,
                    beta=beta)
     state.add_node(tasklet)
-    if C_shape is None:
-        tasklet.remove_in_connector("_c")
 
     state.add_edge(rA, None, tasklet, '_a', dace.Memlet.from_array(A, A_arr))
     state.add_edge(rB, None, tasklet, '_b', dace.Memlet.from_array(B, B_arr))
-    if C_shape is not None:
-        state.add_edge(rC, None, tasklet, '_c',
-                       dace.Memlet.from_array(C, C_arr))
-    state.add_edge(tasklet, '_y', wY, None, dace.Memlet.from_array(Y, Y_arr))
+    state.add_edge(tasklet, '_c', wY, None, dace.Memlet.from_array(Y, Y_arr))
 
     return sdfg
 
@@ -109,7 +100,8 @@ def run_test(implementation,
                             alpha, beta)
 
     if C_shape is not None:
-        sdfg(A=A, B=B, C=C, Y=Y)
+        Y[:] = C
+        sdfg(A=A, B=B, Y=Y)
     else:
         sdfg(A=A, B=B, Y=Y)
 

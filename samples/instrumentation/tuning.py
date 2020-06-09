@@ -87,7 +87,7 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
           M=np.int32(M.get()),
           K=np.int32(K.get()),
           N=np.int32(N.get()))
-    assert np.allclose(REPS * A @ B, C)
+    assert np.allclose(A @ B, C)
 
     # Return instrumentation report
     return sdfg.get_latest_report()
