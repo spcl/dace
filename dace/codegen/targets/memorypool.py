@@ -2,28 +2,49 @@ import dace
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.sdfg.analysis.live_sets import live_sets
+from dace.codegen.targets.target import DefinedType
+from dace import registry
 import itertools
 
 _MP_STORAGE_TYPES = ['CPU_Pool', 'GPU_Pool']
 
-
+#@registry.autoregister_params(name='memorypool')
 class MemoryPoolCodegen(TargetCodeGenerator):
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
 
+        # Mark all transients as CPU_Pool
+        for s in sdfg.arrays:
+            if sdfg.arrays[s].transient:
+                sdfg.arrays[s].storage = dace.StorageType.CPU_Pool
+
+        # Get graph analysis
+        self.alloc_dealloc_states, self.maximum_live_set, \
+            self.maximum_live_set_states, self.shared_transients = live_sets(sdfg)
+
+        print('alloc_dealloc_states', self.alloc_dealloc_states)
+        print('maximum_live_set', self.maximum_live_set)
+        print('maximum_live_set_states', self.maximum_live_set_states)
+        print('shared_transients', self.shared_transients)
+
+        # Simple initialization of MemoryPool:
+        self.initialization = True
+
+        cpp_code = '''#include <dace/memory_pool.h>'''
+        if 'frame' not in sdfg.global_code:
+            sdfg.global_code['frame'] = dace.properties.CodeBlock('', dace.dtypes.Language.CPP)
+        sdfg.global_code['frame'].code += cpp_code
 
         # Register array allocation/deallocation
         for dtype in _MP_STORAGE_TYPES:
             enum_type = dace.StorageType[dtype]
             self._dispatcher.register_array_dispatcher(enum_type, self)
 
-        self.alloc_dealloc_states, self.maximum_live_set, self.maximum_live_set_states, self.static_transients = live_sets(sdfg)
-
         cpu_storages = [
             dace.StorageType.CPU_Heap, dace.StorageType.CPU_Pinned,
-            dace.StorageType.CPU_ThreadLocal
+            dace.StorageType.CPU_ThreadLocal, dace.StorageType.Register
         ]
         gpu_storages = [
             dace.StorageType.GPU_Global,
@@ -47,30 +68,30 @@ class MemoryPoolCodegen(TargetCodeGenerator):
             self._dispatcher.register_copy_dispatcher(dst_storage, src_storage,
                                                       None, self)
 
+        # Register node dispatcher
         self._dispatcher.register_node_dispatcher(self)
 
-        mempools = set()
-        for sd, aname, array in sdfg.arrays_recursive():
-            if array.lifetime == dace.AllocationLifetime.MemoryPool:
-                mempools.add(array.storage)
-
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        callsite_stream.write(
-            'printf(\"test\");'
-        )
-        self._cpu_codegen.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
+                                        function_stream, callsite_stream)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        function_stream.write(
-            ''' #include <dace/memory_pool.h>
-            '''
-        )
+        if self.initialization:
+            m_size = 0
+            for t in sdfg.transients():
+                m_size += (sdfg.arrays[t].total_size / 512) * 512
+            print(m_size)
+            callsite_stream.write(
+                '''MemoryPool MPool;
+                   MPool.ReserveMemory({m_size});'''.format(m_size=m_size)
+            )
+            self.initialization = False
+        self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)
 
         callsite_stream.write(
-            ''' MemoryPool MPool;
-            MPool.ReserveMemory({m_size});
-            double *{array} = (double*)MPool.Alloc({size});
-            '''.format(array=node.label, size=sdfg.arrays[node.data].total_size, m_size=self.maximum_live_set[1])
+        '''double *{array} = (double*)MPool.Alloc({size});'''.format(
+            array=node.label, size=sdfg.arrays[node.data].total_size,
+            m_size=self.maximum_live_set[1])
         )
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
@@ -78,10 +99,9 @@ class MemoryPoolCodegen(TargetCodeGenerator):
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream,
                     callsite_stream):
-        callsite_stream.write("""printf(\"copyy\");
-            std::memcpy({dst_node},{src_node}, sizeof({src_node}) * 64);
-            """.format(src_node=src_node, dst_node=dst_node, size=sdfg.arrays[src_node.data].total_size)
-        )
+
+        self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream,
+                    callsite_stream)
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
         pass

@@ -60,11 +60,9 @@ public:
 
         size = (size / 512) * 512;
 
-        printf("hello");
         m_offset += size;
         return (void*)((char*)m_mem + offset);
     }
-
 
 };
 
