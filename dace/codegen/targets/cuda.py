@@ -1552,8 +1552,11 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         dfg = sdfg.nodes()[state_id]
         sdict = dfg.scope_dict()
         scope_entry = dfg_scope.source_nodes()[0]
+        scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
         next_scopes = self.get_next_scope_entries(dfg, scope_entry)
+
+        outer_map = sdfg.nodes()[state_id].entry_node(scope_entry).map
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -1591,11 +1594,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 sdfg, state_id, scope_entry)
 
             callsite_stream.write(
-                'if (%s < %s) {' %
-                (self._kernel_map.map.params[0],
-                 _topy(
-                     subsets.Range(self._kernel_map.map.range[::-1]).
-                     max_element()[0] + 1)), sdfg, state_id, scope_entry)
+                'if ({} < {}) {{'.format(
+                    outer_map.params[0],
+                    _topy(subsets.Range(outer_map.range[::-1]).max_element()[0] + 1)
+                ), sdfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
@@ -1710,7 +1712,14 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                         or (self._block_dims[i] > maxel) == True):
                     if len(condition) > 0:
                         condition += ' && '
-                    condition += '%s < %s' % (v, _topy(maxel + 1))
+                    if has_dtbmap:
+                        condition += '{mapIdx} < int_ceil({max}, {bs}) * {bs}'.format(
+                            mapIdx=v,
+                            max=_topy(maxel + 1),
+                            bs=_topy(block_dims[i]),
+                        )
+                    else:
+                        condition += '%s < %s' % (v, _topy(maxel + 1))
                 if len(condition) > 0:
                     # callsite_stream.write('if (%s) //{' % condition, sdfg,
                     #                     state_id, scope_entry)
@@ -1821,13 +1830,50 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     callsite_stream.write('{', sdfg, state_id, scope_entry)
         ##########################################################
 
-        # Generate contents normally
-        self._dispatcher.dispatch_subgraph(sdfg,
-                                           dfg_scope,
-                                           state_id,
-                                           function_stream,
-                                           callsite_stream,
-                                           skip_entry_node=True)
+        # need to handle subgraphs appropriately if they contain dynamic thread block maps
+        if any((isinstance(node, dace.nodes.MapEntry)
+                and node != scope_entry
+                and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+               for node in dfg_scope.nodes()):
+
+            subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
+            for dfg in subgraphs:
+                components = dace.sdfg.utils.separate_maps(
+                    sdfg.nodes()[state_id],
+                    dfg,
+                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+                )
+
+                for c in components:
+                    is_not_dynamic_map = not isinstance(c, dace.sdfg.scope.ScopeSubgraphView)
+                    if is_not_dynamic_map:
+                        callsite_stream.write('if ({} < {}) {{'.format(
+                            outer_map.params[0],
+                            _topy(subsets.Range(outer_map.range[::-1]).max_element()[0] + 1)
+                        ), sdfg, state_id, scope_entry)
+
+                    self._dispatcher.dispatch_subgraph(sdfg,
+                                                       c,
+                                                       state_id,
+                                                       function_stream,
+                                                       callsite_stream,
+                                                       skip_entry_node=False)
+
+                    if is_not_dynamic_map:
+                        callsite_stream.write('}')
+
+            # exit node gets lost in the process, thus needs to be scheduled manually
+            self._dispatcher.dispatch_node(sdfg, dfg_scope, state_id, scope_exit, function_stream,
+                                           callsite_stream)
+
+        else:
+            # Generate contents normally
+            self._dispatcher.dispatch_subgraph(sdfg,
+                                               dfg_scope,
+                                               state_id,
+                                               function_stream,
+                                               callsite_stream,
+                                               skip_entry_node=True)
 
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
