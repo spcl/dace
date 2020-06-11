@@ -2,6 +2,7 @@ import re
 import onnx
 
 from dace.dtypes import typeclass
+from dace import dtypes as dt
 
 
 def convert_onnx_attribute(attribute):
@@ -90,21 +91,21 @@ def convert_attribute_proto(proto):
     return convert_onnx_attribute(inv_map[onnx_type](proto))
 
 
-ONNX_DTYPES_TO_NUMPY_STR = {
-    'bool': 'bool',
-    'int8': 'int8',
-    'int16': 'int16',
-    'int32': 'int32',
-    'int64': 'int64',
-    'uint8': 'uint8',
-    'uint16': 'uint16',
-    'uint32': 'uint32',
-    'uint64': 'uint64',
-    'float16': 'float16',
-    'float': 'float32',
-    'double': 'float64',
-    'complex64': 'complex64',
-    'complex128': 'complex128',
+ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
+    'bool': dt.bool,
+    'int8': dt.int8,
+    'int16': dt.int16,
+    'int32': dt.int32,
+    'int64': dt.int64,
+    'uint8': dt.uint8,
+    'uint16': dt.uint16,
+    'uint32': dt.int32,
+    'uint64': dt.uint64,
+    'float16': dt.float16,
+    'float': dt.float32,
+    'double': dt.float64,
+    'complex64': dt.complex64,
+    'complex128': dt.complex128,
 }
 
 
@@ -112,8 +113,8 @@ def onnx_type_str_onnx_type_str_to_dace_type(onnx_str) -> typeclass:
     """Converts an onnx type string, like tensor(float16) to a dace typeclass"""
 
     results = re.findall(r"^tensor\((.+)\)", onnx_str)
-    if len(results) != 1 or results[0] not in ONNX_DTYPES_TO_NUMPY_STR:
+    if len(results) != 1 or results[0] not in ONNX_DTYPES_TO_DACE_TYPE_CLASS:
         raise NotImplementedError(
             "Unable to parse ONNX type_str {}".format(onnx_str))
 
-    return ONNX_DTYPES_TO_NUMPY_STR[str(results[0])]
+    return ONNX_DTYPES_TO_DACE_TYPE_CLASS[str(results[0])]

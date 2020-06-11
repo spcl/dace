@@ -44,6 +44,20 @@ def test_serialize_deserialize():
     onnx_schema = onnx.defs.get_schema("Conv")
     dace_schema = schema.ONNXSchema.from_onnx_proto(onnx_schema)
 
+    assert dace_schema.name == "Conv"
+    assert dace_schema.inputs[0].name == 'X'
+    assert dace_schema.inputs[2].name == 'B'
+    assert dace_schema.inputs[2].type_str == 'T'
+    assert dace_schema.attributes['auto_pad'].default_value == 'NOTSET'
+
+
+    deserialized = schema.ONNXSchema.from_json(dace_schema.to_json())
+
+    assert deserialized.name == "Conv"
+    assert deserialized.inputs[0].name == 'X'
+    assert deserialized.inputs[2].name == 'B'
+    assert deserialized.inputs[2].type_str == 'T'
+    assert deserialized.attributes['auto_pad'].default_value == 'NOTSET'
 
 if __name__ == '__main__':
     test_read_parameter()

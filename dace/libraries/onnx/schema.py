@@ -65,7 +65,7 @@ def onnx_representation(represents, **mapping):
             return cls(**constructor_args)
 
         @classmethod
-        def from_json(cls, json):
+        def from_json(cls, json, parent=None):
 
             constructor_args = {
                 name: prop.from_json(json[name])
@@ -138,7 +138,7 @@ class ONNXAttribute:
 class ONNXTypeConstraint:
 
     type_str = Property(dtype=str, desc="The type parameter string")
-    types = SetProperty(
+    types = ListProperty(
         element_type=typeclass,
         desc=
         "The possible types. Note that only tensor types are currently supported."
@@ -159,6 +159,10 @@ class ONNXTypeConstraint:
 class ONNXSchema:
     """Python representation of an ONNX schema"""
 
+    name = Property(dtype=str, desc="The operator name")
+    domain = Property(dtype=str, desc="The operator domain")
+    doc = Property(dtype=str, desc="The operator's docstring")
+    since_version = Property(dtype=int, desc="The version of the operator")
     inputs = ListProperty(element_type=ONNXParameter,
                           desc="The operator input parameter descriptors")
     outputs = ListProperty(element_type=ONNXParameter,
@@ -172,24 +176,4 @@ class ONNXSchema:
         desc="The type constraints for inputs and outputs")
 
 
-# TODO
-#@dace.library.node
-#class ONNXOp(nd.LibraryNode):
-#    """Abstract superclass for all ONNX ops"""
-#
-#    # Global properties
-#    implementations = {"onnxruntime": ExpandONNXORT}
-#    default_implementation = "onnxruntime"
-#
-#
-#    _attributes = Property(dtype=Dict[str, Union[List[float], List[int],
-#                                                 List[str], float, int, str]],
-#                           desc="The operator attributes")
-#
 
-#for schema in onnx.defs.get_all_schemas():
-#    vars()[schema.name] = type(
-#        schema.name,
-#        (OnnxOp,),
-#        # dynamically define attributes, properties, methods
-#        {})
