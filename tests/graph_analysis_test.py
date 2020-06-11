@@ -24,9 +24,6 @@ def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 1
     dace.reduce(lambda a, b: a + b, tmp, E, axis=2, identity=0)
 
     C[:] =  A @ E @ (A @ B) @ (B @ D)
-    #ctile[:] = C
-    #ctile[:] = A @ E @ (A @ B) @ (B @ D)
-    #C[:] = ctile
 
 if __name__ == "__main__":
     extend_dace()

@@ -24,7 +24,8 @@ private:
         //if (IS_GPU)
         //    m_mem = cudaMalloc(alloc_size);
         //else
-        m_mem = malloc(alloc_size);
+        printf("%f", (double)alloc_size);
+        m_mem = calloc(alloc_size, sizeof(double));
         if (m_mem == NULL){
             printf("ERROR: Allocation failed");
             exit(1);
@@ -58,10 +59,17 @@ public:
 
         size_t offset = m_offset;
 
-        size = (size / 512) * 512;
+        printf("size");
 
-        m_offset += size;
-        return (void*)((char*)m_mem + offset);
+        int int_size = (size / 512 + 1) * 512 * sizeof(double);
+
+        m_offset += int_size;
+        printf("here");
+        printf("%d \n", (int)size);
+        printf("%d \n",(int)offset);
+        printf("%d \n", (int)m_offset);
+        printf("%d \n", (int)int_size);
+        return (void*)((char*)m_mem + (int)offset);
     }
 
 };

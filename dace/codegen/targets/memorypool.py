@@ -79,7 +79,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         if self.initialization:
             m_size = 0
             for t in sdfg.transients():
-                m_size += (sdfg.arrays[t].total_size / 512) * 512
+                m_size += int((sdfg.arrays[t].total_size // 512 + 1) * 512)
             print(m_size)
             callsite_stream.write(
                 '''MemoryPool MPool;
@@ -89,7 +89,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)
 
         callsite_stream.write(
-        '''double *{array} = (double*)MPool.Alloc({size});'''.format(
+        '''double *{array} = (double*)MPool.Alloc({size});
+        printf(\"address of a = %p\\n\", (int){array});'''.format(
             array=node.label, size=sdfg.arrays[node.data].total_size,
             m_size=self.maximum_live_set[1])
         )
