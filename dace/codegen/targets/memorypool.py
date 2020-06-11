@@ -14,6 +14,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
+        self._block_size = 512
 
         # Mark all transients as CPU_Pool
         for s in sdfg.arrays:
@@ -79,8 +80,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         if self.initialization:
             m_size = 0
             for t in sdfg.transients():
-                m_size += int((sdfg.arrays[t].total_size // 512 + 1) * 512)
-            print(m_size)
+                m_size += int((sdfg.arrays[t].total_size // self._block_size + 1) * self._block_size)
+
             callsite_stream.write(
                 '''MemoryPool MPool;
                    MPool.ReserveMemory({m_size});'''.format(m_size=m_size)
@@ -89,10 +90,9 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)
 
         callsite_stream.write(
-        '''double *{array} = (double*)MPool.Alloc({size});
-        printf(\"address of a = %p\\n\", (int){array});'''.format(
+        '''double *{array} = (double*)MPool.Alloc({size},{block_size});'''.format(
             array=node.label, size=sdfg.arrays[node.data].total_size,
-            m_size=self.maximum_live_set[1])
+            m_size=self.maximum_live_set[1], block_size=self._block_size)
         )
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
