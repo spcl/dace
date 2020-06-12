@@ -1,3 +1,6 @@
+from itertools import chain
+import warnings
+
 import onnx
 import aenum
 
@@ -38,13 +41,15 @@ def onnx_representation(represents, **mapping):
                 mapping[name] = name
 
         def __init__(self, *args, **kwargs):
-            """:param represents: the protobuf that this class represents"""
+            args = list(args)
             for name, prop in self.__properties__.items():
                 if len(args) > 0:
                     setattr(self, name, args.pop(0))
                 else:
                     setattr(self, name, kwargs[name])
             self._represents = represents
+            if hasattr(self, "validate"):
+                self.validate()
 
         @classmethod
         def from_onnx_proto(cls, onnx_proto):
@@ -89,20 +94,30 @@ def onnx_representation(represents, **mapping):
     return decorator
 
 
+class ONNXParameterType(aenum.AutoNumberEnum):
+    Single = ()
+    Optional = ()
+    Variadic = ()
+
+
 @onnx_representation(onnx.defs.OpSchema.FormalParameter,
                      type_str='typeStr',
-                     optional='option')
+                     param_type='option',
+                     homogeneous="isHomogeneous")
 class ONNXParameter:
     """Python representation of an ONNX parameter"""
 
     name = Property(dtype=str, desc="The parameter name")
     description = Property(dtype=str, desc="A description of the parameter")
     type_str = Property(dtype=str, desc="The type string of this parameter")
-    optional = Property(
-        dtype=bool,
-        desc=
-        "Whether this parameter is optional. Note that variadic parameters are unsupported for now."
-    )
+    param_type = Property(choices=ONNXParameterType,
+                          desc="The type of the this parameter",
+                          default=ONNXParameterType.Single)
+    homogeneous = Property(dtype=bool,
+                           desc="Whether this parameter is homogeneous")
+
+    def __repr__(self):
+        return self.param_type + "\t" + self.name
 
 
 class ONNXAttributeType(aenum.AutoNumberEnum):
@@ -112,6 +127,16 @@ class ONNXAttributeType(aenum.AutoNumberEnum):
     Ints = ()
     Floats = ()
     Strings = ()
+
+
+_ATTR_TYPE_TO_PYTHON_TYPE = {
+    ONNXAttributeType.Int: int,
+    ONNXAttributeType.Ints: int,
+    ONNXAttributeType.Float: float,
+    ONNXAttributeType.Floats: float,
+    ONNXAttributeType.String: str,
+    ONNXAttributeType.Strings: str,
+}
 
 
 @onnx_representation(onnx.defs.OpSchema.Attribute)
@@ -129,13 +154,19 @@ class ONNXAttribute:
                              default=None,
                              allow_none=True)
 
+    def __repr__(self):
+        return self.name
 
-@onnx_representation(
-    onnx.defs.OpSchema.TypeConstraintParam,
-    type_str='type_param_str',
-    types=lambda proto: list(
-        map(onnx_type_str_onnx_type_str_to_dace_type, proto.allowed_type_strs)))
+
+@onnx_representation(onnx.defs.OpSchema.TypeConstraintParam,
+                     type_str='type_param_str',
+                     types=lambda proto: list(
+                         filter(
+                             lambda x: x is not None,
+                             map(onnx_type_str_onnx_type_str_to_dace_type, proto
+                                 .allowed_type_strs))))
 class ONNXTypeConstraint:
+    """Python representation of an ONNX type constraint"""
 
     type_str = Property(dtype=str, desc="The type parameter string")
     types = ListProperty(
@@ -143,6 +174,9 @@ class ONNXTypeConstraint:
         desc=
         "The possible types. Note that only tensor types are currently supported."
     )
+
+    def __repr__(self):
+        return self.type_str
 
 
 @onnx_representation(
@@ -163,10 +197,6 @@ class ONNXSchema:
     domain = Property(dtype=str, desc="The operator domain")
     doc = Property(dtype=str, desc="The operator's docstring")
     since_version = Property(dtype=int, desc="The version of the operator")
-    inputs = ListProperty(element_type=ONNXParameter,
-                          desc="The operator input parameter descriptors")
-    outputs = ListProperty(element_type=ONNXParameter,
-                           desc="The operator output parameter descriptors")
     attributes = DictProperty(key_type=str,
                               value_type=ONNXAttribute,
                               desc="The operator attributes")
@@ -174,6 +204,66 @@ class ONNXSchema:
         key_type=str,
         value_type=ONNXTypeConstraint,
         desc="The type constraints for inputs and outputs")
+    inputs = ListProperty(element_type=ONNXParameter,
+                          desc="The operator input parameter descriptors")
+    outputs = ListProperty(element_type=ONNXParameter,
+                           desc="The operator output parameter descriptors")
 
+    def __repr__(self):
+        return self.domain + self.name
 
+    def validate(self):
+        # check all parameters with a type str have a entry in the type constraints
+        for param in chain(self.inputs, self.outputs):
+            if param.type_str not in self.type_constraints:
+                # some operators put a type descriptor here. for those, we will try to insert a new type constraint
+                cons_name = param.name + "_constraint"
+                if cons_name in self.type_constraints:
+                    raise ValueError(
+                        "Attempted to insert new type constraint, but the name already existed. Please open an issue."
+                    )
+                parsed_typeclass = onnx_type_str_onnx_type_str_to_dace_type(
+                    param.type_str)
 
+                if parsed_typeclass is None:
+                    warnings.warn(
+                        "Could not parse typeStr '{}' for parameter '{}'".
+                        format(param.type_str, param.name))
+
+                cons = ONNXTypeConstraint(
+                    cons_name,
+                    [parsed_typeclass] if parsed_typeclass is not None else [])
+                self.type_constraints[cons_name] = cons
+                param.type_str = cons_name
+
+        # check for required parameters with no supported type
+        for param in chain(self.inputs, self.outputs):
+            if ((param.param_type == ONNXParameterType.Single
+                 or param.param_type == ONNXParameterType.Variadic)
+                    and len(self.type_constraints[param.type_str].types) == 0):
+                raise NotImplementedError(
+                    "None of the types for {} are supported".format(self.name))
+
+        # check that all variadic parameter names do not contain "__"
+        for param in chain(self.inputs, self.outputs):
+            if param.param_type == ONNXParameterType.Variadic and "__" in param.name:
+                raise ValueError(
+                    "Unsupported parameter name '{}': variadic parameter names must not contain '__'"
+                    .format(param.name))
+
+        # check that all inputs and outputs have unique names
+        seen = set()
+        for param in self.inputs:
+            if param.name in seen:
+                raise ValueError(
+                    "Got duplicate input parameter name '{}'".format(
+                        param.name))
+            seen.add(param.name)
+
+        seen = set()
+        for param in self.outputs:
+            if param.name in seen:
+                raise ValueError(
+                    "Got duplicate output parameter name '{}'".format(
+                        param.name))
+            seen.add(param.name)

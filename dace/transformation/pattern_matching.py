@@ -241,7 +241,7 @@ class ExpandTransformation(Transformation):
         return str(node)
 
     @staticmethod
-    def expansion(node):
+    def expansion(node, state, sdfg):
         raise NotImplementedError("Must be implemented by subclass")
 
     @staticmethod

@@ -474,6 +474,20 @@ class SDFG(OrderedDiGraph):
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.exit_code[location].code += cpp_code
 
+    def prepend_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """
+        Prepends C++ code that will be generated in the __dace_exit_* functions on
+        one of the generated code files.
+        :param cpp_code: The code to append.
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.exit_code:
+            self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.exit_code[location].code = cpp_code + self.exit_code[location].code
+
     ##########################################
     # Instrumentation-related methods
 

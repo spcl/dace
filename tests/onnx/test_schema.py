@@ -9,16 +9,16 @@ def test_read_parameter():
     param2 = schema.ONNXParameter.from_onnx_proto(onnx_schema.inputs[2])
 
     assert param0.name == 'X'
-    assert param0.optional == False
+    assert param0.param_type == schema.ONNXParameterType.Single
     assert param0.type_str == 'T'
 
     assert param2.name == 'B'
-    assert param2.optional == True
+    assert param2.param_type == schema.ONNXParameterType.Optional
     assert param2.type_str == 'T'
 
     deserialized0 = schema.ONNXParameter.from_json(param0.to_json())
     assert deserialized0.name == 'X'
-    assert deserialized0.optional == False
+    assert deserialized0.param_type == schema.ONNXParameterType.Single
     assert deserialized0.type_str == 'T'
 
 
@@ -49,6 +49,7 @@ def test_serialize_deserialize():
     assert dace_schema.inputs[2].name == 'B'
     assert dace_schema.inputs[2].type_str == 'T'
     assert dace_schema.attributes['auto_pad'].default_value == 'NOTSET'
+    assert dace_schema.attributes['auto_pad'].type == schema.ONNXAttributeType.String
 
 
     deserialized = schema.ONNXSchema.from_json(dace_schema.to_json())

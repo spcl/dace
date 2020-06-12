@@ -1,4 +1,6 @@
 import re
+from typing import Union
+
 import onnx
 
 from dace.dtypes import typeclass
@@ -6,28 +8,25 @@ from dace import dtypes as dt
 
 
 def convert_onnx_attribute(attribute):
-    from dace.libraries.onnx.schema import ONNXAttributeType, ONNXParameter, ONNXAttribute, _KNOWN_ONNX_PROTOS
+    from dace.libraries.onnx.schema import ONNXAttributeType, ONNXParameter, ONNXAttribute, _KNOWN_ONNX_PROTOS, ONNXParameterType
 
     if type(attribute) in _KNOWN_ONNX_PROTOS:
         return _KNOWN_ONNX_PROTOS[type(attribute)].from_onnx_proto(attribute)
 
-    if isinstance(attribute, bytes):
-        # not sure if this is right...
-        return attribute.decode('utf-8')
-
-    if isinstance(attribute, (int, str, bool)):
+    if isinstance(attribute, (int, str, bool, float)):
         return attribute
 
     if type(attribute) is onnx.defs.OpSchema.FormalParameterOption:
         if attribute == onnx.defs.OpSchema.FormalParameterOption.Single:
-            # Single parameters are not optional
-            return False
+            return ONNXParameterType.Single
         elif attribute == onnx.defs.OpSchema.FormalParameterOption.Optional:
-            return True
+            return ONNXParameterType.Optional
+        elif attribute == onnx.defs.OpSchema.FormalParameterOption.Variadic:
+            return ONNXParameterType.Variadic
         else:
             raise NotImplementedError(
-                "Only single and optional formal parameters are supported, got".
-                format(attribute))
+                "Only single, optional and variadic formal parameters are supported, got"
+                .format(attribute))
 
     if type(attribute) is onnx.defs.OpSchema.AttrType:
         if attribute == onnx.defs.OpSchema.AttrType.FLOAT:
@@ -70,9 +69,10 @@ def convert_attribute_proto(proto):
             elif k == "INTS":
                 inv_map[v] = lambda attr: list(attr.ints)
             elif k == "STRING":
-                inv_map[v] = lambda attr: attr.s
+                inv_map[v] = lambda attr: attr.s.decode('utf-8')
             elif k == "STRINGS":
-                inv_map[v] = lambda attr: list(attr.strings)
+                inv_map[v] = lambda attr: list(
+                    map(lambda x: x.decode('utf-8'), attr.strings))
 
         convert_attribute_proto.inv_map = inv_map
 
@@ -88,7 +88,7 @@ def convert_attribute_proto(proto):
             "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS attributes are supported, got attribute with type {}"
             .format(type_str))
 
-    return convert_onnx_attribute(inv_map[onnx_type](proto))
+    return inv_map[onnx_type](proto)
 
 
 ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
@@ -101,6 +101,7 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
     'uint16': dt.uint16,
     'uint32': dt.int32,
     'uint64': dt.uint64,
+    # TODO double check this vs bfloat16
     'float16': dt.float16,
     'float': dt.float32,
     'double': dt.float64,
@@ -108,13 +109,13 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
     'complex128': dt.complex128,
 }
 
-
-def onnx_type_str_onnx_type_str_to_dace_type(onnx_str) -> typeclass:
+def onnx_type_str_onnx_type_str_to_dace_type(
+        onnx_str) -> Union[typeclass, None]:
     """Converts an onnx type string, like tensor(float16) to a dace typeclass"""
 
     results = re.findall(r"^tensor\((.+)\)", onnx_str)
     if len(results) != 1 or results[0] not in ONNX_DTYPES_TO_DACE_TYPE_CLASS:
-        raise NotImplementedError(
-            "Unable to parse ONNX type_str {}".format(onnx_str))
+        # we return None here, these types will be filtered out later
+        return None
 
     return ONNX_DTYPES_TO_DACE_TYPE_CLASS[str(results[0])]
