@@ -234,6 +234,7 @@ class SDFG(OrderedDiGraph):
         self._parent = parent
         self.symbols = {}
         self._parent_sdfg = None
+        self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
@@ -656,6 +657,11 @@ class SDFG(OrderedDiGraph):
         """ Returns the parent SDFG of this SDFG, if exists. """
         return self._parent_sdfg
 
+    @property
+    def parent_nsdfg_node(self):
+        """ Returns the parent NestedSDFG node of this SDFG, if exists. """
+        return self._parent_nsdfg_node
+
     @parent.setter
     def parent(self, value):
         self._parent = value
@@ -663,6 +669,10 @@ class SDFG(OrderedDiGraph):
     @parent_sdfg.setter
     def parent_sdfg(self, value):
         self._parent_sdfg = value
+
+    @parent_nsdfg_node.setter
+    def parent_nsdfg_node(self, value):
+        self._parent_nsdfg_node = value
 
     def nodes(self) -> List[SDFGState]:
         return super().nodes()
