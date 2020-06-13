@@ -121,7 +121,7 @@ class ReloadableDLL(object):
             # linker is used
             reason = ''
             if os.name == 'posix':
-                result = subprocess.run(['ld', lib_cfilename],
+                result = subprocess.run(['ld', self._library_filename],
                                         capture_output=True)
                 reason = 'Reason:\n' + '\n'.join(
                     [l for l in result.stdout.split('\n') if '_start' not in l])
