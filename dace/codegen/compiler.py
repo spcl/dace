@@ -123,9 +123,9 @@ class ReloadableDLL(object):
             if os.name == 'posix':
                 result = subprocess.run(['ld', self._library_filename],
                                         capture_output=True)
-                stdout = result.stdout.decode('utf-8')
+                stderr = result.stderr.decode('utf-8')
                 reason = 'Reason:\n' + '\n'.join(
-                    [l for l in stdout.split('\n') if '_start' not in l])
+                    [l for l in stderr.split('\n') if '_start' not in l])
             raise RuntimeError(
                 'Could not load library %s. %s' %
                 (os.path.basename(self._library_filename), reason))
