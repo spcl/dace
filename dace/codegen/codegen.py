@@ -1,3 +1,4 @@
+import functools
 import os
 from typing import List
 
@@ -51,7 +52,8 @@ def generate_dummy(sdfg) -> str:
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
-            dims_mul = "*".join(map(str, arg.shape))
+            dims_mul = cpu.sym2cpp(
+                functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
             allocations += "  " + str(arg.signature(name=argname, with_types=True)) + \
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
