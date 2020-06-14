@@ -982,7 +982,10 @@ class SDFG(OrderedDiGraph):
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                fp.write(dace.serialize.dumps(self.to_json()))
+                json_output = self.to_json()
+                if exception:
+                    json_output['error'] = exception.to_json()
+                fp.write(dace.serialize.dumps(json_output))
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 

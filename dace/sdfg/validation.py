@@ -21,6 +21,7 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
     """ Verifies the correctness of an SDFG by applying multiple tests.
+        :param sdfg: The SDFG to verify.
 
         Raises an InvalidSDFGError with the erroneous node/edge
         on failure.
@@ -518,6 +519,11 @@ class InvalidSDFGError(Exception):
         self.sdfg = sdfg
         self.state_id = state_id
 
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    state_id=self.state_id)
+
     def __str__(self):
         if self.state_id is not None:
             state = self.sdfg.nodes()[self.state_id]
@@ -532,6 +538,11 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
+
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    isedge_id=self.edge_id)
 
     def __str__(self):
         if self.edge_id is not None:
@@ -554,6 +565,12 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         self.sdfg = sdfg
         self.state_id = state_id
         self.node_id = node_id
+
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    state_id=self.state_id,
+                    node_id=self.node_id)
 
     def __str__(self):
         state = self.sdfg.nodes()[self.state_id]
@@ -583,6 +600,12 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         self.sdfg = sdfg
         self.state_id = state_id
         self.edge_id = edge_id
+
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    state_id=self.state_id,
+                    edge_id=self.edge_id)
 
     def __str__(self):
         state = self.sdfg.nodes()[self.state_id]
