@@ -236,9 +236,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         % (node.data, state.label))
 
             # Find writes to input-only arrays
-            if (not arr.transient and
-                (state.in_degree(node) > 0 or
-                 node.access in [AccessType.WriteOnly, AccessType.ReadWrite])):
+            if not arr.transient and state.in_degree(node) > 0:
                 nsdfg_node = sdfg.parent_nsdfg_node
                 if nsdfg_node is not None:
                     if node.data not in nsdfg_node.out_connectors:
