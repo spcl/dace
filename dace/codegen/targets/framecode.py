@@ -158,8 +158,7 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' % sdfg.build_folder,
-                sdfg)
+                'dace::perf::report.save("%s/perf");' % sdfg.build_folder, sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -459,11 +458,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                     sid)
 
                             # Generate loop body
-                            self.generate_states(
-                                sdfg, entry_edge.src.label + "_loop",
-                                control_flow, global_stream, callsite_stream,
-                                control.scope, states_generated,
-                                generated_edges)
+                            self.generate_states(sdfg,
+                                                 entry_edge.src.label + "_loop",
+                                                 control_flow, global_stream,
+                                                 callsite_stream, control.scope,
+                                                 states_generated,
+                                                 generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
 
@@ -486,8 +486,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
-                                        control.scope.exit.edge.dst))
+                                        sdfg.name, control.scope.exit.edge.dst))
                                 generated_edges.add(control.scope.exit.edge)
 
                         elif isinstance(control, cflow.IfExit):
@@ -548,8 +547,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
-                                        control.scope.exit.edge.dst))
+                                        sdfg.name, control.scope.exit.edge.dst))
 
                         else:
 
@@ -578,8 +576,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                         pass
                     else:
                         self._generate_transition(sdfg, sid, callsite_stream,
-                                                  edge,
-                                                  assignments_to_generate)
+                                                  edge, assignments_to_generate)
                         # Assignments will be generated in the transition
                         generate_assignments = False
 
@@ -919,8 +916,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
+                        sdfg, state, None, node, global_stream, callsite_stream)
                     deallocated.add(node.data)
 
         # Now that we have all the information about dependencies, generate
@@ -955,8 +951,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             generated_code = callsite_stream.getvalue()
 
         # Return the generated global and local code strings
-        return (generated_header, generated_code,
-                self._dispatcher.used_targets,
+        return (generated_header, generated_code, self._dispatcher.used_targets,
                 self._dispatcher.used_environments)
 
 
@@ -1013,4 +1008,18 @@ def set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
 
                     node.desc(sdfg).storage = (
                         dtypes.SCOPEDEFAULT_STORAGE[parent_schedule])
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                for name, desc in node.sdfg.arrays.items():
+                    if (not desc.transient
+                            and desc.storage == dtypes.StorageType.Default):
+                        # Find connector and ensure storage types match
+                        for e in state.in_edges(node):
+                            if e.dst_conn == name:
+                                desc.storage = sdfg.arrays[e.data.data].storage
+                                break
+                        for e in state.out_edges(node):
+                            if e.src_conn == name:
+                                desc.storage = sdfg.arrays[e.data.data].storage
+                                break
         ### End of storage type loop
