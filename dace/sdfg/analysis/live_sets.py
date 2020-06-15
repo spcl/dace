@@ -94,9 +94,6 @@ def live_sets(sdfg):
                     alloc_dealloc_nodes[n][0].remove(n.data)
                     alloc_dealloc_nodes[op][0].append(n.data)
                     break
-                    '''if not isinstance(op, nodes.AccessNode):
-                        alloc_dealloc_nodes[n][0].remove(n.data)
-                        alloc_dealloc_nodes[op][0].append(n.data)'''
                 for m in G.nodes():
                     if n in ancestors[m] and successors[n].issubset(ancestors[m]):
                         alloc_dealloc[n.data][1].append(m)
@@ -112,34 +109,7 @@ def live_sets(sdfg):
                             and kill[i] != kill[j]):
                         alloc_dealloc[a][1].remove(kill[j])
             alloc_dealloc_nodes[alloc_dealloc[a][1][0]][1].append(a)
-        print("nodes: ",alloc_dealloc_nodes)
         alloc_dealloc_states[state] = alloc_dealloc_nodes
-
-        #######################################
-
-        '''# Find the kill nodes for each array.
-        alloc_dealloc = {}
-        for a in transients:
-            alloc_dealloc[a] = ([], [])
-        for n in G.nodes():
-            if n.data in transients:
-                alloc_dealloc[n.data][0].append(n)
-                for m in G.nodes():
-                    if n in ancestors[m] and successors[n].issubset(ancestors[m]):
-                        alloc_dealloc[n.data][1].append(m)
-
-        # Remove kill nodes which are descendants of other kill nodes.
-        for a in alloc_dealloc:
-            kill = alloc_dealloc[a][1].copy()
-            for i in range(len(kill)):
-                for j in range(len(kill)):
-                    if (kill[i] in ancestors[kill[j]]
-                            and kill[i] in ancestors[kill[j]]
-                            and kill[j] in alloc_dealloc[a][1]
-                            and kill[i] != kill[j]):
-                        alloc_dealloc[a][1].remove(kill[j])
-
-        alloc_dealloc_states[state] = alloc_dealloc'''
 
         ##############
         # MAX LIVE SET

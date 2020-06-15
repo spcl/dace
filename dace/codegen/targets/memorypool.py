@@ -25,10 +25,10 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self.alloc_dealloc_states, self.maximum_live_set, \
             self.maximum_live_set_states, self.shared_transients = live_sets(sdfg)
 
-        print('alloc_dealloc_states', self.alloc_dealloc_states)
-        print('maximum_live_set', self.maximum_live_set)
-        print('maximum_live_set_states', self.maximum_live_set_states)
-        print('shared_transients', self.shared_transients)
+        #print('alloc_dealloc_states', self.alloc_dealloc_states)
+        #print('maximum_live_set', self.maximum_live_set)
+        #print('maximum_live_set_states', self.maximum_live_set_states)
+        #print('shared_transients', self.shared_transients)
 
         # Simple initialization of MemoryPool:
         self.initialization = True
@@ -78,7 +78,6 @@ class MemoryPoolCodegen(TargetCodeGenerator):
             alloc_dealloc = self.alloc_dealloc_states[state]
             if node in alloc_dealloc:
                 alloc, dealloc = alloc_dealloc[node]
-                print(alloc, dealloc)
                 for t in dealloc:
                     callsite_stream.write(
                         '''MPool.Dealloc({array});'''.format(array=t)
