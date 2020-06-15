@@ -569,13 +569,29 @@ required:
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
 
-            test_serialization:
+    #############################################
+    # Features for unit testing
+
+    testing:
+        type: dict
+        title: Testing
+        description: Unit testing settings
+        required:
+            serialization:
                 type: bool
                 default: false
                 title: Test Serialization on validation
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+
+            single_cache:
+                type: bool
+                default: false
+                title: Use one build folder
+                description: >
+                    When generating code, use a single build folder as cache.
+                    Speeds up build time but disallows concurrent invocations.
 
     #############################################
     # DaCe library settings 

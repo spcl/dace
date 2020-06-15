@@ -705,17 +705,12 @@ def load_from_file(sdfg, binary_filename):
     return CompiledSDFG(sdfg, lib)
 
 
-def get_binary_name(object_name,
-                    object_hash=None,
+def get_binary_name(object_folder,
+                    object_name,
                     lib_extension=Config.get('compiler', 'library_extension')):
     name = None
-    if object_hash is None:
-        name = os.path.join('.dacecache', object_name, "build",
-                            'lib%s.%s' % (object_name, lib_extension))
-    else:
-        name = os.path.join(
-            '.dacecache', object_name, "build",
-            'lib%s_%s.%s' % (object_name, object_hash, lib_extension))
+    name = os.path.join(object_folder, "build",
+                        'lib%s.%s' % (object_name, lib_extension))
     return name
 
 

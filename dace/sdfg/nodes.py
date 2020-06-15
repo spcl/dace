@@ -10,12 +10,11 @@ from typing import Any, Dict, Set
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, CodeProperty, LambdaProperty,
-                             RangeProperty, DebugInfoProperty, SetProperty,
-                             make_properties, indirect_properties,
-                             DataProperty, SymbolicProperty, ListProperty,
-                             SDFGReferenceProperty, DictProperty,
-                             LibraryImplementationProperty, CodeBlock)
+from dace.properties import (
+    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
+    SetProperty, make_properties, indirect_properties, DataProperty,
+    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty,
+    LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
@@ -189,9 +188,10 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(choices=dtypes.AccessType,
-                      desc="Type of access to this array",
-                      default=dtypes.AccessType.ReadWrite)
+    access = Property(
+        choices=dtypes.AccessType,
+        desc="Type of access to this array",
+        default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -355,21 +355,23 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="SDFG schedule",
-                        allow_none=True,
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="SDFG schedule",
+        allow_none=True,
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
         desc="Mapping between internal symbols and their values, expressed as "
         "symbolic expressions")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(dtype=bool,
-                            desc="Show this node/scope/state as collapsed",
-                            default=False)
+    is_collapsed = Property(
+        dtype=bool,
+        desc="Show this node/scope/state as collapsed",
+        default=False)
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -454,8 +456,8 @@ class NestedSDFG(CodeNode):
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
-            raise ValueError('Missing symbols on nested SDFG: %s' %
-                             (missing_symbols))
+            raise ValueError(
+                'Missing symbols on nested SDFG: %s' % (missing_symbols))
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -467,6 +469,7 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -477,6 +480,7 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -489,6 +493,7 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -565,6 +570,7 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -629,22 +635,25 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
-    range = RangeProperty(desc="Ranges of map parameters",
-                          default=sbs.Range([]))
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Map schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
+    range = RangeProperty(
+        desc="Ranges of map parameters", default=sbs.Range([]))
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="Map schedule",
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    collapse = Property(dtype=int,
-                        default=1,
-                        desc="How many dimensions to"
-                        " collapse into the parallel range")
+    collapse = Property(
+        dtype=int,
+        default=1,
+        desc="How many dimensions to"
+        " collapse into the parallel range")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(dtype=bool,
-                            desc="Show this node/scope/state as collapsed",
-                            default=False)
+    is_collapsed = Property(
+        dtype=bool,
+        desc="Show this node/scope/state as collapsed",
+        default=False)
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -699,6 +708,7 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -777,6 +787,7 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -839,18 +850,21 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(dtype=dtypes.ScheduleType,
-                        desc="Consume schedule",
-                        choices=dtypes.ScheduleType,
-                        from_string=lambda x: dtypes.ScheduleType[x],
-                        default=dtypes.ScheduleType.Default)
-    chunksize = Property(dtype=int,
-                         desc="Maximal size of elements to consume at a time",
-                         default=1)
+    schedule = Property(
+        dtype=dtypes.ScheduleType,
+        desc="Consume schedule",
+        choices=dtypes.ScheduleType,
+        from_string=lambda x: dtypes.ScheduleType[x],
+        default=dtypes.ScheduleType.Default)
+    chunksize = Property(
+        dtype=int,
+        desc="Maximal size of elements to consume at a time",
+        default=1)
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(dtype=bool,
-                            desc="Show this node/scope/state as collapsed",
-                            default=False)
+    is_collapsed = Property(
+        dtype=bool,
+        desc="Show this node/scope/state as collapsed",
+        default=False)
 
     instrument = Property(
         choices=dtypes.InstrumentationType,
@@ -886,8 +900,8 @@ class Consume(object):
                     (self._label, self.pe_index, self.num_pes,
                      CodeProperty.to_string(self.condition)))
         else:
-            return ("%s [%s=0:%s]" %
-                    (self._label, self.pe_index, self.num_pes))
+            return (
+                "%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
@@ -919,6 +933,21 @@ class PipelineEntry(MapEntry):
     def pipeline(self, val):
         self._map = val
 
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        result = super().new_symbols(sdfg, state, symbols)
+        for param in self.map.params:
+            result[param] = dtypes.int64  # Overwrite params from Map
+        result[self.pipeline.iterator_str()] = dtypes.int64
+        try:
+            result[self.pipeline.init_condition()] = dtypes.bool
+        except ValueError:
+            pass  # Overlaps
+        try:
+            result[self.pipeline.drain_condition()] = dtypes.bool
+        except ValueError:
+            pass  # Overlaps
+        return result
+
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
@@ -942,14 +971,17 @@ class Pipeline(Map):
         initialization and drain phase (e.g., N*M + c iterations), which would
         otherwise need a flattened one-dimensional map.
     """
-    init_size = Property(dtype=int,
-                         desc="Number of initialization iterations.")
+    init_size = SymbolicProperty(
+        default=0, desc="Number of initialization iterations.")
     init_overlap = Property(
-        dtype=int,
+        dtype=bool,
+        default=True,
         desc="Whether to increment regular map indices during initialization.")
-    drain_size = Property(dtype=int, desc="Number of drain iterations.")
+    drain_size = SymbolicProperty(
+        default=1, desc="Number of drain iterations.")
     drain_overlap = Property(
-        dtype=int,
+        dtype=bool,
+        default=True,
         desc="Whether to increment regular map indices during pipeline drain.")
 
     def __init__(self,
@@ -964,7 +996,6 @@ class Pipeline(Map):
         self.init_overlap = init_overlap
         self.drain_size = drain_size
         self.drain_overlap = drain_overlap
-        self.flatten = True
 
     def iterator_str(self):
         return "__" + "".join(self.params)
@@ -984,14 +1015,14 @@ class Pipeline(Map):
     def init_condition(self):
         """Variable that can be checked to see if pipeline is currently in
            initialization phase."""
-        if self.init_size <= 0:
+        if self.init_size == 0:
             raise ValueError("No init condition exists for " + self.label)
         return self.iterator_str() + "_init"
 
     def drain_condition(self):
         """Variable that can be checked to see if pipeline is currently in
            draining phase."""
-        if self.drain_size <= 0:
+        if self.drain_size == 0:
             raise ValueError("No drain condition exists for " + self.label)
         return self.iterator_str() + "_drain"
 
@@ -1052,9 +1083,8 @@ class LibraryNode(CodeNode):
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
-            dace.serialize.set_properties_from_json(ret,
-                                                    json_obj,
-                                                    context=context)
+            dace.serialize.set_properties_from_json(
+                ret, json_obj, context=context)
             return ret
 
     def expand(self, sdfg, state, *args, **kwargs):

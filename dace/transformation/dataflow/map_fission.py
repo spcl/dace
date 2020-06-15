@@ -236,6 +236,8 @@ class MapFission(pattern_matching.Transformation):
             for name in outer_map.params:
                 if str(name) in nsdfg_node.symbol_mapping:
                     del nsdfg_node.symbol_mapping[str(name)]
+                if str(name) in nsdfg_node.sdfg.symbols:
+                    del nsdfg_node.sdfg.symbols[str(name)]
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
@@ -315,12 +317,10 @@ class MapFission(pattern_matching.Transformation):
                     sbs.offset([r[0] for r in outer_map.range], True)
                     state.add_edge(
                         edge.src, edge.src_conn, anode, None,
-                        mm.Memlet(name, outer_map.range.num_elements(), sbs,
-                                  1))
+                        mm.Memlet(name, outer_map.range.num_elements(), sbs, 1))
                     state.add_edge(
                         anode, None, edge.dst, edge.dst_conn,
-                        mm.Memlet(name, outer_map.range.num_elements(), sbs,
-                                  1))
+                        mm.Memlet(name, outer_map.range.num_elements(), sbs, 1))
                     state.remove_edge(edge)
 
             # Add extra maps around components

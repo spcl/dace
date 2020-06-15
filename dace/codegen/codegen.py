@@ -21,9 +21,9 @@ def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
     params = (sdfg.name, sdfg.signature(with_types=True, for_call=False))
-    proto += "int __dace_init_%s(%s);\n" % params
-    proto += "int __dace_exit_%s(%s);\n" % params
-    proto += "void __program_%s(%s);\n\n" % params
+    proto += 'extern "C" int __dace_init_%s(%s);\n' % params
+    proto += 'extern "C" int __dace_exit_%s(%s);\n' % params
+    proto += 'extern "C" void __program_%s(%s);\n' % params
     return proto
 
 
@@ -82,7 +82,7 @@ def generate_code(sdfg) -> List[CodeObject]:
     # Before compiling, validate SDFG correctness
     sdfg.validate()
 
-    if Config.get_bool('experimental', 'test_serialization'):
+    if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
         import filecmp
         sdfg.save('test.sdfg')
@@ -90,8 +90,7 @@ def generate_code(sdfg) -> List[CodeObject]:
         sdfg2.save('test2.sdfg')
         print('Testing SDFG serialization...')
         if not filecmp.cmp('test.sdfg', 'test2.sdfg'):
-            raise RuntimeError(
-                'SDFG serialization failed - files do not match')
+            raise RuntimeError('SDFG serialization failed - files do not match')
         os.remove('test.sdfg')
         os.remove('test2.sdfg')
 
