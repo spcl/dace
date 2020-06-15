@@ -67,6 +67,11 @@ public:
         return (void*)((char*)m_mem + offset);
     }
 
+    void Dealloc(void* ptr)
+    {
+        return;
+    }
+
 };
 
 #endif // __DACE_MEMORYPOOL_H

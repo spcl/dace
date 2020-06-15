@@ -73,6 +73,21 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._dispatcher.register_node_dispatcher(self)
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+        state = sdfg.states()[state_id]
+        if state in self.alloc_dealloc_states.keys():
+            alloc_dealloc = self.alloc_dealloc_states[state]
+            if node in alloc_dealloc:
+                alloc, dealloc = alloc_dealloc[node]
+                print(alloc, dealloc)
+                for t in dealloc:
+                    callsite_stream.write(
+                        '''MPool.Dealloc({array});'''.format(array=t)
+                    )
+                for t in alloc:
+                    callsite_stream.write(
+                        '''double *{array} = (double*)MPool.Alloc({size});'''.format(
+                            array=t, size=sdfg.arrays[t].total_size)
+                    )
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
@@ -89,8 +104,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
             for t in self.shared_transients:
                 callsite_stream.write(
                     '''double *{array} = (double*)MPool.Alloc({size});'''.format(
-                    array=t, size=sdfg.arrays[node.data].total_size,
-                     m_size=self.maximum_live_set[1])
+                    array=t, size=sdfg.arrays[node.data].total_size)
             )
             self.initialization = False
         self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)

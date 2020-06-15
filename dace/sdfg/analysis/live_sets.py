@@ -56,6 +56,8 @@ def live_sets(sdfg):
                         transients.remove(m.data)
                     G.remove_node(m)
 
+        G_collapsed = G.copy()
+
         # Remove all nodes that are not AccessNodes and connect their predecessors and successors.
         for n in state.nodes():
             if n in G.nodes():
@@ -76,7 +78,46 @@ def live_sets(sdfg):
         ############
         # KILL NODES
 
+        alloc_dealloc_nodes = {}
+        for n in G:
+            alloc_dealloc_nodes[n] = ([], [])
+
         # Find the kill nodes for each array.
+        alloc_dealloc = {}
+        for a in transients:
+            alloc_dealloc[a] = ([], [])
+        for n in G.nodes():
+            if n.data in transients:
+                alloc_dealloc[n.data][0].append(n)
+                alloc_dealloc_nodes[n][0].append(n.data)
+                for op in G.predecessors(n):
+                    alloc_dealloc_nodes[n][0].remove(n.data)
+                    alloc_dealloc_nodes[op][0].append(n.data)
+                    break
+                    '''if not isinstance(op, nodes.AccessNode):
+                        alloc_dealloc_nodes[n][0].remove(n.data)
+                        alloc_dealloc_nodes[op][0].append(n.data)'''
+                for m in G.nodes():
+                    if n in ancestors[m] and successors[n].issubset(ancestors[m]):
+                        alloc_dealloc[n.data][1].append(m)
+
+        # Remove kill nodes which are descendants of other kill nodes.
+        for a in alloc_dealloc:
+            kill = alloc_dealloc[a][1].copy()
+            for i in range(len(kill)):
+                for j in range(len(kill)):
+                    if (kill[i] in ancestors[kill[j]]
+                            and kill[i] in ancestors[kill[j]]
+                            and kill[j] in alloc_dealloc[a][1]
+                            and kill[i] != kill[j]):
+                        alloc_dealloc[a][1].remove(kill[j])
+            alloc_dealloc_nodes[alloc_dealloc[a][1][0]][1].append(a)
+        print("nodes: ",alloc_dealloc_nodes)
+        alloc_dealloc_states[state] = alloc_dealloc_nodes
+
+        #######################################
+
+        '''# Find the kill nodes for each array.
         alloc_dealloc = {}
         for a in transients:
             alloc_dealloc[a] = ([], [])
@@ -97,7 +138,8 @@ def live_sets(sdfg):
                             and kill[j] in alloc_dealloc[a][1]
                             and kill[i] != kill[j]):
                         alloc_dealloc[a][1].remove(kill[j])
-        alloc_dealloc_states[state] = alloc_dealloc
+
+        alloc_dealloc_states[state] = alloc_dealloc'''
 
         ##############
         # MAX LIVE SET
@@ -133,7 +175,7 @@ def live_sets(sdfg):
         for i in range(len(levels)):
             transient_levels.append(set())
         for t in transients:
-            alloc, dealloc = alloc_dealloc[t]
+            alloc, dealloc = alloc_dealloc[t]  # TODO: maybe change to alloc_dealloc_states or alloc_dealloc_nodes
             if not alloc:
                 transient_levels[0].add(t)
             else:
