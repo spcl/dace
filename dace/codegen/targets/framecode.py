@@ -1067,11 +1067,12 @@ def _set_default_storage_types(sdfg, toplevel_schedule):
                 # Set default storage type
                 desc.storage = dtypes.SCOPEDEFAULT_STORAGE[parent_schedule]
 
-        # Take care of remaining arrays/scalars, e.g., code->code edges
-        for desc in sdfg.arrays.values():
-            if desc.storage == dtypes.StorageType.Default:
-                desc.storage = dtypes.StorageType.Register
+    # Take care of remaining arrays/scalars, e.g., code->code edges
+    for desc in sdfg.arrays.values():
+        if desc.storage == dtypes.StorageType.Default:
+            desc.storage = dtypes.StorageType.Register
 
+    for state in sdfg.nodes():
         # Loop again after all default storages have been set to set nested
         # SDFGs
         for node in state.nodes():
