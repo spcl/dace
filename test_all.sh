@@ -63,7 +63,7 @@ testcmd() {
     #$* | tee -a test.log
     TESTCNT=`expr $TESTS - 1`
     MSG="($TESTCNT / $TOTAL_TESTS) $CURTEST (Fails: $ERRORS)"
-   # ($* || echo "_TFAIL_ $?") |& awk "BEGIN{printf \"$MSG\r\"} /_TFAIL_/{printf \"$TGAP\r\"; exit \$NF} {printf \"$TGAP\r\"; print; printf \"$MSG\r\";} END{printf \"$TGAP\r\"}"
+    ($* || echo "_TFAIL_ $?") |& awk "BEGIN{printf \"$MSG\r\"} /_TFAIL_/{printf \"$TGAP\r\"; exit \$NF} {printf \"$TGAP\r\"; print; printf \"$MSG\r\";} END{printf \"$TGAP\r\"}"
 }
 
 ################################################
