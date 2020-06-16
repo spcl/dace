@@ -34,6 +34,9 @@ class ReduceMap(pattern_matching.Transformation):
     _reduce = stdlib.Reduce()
 
 
+    debug = Property(desc="Debug Info",
+                     dtype = bool,
+                     default = True)
 
     map_transient_to_registers = Property(desc="Push out-transient created inside"
                                                 "the reduction into register",
@@ -207,7 +210,8 @@ class ReduceMap(pattern_matching.Transformation):
         shortcut = False
         if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
                                         or identity is not None:
-            print("ReduceMap::Shortcut applied")
+            if self.debug:
+                print("ReduceMap::Shortcut applied")
             # we are lucky
             shortcut = True
             nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
@@ -216,7 +220,8 @@ class ReduceMap(pattern_matching.Transformation):
 
 
         else:
-            print("ReduceMap::No shortcut, operating with ancestor", array_closest_ancestor)
+            if self.debug:
+                print("ReduceMap::No shortcut, operating with ancestor", array_closest_ancestor)
             array_closest_ancestor = nodes.AccessNode(out_storage_node.data,
                                         access = dtypes.AccessType.ReadOnly)
             graph.add_node(array_closest_ancestor)
