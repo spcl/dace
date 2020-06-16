@@ -38,9 +38,9 @@ class ReduceMap(pattern_matching.Transformation):
     map_transient_to_registers = Property(desc="Push out-transient created inside"
                                                 "the reduction into register",
                                                 dtype = bool,
-                                                default = False)
+                                                default = True)
 
-    create_in_transient = Property(desc = "Create local in-transient register",
+    create_in_transient = Property(desc = "Create local in-transient",
                                    dtype = bool,
                                    default = False)
 
@@ -160,7 +160,7 @@ class ReduceMap(pattern_matching.Transformation):
 
 
         if self.create_in_transient:
-            # create a in-transient as well.
+            # create an in-transient as well.
             array_in = nstate.in_edges(outer_entry)[0].data.data
             local_storage_subgraph = {
                 LocalStorage._node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
@@ -181,8 +181,6 @@ class ReduceMap(pattern_matching.Transformation):
 
         if self.map_transient_to_registers:
             nsdfg.sdfg.data(out_transient_node_inner.data).storage = dtypes.StorageType.Register
-            if self.create_in_transient:
-                nsdfg.sdfg.data(out_transient_node_inner.data).storage = dtypes.StorageType.Register
 
 
         # find earliest parent read-write occurrence of array onto which

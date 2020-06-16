@@ -473,7 +473,6 @@ class SubgraphFusion():
 
 
         # do one pass to adjust in-transients and their corresponding memlets
-        sdfg.view()
         transient_dict_rev = {v:k for k,v in transient_dict.items()}
         for transient_node in intermediate_nodes:
             try:
