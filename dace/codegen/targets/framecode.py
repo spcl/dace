@@ -1007,14 +1007,14 @@ def _set_default_schedule_in_scope(parent_node, parent_schedule,
             if node.map.schedule == dtypes.ScheduleType.Default:
                 node.map.schedule = child_schedule
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, child_schedule,
+            _set_default_schedule_in_scope(node, node.map.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.ConsumeEntry):
             if node.consume.schedule == dtypes.ScheduleType.Default:
                 node.consume.schedule = child_schedule
 
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, child_schedule,
+            _set_default_schedule_in_scope(node, node.consume.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
