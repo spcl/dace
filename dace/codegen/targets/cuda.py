@@ -364,12 +364,14 @@ void __dace_exit_cuda({params}) {{
         dataname = node.data
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
-                'name': dataname,
-                'type': nodedesc.dtype.ctype,
+                'name':
+                dataname,
+                'type':
+                nodedesc.dtype.ctype,
                 'is_pow2':
                 sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
                 'location':
-                '%s_%s_%s' % (sdfg.name, state_id, dfg.node_id(node)),
+                '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node)),
             }
 
             self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)

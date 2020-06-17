@@ -346,7 +346,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     [""]), sdfg, sid)
 
         callsite_stream.write(
-            "goto __state_{}_{};".format(sdfg.name, edge.dst.label), sdfg, sid)
+            "goto __state_{}_{};".format(sdfg.sdfg_id, edge.dst.label), sdfg,
+            sid)
 
         if not always_true:
             callsite_stream.write("}")
@@ -376,7 +377,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             sid = sdfg.node_id(state)
 
             callsite_stream.write(
-                "__state_{}_{}:\n".format(sdfg.name, state.label), sdfg, sid)
+                "__state_{}_{}:\n".format(sdfg.sdfg_id, state.label), sdfg, sid)
 
             # Don't generate brackets and comments for empty states
             if len([n for n in state.nodes()]) > 0:
@@ -486,7 +487,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name, control.scope.exit.edge.dst))
+                                        sdfg.sdfg_id,
+                                        control.scope.exit.edge.dst))
                                 generated_edges.add(control.scope.exit.edge)
 
                         elif isinstance(control, cflow.IfExit):
@@ -547,7 +549,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name, control.scope.exit.edge.dst))
+                                        sdfg.sdfg_id,
+                                        control.scope.exit.edge.dst))
 
                         else:
 
@@ -594,12 +597,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                   (len(states_to_generate) == 0)))
                     and (len(states_generated) != sdfg.number_of_nodes())):
                 callsite_stream.write(
-                    "goto __state_exit_{}_{};".format(sdfg.name, scope_label),
-                    sdfg, sid)
+                    "goto __state_exit_{}_{};".format(sdfg.sdfg_id,
+                                                      scope_label), sdfg, sid)
 
         # Write exit state
         callsite_stream.write(
-            "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
+            "__state_exit_{}_{}:;".format(sdfg.sdfg_id, scope_label), sdfg)
 
     def generate_code(
         self,
@@ -617,6 +620,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
+
+        if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
+            sdfg_id = '_%d' % sdfg.sdfg_id
 
         sdfg_label = sdfg.name + sdfg_id
 
