@@ -1,24 +1,49 @@
 import os
 import dace.library
 
-CONDA_HOME = "/home/orausch/.local/opt/miniconda3/envs/dace"
+if 'ORT_ROOT' not in os.environ:
+    raise ValueError("This environment expects the environment variable "
+                     "ORT_ROOT to be set to the root of the patched onnxruntime repository "
+                     "(https://github.com/orausch/onnxruntime).\n"
+                     "See the docstring for dace.libraries.onnx.environments.ONNXRuntime for more information.")
+
+ORT_PATH = os.environ['ORT_ROOT']
+ORT_BUILD_PATH = os.path.join(ORT_PATH, "build", "Linux", "Release")
+
+
 
 @dace.library.environment
 class ONNXRuntime:
+    """ Environment used to run ONNX operator nodes using ONNX Runtime. This environment expects the environment variable
+        ``ORT_ROOT`` to be set to the root of the patched onnxruntime repository (https://github.com/orausch/onnxruntime)
+
+        Furthermore, both the runtime and the protobuf shared libs should be built:
+
+        ``./build.sh --build_shared_lib --parallel --config Release``
+        ``mkdir build-protobuf && cd build-protobuf && cmake ../cmake/external/protobuf/cmake -Dprotobuf_BUILD_SHARED_LIBS=ON && make``
+
+        (add -jN to the make command for parallel builds)
+
+        See ``onnxruntime/BUILD.md`` for more details.
+    """
+
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
     cmake_includes = [
-        "/home/orausch/sources/onnx", # pick up the onnx source headers
-        "/home/orausch/sources/onnx/build-no-ml", # pick up the compiled protobuf headers
-        "/home/orausch/sources/dace/dist-cpu/include"
+        ORT_BUILD_PATH,
+        os.path.join(ORT_PATH, "cmake", "external", "onnx"),
+        os.path.join(ORT_PATH, "include"),
+        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "session"),
+        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers", "cpu"),
+        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers", "cuda")
     ]
     cmake_libraries = [
-        "/home/orausch/sources/dace/dist-cpu/libonnxruntime.so",
-        "/home/orausch/sources/onnx/build-no-ml/libonnx_proto.a",
-        "protobuf",
+        os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"),
+        os.path.join(ORT_BUILD_PATH, "onnx", "libonnx_proto.a"),
+        os.path.join(ORT_PATH, "build-protobuf", "libprotobuf.so"),
     ]
-    cmake_compile_flags = []
+    cmake_compile_flags = ["-DONNX_ML=1"]
     cmake_link_flags = []
     cmake_files = []
 

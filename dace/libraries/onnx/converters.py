@@ -7,7 +7,7 @@ from dace.dtypes import typeclass
 from dace import dtypes as dt
 
 
-def convert_onnx_attribute(attribute):
+def convert_onnx_proto(attribute):
     from dace.libraries.onnx.schema import ONNXAttributeType, ONNXParameter, ONNXAttribute, _KNOWN_ONNX_PROTOS, ONNXParameterType
 
     if type(attribute) in _KNOWN_ONNX_PROTOS:
@@ -108,6 +108,28 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
     'complex64': dt.complex64,
     'complex128': dt.complex128,
 }
+
+def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
+    #  we cache the reverse map as an attribute of the method
+    if hasattr(onnx_tensor_type_to_dace_type, "inv_map"):
+        inv_map = onnx_tensor_type_to_dace_type.inv_map
+    else:
+        k: str
+        v : int
+        inv_map = {}
+        for k, v in onnx.TensorProto.DataType.items():
+            if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS:
+                inv_map[v] = ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
+
+        onnx_tensor_type_to_dace_type.inv_map = inv_map
+
+    if elem_type not in inv_map:
+        raise ValueError("Got unsupported ONNX tensor type: {}".format(
+            {v: k for k, v in onnx.TensorProto.DataType.items()}[elem_type]
+        ))
+
+    return inv_map[elem_type]
+
 
 def onnx_type_str_onnx_type_str_to_dace_type(
         onnx_str) -> Union[typeclass, None]:

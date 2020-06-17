@@ -7,10 +7,12 @@ import aenum
 import dace
 from dace.dtypes import typeclass
 from dace.properties import make_properties, Property, DictProperty, ListProperty, SetProperty
-from dace.libraries.onnx.converters import convert_onnx_attribute, onnx_type_str_onnx_type_str_to_dace_type
+from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_onnx_type_str_to_dace_type
 
 _KNOWN_ONNX_PROTOS = {}
 
+# TODO @orausch migrate all str types to bytes
+# TODO @orausch rethink how to check proto HasField
 
 def onnx_representation(represents, **mapping):
     """ Decorator for python representations of ONNX protobufs.
@@ -61,7 +63,7 @@ def onnx_representation(represents, **mapping):
             constructor_args = {}
             for name, _ in cls.__properties__.items():
                 if type(mapping[name]) is str:
-                    constructor_args[name] = convert_onnx_attribute(
+                    constructor_args[name] = convert_onnx_proto(
                         getattr(onnx_proto, mapping[name]))
                 else:
                     mapping[name](onnx_proto)
@@ -181,13 +183,13 @@ class ONNXTypeConstraint:
 
 @onnx_representation(
     onnx.defs.OpSchema,
-    inputs=lambda proto: list(map(convert_onnx_attribute, proto.inputs)),
-    outputs=lambda proto: list(map(convert_onnx_attribute, proto.outputs)),
+    inputs=lambda proto: list(map(convert_onnx_proto, proto.inputs)),
+    outputs=lambda proto: list(map(convert_onnx_proto, proto.outputs)),
     attributes=lambda proto:
-    {str(k): convert_onnx_attribute(v)
+    {str(k): convert_onnx_proto(v)
      for k, v in proto.attributes.items()},
     type_constraints=lambda proto: {
-        str(cons.type_param_str): convert_onnx_attribute(cons)
+        str(cons.type_param_str): convert_onnx_proto(cons)
         for cons in proto.type_constraints
     })
 class ONNXSchema:

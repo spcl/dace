@@ -1,4 +1,6 @@
+# TODO do checking on if type exists for non required fields (maybe automate this?)
 from abc import ABC, abstractmethod
+from collections import Iterable
 from itertools import chain, repeat, count
 from functools import reduce
 
@@ -12,7 +14,7 @@ from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.standard.nodes.code import _get_inputs_and_outputs
 from dace.libraries.onnx import ONNXRuntime
 from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS
-from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType
+from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute
 from dace.sdfg import InvalidSDFGNodeError
 
 
@@ -23,9 +25,11 @@ def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
     else:
         variadic_number = None
 
-    matches = [(i, param)
-               for i, param in enumerate(schema.inputs if is_input else schema.outputs)
-               if param.name == parameter_name]
+    matches = [
+        (i, param)
+        for i, param in enumerate(schema.inputs if is_input else schema.outputs)
+        if param.name == parameter_name
+    ]
     if len(matches) != 1:
         raise ValueError(
             "Error in schema: found more or less than one parameter with name {}"
@@ -75,7 +79,7 @@ def parse_variadic_param(param):
     name = split[0]
     number = split[1]
 
-    if number[0] == '0':
+    if number[0] == '0' and len(number > 1):
         raise ValueError(
             "Variadic parameters must not be numbered with leading zeroes, got: '{}'"
             .format(number))
@@ -88,9 +92,84 @@ def parse_variadic_param(param):
     return name, number
 
 
-
 # this counter is used to get unique names for the Node protos
 GLOBAL_COUNTER = count()
+
+
+def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
+    """ Get the code to setup an attribute on an onnx::NodeProto
+        :param node_proto: the variable name of the node protobuf
+        :param attr: the attribute to setup
+    """
+    if value is None:
+        return ""
+
+    def assert_type(val, expected_type):
+        if not isinstance(val, expected_type):
+            raise ValueError(
+                "Expected value of attribute '{}' to have type {}, got {} (type {})"
+                .format(attr.name, expected_type, val, type(val)))
+
+    init_code = """{{
+    // Setup attribute {name}
+    onnx::AttributeProto* attribute = {node_proto}.add_attribute();
+    attribute->set_name("{name}");
+    """.format(name=attr.name, node_proto=node_proto)
+
+    attr_type_to_type = {
+        ONNXAttributeType.Int: int,
+        ONNXAttributeType.Float: float,
+        ONNXAttributeType.String: str,  # TODO @orausch: change to bytes
+        ONNXAttributeType.Ints: int,
+        ONNXAttributeType.Floats: float,
+        ONNXAttributeType.Strings: str,
+    }
+    type_to_str = {
+        ONNXAttributeType.Int: "int",
+        ONNXAttributeType.Float: "float",
+        ONNXAttributeType.String: "string",
+        ONNXAttributeType.Ints: "int",
+        ONNXAttributeType.Floats: "float",
+        ONNXAttributeType.Strings: "string",
+    }
+
+    if attr.type in [
+            ONNXAttributeType.Int, ONNXAttributeType.Float,
+            ONNXAttributeType.String
+    ]:
+        assert_type(value, attr_type_to_type[attr.type])
+        init_code += """
+        attribute->set_type(onnx::AttributeProto::{type_str});
+        attribute->set_{short_type}({value});
+        """.format(type_str=type_to_str[attr.type].upper(),
+                   short_type=type_to_str[attr.type][0],
+                   value='"{}"'.format(value)
+                   if attr.type == ONNXAttributeType.String else value)
+    elif attr.type in [
+            ONNXAttributeType.Ints, ONNXAttributeType.Floats,
+            ONNXAttributeType.Strings
+    ]:
+        init_code += "attribute->set_type(onnx::AttributeProto::{}S);\n".format(
+            type_to_str[attr.type].upper())
+
+        if not isinstance(value, Iterable):
+            raise ValueError("Expected iterable value for attribute '{}', got {}".format(attr.name, value))
+
+        for i in value:
+            assert_type(i, attr_type_to_type[attr.type])
+            init_code += "attribute->add_{type_str}s({value});\n".format(
+                type_str_decl='std::string' if attr.type
+                == ONNXAttributeType.String else type_to_str[attr.type],
+                type_str=type_to_str[attr.type],
+                value='"{}"'.format(i)
+                if attr.type == ONNXAttributeType.String else i)
+    else:
+        raise NotImplementedError(
+            "Got unsupported attribute type {} for '{}'".format(
+                attr.dtype, attr.name))
+    init_code += "}\n"
+    return init_code
+
 
 class ONNXOp(nd.LibraryNode, ABC):
     """ Abstract superclass for all ONNX ops"""
@@ -116,9 +195,10 @@ class ONNXOp(nd.LibraryNode, ABC):
             for inp in self.schema.inputs
             if inp.param_type == ONNXParameterType.Single
         }
-        passed_inputs = {inp.dst_conn
-                         for inp in in_edges if '__' not in inp.dst_conn
-                         }  # we will test variadic inputs separately
+        passed_inputs = {
+            inp.dst_conn
+            for inp in in_edges if '__' not in inp.dst_conn
+        }  # we will test variadic inputs separately
         known_inputs = {inp.name for inp in self.schema.inputs}
 
         missing_inputs = required_inputs.difference(passed_inputs)
@@ -177,8 +257,7 @@ class ONNXOp(nd.LibraryNode, ABC):
             name, number = parse_variadic_param(param)
             if name not in variadic_inputs:
                 raise ValueError(
-                    "Got an unexpected variadic argument '{}'".format(
-                        param))
+                    "Got an unexpected variadic argument '{}'".format(param))
             if number in seen_variadic_numbers:
                 raise ValueError(
                     "Got two variadic inputs with index {}, expected at most one"
@@ -206,8 +285,7 @@ class ONNXOp(nd.LibraryNode, ABC):
             name, number = parse_variadic_param(param)
             if name not in variadic_outputs:
                 raise ValueError(
-                    "Got an unexpected variadic argument '{}'".format(
-                        param))
+                    "Got an unexpected variadic argument '{}'".format(param))
             if number in seen_variadic_numbers:
                 raise ValueError(
                     "Got two variadic outputs with index {}, expected at most one"
@@ -248,8 +326,7 @@ class ONNXOp(nd.LibraryNode, ABC):
                 raise ValueError(
                     "Could not solve type constraints;"
                     " excepted type '{expected}' for {param_type} '{conn_name}', got type '{actual}'"
-                    .format(
-                            expected=assigned_params[matched.type_str],
+                    .format(expected=assigned_params[matched.type_str],
                             param_type="input" if is_input else "output",
                             conn_name=matched.name,
                             actual=edge_dtype))
@@ -259,8 +336,7 @@ class ONNXOp(nd.LibraryNode, ABC):
             if edge_dtype not in cons.types:
                 raise ValueError(
                     "Expected type in '{possible}' for {param_type} '{conn_name}', got type '{actual}'"
-                    .format(
-                            possible=cons.types,
+                    .format(possible=cons.types,
                             param_type="input" if is_input else "output",
                             conn_name=matched.name,
                             actual=edge_dtype))
@@ -275,17 +351,17 @@ class ONNXOp(nd.LibraryNode, ABC):
         for attr in required_attrs:
             if getattr(self, attr) is None:
                 raise ValueError(
-                    "Expected value for required attribute '{}', got None"
-                    .format(attr))
+                    "Expected value for required attribute '{}', got None".
+                    format(attr))
 
-    def expansion(self, node, state: SDFGState, sdfg: SDFG):
+    @staticmethod
+    def expansion(node, state: SDFGState, sdfg: SDFG):
         # Extract input and output array views (as generated by memlets)
         inputs, outputs = _get_inputs_and_outputs(sdfg, state, node)
         # Generate the appropriate code
         # Replace this node with a C++ tasklet
-        unique_id = "{}_{}".format(self.schema.name,
-                                   next(GLOBAL_COUNTER))
-        if "OrtKernelSession" not in sdfg.init_code:
+        unique_id = "{}_{}".format(node.schema.name, next(GLOBAL_COUNTER))
+        if "OrtKernelSession" not in sdfg.global_code['frame'].as_string:
             sdfg.append_global_code("""
             // Start global ORT setup
             const OrtApi* __ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
@@ -327,8 +403,7 @@ class ONNXOp(nd.LibraryNode, ABC):
             sdfg.prepend_exit_code(session_cleanup_code)
 
         sdfg.append_global_code(
-            "OrtExecutableKernelContext *__ort_context_{};\n".format(
-                unique_id))
+            "OrtExecutableKernelContext *__ort_context_{};\n".format(unique_id))
 
         sdfg.append_init_code("""
         {{
@@ -337,7 +412,7 @@ class ONNXOp(nd.LibraryNode, ABC):
         proto.set_op_type("{name}");
         proto.set_name("{id}");
         std::unordered_map<std::string, onnx::TypeProto> type_map;
-        """.format(id=unique_id, name=self.schema.name))
+        """.format(id=unique_id, name=node.schema.name))
 
         tasklet_setup_code = ""
         tasklet_code = ""
@@ -347,9 +422,8 @@ class ONNXOp(nd.LibraryNode, ABC):
             v: k
             for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
         }
-        for edge, is_input in chain(
-                zip(state.in_edges(node), repeat(True)),
-                zip(state.out_edges(node), repeat(False))):
+        for edge, is_input in chain(zip(state.in_edges(node), repeat(True)),
+                                    zip(state.out_edges(node), repeat(False))):
             parameter_name = edge.dst_conn if is_input else edge.src_conn
             input_output_string = "input" if is_input else "output"
             memlet = edge.data
@@ -360,15 +434,15 @@ class ONNXOp(nd.LibraryNode, ABC):
                 onnx::TypeProto type_proto;
                 onnx::TypeProto::Tensor *tensor_type = type_proto.mutable_tensor_type();
                 tensor_type->set_elem_type(onnx::TensorProto::{type_string});
-                type_map["{parameter_name}"] = type_proto;
+                type_map["{unique_id}_{parameter_name}"] = type_proto;
 
                 std::string* {input_output_string} = proto.add_{input_output_string}();
-                *{input_output_string} = "{parameter_name}";
+                *{input_output_string} = "{unique_id}_{parameter_name}";
             }}
-            """.format(
-                type_string=reversed_onnx_dtype_map[arr.dtype].upper(),
-                parameter_name=parameter_name,
-                input_output_string=input_output_string))
+            """.format(unique_id=unique_id,
+                       type_string=reversed_onnx_dtype_map[arr.dtype].upper(),
+                       parameter_name=parameter_name,
+                       input_output_string=input_output_string))
 
             tasklet_setup_code += """
             int64_t {input_output_string}_{parameter_name}_dims[{dims_size}] = {{{dims}}};
@@ -391,14 +465,13 @@ class ONNXOp(nd.LibraryNode, ABC):
                 ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_str},
                 &{ort_value_name}
             ));
-            """.format(
-                input_output_string=input_output_string,
-                parameter_name=parameter_name,
-                data_size=reduce(lambda x, y: x * y, arr.shape),
-                ctype=arr.dtype.ctype,
-                dims_size=len(arr.shape),
-                type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
-                ort_value_name=ort_value_name)
+            """.format(input_output_string=input_output_string,
+                       parameter_name=parameter_name,
+                       data_size=reduce(lambda x, y: x * y, arr.shape),
+                       ctype=arr.dtype.ctype,
+                       dims_size=len(arr.shape),
+                       type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
+                       ort_value_name=ort_value_name)
 
             tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Set{input_output_string_capital}(" \
                             "__ort_context_{unique_id}, {position}, {ort_value_name}));\n".format(
@@ -406,22 +479,29 @@ class ONNXOp(nd.LibraryNode, ABC):
                     capitalize(),
                 ort_value_name=ort_value_name,
                 unique_id=unique_id,
-                position=get_position(self.schema, is_input,
+                position=get_position(node.schema, is_input,
                                       parameter_name))
 
             tasklet_cleanup_code += "__ort_api->ReleaseValue(ort_value_{input_output_string}_{parameter_name});\n".format(
                 input_output_string=input_output_string,
                 parameter_name=parameter_name)
 
+        sdfg.append_init_code("// Setup attributes\n")
+
+        for name, attr in node.schema.attributes.items():
+            if hasattr(node, name):
+                sdfg.append_init_code(
+                    _gen_attr_init_code("proto", node.schema.attributes[name], getattr(node, name)))
+
         sdfg.append_init_code(
             "__ort_check_status(__ort_api->CreateExecutableKernelContext("
             "__ort_session, {provider_index}, &proto, &type_map, &__ort_context_{id}));\n"
-                .format(provider_index=0, id=unique_id))
-        sdfg.append_init_code("}")
+            .format(provider_index=0, id=unique_id))
+        sdfg.append_init_code("}} // end setup for context_{}".format(unique_id))
 
         sdfg.prepend_exit_code(
-            "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n"
-                .format(unique_id))
+            "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n".
+            format(unique_id))
 
         tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Compute(__ort_context_{}));\n".format(
             unique_id)
@@ -434,6 +514,8 @@ class ONNXOp(nd.LibraryNode, ABC):
                           language=dace.dtypes.Language.CPP)
 
 
+_ONNX_OPS_BY_NAME = {}
+# Generate all of the Op Nodes
 for schema in onnx.defs.get_all_schemas():
     try:
         dace_schema = ONNXSchema.from_onnx_proto(schema)
@@ -523,7 +605,9 @@ for schema in onnx.defs.get_all_schemas():
                 try:
                     node.validate(sdfg, state)
                 except Exception as ex:
-                    raise ValueError("Node validation failed: {} (at ONNX Operator {})".format(str(ex), self.schema.name))
+                    raise ValueError(
+                        "Node validation failed: {} (at ONNX Operator {})".
+                        format(str(ex), self.schema.name))
 
                 return self.expansion(node, state, sdfg)
 
@@ -535,6 +619,22 @@ for schema in onnx.defs.get_all_schemas():
 
     cls = type(dace_schema.name, (ONNXOp, ), attrs)
 
-    globals()[schema.name] = dace.library.node(cls)
+    cls = dace.library.node(cls)
+    globals()[schema.name] = cls
+    _ONNX_OPS_BY_NAME[schema.name] = cls
 
 del cls
+
+
+def has_onnx_node(name: str):
+    """ Check if an ONNX operator is supported
+        :param name: the operator name
+    """
+    return name in _ONNX_OPS_BY_NAME
+
+
+def get_onnx_node(name: str):
+    """ Get the ONNX Operator node for an operator by name
+        :param name: the operator name
+    """
+    return _ONNX_OPS_BY_NAME[name]

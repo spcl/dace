@@ -32,7 +32,5 @@ def test_expansion():
 
     assert np.allclose(Z, Z_t)
 
-
-
 if __name__ == '__main__':
     test_expansion()
