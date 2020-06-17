@@ -1116,7 +1116,7 @@ class LibraryNode(CodeNode):
             raise KeyError("Unknown implementation for node {}: {}".format(
                 type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)

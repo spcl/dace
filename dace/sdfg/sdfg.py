@@ -249,6 +249,14 @@ class SDFG(OrderedDiGraph):
         self._orig_name = name
         self._num = 0
 
+    @property
+    def sdfg_id(self):
+        """ 
+        Returns the unique index of the current SDFG within the current
+        tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
+        """
+        return self.sdfg_list.index(self)
+
     def to_json(self):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
@@ -257,7 +265,7 @@ class SDFG(OrderedDiGraph):
 
         # Location in the SDFG list
         self.reset_sdfg_list()
-        tmp['sdfg_list_id'] = int(self.sdfg_list.index(self))
+        tmp['sdfg_list_id'] = int(self.sdfg_id)
 
         tmp['attributes']['name'] = self.name
 

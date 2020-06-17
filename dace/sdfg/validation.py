@@ -519,7 +519,7 @@ class InvalidSDFGError(Exception):
 
     def to_json(self):
         return dict(message=self.message,
-                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    sdfg_id=self.sdfg.sdfg_id,
                     state_id=self.state_id)
 
     def __str__(self):
@@ -539,7 +539,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
 
     def to_json(self):
         return dict(message=self.message,
-                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    sdfg_id=self.sdfg.sdfg_id,
                     isedge_id=self.edge_id)
 
     def __str__(self):
@@ -566,7 +566,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
 
     def to_json(self):
         return dict(message=self.message,
-                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    sdfg_id=self.sdfg.sdfg_id,
                     state_id=self.state_id,
                     node_id=self.node_id)
 
@@ -601,7 +601,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
 
     def to_json(self):
         return dict(message=self.message,
-                    sdfg_id=self.sdfg.sdfg_list.index(self.sdfg),
+                    sdfg_id=self.sdfg.sdfg_id,
                     state_id=self.state_id,
                     edge_id=self.edge_id)
 
