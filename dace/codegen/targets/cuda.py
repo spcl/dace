@@ -981,9 +981,8 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                     and node.map.schedule == dtypes.ScheduleType.GPU_Device):
                 create_grid_barrier = True
 
-        kernel_name = '%s_%d_%d' % (scope_entry.map.label,
-                                    state.node_id(scope_entry),
-                                    sdfg.node_id(state))
+        kernel_name = 's%s_%d_%d' % (sdfg.sdfg_id, sdfg.node_id(state),
+                                     state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap = self.get_kernel_dimensions(
