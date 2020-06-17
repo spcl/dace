@@ -58,6 +58,67 @@ namespace dace {
         }
     };
 
+    // Specialization of CAS for float and double
+    template <>
+    struct wcr_custom<float> {
+        template <typename WCR>
+        static DACE_HDFI void reduce_atomic(WCR wcr, float *ptr, const float& value) {
+            // The slowest kind of atomic operations (locked/compare-and-swap),
+            // this should only happen in case of unrecognized lambdas
+            #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
+                // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+                int *iptr = (int *)ptr;
+                int old = *iptr, assumed;
+                do {
+                    assumed = old;
+                    old = atomicCAS(iptr, assumed, 
+                        __float_as_int(wcr(__int_as_float(assumed), value)));
+                } while (assumed != old);
+            #else
+                #pragma omp critical
+                *ptr = wcr(*ptr, value);
+            #endif
+        }
+
+        // Non-conflicting version --> no critical section
+        template <typename WCR>
+        static DACE_HDFI void reduce(WCR wcr, float *ptr, const float& value) {
+            *ptr = wcr(*ptr, value);
+        }
+    };
+
+    template <>
+    struct wcr_custom<double> {
+        template <typename WCR>
+        static DACE_HDFI void reduce_atomic(WCR wcr, double *ptr, const double& value) {
+            // The slowest kind of atomic operations (locked/compare-and-swap),
+            // this should only happen in case of unrecognized lambdas
+            #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
+                // Adapted from CUDA's pre-v8.0 double atomicAdd implementation
+                unsigned long long *iptr = (unsigned long long *)ptr;
+                unsigned long long old = *ptr, assumed;
+                do {
+                    assumed = old;
+                    old = atomicCAS(
+                        iptr, assumed,
+                        __double_as_longlong(
+                                wcr(__longlong_as_double(assumed),
+                                    value)));
+                } while (assumed != old);
+            #else
+                #pragma omp critical
+                *ptr = wcr(*ptr, value);
+            #endif
+        }
+
+        // Non-conflicting version --> no critical section
+        template <typename WCR>
+        static DACE_HDFI void reduce(WCR wcr, double *ptr, const double& value) {
+            *ptr = wcr(*ptr, value);
+        }
+    };
+    // End of specialization
+
     template <typename T>
     struct _wcr_fixed<ReductionType::Sum, T> {
         static DACE_HDFI void reduce(T *ptr, const T& value) { *ptr += value; }
@@ -151,6 +212,66 @@ namespace dace {
 
         DACE_HDFI T operator()(const T &a, const T &b) const { return ::max(a, b); }
     };
+
+    // Specialization for floating point types
+    template <>
+    struct _wcr_fixed<ReductionType::Min, float> {
+
+        static DACE_HDFI void reduce(float *ptr, const float& value) { *ptr = ::min(*ptr, value); }
+                
+
+        static DACE_HDFI void reduce_atomic(float *ptr, const float& value) { 
+            wcr_custom<float>::reduce_atomic(
+                _wcr_fixed<ReductionType::Min, float>(), ptr, value);
+        }
+
+
+        DACE_HDFI float operator()(const float &a, const float &b) const { return ::min(a, b); }
+    };
+    
+    template <>
+    struct _wcr_fixed<ReductionType::Max, float> {
+
+        static DACE_HDFI void reduce(float *ptr, const float& value) { *ptr = ::max(*ptr, value); }
+                
+
+        static DACE_HDFI void reduce_atomic(float *ptr, const float& value) { 
+            wcr_custom<float>::reduce_atomic(
+                _wcr_fixed<ReductionType::Max, float>(), ptr, value);
+        }
+
+        DACE_HDFI float operator()(const float &a, const float &b) const { return ::max(a, b); }
+    };
+
+    template <>
+    struct _wcr_fixed<ReductionType::Min, double> {
+
+        static DACE_HDFI void reduce(double *ptr, const double& value) { *ptr = ::min(*ptr, value); }
+                
+
+        static DACE_HDFI void reduce_atomic(double *ptr, const double& value) { 
+            wcr_custom<double>::reduce_atomic(
+                _wcr_fixed<ReductionType::Min, double>(), ptr, value);
+        }
+
+
+        DACE_HDFI double operator()(const double &a, const double &b) const { return ::min(a, b); }
+    };
+    
+    template <>
+    struct _wcr_fixed<ReductionType::Max, double> {
+
+        static DACE_HDFI void reduce(double *ptr, const double& value) { *ptr = ::max(*ptr, value); }
+                
+
+        static DACE_HDFI void reduce_atomic(double *ptr, const double& value) { 
+            wcr_custom<double>::reduce_atomic(
+                _wcr_fixed<ReductionType::Max, double>(), ptr, value);
+        }
+
+        DACE_HDFI double operator()(const double &a, const double &b) const { return ::max(a, b); }
+    };
+    // End of specialization
 
     template <typename T>
     struct _wcr_fixed<ReductionType::Logical_And, T> {

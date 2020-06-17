@@ -144,9 +144,8 @@ class InlineSDFG(pattern_matching.Transformation):
                 pedge = None
                 for pedge in (reversed(path) if reverse else path):
                     # If there are no other edges, it is safe to remove
-                    if len([
-                            e for e in edge_func(pedge) if edge_pred(pedge, e)
-                    ]) == 1:
+                    if len([e for e in edge_func(pedge)
+                            if edge_pred(pedge, e)]) == 1:
                         # Remove connectors as well
                         state.remove_edge_and_connectors(pedge)
                     else:
@@ -219,8 +218,7 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
                 if node.data not in transients and datadesc.transient:
-                    name = sdfg.add_datadesc('%s_%s' %
-                                             (nsdfg.label, node.data),
+                    name = sdfg.add_datadesc('%s_%s' % (nsdfg.label, node.data),
                                              datadesc,
                                              find_new_name=True)
                     transients[node.data] = name
@@ -338,6 +336,7 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.NestedSDFG):
                 node.sdfg.parent = state
                 node.sdfg.parent_sdfg = sdfg
+                node.sdfg.parent_nsdfg_node = node
 
         # Remove all unused external inputs/output memlet paths, as well as
         # resulting isolated nodes
@@ -393,9 +392,8 @@ class InlineSDFG(pattern_matching.Transformation):
                     mtree = state.memlet_tree(new_edge)
                 else:
                     new_edge = state.add_edge(inner_edge.src,
-                                              inner_edge.src_conn,
-                                              top_edge.dst, top_edge.dst_conn,
-                                              new_memlet)
+                                              inner_edge.src_conn, top_edge.dst,
+                                              top_edge.dst_conn, new_memlet)
                     mtree = state.memlet_tree(new_edge)
 
                 # Modify all memlets going forward/backward
@@ -469,8 +467,7 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in outputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname +
-                                               '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
                             outputs[arrname] = '__' + arrname + '_out'
@@ -486,8 +483,7 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname +
-                                               '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             transients[arrname] = '__' + arrname + '_out'
                         node.data = '__' + arrname + '_out'

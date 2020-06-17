@@ -158,8 +158,7 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' % sdfg.build_folder,
-                sdfg)
+                'dace::perf::report.save("%s/perf");' % sdfg.build_folder, sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -347,7 +346,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     [""]), sdfg, sid)
 
         callsite_stream.write(
-            "goto __state_{}_{};".format(sdfg.name, edge.dst.label), sdfg, sid)
+            "goto __state_{}_{};".format(sdfg.sdfg_id, edge.dst.label), sdfg,
+            sid)
 
         if not always_true:
             callsite_stream.write("}")
@@ -377,7 +377,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             sid = sdfg.node_id(state)
 
             callsite_stream.write(
-                "__state_{}_{}:\n".format(sdfg.name, state.label), sdfg, sid)
+                "__state_{}_{}:\n".format(sdfg.sdfg_id, state.label), sdfg, sid)
 
             # Don't generate brackets and comments for empty states
             if len([n for n in state.nodes()]) > 0:
@@ -459,11 +459,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                     sid)
 
                             # Generate loop body
-                            self.generate_states(
-                                sdfg, entry_edge.src.label + "_loop",
-                                control_flow, global_stream, callsite_stream,
-                                control.scope, states_generated,
-                                generated_edges)
+                            self.generate_states(sdfg,
+                                                 entry_edge.src.label + "_loop",
+                                                 control_flow, global_stream,
+                                                 callsite_stream, control.scope,
+                                                 states_generated,
+                                                 generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
 
@@ -486,7 +487,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
+                                        sdfg.sdfg_id,
                                         control.scope.exit.edge.dst))
                                 generated_edges.add(control.scope.exit.edge)
 
@@ -548,7 +549,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
+                                        sdfg.sdfg_id,
                                         control.scope.exit.edge.dst))
 
                         else:
@@ -578,8 +579,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                         pass
                     else:
                         self._generate_transition(sdfg, sid, callsite_stream,
-                                                  edge,
-                                                  assignments_to_generate)
+                                                  edge, assignments_to_generate)
                         # Assignments will be generated in the transition
                         generate_assignments = False
 
@@ -597,12 +597,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                   (len(states_to_generate) == 0)))
                     and (len(states_generated) != sdfg.number_of_nodes())):
                 callsite_stream.write(
-                    "goto __state_exit_{}_{};".format(sdfg.name, scope_label),
-                    sdfg, sid)
+                    "goto __state_exit_{}_{};".format(sdfg.sdfg_id,
+                                                      scope_label), sdfg, sid)
 
         # Write exit state
         callsite_stream.write(
-            "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
+            "__state_exit_{}_{}:;".format(sdfg.sdfg_id, scope_label), sdfg)
 
     def generate_code(
         self,
@@ -620,6 +620,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
+
+        if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
+            sdfg_id = '_%d' % sdfg.sdfg_id
 
         sdfg_label = sdfg.name + sdfg_id
 
@@ -919,8 +922,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
+                        sdfg, state, None, node, global_stream, callsite_stream)
                     deallocated.add(node.data)
 
         # Now that we have all the information about dependencies, generate
@@ -955,9 +957,36 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             generated_code = callsite_stream.getvalue()
 
         # Return the generated global and local code strings
-        return (generated_header, generated_code,
-                self._dispatcher.used_targets,
+        return (generated_header, generated_code, self._dispatcher.used_targets,
                 self._dispatcher.used_environments)
+
+
+def _scopes_with_tbmaps(state, scopes):
+    """ Returns a set of scopes where a thread-block (or dynamic thread-block)
+        sub-scopes exist. Used, e.g., to modify storage defaults. """
+    scopes_with_tbmaps = set()
+    for scope_entry in scopes:
+        subgraph = state.scope_subgraph(scope_entry)
+        has_tb_map = False
+        # Append thread-block maps from subgraph and nested SDFGs
+        for node in subgraph.nodes():
+            if isinstance(node, nodes.EntryNode) and node.schedule in (
+                    dtypes.ScheduleType.GPU_ThreadBlock,
+                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
+                has_tb_map = True
+                break
+            elif isinstance(node, nodes.NestedSDFG):
+                for n in node.sdfg.all_nodes_recursive():
+                    if isinstance(node, nodes.EntryNode) and node.schedule in (
+                            dtypes.ScheduleType.GPU_ThreadBlock,
+                            dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
+                        has_tb_map = True
+                        break
+                if has_tb_map:
+                    break
+        if has_tb_map:
+            scopes_with_tbmaps.add(scope_entry)
+    return scopes_with_tbmaps
 
 
 def set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
@@ -965,52 +994,106 @@ def set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
         Replaces `ScheduleType.Default` and `StorageType.Default`
         with the corresponding types according to the parent scope's
         schedule. """
+    _set_default_schedule_types(sdfg, toplevel_schedule)
+    _set_default_storage_types(sdfg, toplevel_schedule)
+
+
+def _set_default_schedule_in_scope(parent_node, parent_schedule,
+                                   reverse_scope_dict):
+    for node in reverse_scope_dict[parent_node]:
+        child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+        # Set default schedule type
+        if isinstance(node, nodes.MapEntry):
+            if node.map.schedule == dtypes.ScheduleType.Default:
+                node.map.schedule = child_schedule
+            # Also traverse children (recursively)
+            _set_default_schedule_in_scope(node, node.map.schedule,
+                                           reverse_scope_dict)
+        elif isinstance(node, nodes.ConsumeEntry):
+            if node.consume.schedule == dtypes.ScheduleType.Default:
+                node.consume.schedule = child_schedule
+
+            # Also traverse children (recursively)
+            _set_default_schedule_in_scope(node, node.consume.schedule,
+                                           reverse_scope_dict)
+        elif isinstance(node, nodes.NestedSDFG):
+            # Nested SDFGs retain same schedule as their parent scope
+            if node.schedule == dtypes.ScheduleType.Default:
+                node.schedule = parent_schedule
+            _set_default_schedule_types(node.sdfg, node.schedule)
+        elif getattr(node, 'schedule', False):
+            if node.schedule == dtypes.ScheduleType.Default:
+                node.schedule = child_schedule
+
+
+def _set_default_schedule_types(sdfg, toplevel_schedule):
     for state in sdfg.nodes():
-        scope_dict = state.scope_dict()
         reverse_scope_dict = state.scope_dict(node_to_children=True)
 
-        def set_default_in_scope(parent_node):
-            if parent_node is None:
-                parent_schedule = toplevel_schedule
-            else:
-                parent_schedule = parent_node.map.schedule
+        # Start with top-level nodes and call recursively
+        _set_default_schedule_in_scope(None, toplevel_schedule,
+                                       reverse_scope_dict)
 
-            for node in reverse_scope_dict[parent_node]:
-                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
-                # Set default schedule type
-                if isinstance(node, nodes.MapEntry):
-                    if node.map.schedule == dtypes.ScheduleType.Default:
-                        node.map.schedule = child_schedule
-                    # Also traverse children (recursively)
-                    set_default_in_scope(node)
-                elif isinstance(node, nodes.ConsumeEntry):
-                    if node.consume.schedule == dtypes.ScheduleType.Default:
-                        node.consume.schedule = child_schedule
 
-                    # Also traverse children (recursively)
-                    set_default_in_scope(node)
-                elif isinstance(node, nodes.NestedSDFG):
-                    # Nested SDFGs retain same schedule as their parent scope
-                    if node.schedule == dtypes.ScheduleType.Default:
-                        node.schedule = parent_schedule
-                elif getattr(node, 'schedule', False):
-                    if node.schedule == dtypes.ScheduleType.Default:
-                        node.schedule = child_schedule
+def _set_default_storage_types(sdfg, toplevel_schedule):
+    for state in sdfg.nodes():
+        scope_dict = state.scope_dict()
+        scopes_with_tbmaps = _scopes_with_tbmaps(state, [
+            n for n in state.nodes() if isinstance(n, nodes.MapEntry)
+            and n.schedule in [dtypes.ScheduleType.GPU_Device]
+        ])
 
-        ## End of recursive function
-
-        # Start with top-level nodes
-        set_default_in_scope(None)
-
-        # Set default storage type
         for node in state.nodes():
-            if isinstance(node, nodes.AccessNode):
-                if node.desc(sdfg).storage == dtypes.StorageType.Default:
-                    if scope_dict[node] is None:
-                        parent_schedule = toplevel_schedule
-                    else:
-                        parent_schedule = scope_dict[node].map.schedule
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            desc = node.desc(sdfg)
+            # Only set transients if nested
+            if ((desc.transient or sdfg.parent_sdfg is None)
+                    and desc.storage == dtypes.StorageType.Default):
+                # Special cases
+                parent_node = scope_dict[node]
+                if parent_node is None:
+                    parent_schedule = toplevel_schedule
+                else:
+                    parent_schedule = parent_node.map.schedule
+                    # Skip sequential maps to determine storage
+                    while parent_schedule == dtypes.ScheduleType.Sequential:
+                        parent_node = scope_dict[parent_node]
+                        if parent_node is None:
+                            parent_schedule = toplevel_schedule
+                            break
+                        parent_schedule = parent_node.map.schedule
+                # Determine default GPU schedule based on existence of
+                # thread-block maps
+                if parent_schedule == dtypes.ScheduleType.GPU_Device:
+                    if parent_node not in scopes_with_tbmaps:
+                        parent_schedule = dtypes.ScheduleType.GPU_ThreadBlock
+                # End of special cases
 
-                    node.desc(sdfg).storage = (
-                        dtypes.SCOPEDEFAULT_STORAGE[parent_schedule])
-        ### End of storage type loop
+                # Set default storage type
+                desc.storage = dtypes.SCOPEDEFAULT_STORAGE[parent_schedule]
+
+    # Take care of remaining arrays/scalars, e.g., code->code edges
+    for desc in sdfg.arrays.values():
+        if desc.storage == dtypes.StorageType.Default:
+            desc.storage = dtypes.StorageType.Register
+
+    for state in sdfg.nodes():
+        # Loop again after all default storages have been set to set nested
+        # SDFGs
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            for name, desc in node.sdfg.arrays.items():
+                if (not desc.transient
+                        and desc.storage == dtypes.StorageType.Default):
+                    # Find connector and ensure storage types match
+                    for e in state.in_edges(node):
+                        if e.dst_conn == name:
+                            desc.storage = sdfg.arrays[e.data.data].storage
+                            break
+                    for e in state.out_edges(node):
+                        if e.src_conn == name:
+                            desc.storage = sdfg.arrays[e.data.data].storage
+                            break
+            _set_default_storage_types(node.sdfg, node.schedule)

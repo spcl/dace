@@ -27,8 +27,7 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
         return old_dinfo
 
     caller = getframeinfo(stack()[2][0])
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
-                            caller.filename)
+    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
 
 class StateGraphView(object):
@@ -76,8 +75,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self,
-                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -122,8 +120,7 @@ class StateGraphView(object):
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst)
-                                 if e.src_conn == "OUT_" +
-                                 curedge.dst_conn[3:])
+                                 if e.src_conn == "OUT_" + curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
 
@@ -144,8 +141,7 @@ class StateGraphView(object):
             (isinstance(edge.dst, nd.EntryNode) and edge.dst_conn is not None
              and edge.dst_conn.startswith('IN_'))):
             propagate_forward = True
-        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None)
-                or
+        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None) or
             (isinstance(edge.dst, nd.ExitNode) and edge.dst_conn is not None)):
             propagate_backward = True
 
@@ -537,10 +533,7 @@ class StateGraphView(object):
             for k, v in self.arglist().items()
         ]
 
-    def scope_subgraph(self,
-                       entry_node,
-                       include_entry=True,
-                       include_exit=True):
+    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
         from dace.sdfg.scope import _scope_subgraph
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
@@ -584,10 +577,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     location = DictProperty(
         key_type=str,
@@ -800,8 +792,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self,
-                                              as_edges=True):
+            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
                 for e in path:
                     symbols.update(e.data.new_symbols(symbols))
         except ValueError:
@@ -910,7 +901,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         debuginfo = _getdebuginfo(debuginfo)
 
         sdfg.parent = self
-        sdfg._parent_sdfg = self.parent
+        sdfg.parent_sdfg = self.parent
 
         sdfg.update_sdfg_list([])
 
@@ -925,6 +916,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             debuginfo=debuginfo,
         )
         self.add_node(s)
+
+        sdfg.parent_nsdfg_node = s
 
         # Add "default" undefined symbols if None are given
         symbols = sdfg.free_symbols
@@ -1214,18 +1207,16 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self.add_node(result)
         return result
 
-    def add_pipeline(
-            self,
-            name,
-            ndrange,
-            init_size=0,
-            init_overlap=False,
-            drain_size=0,
-            drain_overlap=False,
-            schedule=dtypes.ScheduleType.FPGA_Device,
-            debuginfo=None,
-            **kwargs
-    ) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
+    def add_pipeline(self,
+                     name,
+                     ndrange,
+                     init_size=0,
+                     init_overlap=False,
+                     drain_size=0,
+                     drain_overlap=False,
+                     schedule=dtypes.ScheduleType.FPGA_Device,
+                     debuginfo=None,
+                     **kwargs) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
         """ Adds a pipeline entry and pipeline exit. These are used for FPGA
             kernels to induce distinct behavior between an "initialization"
             phase, a main streaming phase, and a "draining" phase, which require
@@ -1394,8 +1385,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Add edges first so that scopes can be understood
         edges = [
             self.add_edge(path_nodes[i], None, path_nodes[i + 1], None,
-                          mm.EmptyMemlet())
-            for i in range(len(path_nodes) - 1)
+                          mm.EmptyMemlet()) for i in range(len(path_nodes) - 1)
         ]
 
         if not isinstance(memlet, mm.Memlet):
