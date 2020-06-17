@@ -235,9 +235,8 @@ class SubgraphFusion():
                     out_nodes.add(current_node)
                 else:
                     for dst_edge in graph.out_edges(current_node):
-                        if isinstance(dst_edge.dst, nodes.MapEntry):
-                            if dst_edge.dst in map_entries:
-                                intermediate_nodes.add(current_node)
+                        if dst_edge.dst in map_entries:
+                            intermediate_nodes.add(current_node)
                         else:
                             out_nodes.add(current_node)
 
@@ -585,3 +584,6 @@ class SubgraphFusion():
 
             # override number of accesses
             in_edge.data.num_accesses = memlet_out.num_accesses
+
+        # create a hook for outside the class to access global_map
+        self._global_map_entry = global_map_entry

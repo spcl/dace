@@ -11,7 +11,7 @@ from typing import Union, List
 import dace.libraries.standard as stdlib
 
 import dace.sdfg.nodes as nodes
-import dace.sdfg.graph as graph
+from dace.sdfg.graph import SubgraphView
 
 import timeit
 
@@ -30,16 +30,17 @@ Usual Pipeline:
       (source found in subgraph_fusion.py)
 #################
 """
-# TODO: Top-level map detection enhancement
 
 
 
 def expand_reduce(sdfg: dace.SDFG,
                   graph: dace.SDFGState,
-                  subgraph: Union[graph.SubgraphView, List[graph.SubgraphView]] = None):
+                  subgraph: Union[SubgraphView, List[SubgraphView]] = None):
     """
     Perform a ReduceMap transformation of all the Reduce Nodes specified in the
-    subgraph. If for a reduce node transformation cannot be done, a warning is omitted
+    subgraph. If for a reduce node transformation cannot be done, a warning is omitted.
+    After a successful transformation and if subgraph(s) is/are specified, the outer map and
+    reduce are added back
 
     :param sdfg: SDFG
     :param graph: SDFGState of interest
@@ -54,6 +55,7 @@ def expand_reduce(sdfg: dace.SDFG,
 
     if TRANSFORMATION_TIMER:
         start = timeit.default_timer()
+
     for sg in subgraph:
         reduce_nodes = []
         for node in sg.nodes():
@@ -71,6 +73,10 @@ def expand_reduce(sdfg: dace.SDFG,
         start = timeit.default_timer()
         for reduce_node in reduce_nodes:
             trafo_reduce.expand(sdfg,graph,reduce_node)
+            if isinstance(sg, SubgraphView):
+                sg.nodes().remove(reduce_node)
+                sg.nodes().append(trafo_reduce._new_reduce)
+                sg.nodes().append(trafo_reduce._outer_entry)
 
     if TRANSFORMATION_TIMER:
         end = timeit.default_timer()
@@ -78,7 +84,7 @@ def expand_reduce(sdfg: dace.SDFG,
 
 def expand_maps(sdfg: dace.SDFG,
                 graph: dace.SDFGState,
-                subgraph: Union[graph.SubgraphView, List[graph.SubgraphView]] = None):
+                subgraph: Union[SubgraphView, List[SubgraphView]] = None):
 
     """
     Perform MultiExpansion on all the Map nodes specified.
@@ -112,7 +118,7 @@ def expand_maps(sdfg: dace.SDFG,
 
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
-           subgraph: Union[graph.SubgraphView, List[graph.SubgraphView]] = None):
+           subgraph: Union[SubgraphView, List[SubgraphView]] = None):
     """
     Perform MapFusion on the graph/subgraph/subgraphs specified
 
@@ -135,9 +141,19 @@ def fusion(sdfg: dace.SDFG,
 
     for sg in subgraph:
         map_entries = get_highest_scope_maps(sdfg, graph, sg)
+        # remove map_entries and their corresponding exits from the subgraph
+        # already before applying transformation
+        if isinstance(sg, SubgraphView):
+            for map_entry in map_entries:
+                sg.nodes().remove(map_entry)
+                if graph.exit_node(map_entry) in sg.nodes():
+                    sg.nodes().remove(graph.exit_node(map_entry))
         print(f"Subgraph Fusion on map entries {map_entries}")
         map_fusion = SubgraphFusion()
         map_fusion.fuse(sdfg, graph, map_entries)
+        if isinstance(sg, SubgraphView):
+            sg.nodes().append(map_fusion._global_map_entry)
+            #TODO: also add all created in_between transients...
 
     if TRANSFORMATION_TIMER:
         end = timeit.default_timer()
@@ -148,7 +164,16 @@ def fusion(sdfg: dace.SDFG,
 def get_highest_scope_maps(sdfg, graph, subgraph = None):
     subgraph = graph if not subgraph else subgraph
     scope_dict = graph.scope_dict()
-    maps = [node for node in subgraph.nodes()            \
-                 if isinstance(node, nodes.MapEntry) and \
-                    (not scope_dict[node] or scope_dict[node] not in subgraph.nodes())]
+
+    def is_highest_scope(node):
+        while scope_dict[node]:
+            if scope_dict[node] in subgraph.nodes():
+                return False
+            node = scope_dict[node]
+
+        return True
+
+    maps = [node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
+                                              and is_highest_scope(node)]
+
     return maps
