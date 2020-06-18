@@ -139,7 +139,7 @@ class Memlet(object):
                debuginfo=None):
         """ Constructs a Memlet from string-based expressions.
             :param data: The data object or name to access. B{Note:} this
-                         parameter will soon be deprecated.
+                         parameter is deprecated.
             :type data: Either a string of the data descriptor name or an
                         AccessNode.
             :param subset_str: The subset of `data` that is going to
