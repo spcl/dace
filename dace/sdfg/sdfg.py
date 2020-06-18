@@ -234,6 +234,7 @@ class SDFG(OrderedDiGraph):
         self._parent = parent
         self.symbols = {}
         self._parent_sdfg = None
+        self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
@@ -248,6 +249,14 @@ class SDFG(OrderedDiGraph):
         self._orig_name = name
         self._num = 0
 
+    @property
+    def sdfg_id(self):
+        """ 
+        Returns the unique index of the current SDFG within the current
+        tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
+        """
+        return self.sdfg_list.index(self)
+
     def to_json(self):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
@@ -256,7 +265,7 @@ class SDFG(OrderedDiGraph):
 
         # Location in the SDFG list
         self.reset_sdfg_list()
-        tmp['sdfg_list_id'] = int(self.sdfg_list.index(self))
+        tmp['sdfg_list_id'] = int(self.sdfg_id)
 
         tmp['attributes']['name'] = self.name
 
@@ -656,6 +665,11 @@ class SDFG(OrderedDiGraph):
         """ Returns the parent SDFG of this SDFG, if exists. """
         return self._parent_sdfg
 
+    @property
+    def parent_nsdfg_node(self):
+        """ Returns the parent NestedSDFG node of this SDFG, if exists. """
+        return self._parent_nsdfg_node
+
     @parent.setter
     def parent(self, value):
         self._parent = value
@@ -663,6 +677,10 @@ class SDFG(OrderedDiGraph):
     @parent_sdfg.setter
     def parent_sdfg(self, value):
         self._parent_sdfg = value
+
+    @parent_nsdfg_node.setter
+    def parent_nsdfg_node(self, value):
+        self._parent_nsdfg_node = value
 
     def nodes(self) -> List[SDFGState]:
         return super().nodes()
@@ -972,7 +990,10 @@ class SDFG(OrderedDiGraph):
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                fp.write(dace.serialize.dumps(self.to_json()))
+                json_output = self.to_json()
+                if exception:
+                    json_output['error'] = exception.to_json()
+                fp.write(dace.serialize.dumps(json_output))
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
 

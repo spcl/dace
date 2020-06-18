@@ -96,9 +96,6 @@ class ExpandTransposePure(ExpandTransformation):
                 },
                 external_edges=True)
 
-        sdfg.parent = parent_sdfg
-        sdfg.parent_sdfg = parent_sdfg
-
         return sdfg
 
     @staticmethod
