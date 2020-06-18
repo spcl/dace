@@ -123,9 +123,6 @@ class ExpandGemvPure(ExpandTransformation):
                 external_edges=True,
                 input_nodes={mul_out: access_tmp})
 
-            sdfg.parent = parent_sdfg
-        sdfg.parent_sdfg = parent_sdfg
-
         return sdfg
 
     @staticmethod

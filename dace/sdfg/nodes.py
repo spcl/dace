@@ -10,11 +10,12 @@ from typing import Any, Dict, Set
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (
-    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
-    SetProperty, make_properties, indirect_properties, DataProperty,
-    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty,
-    LibraryImplementationProperty, CodeBlock)
+from dace.properties import (Property, CodeProperty, LambdaProperty,
+                             RangeProperty, DebugInfoProperty, SetProperty,
+                             make_properties, indirect_properties, DataProperty,
+                             SymbolicProperty, ListProperty,
+                             SDFGReferenceProperty, DictProperty,
+                             LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
@@ -28,8 +29,9 @@ import warnings
 class Node(object):
     """ Base node class. """
 
-    in_connectors = SetProperty(
-        str, default=set(), desc="A set of input connectors for this node.")
+    in_connectors = SetProperty(str,
+                                default=set(),
+                                desc="A set of input connectors for this node.")
     out_connectors = SetProperty(
         str, default=set(), desc="A set of output connectors for this node.")
 
@@ -188,10 +190,9 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(
-        choices=dtypes.AccessType,
-        desc="Type of access to this array",
-        default=dtypes.AccessType.ReadWrite)
+    access = Property(choices=dtypes.AccessType,
+                      desc="Type of access to this array",
+                      default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -285,10 +286,9 @@ class Tasklet(CodeNode):
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
     debuginfo = DebugInfoProperty()
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -355,28 +355,25 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
-        desc="SDFG schedule",
-        allow_none=True,
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
+    schedule = Property(dtype=dtypes.ScheduleType,
+                        desc="SDFG schedule",
+                        allow_none=True,
+                        choices=dtypes.ScheduleType,
+                        from_string=lambda x: dtypes.ScheduleType[x],
+                        default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
         desc="Mapping between internal symbols and their values, expressed as "
         "symbolic expressions")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -408,6 +405,8 @@ class NestedSDFG(CodeNode):
             ret.sdfg.parent = context['sdfg_state']
         if context and 'sdfg' in context:
             ret.sdfg.parent_sdfg = context['sdfg']
+
+        ret.sdfg.parent_nsdfg_node = ret
 
         ret.sdfg.update_sdfg_list([])
 
@@ -456,8 +455,8 @@ class NestedSDFG(CodeNode):
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
-            raise ValueError(
-                'Missing symbols on nested SDFG: %s' % (missing_symbols))
+            raise ValueError('Missing symbols on nested SDFG: %s' %
+                             (missing_symbols))
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -469,7 +468,6 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -480,7 +478,6 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -493,7 +490,6 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -570,7 +566,6 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -585,8 +580,8 @@ class MapExit(ExitNode):
     def from_json(cls, json_obj, context=None):
         try:
             # Set map reference to map entry
-            entry_node = context['sdfg_state'].node(
-                int(json_obj['scope_entry']))
+            entry_node = context['sdfg_state'].node(int(
+                json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
@@ -635,30 +630,26 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
-    range = RangeProperty(
-        desc="Ranges of map parameters", default=sbs.Range([]))
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
-        desc="Map schedule",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
+    range = RangeProperty(desc="Ranges of map parameters",
+                          default=sbs.Range([]))
+    schedule = Property(dtype=dtypes.ScheduleType,
+                        desc="Map schedule",
+                        choices=dtypes.ScheduleType,
+                        from_string=lambda x: dtypes.ScheduleType[x],
+                        default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    collapse = Property(
-        dtype=int,
-        default=1,
-        desc="How many dimensions to"
-        " collapse into the parallel range")
+    collapse = Property(dtype=int,
+                        default=1,
+                        desc="How many dimensions to"
+                        " collapse into the parallel range")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -683,9 +674,8 @@ class Map(object):
 
     def __str__(self):
         return self.label + "[" + ", ".join([
-            "{}={}".format(i, r)
-            for i, r in zip(self._params,
-                            [sbs.Range.dim_to_string(d) for d in self._range])
+            "{}={}".format(i, r) for i, r in zip(
+                self._params, [sbs.Range.dim_to_string(d) for d in self._range])
         ]) + "]"
 
     def validate(self, sdfg, state, node):
@@ -708,7 +698,6 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -787,7 +776,6 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -798,8 +786,8 @@ class ConsumeExit(ExitNode):
     def from_json(json_obj, context=None):
         try:
             # Set consume reference to entry node
-            entry_node = context['sdfg_state'].node(
-                int(json_obj['scope_entry']))
+            entry_node = context['sdfg_state'].node(int(
+                json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
@@ -850,26 +838,22 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
-        desc="Consume schedule",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
-    chunksize = Property(
-        dtype=int,
-        desc="Maximal size of elements to consume at a time",
-        default=1)
+    schedule = Property(dtype=dtypes.ScheduleType,
+                        desc="Consume schedule",
+                        choices=dtypes.ScheduleType,
+                        from_string=lambda x: dtypes.ScheduleType[x],
+                        default=dtypes.ScheduleType.Default)
+    chunksize = Property(dtype=int,
+                         desc="Maximal size of elements to consume at a time",
+                         default=1)
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -900,8 +884,7 @@ class Consume(object):
                     (self._label, self.pe_index, self.num_pes,
                      CodeProperty.to_string(self.condition)))
         else:
-            return (
-                "%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
+            return ("%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
@@ -971,14 +954,13 @@ class Pipeline(Map):
         initialization and drain phase (e.g., N*M + c iterations), which would
         otherwise need a flattened one-dimensional map.
     """
-    init_size = SymbolicProperty(
-        default=0, desc="Number of initialization iterations.")
+    init_size = SymbolicProperty(default=0,
+                                 desc="Number of initialization iterations.")
     init_overlap = Property(
         dtype=bool,
         default=True,
         desc="Whether to increment regular map indices during initialization.")
-    drain_size = SymbolicProperty(
-        default=1, desc="Number of drain iterations.")
+    drain_size = SymbolicProperty(default=1, desc="Number of drain iterations.")
     drain_overlap = Property(
         dtype=bool,
         default=True,
@@ -1083,8 +1065,9 @@ class LibraryNode(CodeNode):
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
-            dace.serialize.set_properties_from_json(
-                ret, json_obj, context=context)
+            dace.serialize.set_properties_from_json(ret,
+                                                    json_obj,
+                                                    context=context)
             return ret
 
     def expand(self, sdfg, state, *args, **kwargs):
@@ -1133,7 +1116,7 @@ class LibraryNode(CodeNode):
             raise KeyError("Unknown implementation for node {}: {}".format(
                 type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)

@@ -63,9 +63,8 @@ class ReloadableDLL(object):
         """ Returns a symbol (e.g., function name) in the loaded library. """
 
         if self._lib is None or self._lib.value is None:
-            raise ReferenceError(
-                'ReloadableDLL can only be used with a ' +
-                '"with" statement or with load() and unload()')
+            raise ReferenceError('ReloadableDLL can only be used with a ' +
+                                 '"with" statement or with load() and unload()')
 
         func = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
         if func is None:
@@ -111,15 +110,25 @@ class ReloadableDLL(object):
                     raise DuplicateDLLError(
                         'Library %s is already loaded somewhere else ' %
                         os.path.basename(self._library_filename) +
-                        'and cannot be unloaded. Please use a different name '
-                        + 'for the SDFG/program.')
+                        'and cannot be unloaded. Please use a different name ' +
+                        'for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
 
         if self._lib.value is None:
-            raise RuntimeError('Could not load library %s' %
-                               os.path.basename(self._library_filename))
+            # Try to understand why the library is not loading, if dynamic
+            # linker is used
+            reason = ''
+            if os.name == 'posix':
+                result = subprocess.run(['ld', self._library_filename],
+                                        capture_output=True)
+                stderr = result.stderr.decode('utf-8')
+                reason = 'Reason:\n' + '\n'.join(
+                    [l for l in stderr.split('\n') if '_start' not in l])
+            raise RuntimeError(
+                'Could not load library %s. %s' %
+                (os.path.basename(self._library_filename), reason))
 
     def unload(self):
         """ Unloads the internal library using the stub. """
@@ -208,18 +217,16 @@ class CompiledSDFG(object):
         for a, arg, atype in zip(argnames, arglist, argtypes):
             if not _is_array(arg) and isinstance(atype, dt.Array):
                 raise TypeError(
-                    'Passing an object (type %s) to an array in argument "%s"'
-                    % (type(arg).__name__, a))
+                    'Passing an object (type %s) to an array in argument "%s"' %
+                    (type(arg).__name__, a))
             elif _is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
             elif not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg,
-                        (atype.dtype.type,
-                         sp.Basic)) and not (isinstance(arg, symbolic.symbol)
-                                             and arg.dtype == atype.dtype):
+                        arg, (atype.dtype.type, sp.Basic)) and not (isinstance(
+                            arg, symbolic.symbol) and arg.dtype == atype.dtype):
                 if isinstance(arg, int) and atype.dtype.type == np.int64:
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
@@ -447,8 +454,7 @@ def generate_program_folder(sdfg,
         environments |= obj.environments
 
     # Write list of environments
-    with open(os.path.join(out_path, "dace_environments.csv"),
-              "w") as env_file:
+    with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
         env_file.write("\n".join(environments))
 
     # Copy snapshot of configuration script
@@ -597,8 +603,7 @@ def configure_and_compile(program_folder,
         "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(cmake_packages)),
         "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(cmake_includes)),
         "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(cmake_libraries)),
-        "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(
-            " ".join(cmake_compile_flags)),
+        "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(" ".join(cmake_compile_flags)),
         # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
         "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(cmake_files)),
     ]

@@ -115,7 +115,7 @@ class MPITransformMap(pattern_matching.Transformation):
         stripmine_subgraph = {
             StripMining._map_entry: self.subgraph[MPITransformMap._map_entry]
         }
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph,
                                 self.expr_index)
         stripmine.dim_idx = -1
@@ -142,7 +142,7 @@ class MPITransformMap(pattern_matching.Transformation):
                 LocalStorage._node_a: graph.node_id(outer_map),
                 LocalStorage._node_b: self.subgraph[MPITransformMap._map_entry]
             }
-            sdfg_id = sdfg.sdfg_list.index(sdfg)
+            sdfg_id = sdfg.sdfg_id
             in_local_storage = LocalStorage(sdfg_id, self.state_id,
                                             in_local_storage_subgraph,
                                             self.expr_index)
@@ -159,7 +159,7 @@ class MPITransformMap(pattern_matching.Transformation):
                 LocalStorage._node_a: graph.node_id(in_map_exit),
                 LocalStorage._node_b: graph.node_id(out_map_exit)
             }
-            sdfg_id = sdfg.sdfg_list.index(sdfg)
+            sdfg_id = sdfg.sdfg_id
             outlocalstorage = LocalStorage(sdfg_id, self.state_id,
                                            outlocalstorage_subgraph,
                                            self.expr_index)

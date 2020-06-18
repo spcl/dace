@@ -72,8 +72,8 @@ void __dace_exit_mpi({params}) {{
         options = ['-DDACE_ENABLE_MPI=ON']
 
         if Config.get("compiler", "mpi", "executable"):
-            compiler = make_absolute(
-                Config.get("compiler", "mpi", "executable"))
+            compiler = make_absolute(Config.get("compiler", "mpi",
+                                                "executable"))
             options.append("-DMPI_CXX_COMPILER=\"{}\"".format(compiler))
 
         return options
@@ -121,9 +121,8 @@ void __dace_exit_mpi({params}) {{
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
-                                               child, function_stream,
-                                               callsite_stream)
+            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
+                                               function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,

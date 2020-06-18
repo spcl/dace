@@ -26,7 +26,7 @@ class CodeIOStream(StringIO):
 
         # If SDFG/state/node location is given, annotate this line
         if sdfg is not None:
-            location_identifier = '  ////__DACE:%s' % sdfg.name
+            location_identifier = '  ////__DACE:%d' % sdfg.sdfg_id
             if state_id is not None:
                 location_identifier += ':' + str(state_id)
                 if node_id is not None:
