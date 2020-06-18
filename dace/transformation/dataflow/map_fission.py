@@ -355,7 +355,7 @@ class MapFission(pattern_matching.Transformation):
                 # Empty memlet edge in nested SDFGs
                 if state.in_degree(component_in) == 0:
                     state.add_edge(me, None, component_in, None,
-                                   mm.EmptyMemlet())
+                                   mm.Memlet())
 
                 for e in state.out_edges(component_out):
                     state.add_edge(e.src, e.src_conn, mx, None, dcpy(e.data))
@@ -371,7 +371,7 @@ class MapFission(pattern_matching.Transformation):
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
                     state.add_edge(component_out, None, mx, None,
-                                   mm.EmptyMemlet())
+                                   mm.Memlet())
             # Connect other sources/sinks not in components (access nodes)
             # directly to external nodes
             if self.expr_index == 0:

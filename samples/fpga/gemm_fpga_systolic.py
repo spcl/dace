@@ -785,22 +785,22 @@ def make_fpga_state(sdfg):
     # Bring data nodes into scope
     state.add_memlet_path(compute_entry,
                           A_pipe_in,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
     state.add_memlet_path(compute_entry,
                           B_pipe_in,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
     state.add_memlet_path(compute_entry,
                           C_pipe_in,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
     state.add_memlet_path(A_pipe_out,
                           compute_exit,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
     state.add_memlet_path(B_pipe_out,
                           compute_exit,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
     state.add_memlet_path(C_pipe_out,
                           compute_exit,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
 
     # Connect data nodes
     state.add_memlet_path(

@@ -481,7 +481,7 @@ def make_outer_compute_state(sdfg):
         unroll=True)
     state.add_memlet_path(compute_entry,
                           pipes_read,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
     state.add_memlet_path(pipes_read,
                           compute_sdfg_node,
                           dst_conn="stream_in",
@@ -499,7 +499,7 @@ def make_outer_compute_state(sdfg):
             dace.properties.SubsetProperty.from_string("p + 1"), 1))
     state.add_memlet_path(pipes_write,
                           compute_exit,
-                          memlet=dace.memlet.EmptyMemlet())
+                          memlet=dace.memlet.Memlet())
 
     state.add_memlet_path(pipes_memory_read,
                           write_sdfg_node,

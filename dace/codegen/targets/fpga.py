@@ -373,7 +373,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     key = alias[key]
                 name = key[0]
                 for edge in state.all_edges(node):
-                    if (isinstance(edge.data, dace.memlet.EmptyMemlet)
+                    if (edge.data.is_empty()
                             or edge.data.data is None):
                         continue
                     if (isinstance(edge.src, dace.sdfg.nodes.AccessNode) and

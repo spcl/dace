@@ -22,23 +22,43 @@ class Memlet(object):
     """
 
     # Properties
-    veclen = Property(dtype=int, desc="Vector length", default=1)
-    num_accesses = SymbolicProperty(default=0)
-    subset = SubsetProperty(default=subsets.Range([]))
-    other_subset = SubsetProperty(allow_none=True)
-    data = DataProperty()
-    debuginfo = DebugInfoProperty()
-    wcr = LambdaProperty(allow_none=True)
-    wcr_conflict = Property(dtype=bool, default=True)
+    num_accesses = SymbolicProperty(default=0,
+                                    desc='The exact number of elements moved '
+                                    'using this memlet, or the maximum number '
+                                    'if dynamic=True')
+    dynamic = Property(default=False,
+                       desc='Is the number of elements moved determined at '
+                       'runtime (e.g., data dependent)')
+    src_subset = SubsetProperty(allow_none=True,
+                                desc='Subset of elements to move from the '
+                                'source of this edge. If None, all elements '
+                                'participate')
+    dst_subset = SubsetProperty(allow_none=True,
+                                desc='Subset of elements to move to the '
+                                'destination of this edge. If None, all '
+                                'elements participate')
+    wcr = LambdaProperty(allow_none=True,
+                         desc='If set, defines a write-conflict resolution '
+                         'lambda function. The syntax of the lambda function '
+                         'receives two elements: `current` value and `new` '
+                         'value, and returns the value after resolution')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and '
+                                  'generated code')
+
+    # Code generation hints
+    wcr_conflict = Property(dtype=bool,
+                            default=True,
+                            desc='If False, always generates non-conflicting '
+                            '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool,
                          default=False,
                          desc='Bypass out-of-bounds validation')
 
     def __init__(self,
-                 data,
-                 num_accesses,
-                 subset,
-                 vector_length,
+                 data=None,
+                 num_accesses=None,
+                 subset=None,
+                 vector_length=None,
                  wcr=None,
                  other_subset=None,
                  debuginfo=None,
@@ -46,7 +66,7 @@ class Memlet(object):
         """ Constructs a Memlet.
             :param data: The data object or name to access. B{Note:} this
                          parameter will soon be deprecated.
-            @type data: Either a string of the data descriptor name or an
+            :type data: Either a string of the data descriptor name or an
                         AccessNode.
             :param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
@@ -91,21 +111,22 @@ class Memlet(object):
 
     def to_json(self, parent_graph=None):
         attrs = dace.serialize.all_properties_to_json(self)
-
-        retdict = {"type": "Memlet", "attributes": attrs}
-
-        return retdict
+        return {"type": "Memlet", "attributes": attrs}
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "Memlet":
-            raise TypeError("Invalid data type")
-
-        # Create dummy object
-        ret = Memlet("", dace.dtypes.DYNAMIC, None, 1)
+        ret = Memlet()
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
-
         return ret
+
+    def is_empty(self) -> bool:
+        """ 
+        Returns True if this memlet carries no data. Memlets without data are
+        primarily used for connecting nodes to scopes without transferring 
+        data to them. 
+        """
+        return (self.data is None and self.src_subset is None
+                and self.dst_subset is None)
 
     @staticmethod
     def simple(data,
@@ -119,7 +140,7 @@ class Memlet(object):
         """ Constructs a Memlet from string-based expressions.
             :param data: The data object or name to access. B{Note:} this
                          parameter will soon be deprecated.
-            @type data: Either a string of the data descriptor name or an
+            :type data: Either a string of the data descriptor name or an
                         AccessNode.
             :param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
@@ -182,7 +203,7 @@ class Memlet(object):
             :param dataname: The name of the data descriptor in the SDFG.
             :param datadesc: The data descriptor object.
             :param wcr: The conflict resolution lambda.
-            @type datadesc: Data.
+            :type datadesc: Data
         """
         range = subsets.Range.from_array(datadesc)
         return Memlet(dataname, range.num_elements(), range, 1, wcr=wcr)
@@ -283,13 +304,6 @@ class Memlet(object):
 
     def __repr__(self):
         return "Memlet (" + self.__str__() + ")"
-
-
-class EmptyMemlet(Memlet):
-    """ A memlet without data. Primarily used for connecting nodes to scopes
-        without transferring data to them. """
-    def __init__(self):
-        super(EmptyMemlet, self).__init__(None, 0, None, 1)
 
 
 class MemletTree(object):

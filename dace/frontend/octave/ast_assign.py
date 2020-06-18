@@ -161,7 +161,7 @@ class AST_Assign(AST_Node):
                         dace.memlet.Memlet.simple(
                             self.lhs.arrayname.get_name(),
                             ','.join([str(d) for d in acc_dims])))
-                    s.add_edge(dn, None, mex, None, dace.memlet.EmptyMemlet())
+                    s.add_edge(dn, None, mex, None, dace.memlet.Memlet())
 
             else:
                 raise NotImplementedError("Assignment with lhs of type " +

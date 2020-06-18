@@ -85,7 +85,7 @@ class Node(object):
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
 
-    def add_in_connector(self, connector_name: str):
+    def add_in_connector(self, connector_name: str, dtype=None):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.

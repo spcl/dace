@@ -8,7 +8,7 @@ import sympy
 import warnings
 
 from dace import registry, subsets, symbolic, dtypes
-from dace.memlet import EmptyMemlet, Memlet
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 
 
@@ -624,8 +624,8 @@ def _propagate_node(dfg_state, node):
         ]
 
     for edge in external_edges:
-        if isinstance(edge.data, EmptyMemlet):
-            new_memlet = EmptyMemlet()
+        if edge.data.is_empty():
+            new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges
                                  if e.data.data == edge.data.data)
@@ -658,8 +658,8 @@ def propagate_memlet(dfg_state,
         neighboring_edges = dfg_state.in_edges(scope_node)
     else:
         raise TypeError('Trying to propagate through a non-scope node')
-    if isinstance(memlet, EmptyMemlet):
-        return EmptyMemlet()
+    if memlet.is_empty():
+        return Memlet()
 
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors

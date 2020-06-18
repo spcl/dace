@@ -1626,7 +1626,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                    dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
                         state.add_edge(entry_node, None, v, None,
-                                       dace.EmptyMemlet())
+                                       dace.Memlet())
                     continue
 
                 if isinstance(v, tuple):
@@ -1727,7 +1727,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_edge(read_node, None, internal_node, conn, memlet)
         else:
             if entry_node is not None:
-                state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
+                state.add_nedge(entry_node, internal_node, dace.Memlet())
 
         # Parse internal node outputs
         if outputs:
@@ -1822,7 +1822,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                    inner_memlet)
         else:
             if exit_node is not None:
-                state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
+                state.add_nedge(internal_node, exit_node, dace.Memlet())
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
         """ 
