@@ -23,8 +23,6 @@ state.add_edge_pair(mx,
                     internal_connector='b',
                     scope_connector='o')
 
-sdfg.draw_to_file()
-
 if __name__ == '__main__':
     A = np.random.rand(31).astype(np.float32)
     B = np.array([0.], dtype=np.float32)

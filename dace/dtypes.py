@@ -4,8 +4,9 @@ import ctypes
 import aenum
 import inspect
 import numpy
+import re
 from functools import wraps
-
+from dace.config import Config
 from dace.registry import extensible_enum
 
 
@@ -14,25 +15,28 @@ class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
-    Immaterial = ()  # Needs materialize function
-    Register = ()  # Tasklet storage location
-    CPU_Pinned = ()  # NOTE: Can be DMA accessed from accelerators
-    CPU_Heap = ()  # NOTE: Allocated with new[]
-    CPU_Stack = ()  # NOTE: Allocated on stack
+    Immaterial = ()  # Data that is materialized on access
+    Register = ()  # Local data on registers, stack, or equivalent memory
+    CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = ()  # Host memory allocated on heap
+    CPU_ThreadLocal = ()  # Thread-local host memory
     GPU_Global = ()  # Global memory
     GPU_Shared = ()  # Shared memory
-    GPU_Stack = ()  # GPU registers
     FPGA_Global = ()  # Off-chip global memory (DRAM)
     FPGA_Local = ()  # On-chip memory (bulk storage)
     FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
+    FPGA_ShiftRegister = ()  # Only accessible at constant indices
 
 
 @extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
+    # TODO: Address different targets w.r.t. sequential
+    # TODO: Add per-type properties for scope nodes. Consider TargetType enum
+    #       and a MapScheduler class
 
     Default = ()  # Scope-default parallel schedule
-    Sequential = ()  # Sequential code (single-core)
+    Sequential = ()  # Sequential code (single-thread)
     MPI = ()  # MPI processes
     CPU_Multicore = ()  # OpenMP
     GPU_Device = ()  # Kernel
@@ -65,6 +69,21 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+
+    # Only supported in OpenMP
+    Sub = ()  # Subtraction
+    Div = ()  # Division
+
+
+@extensible_enum
+class AllocationLifetime(aenum.AutoNumberEnum):
+    """ Options for allocation span (when to allocate/deallocate) of data. """
+
+    Scope = ()  # Allocated/Deallocated on innermost scope start/end
+    State = ()  # Allocated throughout the containing state
+    SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
+    Global = ()  # Allocated throughout the entire program (outer SDFG)
+    Persistent = ()  # Allocated throughout multiple invocations (init/exit)
 
 
 @extensible_enum
@@ -100,10 +119,10 @@ SCOPEDEFAULT_STORAGE = {
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
-    ScheduleType.CPU_Multicore: StorageType.CPU_Stack,
+    ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
-    ScheduleType.GPU_ThreadBlock: StorageType.GPU_Stack,
-    ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.GPU_Stack,
+    ScheduleType.GPU_ThreadBlock: StorageType.Register,
+    ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
 }
 
@@ -201,10 +220,26 @@ class typeclass(object):
                 wrapped_type = getattr(numpy, wrapped_type)
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
+
+        config_data_types = Config.get('compiler', 'default_data_types')
         if wrapped_type is int:
-            wrapped_type = numpy.int64
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.int64
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.int32
+            else:
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
         elif wrapped_type is float:
-            wrapped_type = numpy.float64
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.float64
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.float32
+            else:
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
         elif wrapped_type is complex:
             wrapped_type = numpy.complex128
 
@@ -226,6 +261,9 @@ class typeclass(object):
         """ Returns the ctypes version of the typeclass. """
         return _FFI_CTYPES[self.type]
 
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.type)
+
     def is_complex(self):
         if self.type == numpy.complex64 or self.type == numpy.complex128:
             return True
@@ -233,6 +271,10 @@ class typeclass(object):
 
     def to_json(self):
         return self.type.__name__
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return json_to_typeclass(json_obj, context)
 
     # Create a new type
     def __call__(self, *args, **kwargs):
@@ -259,159 +301,89 @@ class typeclass(object):
         return self.ctype
 
 
-# _CTYPES_RULES: returns the largest between two types (dace.types.typeclass) according to C semantic
-_CTYPES_RULES = {
+def max_value(dtype: typeclass):
+    """Get a max value literal for `dtype`."""
+    nptype = dtype.as_numpy_dtype()
+    if nptype == numpy.bool:
+        return True
+    elif numpy.issubdtype(nptype, numpy.integer):
+        return numpy.iinfo(nptype).max
+    elif numpy.issubdtype(nptype, numpy.floating):
+        return numpy.finfo(nptype).max
 
-    # Both operands are integers
-    # C Integer promotion rules apply:
-    # - if the types are the same, return the type
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.uint8))):
-    typeclass(numpy.uint8),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint16))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint32))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint64))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.int8))):
-    typeclass(numpy.int8),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.int16))):
-    typeclass(numpy.int16),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int32))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int64))):
-    typeclass(numpy.int64),
+    raise TypeError('Unsupported type "%s" for maximum' % dtype)
 
-    # - Otherwise if both operands after promotion have the same signedness
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint32))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.uint8))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint16))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.uint8))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.uint8))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int32))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int16))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.int8))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int16))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int), typeclass(numpy.int16))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.int8))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int), typeclass(numpy.int8))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.int8))):
-    typeclass(numpy.int16),
 
-    # - Otherwise, the signedness is different: If the operand with the unsigned type has
-    # conversion rank greater or equal than the rank of the type of the signed operand,
-    # then the operand with the signed type is implicitly converted to the unsigned type
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int64))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int32))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int16))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint64), typeclass(numpy.int8))):
-    typeclass(numpy.uint64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int32))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int16))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.int8))):
-    typeclass(numpy.uint32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.int16))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.int8))):
-    typeclass(numpy.uint16),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.int8))):
-    typeclass(numpy.uint8),
+def min_value(dtype: typeclass):
+    """Get a min value literal for `dtype`."""
+    nptype = dtype.as_numpy_dtype()
+    if nptype == numpy.bool:
+        return False
+    elif numpy.issubdtype(nptype, numpy.integer):
+        return numpy.iinfo(nptype).min
+    elif numpy.issubdtype(nptype, numpy.floating):
+        return numpy.finfo(nptype).min
 
-    # - Otherwise, the signedness is different and the signed operand's rank is greater than
-    # unsigned operand's rank. In this case, if the signed type can represent all values of
-    # the unsigned type, then the operand with the unsigned type is implicitly converted to
-    # the type of the signed operand.
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint32))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint16))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int64), typeclass(numpy.uint8))):
-    typeclass(numpy.int64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.uint16))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.uint8))):
-    typeclass(numpy.int32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.uint8))):
-    typeclass(numpy.int16),
+    raise TypeError('Unsupported type "%s" for minimum' % dtype)
 
-    # If any of the operand is float then the result will be in float (of the biggest rank
-    # if the two operands are of the same type)
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float32))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float64), typeclass(numpy.float16))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.float32), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.float32), typeclass(numpy.float16))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.float16), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float16))):
-    typeclass(numpy.float16),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float32))):
-    typeclass(numpy.float32),
-    frozenset((typeclass(numpy.int8), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.int16), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.int32), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint8), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint16), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-    frozenset((typeclass(numpy.uint32), typeclass(numpy.float64))):
-    typeclass(numpy.float64),
-}
+
+def result_type_of(lhs, *rhs):
+    """ 
+    Returns the largest between two or more types (dace.types.typeclass) 
+    according to C semantics.
+    """
+    if len(rhs) == 0:
+        rhs = None
+    elif len(rhs) > 1:
+        result = lhs
+        for r in rhs:
+            result = result_type_of(result, r)
+        return result
+
+    rhs = rhs[0]
+
+    # Extract the type if symbolic
+    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
+    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+
+    if lhs == rhs:
+        return lhs  # Types are the same, return either
+    if lhs == None:
+        return rhs  # Use RHS even if it's None
+    if rhs == None:
+        return lhs  # Use LHS
+
+    # Extract the numpy type so we can call issubdtype on them
+    lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
+    rhs_ = rhs.type if isinstance(rhs, typeclass) else rhs
+    # Extract data sizes (seems the type itself doesn't expose this)
+    size_lhs = lhs_(0).itemsize
+    size_rhs = rhs_(0).itemsize
+    # Both are integers
+    if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(
+            rhs_, numpy.integer):
+        # If one byte width is larger, use it
+        if size_lhs > size_rhs:
+            return lhs
+        elif size_lhs < size_rhs:
+            return rhs
+        # Sizes are the same
+        if numpy.issubdtype(lhs_, numpy.unsignedinteger):
+            # No matter if right is signed or not, we must return unsigned
+            return lhs
+        else:
+            # Left is signed, so either right is unsigned and we return that,
+            # or both are signed
+            return rhs
+    # At least one side is a floating point number
+    if numpy.issubdtype(lhs_, numpy.integer):
+        return rhs
+    if numpy.issubdtype(rhs_, numpy.integer):
+        return lhs
+    # Both sides are floating point numbers
+    if size_lhs > size_rhs:
+        return lhs
+    return rhs  # RHS is bigger
 
 
 class pointer(typeclass):
@@ -436,11 +408,14 @@ class pointer(typeclass):
         if json_obj['type'] != 'pointer':
             raise TypeError("Invalid type for pointer")
 
-        return pointer(json_to_typeclass(json_obj['dtype']))
+        return pointer(json_to_typeclass(json_obj['dtype'], context))
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
         return ctypes.POINTER(_FFI_CTYPES[self.type])
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
 
 
 def immaterial(dace_data, materialize_func):
@@ -492,7 +467,7 @@ class struct(typeclass):
 
         ret = struct(json_obj['name'])
         ret._data = {
-            k: json_to_typeclass(v)
+            k: json_to_typeclass(v, context)
             for k, v in json_obj['data'].items()
         }
         ret._length = {k: v for k, v in json_obj['length'].items()}
@@ -538,6 +513,9 @@ class struct(typeclass):
         struct_class = type("NewStructClass", (ctypes.Structure, ),
                             {"_fields_": fields})
         return struct_class
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
 
     def emit_definition(self):
         return """struct {name} {{
@@ -609,6 +587,9 @@ class callback(typeclass):
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
 
     def signature(self, name):
         from dace import data
@@ -683,7 +664,8 @@ class callback(typeclass):
 
         return callback(
             json_to_typeclass(rettype) if rettype else None,
-            *(dace.serialize.from_json(arg) for arg in json_obj['arguments']))
+            *(dace.serialize.from_json(arg, context)
+              for arg in json_obj['arguments']))
 
     def __str__(self):
         return "dace.callback"
@@ -833,7 +815,8 @@ def ismodule_and_allowed(var):
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
     from dace.symbolic import symbol
-    return isconstant(var) or ismodule(var) or isinstance(var, symbol)
+    return isconstant(var) or ismodule(var) or isinstance(
+        var, symbol) or isinstance(var, typeclass)
 
 
 class _external_function(object):
@@ -885,14 +868,14 @@ class DebugInfo:
 # Static (utility) functions
 
 
-def json_to_typeclass(obj):
+def json_to_typeclass(obj, context=None):
     # TODO: this does two different things at the same time. Should be split
     # into two separate functions.
     from dace.serialize import get_serializer
     if isinstance(obj, str):
         return get_serializer(obj)
     elif isinstance(obj, dict) and "type" in obj:
-        return get_serializer(obj["type"]).from_json(obj)
+        return get_serializer(obj["type"]).from_json(obj, context)
     else:
         raise ValueError("Cannot resolve: {}".format(obj))
 
@@ -924,3 +907,49 @@ def deduplicate(iterable):
     """ Removes duplicates in the passed iterable. """
     return type(iterable)(
         [i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
+
+
+def validate_name(name):
+    if not isinstance(name, str) or len(name) == 0:
+        return False
+    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
+        return False
+    return True
+
+
+def can_allocate(storage: StorageType, schedule: ScheduleType):
+    """ 
+    Identifies whether a container of a storage type can be allocated in a
+    specific schedule. Used to determine arguments to subgraphs by the 
+    innermost scope that a container can be allocated in. For example, 
+    FPGA_Global memory cannot be allocated from within the FPGA scope, or
+    GPU shared memory cannot be allocated outside of device-level code.
+
+    :param storage: The storage type of the data container to allocate.
+    :param schedule: The scope schedule to query.
+    :return: True if the container can be allocated, False otherwise.
+    """
+    # Host-only allocation
+    if storage in [
+            StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal, StorageType.FPGA_Global,
+            StorageType.GPU_Global
+    ]:
+        return schedule in [
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential,
+            ScheduleType.MPI
+        ]
+
+    # FPGA-local memory
+    if storage in [StorageType.FPGA_Local, StorageType.FPGA_Registers]:
+        return schedule == ScheduleType.FPGA_Device
+
+    # GPU-local memory
+    if storage == StorageType.GPU_Shared:
+        return schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic
+        ]
+
+    # The rest (Registers) can be allocated everywhere
+    return True

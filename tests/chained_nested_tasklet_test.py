@@ -22,7 +22,7 @@ if __name__ == '__main__':
     state = mysdfg.add_state()
     A_ = state.add_array('A', [N], dp.int32)
     B_ = state.add_array('B', [N], dp.int32)
-    mysdfg.add_scalar('something', dp.int32)
+    mysdfg.add_scalar('something', dp.int32, transient=True)
 
     omap_entry, omap_exit = state.add_map('omap', dict(k='0:2'))
     map_entry, map_exit = state.add_map('mymap', dict(i='0:N/2'))
@@ -40,9 +40,6 @@ if __name__ == '__main__':
     state.add_edge(map_exit, None, omap_exit, None,
                    Memlet.simple(B_, 'k*N/2:(k+1)*N/2'))
     state.add_edge(omap_exit, None, B_, None, Memlet.simple(B_, '0:N'))
-
-    # Left for debugging purposes
-    mysdfg.draw_to_file()
 
     mysdfg(A=input, B=output, N=N)
 

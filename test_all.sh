@@ -6,7 +6,9 @@ SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH
 
 DACE_debugprint="${DACE_debugprint:-0}"
-DACE_experimental_test_serialization="${DACE_experimental_test_serialization:-1}"
+DACE_testing_serialization="${DACE_testing_serialization:-1}"
+DACE_testing_single_cache="${DACE_testing_single_cache:-1}"
+DACE_optimizer_interface="${DACE_optimizer_interface:-dace.transformation.optimizer.SDFGOptimizer}"
 NOSTATUSBAR="${NOSTATUSBAR:-0}"
 ERRORS=0
 FAILED_TESTS=""
@@ -132,7 +134,6 @@ cd $SCRIPTPATH/tests
 SUBTESTS=`find . -type d -not -name '.*' | cut -c3- | grep -v "/[._]" | grep -v '^[._]'`
 
 DACE_compiler_use_cache=0
-DACE_optimizer_interface="dace.transformation.optimizer.SDFGOptimizer"
 DACE_optimizer_detect_control_flow=1
 
 # Specific test(s)

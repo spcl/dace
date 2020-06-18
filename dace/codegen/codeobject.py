@@ -8,7 +8,7 @@ class CodeObject(object):
     code = Property(dtype=str, desc="The code attached to this object")
     language = Property(dtype=str,
                         desc="Language used for this code (same " +
-                        "as its file extension)")  # dtype=dtypes.Language?
+                        "as its file extension)")
     target = Property(dtype=type,
                       desc="Target to use for compilation",
                       allow_none=True)

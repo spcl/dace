@@ -34,7 +34,7 @@ bail() {
 run_sample() {
     # Args:
     #  1 - Relative path of FPGA test starting from test folder
-    #  2 - Name of the DAPP program
+    #  2 - Name of the DaCe program
     #  3 - a string indicating the list of input to pass to the python program (the transformation sequence)
     #  4 - program command line argument (if any)
 
@@ -44,7 +44,7 @@ run_sample() {
     echo -e ${3} | $PYTHON_BINARY ${1}.py ${@:4}
 
     if [ $? -ne 0 ]; then
-        bail "$1 (${RED}Wrong emulation result${NC})"
+        bail "$1"
     fi
 
     return 0
@@ -59,18 +59,29 @@ run_all() {
     run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True)\n"
     # Vectorization 3: TODO non vectorizable N
 
+    # Throw error when kernel names are too long
+    run_sample intel_fpga/name_too_long name_too_long "\n"
+    
+    # Test removing degenerate loops that only have a single iteration
+    run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
+    
+    # Test pipeline scopes 
+    run_sample pipeline_scope pipeline_scope "\n" 
+
+    # Test shift register abstraction with stencil code
+    run_sample fpga_stencil fpga_stencil_test "\n"
+
     # ### MAP TILING ####
     # First tile then transform
     run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
+    run_sample intel_fpga/veclen_conversion "\n"
+
     # #### WCR ####
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
-
-    # histogram (WCR on array)
-    run_sample ../samples/simple/histogram histogram "FPGATransformSDFG\$0\n"
 
     # #### REDUCE ####
     # Simple reduce

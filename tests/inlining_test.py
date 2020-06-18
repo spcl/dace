@@ -37,4 +37,4 @@ def myprogram(A, B, cst):
 
 
 if __name__ == '__main__':
-    dp.compile(myprogram, dp.float32[W, H], dp.float32[H, W], dp.int32)
+    myprogram.compile(dp.float32[W, H], dp.float32[H, W], dp.int32)

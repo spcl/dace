@@ -68,8 +68,6 @@ sdfg.fill_scope_connectors()
 # Validate correctness of initial SDFG
 sdfg.validate()
 
-sdfg.draw_to_file()
-
 ######################################
 if __name__ == '__main__':
     print('Multi-stream kernel test')

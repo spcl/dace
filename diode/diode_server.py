@@ -8,7 +8,7 @@ from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
 from dace.transformation.pattern_matching import Transformation
-from dace.graph.nodes import LibraryNode
+from dace.sdfg.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -499,9 +499,10 @@ def expand_node_or_sdfg():
         sdfg.expand_library_nodes()
     else:
         context_sdfg = sdfg.sdfg_list[sdfg_id]
-        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        state = context_sdfg.node(state_id)
+        node = state.node(node_id)
         if isinstance(node, LibraryNode):
-            node.expand(context_sdfg)
+            node.expand(context_sdfg, state)
         else:
             return jsonify({'error': 'The given node is not a library node'})
 
@@ -594,7 +595,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
 
     sid = int(property_element['state_id'])
     nid = int(property_element['node_id'])
-    node = sdfg.find_node(sid, nid)
+    node = sdfg.node(sid).node(nid)
 
     for prop in property_element['params']:
         dace.serialize.set_properties_from_json(node, prop, context=sdfg)
@@ -621,8 +622,8 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
         name = x['name']
         classname = name[:name.index('$')] if name.find('$') >= 0 else name
 
-        transformation = next(t for t in Transformation.extensions().keys() if
-                              t.__name__ == classname)
+        transformation = next(t for t in Transformation.extensions().keys()
+                              if t.__name__ == classname)
         matching = optimizer.get_pattern_matches(patterns=[transformation])
 
         # Apply properties (will automatically apply by step-matching)
@@ -1250,6 +1251,7 @@ def main():
         # Wait for an event that will never arrive (passive wait)
         event = threading.Event()
         event.wait()
+
 
 if __name__ == '__main__':
     main()

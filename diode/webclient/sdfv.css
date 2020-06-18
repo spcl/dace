@@ -29,8 +29,14 @@ h1,h2,h3,h4,h5,h6{font-family:"Segoe UI",Arial,sans-serif;font-weight:400;margin
     height: 100%;
     width: 2px;
     display: flex;
+    position: fixed;
     cursor: col-resize;
     background-color: silver;
+}
+
+.sidebar-inner {
+  display: block;
+  margin-left: 15px;
 }
 
 .context_menu {

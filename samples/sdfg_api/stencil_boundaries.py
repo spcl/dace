@@ -70,8 +70,6 @@ sdfg.validate()
 # NOTE: If GPUTransformSDFG is applied, boundary kernels will run on separate
 # streams.
 if __name__ == '__main__':
-    sdfg.draw_to_file()
-
     H, W = 24, 24
 
     A = np.random.rand(H, W).astype(np.float32)

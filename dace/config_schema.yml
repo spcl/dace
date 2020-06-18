@@ -38,23 +38,17 @@ required:
                     on compilation. Defaults to the transformation CLI, empty
                     string or an invalid class name skips the process.
 
-            visualize:
-                type: bool
-                default: false
-                title: Visualize SDFG
-                description: Open a GraphViz window after every transformation.
-
             visualize_sdfv:
                 type: bool
                 default: false
                 title: Visualize SDFG
                 description: Open a SDFV in browser every transformation.
 
-            savedots:
+            save_intermediate:
                 type: bool
                 default: false
-                title: Save dot files
-                description: Save GraphViz .dot files after every transformation.
+                title: Save intermediate SDFGs
+                description: Save SDFG files after every transformation.
 
             automatic_strict_transformations:
                 type: bool
@@ -117,7 +111,17 @@ required:
                 description: >
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
-                   
+
+            default_data_types:
+                type : str
+                default: Python
+                title : Default data types
+                descrition: >
+                    Specify the default data types to use in generating code.
+                    If "Python", Python's semantics will be followed (i.e., `float`  and `int`
+                    are represented using 64 bits). If the property is set to "C", C's semantcs will be
+                    used (`float` and `int` are represented using 32bits).
+
             fpga_vendor:
                 type: str
                 default: xilinx 
@@ -125,6 +129,18 @@ required:
                 description: >
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
                     generating code. 
+
+            autobuild_bitstreams:
+                type: bool
+                default: true
+                title: Automatically build bitstreams
+                description: >
+                    If set to true, CMake will automatically build missing
+                    bitstreams when running an FPGA program. This can take a
+                    very long time, and users might want to do this manually.
+                    If set to false, the program will optimistically assume
+                    that the bitstream is present in the build directory, and
+                    will crash if this is not the case.
             #############################################
             # CPU compiler
             cpu:
@@ -187,6 +203,24 @@ required:
                             Default thread-block size for CUDA kernels when
                             explicit GPU block maps are not defined.
                         default: '32,1,1'
+
+                    dynamic_map_block_size:
+                        type: str
+                        title: Thread-Block size for GPU_ThreadBlock_Dynamic
+                        description: >
+                            Thread-Block size for maps using GPU_ThreadBlock_Dynamic
+                            scheduler.
+                        default: '128,1,1'
+
+                    dynamic_map_fine_grained:
+                        type: bool
+                        title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
+                        description: >
+                            If true the scheduler will dynamically redistribute the
+                            combined work of all threads in the warp equally across the
+                            warp (fine grained). Otherwise, each warp works sequentially
+                            only on its tasks (potential load imbalance).
+                        default: true
 
                     max_concurrent_streams:
                         type: int
@@ -535,13 +569,29 @@ required:
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
 
-            test_serialization:
+    #############################################
+    # Features for unit testing
+
+    testing:
+        type: dict
+        title: Testing
+        description: Unit testing settings
+        required:
+            serialization:
                 type: bool
                 default: false
                 title: Test Serialization on validation
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+
+            single_cache:
+                type: bool
+                default: false
+                title: Use one build folder
+                description: >
+                    When generating code, use a single build folder as cache.
+                    Speeds up build time but disallows concurrent invocations.
 
     #############################################
     # DaCe library settings 
@@ -566,4 +616,3 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
-

@@ -5,9 +5,8 @@ from string import ascii_letters
 from typing import Dict, Optional
 
 from dace import dtypes, symbolic
-from dace.graph.nodes import AccessNode
-from dace.graph.edges import InterstateEdge
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.nodes import AccessNode
+from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
 
