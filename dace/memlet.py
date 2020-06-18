@@ -2,6 +2,7 @@ import ast
 from functools import reduce
 import operator
 from typing import List, Set
+import warnings
 
 import dace
 import dace.serialize
@@ -25,7 +26,7 @@ class Memlet(object):
     num_accesses = SymbolicProperty(default=0,
                                     desc='The exact number of elements moved '
                                     'using this memlet, or the maximum number '
-                                    'if dynamic=True')
+                                    'if dynamic=True (with 0 as unbounded)')
     dynamic = Property(default=False,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
@@ -78,7 +79,8 @@ class Memlet(object):
                                   the data (used for vectorization
                                   optimizations).
             :param wcr: A lambda function specifying how write-conflicts
-                        are resolved. The syntax of the lambda function receives two elements: `current` value and `new` value,
+                        are resolved. The syntax of the lambda function 
+                        receives two elements: `current` value and `new` value,
                         and returns the value after resolution. For example,
                         summation is `lambda cur, new: cur + new`.
             :param other_subset: The reindexing of `subset` on the other
@@ -168,19 +170,31 @@ class Memlet(object):
                               used for debugging.
 
         """
-        subset = SubsetProperty.from_string(subset_str)
+        warnings.warn(
+            'This function is deprecated, please use the Memlet '
+            'constructor instead', DeprecationWarning)
+        if isinstance(subset_str, subsets.Subset):
+            subset = subset_str
+        else:
+            subset = SubsetProperty.from_string(subset_str)
         if num_accesses is not None:
             na = num_accesses
         else:
             na = subset.num_elements()
 
         if wcr_str is not None:
-            wcr = LambdaProperty.from_string(wcr_str)
+            if isinstance(wcr_str, ast.AST):
+                wcr = wcr_str
+            else:
+                wcr = LambdaProperty.from_string(wcr_str)
         else:
             wcr = None
 
         if other_subset_str is not None:
-            other_subset = SubsetProperty.from_string(other_subset_str)
+            if isinstance(other_subset_str, subsets.Subset):
+                other_subset = other_subset_str
+            else:
+                other_subset = SubsetProperty.from_string(other_subset_str)
         else:
             other_subset = None
 

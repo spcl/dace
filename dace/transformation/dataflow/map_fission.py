@@ -317,10 +317,16 @@ class MapFission(pattern_matching.Transformation):
                     sbs.offset([r[0] for r in outer_map.range], True)
                     state.add_edge(
                         edge.src, edge.src_conn, anode, None,
-                        mm.Memlet(name, outer_map.range.num_elements(), sbs, 1))
+                        mm.Memlet.simple(
+                            name,
+                            sbs,
+                            num_accesses=outer_map.range.num_elements()))
                     state.add_edge(
                         anode, None, edge.dst, edge.dst_conn,
-                        mm.Memlet(name, outer_map.range.num_elements(), sbs, 1))
+                        mm.Memlet.simple(
+                            name,
+                            sbs,
+                            num_accesses=outer_map.range.num_elements()))
                     state.remove_edge(edge)
 
             # Add extra maps around components
@@ -354,8 +360,7 @@ class MapFission(pattern_matching.Transformation):
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.in_degree(component_in) == 0:
-                    state.add_edge(me, None, component_in, None,
-                                   mm.Memlet())
+                    state.add_edge(me, None, component_in, None, mm.Memlet())
 
                 for e in state.out_edges(component_out):
                     state.add_edge(e.src, e.src_conn, mx, None, dcpy(e.data))
@@ -370,8 +375,7 @@ class MapFission(pattern_matching.Transformation):
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
-                    state.add_edge(component_out, None, mx, None,
-                                   mm.Memlet())
+                    state.add_edge(component_out, None, mx, None, mm.Memlet())
             # Connect other sources/sinks not in components (access nodes)
             # directly to external nodes
             if self.expr_index == 0:
