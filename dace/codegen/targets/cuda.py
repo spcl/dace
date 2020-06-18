@@ -254,27 +254,28 @@ void __dace_exit_cuda({params}) {{
 
     @staticmethod
     def cmake_options():
+        options = []
 
-        host_compiler = make_absolute(
-            Config.get("compiler", "cpu", "executable"))
-        compiler = make_absolute(Config.get("compiler", "cuda", "executable"))
-        flags = Config.get("compiler", "cuda", "args")
-        flags += Config.get("compiler", "cuda", "additional_args")
+        # Override CUDA toolkit
+        if Config.get('compiler', 'cuda', 'path'):
+            options.append("-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
+                Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
 
         # Get CUDA architectures from configuration
         cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
         cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
 
+        flags = Config.get("compiler", "cuda", "args")
         flags += ' ' + ' '.join(
             '-gencode arch=compute_{arch},code=sm_{arch}'.format(arch=arch)
             for arch in cuda_arch)
 
-        options = [
-            "-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler),
-            "-DCUDA_NVCC_FLAGS=\"{}\"".format(flags),
-            "-DCUDA_TOOLKIT_ROOT_DIR=\"{}\"".format(
-                os.path.dirname(os.path.dirname(compiler).replace('\\', '/')))
-        ]
+        options.append("-DCUDA_NVCC_FLAGS=\"{}\"".format(flags))
+
+        if Config.get('compiler', 'cpu', 'executable'):
+            host_compiler = make_absolute(
+                Config.get("compiler", "cpu", "executable"))
+            options.append("-DCUDA_HOST_COMPILER=\"{}\"".format(host_compiler))
 
         return options
 
@@ -1190,19 +1191,19 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
             Ruleset for kernel dimensions:
                 1. If only one map (device-level) exists, of an integer set S,
-                   the block size is 32x1x1 and grid size is ceil(|S|/32) in 
+                   the block size is 32x1x1 and grid size is ceil(|S|/32) in
                    1st dimension.
-                2. If nested thread-block maps exist (T_1,...,T_n), grid 
-                   size is |S| and block size is max(|T_1|,...,|T_n|) with 
+                2. If nested thread-block maps exist (T_1,...,T_n), grid
+                   size is |S| and block size is max(|T_1|,...,|T_n|) with
                    block specialization.
-                3. If block size can be overapproximated, it is (for 
-                    dynamically-sized blocks that are bounded by a 
+                3. If block size can be overapproximated, it is (for
+                    dynamically-sized blocks that are bounded by a
                     predefined size).
-    
+
             @note: Kernel dimensions are separate from the map
                    variables, and they should be treated as such.
             @note: To make use of the grid/block 3D registers, we use multi-
-                   dimensional kernels up to 3 dimensions, and flatten the 
+                   dimensional kernels up to 3 dimensions, and flatten the
                    rest into the third dimension.
         """
 
@@ -1289,10 +1290,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         return grid_size, block_size, True
 
     def generate_kernel_scope(
-            self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int,
-            kernel_map: nodes.Map, kernel_name: str, grid_dims: list,
-            block_dims: list, has_tbmap: bool, kernel_params: list,
-            function_stream: CodeIOStream, kernel_stream: CodeIOStream):
+        self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int,
+        kernel_map: nodes.Map, kernel_name: str, grid_dims: list,
+        block_dims: list, has_tbmap: bool, kernel_params: list,
+        function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit

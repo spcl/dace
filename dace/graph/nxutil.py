@@ -102,7 +102,7 @@ def depth_limited_dfs_iter(source, depth):
             stack.pop()
 
 
-def dfs_topological_sort(G, sources=None, parent=False, condition=None):
+def dfs_topological_sort(G, sources=None, condition=None):
     """ Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering
@@ -261,10 +261,6 @@ def range_to_str(ranges, limit_length=50):
         s.append(convert_index(r))
 
     res = ', '.join(s)
-    if limit_length is not None:
-        if not Config.get_bool('renderer', 'fulledges') and \
-           len(res) > limit_length:
-            res = '...'
 
     return "[" + res + "]"
 

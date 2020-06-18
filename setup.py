@@ -13,6 +13,7 @@ runtime_files = [
 diode_files = [
     f[len(diode_path):]
     for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
+              glob.glob(diode_path + 'templates/**/*', recursive=True) +
               glob.glob(diode_path + '**/LICENSE', recursive=True))
 ]
 cub_files = [
@@ -57,9 +58,15 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'scipy', 'pyyaml',
-          'absl-py', 'ply', 'websockets', 'graphviz', 'requests', 'flask',
+          'numpy', 'networkx >= 2.2', 'astunparse', 'sympy', 'pyyaml',
+          'ply', 'websockets', 'graphviz', 'requests', 'flask',
           'scikit-build', 'cmake', 'aenum'
       ],
-      tests_require=['coverage'],
-      scripts=['scripts/diode', 'scripts/dacelab', 'scripts/sdfv'])
+      extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},
+      entry_points={
+        'console_scripts': [
+            'dacelab = dace.frontend.octave.dacelab:main',
+            'diode = diode.diode_server:main',
+            'sdfv = diode.sdfv:main'
+        ],
+      })

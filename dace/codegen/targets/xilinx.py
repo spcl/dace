@@ -1,3 +1,5 @@
+import collections
+import itertools
 import os
 import re
 
@@ -37,8 +39,6 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
     @staticmethod
     def cmake_options():
-        compiler = make_absolute(Config.get("compiler", "xilinx",
-                                            "executable"))
         host_flags = Config.get("compiler", "xilinx", "host_flags")
         synthesis_flags = Config.get("compiler", "xilinx", "synthesis_flags")
         build_flags = Config.get("compiler", "xilinx", "build_flags")
@@ -47,8 +47,6 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "xilinx", "enable_debugging") else "OFF")
         options = [
-            "-DSDACCEL_ROOT_DIR={}".format(
-                os.path.dirname(os.path.dirname(compiler))),
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
             "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags),
@@ -56,28 +54,25 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
         ]
+        # Override Vitis/SDx/SDAccel installation directory
+        if Config.get("compiler", "xilinx", "path"):
+            options.append("-DVITIS_ROOT_DIR=\"{}\"".format(
+                Config.get("compiler", "xilinx", "path").replace("\\", "/")))
         return options
 
     def get_generated_codeobjects(self):
 
         execution_mode = Config.get("compiler", "xilinx", "mode")
-        try:
-            sdaccel_dir = os.path.dirname(
-                os.path.dirname(
-                    make_absolute(
-                        Config.get("compiler", "xilinx", "executable"))))
-        except ValueError:
-            sdaccel_dir = ''
 
-        kernel_file_name = "DACE_BINARY_DIR \"{}".format(self._program_name)
+        kernel_file_name = "DACE_BINARY_DIR \"/{}".format(self._program_name)
         if execution_mode == "software_emulation":
             kernel_file_name += "_sw_emu.xclbin\""
-            xcl_emulation_mode = "sw_emu"
-            xilinx_sdx = sdaccel_dir
+            xcl_emulation_mode = "\"sw_emu\""
+            xilinx_sdx = "DACE_VITIS_DIR"
         elif execution_mode == "hardware_emulation":
             kernel_file_name += "_hw_emu.xclbin\""
-            xcl_emulation_mode = "sw_emu"
-            xilinx_sdx = sdaccel_dir
+            xcl_emulation_mode = "\"hw_emu\""
+            xilinx_sdx = "DACE_VITIS_DIR"
         elif execution_mode == "hardware" or execution_mode == "simulation":
             kernel_file_name += "_hw.xclbin\""
             xcl_emulation_mode = None
@@ -87,7 +82,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                 "Unknown Xilinx execution mode: {}".format(execution_mode))
 
         set_env_vars = ""
-        set_str = "dace::set_environment_variable(\"{}\", \"{}\");\n"
+        set_str = "dace::set_environment_variable(\"{}\", {});\n"
         unset_str = "dace::unset_environment_variable(\"{}\");\n"
         set_env_vars += (set_str.format("XCL_EMULATION_MODE",
                                         xcl_emulation_mode)
@@ -106,10 +101,17 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
         host_code.write("""
+dace::fpga::Context *dace::fpga::_context;
+
 DACE_EXPORTED int __dace_init_xilinx({signature}) {{
     {environment_variables}
-    hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
+    dace::fpga::_context = new dace::fpga::Context();
+    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
     return 0;
+}}
+
+DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
+    delete dace::fpga::_context;
 }}
 
 {host_code}""".format(signature=self._global_sdfg.signature(),
@@ -286,10 +288,12 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
             if kernel_arg:
                 kernel_args.append(kernel_arg)
 
+        scalar_parameters = collections.OrderedDict(scalar_parameters)
+        symbol_parameters.update(scalar_parameters)
         kernel_args += ([
             arg.signature(with_types=True, name=argname)
-            for argname, arg in scalar_parameters
-        ] + symbol_params)
+            for argname, arg in symbol_parameters.items()
+        ])
 
         # Write kernel signature
         kernel_stream.write(
@@ -326,11 +330,15 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                                     symbol_parameters, kernel_stream):
 
         # Just collect all variable names for calling the kernel function
-        kernel_args = [
-            p.signature(False, name=name) for is_output, name, p in parameters
-        ]
-
-        kernel_args += symbol_parameters.keys()
+        added = set()
+        kernel_args = []
+        for _, name, p in itertools.chain(
+                parameters,
+            [(False, k, v) for k, v in symbol_parameters.items()]):
+            if not isinstance(p, dace.data.Array) and name in added:
+                continue
+            added.add(name)
+            kernel_args.append(p.signature(False, name=name))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
@@ -353,18 +361,13 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
-        # Treat scalars and symbols the same, assuming there are no scalar
-        # outputs
-        symbol_sigs = [
-            v.signature(with_types=True, name=k)
-            for k, v in symbol_parameters.items()
-        ]
-        symbol_names = symbol_parameters.keys()
         kernel_args_call = []
         kernel_args_module = []
         added = set()
 
-        for is_output, pname, p in parameters:
+        for is_output, pname, p in itertools.chain(
+                parameters,
+            [(False, k, v) for k, v in symbol_parameters.items()]):
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
@@ -393,8 +396,6 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                         p.signature(with_types=False, name=pname))
                     kernel_args_module.append(
                         p.signature(with_types=True, name=pname))
-        kernel_args_call += symbol_names
-        kernel_args_module += symbol_sigs
         module_function_name = "module_" + name
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -622,7 +623,9 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
         kernel_args = []
 
         seen = set()
-        for is_output, name, arg in parameters:
+        for is_output, name, arg in itertools.chain(
+                parameters,
+            [(False, k, v) for k, v in symbol_parameters.items()]):
             if isinstance(arg, dace.data.Array):
                 kernel_args.append(
                     arg.signature(with_types=True,
@@ -633,11 +636,6 @@ DACE_EXPORTED int __dace_init_xilinx({signature}) {{
                     continue
                 seen.add(name)
                 kernel_args.append(arg.signature(with_types=True, name=name))
-
-        kernel_args += [
-            v.signature(with_types=True, name=k)
-            for k, v in symbol_parameters.items()
-        ]
 
         host_code_stream.write(
             """\

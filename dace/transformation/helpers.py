@@ -260,10 +260,13 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
 
         result.subset.unsqueeze(to_unsqueeze)
     elif len(internal_memlet.subset) > len(external_memlet.subset):
-        raise ValueError('Unexpected extra dimensions in internal memlet '
-                         'while un-squeezing memlet.\nExternal memlet: %s\n'
-                         'Internal memlet: %s' %
-                         (external_memlet, internal_memlet))
+        # Try to squeeze internal memlet
+        result.subset.squeeze()
+        if len(result.subset) != len(external_memlet.subset):
+            raise ValueError('Unexpected extra dimensions in internal memlet '
+                             'while un-squeezing memlet.\nExternal memlet: %s\n'
+                             'Internal memlet: %s' %
+                             (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
 

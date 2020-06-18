@@ -98,7 +98,7 @@ class Memlet(object):
     def to_json(self, parent_graph=None):
         attrs = dace.serialize.all_properties_to_json(self)
 
-        retdict = {"type": "Memlet", "label": str(self), "attributes": attrs}
+        retdict = {"type": "Memlet", "attributes": attrs}
 
         return retdict
 
@@ -188,14 +188,15 @@ class Memlet(object):
                       debuginfo=debuginfo)
 
     @staticmethod
-    def from_array(dataname, datadesc):
+    def from_array(dataname, datadesc, wcr=None):
         """ Constructs a Memlet that transfers an entire array's contents.
             :param dataname: The name of the data descriptor in the SDFG.
             :param datadesc: The data descriptor object.
+            :param wcr: The conflict resolution lambda.
             @type datadesc: Data.
         """
         range = subsets.Range.from_array(datadesc)
-        return Memlet(dataname, range.num_elements(), range, 1)
+        return Memlet(dataname, range.num_elements(), range, 1, wcr=wcr)
 
     def __hash__(self):
         return hash((self.data, self.num_accesses, self.subset, self.veclen,

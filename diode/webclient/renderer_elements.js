@@ -36,8 +36,7 @@ class SDFGElement {
     }
 
     // Produces HTML for a hover-tooltip
-    tooltip() {
-        return null;
+    tooltip(container) {
     }
 
     topleft() {
@@ -106,7 +105,7 @@ class State extends SDFGElement {
         ctx.fillStyle = "#000000";
 
         if (mousepos && this.intersect(mousepos.x, mousepos.y))
-            renderer.tooltip = this.tooltip();
+            renderer.tooltip = (c) => this.tooltip(c);
         // Draw state name in center without contents (does not look good)
         /*
         let FONTSIZE = Math.min(renderer.canvas_manager.points_per_pixel() * 16, 100);
@@ -122,8 +121,8 @@ class State extends SDFGElement {
         */
     }
 
-    tooltip() {
-        return "State: " + this.label();
+    tooltip(container) {
+        container.innerHTML = 'State: ' + this.label();
     }
 
     attributes() {
@@ -200,7 +199,7 @@ class Edge extends SDFGElement {
 
         let style = this.strokeStyle();
         if (style !== 'black')
-            renderer.tooltip = this.tooltip();
+            renderer.tooltip = (c) => this.tooltip(c, renderer);
         if (this.parent_id == null && style === 'black') {  // Interstate edge
             style = 'blue';
         }
@@ -225,8 +224,36 @@ class Edge extends SDFGElement {
         ctx.strokeStyle = "black";
     }
 
-    tooltip() {
-        return this.label();
+    tooltip(container, renderer) {
+        let dsettings = renderer.view_settings();
+        let attr = this.attributes();
+        // Memlet
+        if (attr.subset !== undefined) {
+            if (attr.subset === null) {  // Empty memlet
+                container.style.display = 'none';
+                return;
+            }
+            let contents = attr.data;
+            contents += sdfg_property_to_string(attr.subset, dsettings);
+            
+            if (attr.other_subset)
+                contents += ' -> ' + sdfg_property_to_string(attr.other_subset, dsettings);
+
+            if (attr.wcr)
+                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr, dsettings) +'</b>';
+
+            let num_accesses = sdfg_property_to_string(attr.num_accesses, dsettings);
+            if (num_accesses == -1)
+                num_accesses = "<b>Dynamic</b>";
+
+            contents += '<br /><font style="font-size: 14px">Volume: ' + num_accesses + '</font>';
+            container.innerHTML = contents;
+        } else {  // Interstate edge
+            container.style.background = '#0000aabb';
+            container.innerText = this.label();
+            if (!this.label())
+                container.style.display = 'none';
+        }
     }
 
     set_layout() {
@@ -269,7 +296,7 @@ class Connector extends SDFGElement {
         ctx.fillStyle = "black";
         ctx.strokeStyle = "black";
         if (this.strokeStyle() !== 'black')
-            renderer.tooltip = this.tooltip();
+            renderer.tooltip = (c) => this.tooltip(c);
     }
 
     attributes() {
@@ -280,8 +307,11 @@ class Connector extends SDFGElement {
 
     label() { return this.data.name; }
 
-    tooltip() {
-        return this.label();
+    tooltip(container) {
+        container.style.background = '#f0fdffee';
+        container.style.color = 'black';
+        container.style.border = '1px solid black';
+        container.innerText = this.label();
     }
 }
 
@@ -295,13 +325,13 @@ class AccessNode extends Node {
 
         let nodedesc = this.sdfg.attributes._arrays[this.data.node.attributes.data];
         // Streams have dashed edges
-        if (nodedesc.type === "Stream") {
+        if (nodedesc && nodedesc.type === "Stream") {
             ctx.setLineDash([5, 3]);
         } else {
             ctx.setLineDash([1, 0]);
         }
 
-        if (nodedesc.attributes.transient === false) {
+        if (nodedesc && nodedesc.attributes.transient === false) {
             ctx.lineWidth = 3.0;
         } else {
             ctx.lineWidth = 1.0;
@@ -349,23 +379,54 @@ class ScopeNode extends Node {
         ctx.fill();
         ctx.fillStyle = "black";
 
-        let far_label = this.attributes().label;
+        let far_label = this.far_label();
+        drawAdaptiveText(ctx, renderer, far_label,
+                         this.close_label(renderer), this.x, this.y, 
+                         this.width, this.height, 
+                         SCOPE_LOD);
+    }
+
+    far_label() {
+        let result = this.attributes().label;
         if (this.scopeend()) {  // Get label from scope entry
             let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
             if (entry !== undefined)
-                far_label = entry.attributes.label;
+                result = entry.attributes.label;
             else {
-                far_label = this.label();
-                let ind = far_label.indexOf('[');
+                result = this.data.node.label;
+                let ind = result.indexOf('[');
                 if (ind > 0)
-                    far_label = far_label.substring(0, ind);
+                    result = result.substring(0, ind);
             }
         }
+        return result;
+    }
 
-        drawAdaptiveText(ctx, renderer, far_label,
-                         this.label(), this.x, this.y, 
-                         this.width, this.height, 
-                         SCOPE_LOD);
+    close_label(renderer) {
+        if (!renderer.inclusive_ranges)
+            return this.label();
+
+        let result = this.far_label();
+        let attrs = this.attributes();
+        if (this.scopeend()) {
+            let entry = this.sdfg.nodes[this.parent_id].nodes[this.data.node.scope_entry];
+            if (entry !== undefined)
+                attrs = entry.attributes;
+            else
+                return this.label();
+        }
+        result += ' [';
+
+        if (this instanceof ConsumeEntry || this instanceof ConsumeExit) {
+            result += attrs.pe_index + '=' + '0..' + (attrs.num_pes - 1).toString();
+        } else {
+            for (let i = 0; i < attrs.params.length; ++i) {
+                result += attrs.params[i] + '=';
+                result += sdfg_range_elem_to_string(attrs.range.ranges[i], renderer.view_settings()) + ', ';
+            }
+            result = result.substring(0, result.length-2); // Remove trailing comma
+        }
+        return result + ']';
     }
 }
 

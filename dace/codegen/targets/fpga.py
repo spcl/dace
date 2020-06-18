@@ -431,7 +431,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         # TODO: Handle memory banks
                         self._allocated_global_arrays.add(node.data)
                         result.write(
-                            "auto {} = hlslib::ocl::GlobalContext()."
+                            "auto {} = dace::fpga::_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({});".format(dataname, nodedesc.dtype.ctype,
                                            sym2cpp(arrsize)))
@@ -872,7 +872,6 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
                     self.generate_flatten_loop_pre(result, sdfg, state_id,
                                                    node)
-
             # Generate nested loops
             if not isinstance(node, PipelineEntry):
                 for i, r in enumerate(node.map.range):
@@ -906,9 +905,16 @@ class FPGACodeGen(TargetCodeGenerator):
                                         np.dtype(end_type.dtype.type),
                                         np.unsignedinteger):
                                     loop_var_type = "size_t"
-                    except (UnboundLocalError, TypeError):
+                    except (UnboundLocalError):
                         raise UnboundLocalError('Pipeline scopes require '
                                                 'specialized bound values')
+                    except (TypeError):
+                        # Raised when the evaluation of begin or skip fails.
+                        # This could occur, for example, if they are defined in terms of other symbols, which
+                        # is the case in a tiled map
+                        pass
+
+
 
                     result.write(
                         "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
@@ -1282,7 +1288,7 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = hlslib::ocl::GlobalContext().CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = dace::fpga::_context->Get().CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 

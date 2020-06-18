@@ -9,7 +9,7 @@ from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
-from dace.graph import labeling, graph as gr, nodes as nd
+from dace.graph import labeling, graph as gr, nodes as nd, nxutil
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Dict, List, Tuple, Type, Union
