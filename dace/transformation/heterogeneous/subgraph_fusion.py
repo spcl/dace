@@ -203,6 +203,10 @@ class SubgraphFusion():
                                   is created and linked to it.
         """
 
+        # if there are no maps, return immediately
+        if len(map_entries) == 0:
+            return
+
         maps = [map_entry.map for map_entry in map_entries]
         map_exits = [graph.exit_node(map_entry) for map_entry in map_entries]
 
@@ -254,6 +258,13 @@ class SubgraphFusion():
                                ndrange = maps[0].range)
         global_map_entry = nodes.MapEntry(global_map)
         global_map_exit  = nodes.MapExit(global_map)
+
+        # assign correct schedule to global_map_entry
+        schedule = map_entries[0].schedule
+        if not all([entry.schedule == schedule for entry in map_entries]):
+            raise RuntimeError("Not all the maps have the same schedule. Cannot fuse.")
+
+        global_map_entry.schedule = schedule
 
         # if we make new transients of any objects, we are to save them
         # into this dict. This allows for easy redirection
