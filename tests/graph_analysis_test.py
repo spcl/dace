@@ -9,6 +9,7 @@ from dace.codegen.targets.memorypool import extend_dace
 M = dace.symbol('M')
 N = dace.symbol('N')
 
+
 @dace.program
 def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 10], D: dace.float64[5, 10]):
     tmp = dace.define_local([5, 5, 5], dtype=A.dtype)
@@ -23,7 +24,8 @@ def operation(A: dace.float64[5, 5], B: dace.float64[5, 5], C: dace.float64[5, 1
         out = in_A * in_B
     dace.reduce(lambda a, b: a + b, tmp, E, axis=2, identity=0)
 
-    C[:] =  A @ E @ (A @ B) @ (B @ D)
+    C[:] = A @ E @ (A @ B) @ (B @ D)
+
 
 if __name__ == "__main__":
     extend_dace()
@@ -50,6 +52,6 @@ if __name__ == "__main__":
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B,D))
 
     diff = np.linalg.norm(C_regression - C) / (M.value * N.value)
-    print("Difference:", diff, 'C_reg', C_regression, 'C', C)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    if diff > 1e-5:
+        print("Difference:", diff, 'C_reg', C_regression, 'C', C)
+        exit(1)

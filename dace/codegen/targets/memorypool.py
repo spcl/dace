@@ -84,21 +84,25 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                 alloc, dealloc = alloc_dealloc[node]
                 for t in dealloc:
                     callsite_stream.write(
-                        '''MPool.Dealloc({array});'''.format(array=t)
+                        '''MPool.Dealloc({name});'''.format(name=t)
                     )
                     self.free.add(t)
 
                 for t in alloc:
+                    array = sdfg.arrays[t]
                     if self.free:
                         free_array = self.free.pop()
                         callsite_stream.write(
-                            '''double *{array} = {free_array};'''.format(
-                                array=t, size=sdfg.arrays[t].total_size, free_array=free_array)
+                            '''{type} *{name} = {free_array};'''.format(
+                                name=t, free_array=free_array, type=array.dtype.ctype
+                            )
                         )
                     else:
                         callsite_stream.write(
-                            '''double *{array} = (double*)MPool.Alloc({size});'''.format(
-                                array=t, size=sdfg.arrays[t].total_size)
+                            '''{type} *{name} = ({type}*)MPool.Alloc({size});'''.format(
+                                name=t, size=array.total_size*array.dtype.bytes,
+                                type=array.dtype.ctype
+                            )
                         )
 
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
@@ -112,21 +116,25 @@ class MemoryPoolCodegen(TargetCodeGenerator):
 
                 m_size = 0
                 for t in max_live_set[0]:
-                    m_size += int((sdfg.arrays[t].total_size // self._block_size + 1)
+                    array = sdfg.arrays[t]
+                    m_size += int((array.total_size*array.dtype.bytes // self._block_size + 1)
                                   * self._block_size)
                 for t in self.shared_transients:
-                    m_size += int((sdfg.arrays[t].total_size // self._block_size + 1)
+                    array = sdfg.arrays[t]
+                    m_size += int((array.total_size*array.dtype.bytes  // self._block_size + 1)
                                   * self._block_size)
-                m_size += self._block_size
+
                 callsite_stream.write(
                     '''MemoryPool<false> MPool({m_size},{block_size});'''.format(
                         m_size=m_size, block_size=self._block_size)
                 )
 
                 for t in self.shared_transients:
+                    array = sdfg.arrays[t]
                     callsite_stream.write(
-                        '''double *{array} = (double*)MPool.Alloc({size});'''.format(
-                            array=t, size=sdfg.arrays[node.data].total_size)
+                        '''{type} *{name} = ({type}*)MPool.Alloc({size});'''.format(
+                            name=t, size=array.total_size*array.dtype.bytes, type=array.dtype.ctype
+                        )
                     )
                 self.initialization = False
         self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)
