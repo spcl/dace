@@ -7,12 +7,13 @@ import aenum
 import dace
 from dace.dtypes import typeclass
 from dace.properties import make_properties, Property, DictProperty, ListProperty, SetProperty
-from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_onnx_type_str_to_dace_type
+from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_onnx_type_str_to_dace_type, get_proto_attr
 
 _KNOWN_ONNX_PROTOS = {}
 
 # TODO @orausch migrate all str types to bytes
 # TODO @orausch rethink how to check proto HasField
+
 
 def onnx_representation(represents, **mapping):
     """ Decorator for python representations of ONNX protobufs.
@@ -38,6 +39,8 @@ def onnx_representation(represents, **mapping):
 
         cls = make_properties(cls)
 
+        # initialize the mapping with identity
+        # this means that by default, we will read the property of the protobuf using the same name as the property name
         for name, _ in cls.__properties__.items():
             if name not in mapping:
                 mapping[name] = name
@@ -46,8 +49,10 @@ def onnx_representation(represents, **mapping):
             args = list(args)
             for name, prop in self.__properties__.items():
                 if len(args) > 0:
+                    # try to init all the positional args first
                     setattr(self, name, args.pop(0))
                 else:
+                    # then try kwargs
                     setattr(self, name, kwargs[name])
             self._represents = represents
             if hasattr(self, "validate"):
@@ -57,16 +62,17 @@ def onnx_representation(represents, **mapping):
         def from_onnx_proto(cls, onnx_proto):
             if type(onnx_proto) is not represents:
                 raise ValueError(
-                    "Unexpected protobuf {}, expected protobuf of type {}".
-                    format(onnx_proto, represents))
+                    "Unexpected protobuf '{}' (type {}), expected protobuf of type {}"
+                    .format(onnx_proto, type(onnx_proto), represents))
 
             constructor_args = {}
             for name, _ in cls.__properties__.items():
                 if type(mapping[name]) is str:
+                    # if the value of the mapping for that property is a string, read the attribute with that name
                     constructor_args[name] = convert_onnx_proto(
-                        getattr(onnx_proto, mapping[name]))
+                        get_proto_attr(onnx_proto, mapping[name]))
                 else:
-                    mapping[name](onnx_proto)
+                    # the value of the mapping should be a function, apply it to the onnx_proto
                     constructor_args[name] = mapping[name](onnx_proto)
 
             return cls(**constructor_args)
@@ -107,7 +113,7 @@ class ONNXParameterType(aenum.AutoNumberEnum):
                      param_type='option',
                      homogeneous="isHomogeneous")
 class ONNXParameter:
-    """Python representation of an ONNX parameter"""
+    """ Python representation of an ONNX parameter. """
 
     name = Property(dtype=str, desc="The parameter name")
     description = Property(dtype=str, desc="A description of the parameter")
@@ -143,7 +149,7 @@ _ATTR_TYPE_TO_PYTHON_TYPE = {
 
 @onnx_representation(onnx.defs.OpSchema.Attribute)
 class ONNXAttribute:
-    """Python representation of an ONNX attribute"""
+    """ Python representation of an ONNX attribute. """
 
     name = Property(dtype=str, desc="The attribute name")
     description = Property(dtype=str, desc="A description this attribute")
@@ -165,10 +171,10 @@ class ONNXAttribute:
                      types=lambda proto: list(
                          filter(
                              lambda x: x is not None,
-                             map(onnx_type_str_onnx_type_str_to_dace_type, proto
-                                 .allowed_type_strs))))
+                             map(onnx_type_str_onnx_type_str_to_dace_type,
+                                 get_proto_attr(proto, "allowed_type_strs")))))
 class ONNXTypeConstraint:
-    """Python representation of an ONNX type constraint"""
+    """ Python representation of an ONNX type constraint. """
 
     type_str = Property(dtype=str, desc="The type parameter string")
     types = ListProperty(
@@ -183,14 +189,17 @@ class ONNXTypeConstraint:
 
 @onnx_representation(
     onnx.defs.OpSchema,
-    inputs=lambda proto: list(map(convert_onnx_proto, proto.inputs)),
-    outputs=lambda proto: list(map(convert_onnx_proto, proto.outputs)),
-    attributes=lambda proto:
-    {str(k): convert_onnx_proto(v)
-     for k, v in proto.attributes.items()},
+    inputs=lambda proto: list(
+        map(convert_onnx_proto, get_proto_attr(proto, "inputs"))),
+    outputs=lambda proto: list(
+        map(convert_onnx_proto, get_proto_attr(proto, "outputs"))),
+    attributes=lambda proto: {
+        str(k): convert_onnx_proto(v)
+        for k, v in get_proto_attr(proto, "attributes").items()
+    },
     type_constraints=lambda proto: {
         str(cons.type_param_str): convert_onnx_proto(cons)
-        for cons in proto.type_constraints
+        for cons in get_proto_attr(proto, "type_constraints")
     })
 class ONNXSchema:
     """Python representation of an ONNX schema"""

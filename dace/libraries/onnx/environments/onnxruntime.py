@@ -2,14 +2,15 @@ import os
 import dace.library
 
 if 'ORT_ROOT' not in os.environ:
-    raise ValueError("This environment expects the environment variable "
-                     "ORT_ROOT to be set to the root of the patched onnxruntime repository "
-                     "(https://github.com/orausch/onnxruntime).\n"
-                     "See the docstring for dace.libraries.onnx.environments.ONNXRuntime for more information.")
+    raise ValueError(
+        "This environment expects the environment variable "
+        "ORT_ROOT to be set to the root of the patched onnxruntime repository "
+        "(https://github.com/orausch/onnxruntime).\n"
+        "See the docstring for dace.libraries.onnx.environments.ONNXRuntime for more information."
+    )
 
 ORT_PATH = os.environ['ORT_ROOT']
 ORT_BUILD_PATH = os.path.join(ORT_PATH, "build", "Linux", "Release")
-
 
 
 @dace.library.environment
@@ -22,8 +23,7 @@ class ONNXRuntime:
         ``./build.sh --build_shared_lib --parallel --config Release``
         ``mkdir build-protobuf && cd build-protobuf && cmake ../cmake/external/protobuf/cmake -Dprotobuf_BUILD_SHARED_LIBS=ON && make``
 
-        (add -jN to the make command for parallel builds)
-
+        (add ``-jN`` to the make command for parallel builds)
         See ``onnxruntime/BUILD.md`` for more details.
     """
 
@@ -35,8 +35,10 @@ class ONNXRuntime:
         os.path.join(ORT_PATH, "cmake", "external", "onnx"),
         os.path.join(ORT_PATH, "include"),
         os.path.join(ORT_PATH, "include", "onnxruntime", "core", "session"),
-        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers", "cpu"),
-        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers", "cuda")
+        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers",
+                     "cpu"),
+        os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers",
+                     "cuda")
     ]
     cmake_libraries = [
         os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"),

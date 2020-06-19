@@ -7,8 +7,33 @@ from dace.dtypes import typeclass
 from dace import dtypes as dt
 
 
+def get_proto_attr(proto, name):
+    """ A more safe access method for protobuf. It checks that the name is ASCII (A defensive safeguard against any
+        encoding issues with protobuf: python getattr calls take a string, but protobuf attributes are utf-8), and that
+        the protobuf has the field. Note that the HasField checks might break in proto3, but ONNX doesn't use this yet.
+    """
+    def is_ascii(s):
+        try:
+            s.encode('ascii')
+        except UnicodeEncodeError:
+            return False
+        else:
+            return True
+
+    if not is_ascii(name):
+        raise ValueError(
+            "Attempted to access non-ASCII property name '{}' on protobuf {} (type {})."
+            " Please open an issue".format(name, proto, type(proto)))
+
+    # TODO
+    #if not proto.HasField(name):
+    #    raise ValueError("Expected {} to have field '{}'".format(proto, name))
+
+    return getattr(proto, name)
+
+
 def convert_onnx_proto(attribute):
-    from dace.libraries.onnx.schema import ONNXAttributeType, ONNXParameter, ONNXAttribute, _KNOWN_ONNX_PROTOS, ONNXParameterType
+    from dace.libraries.onnx.schema import ONNXAttributeType, _KNOWN_ONNX_PROTOS, ONNXParameterType
 
     if type(attribute) in _KNOWN_ONNX_PROTOS:
         return _KNOWN_ONNX_PROTOS[type(attribute)].from_onnx_proto(attribute)
@@ -50,7 +75,8 @@ def convert_onnx_proto(attribute):
         return convert_attribute_proto(attribute)
 
     raise NotImplementedError(
-        "No conversion implemented for {}".format(attribute))
+        "No conversion implemented for {} (type {})".format(
+            attribute, type(attribute)))
 
 
 def convert_attribute_proto(proto):
@@ -61,25 +87,29 @@ def convert_attribute_proto(proto):
         inv_map = {}
         for k, v in onnx.AttributeProto.AttributeType.items():
             if k == "FLOAT":
-                inv_map[v] = lambda attr: attr.f
+                inv_map[v] = lambda attr: get_proto_attr(attr, "f")
             elif k == "FLOATS":
-                inv_map[v] = lambda attr: list(attr.floats)
+                inv_map[v] = lambda attr: list(get_proto_attr(attr, "floats"))
             elif k == "INT":
-                inv_map[v] = lambda attr: attr.i
+                inv_map[v] = lambda attr: get_proto_attr(attr, "i")
             elif k == "INTS":
-                inv_map[v] = lambda attr: list(attr.ints)
+                inv_map[v] = lambda attr: list(get_proto_attr(attr, "ints"))
             elif k == "STRING":
-                inv_map[v] = lambda attr: attr.s.decode('utf-8')
+                inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode(
+                    'utf-8')
             elif k == "STRINGS":
                 inv_map[v] = lambda attr: list(
-                    map(lambda x: x.decode('utf-8'), attr.strings))
+                    map(lambda x: x.decode('utf-8'),
+                        get_proto_attr(attr, "strings")))
 
         convert_attribute_proto.inv_map = inv_map
 
-    onnx_type = proto.type
+    onnx_type = get_proto_attr(proto, "type")
+
     if onnx_type == 0:
         # in case of undefined return None
         return None
+
     if onnx_type not in inv_map:
         type_str = {v: k
                     for k, v in onnx.AttributeProto.AttributeType.items()
@@ -101,7 +131,6 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
     'uint16': dt.uint16,
     'uint32': dt.int32,
     'uint64': dt.uint64,
-    # TODO double check this vs bfloat16
     'float16': dt.float16,
     'float': dt.float32,
     'double': dt.float64,
@@ -109,13 +138,14 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
     'complex128': dt.complex128,
 }
 
+
 def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
     #  we cache the reverse map as an attribute of the method
     if hasattr(onnx_tensor_type_to_dace_type, "inv_map"):
         inv_map = onnx_tensor_type_to_dace_type.inv_map
     else:
         k: str
-        v : int
+        v: int
         inv_map = {}
         for k, v in onnx.TensorProto.DataType.items():
             if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS:
@@ -125,8 +155,8 @@ def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
 
     if elem_type not in inv_map:
         raise ValueError("Got unsupported ONNX tensor type: {}".format(
-            {v: k for k, v in onnx.TensorProto.DataType.items()}[elem_type]
-        ))
+            {v: k
+             for k, v in onnx.TensorProto.DataType.items()}[elem_type]))
 
     return inv_map[elem_type]
 

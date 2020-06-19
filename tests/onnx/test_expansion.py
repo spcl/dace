@@ -4,6 +4,7 @@ from dace.libraries.onnx.nodes.onnx_op import Conv
 
 import torch
 
+
 def test_expansion():
     sdfg = dace.SDFG("test_expansion")
     sdfg.add_array("X_arr", (5, 3, 10, 10), dace.float32)
@@ -31,6 +32,7 @@ def test_expansion():
     Z_t = torch.nn.functional.conv2d(torch.tensor(X), torch.tensor(W))
 
     assert np.allclose(Z, Z_t)
+
 
 if __name__ == '__main__':
     test_expansion()

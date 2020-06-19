@@ -1,9 +1,11 @@
 from dace.libraries.onnx.nodes.onnx_op import Conv
 import pytest
 
+
 def test_import():
     # just need to run the import statement
     node = Conv("conv")
+
 
 def test_errors():
     with pytest.raises(TypeError) as e:
@@ -14,7 +16,6 @@ def test_errors():
         node = Conv("conv", x=1)
 
     assert "unexpected" in str(e.value)
-
 
 
 if __name__ == '__main__':

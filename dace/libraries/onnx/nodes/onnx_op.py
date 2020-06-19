@@ -8,7 +8,7 @@ import onnx
 
 import dace
 import dace.sdfg.nodes as nd
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, ScheduleType
 from dace.properties import make_properties, Property, ListProperty
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.standard.nodes.code import _get_inputs_and_outputs
@@ -153,7 +153,9 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
             type_to_str[attr.type].upper())
 
         if not isinstance(value, Iterable):
-            raise ValueError("Expected iterable value for attribute '{}', got {}".format(attr.name, value))
+            raise ValueError(
+                "Expected iterable value for attribute '{}', got {}".format(
+                    attr.name, value))
 
         for i in value:
             assert_type(i, attr_type_to_type[attr.type])
@@ -390,7 +392,7 @@ class ONNXOp(nd.LibraryNode, ABC):
             __ort_check_status(__ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &__ort_mem_info)); 
             __ort_check_status(__ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dace_graph", &__ort_env));
             __ort_check_status(__ort_api->CreateSessionOptions(&__ort_session_options));
-            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, 0));
+            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, /*use_arena=*/0));
             __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session));
             """)
 
@@ -401,6 +403,13 @@ class ONNXOp(nd.LibraryNode, ABC):
             __ort_api->ReleaseEnv(__ort_env);
             """
             sdfg.prepend_exit_code(session_cleanup_code)
+
+        if node.schedule == ScheduleType.GPU_Device and "OrtSessionOptionsAppendExecutionProvider_CUDA" not in sdfg.global_code[
+                'frame'].as_string:
+            # the first time we expand a GPU node, we need to add the execution provider (only once)
+            sdfg.append_init_code("""
+            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
+            """)
 
         sdfg.append_global_code(
             "OrtExecutableKernelContext *__ort_context_{};\n".format(unique_id))
@@ -491,13 +500,24 @@ class ONNXOp(nd.LibraryNode, ABC):
         for name, attr in node.schema.attributes.items():
             if hasattr(node, name):
                 sdfg.append_init_code(
-                    _gen_attr_init_code("proto", node.schema.attributes[name], getattr(node, name)))
+                    _gen_attr_init_code("proto", node.schema.attributes[name],
+                                        getattr(node, name)))
+
+        if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
+            provider_index = 0
+        elif node.schedule == ScheduleType.GPU_Device:
+            provider_index = 1
+        else:
+            raise NotImplementedError(
+                "ORT expansion for schedule '{}' is not implemented".format(
+                    node.schedule))
 
         sdfg.append_init_code(
             "__ort_check_status(__ort_api->CreateExecutableKernelContext("
-            "__ort_session, {provider_index}, &proto, &type_map, &__ort_context_{id}));\n"
-            .format(provider_index=0, id=unique_id))
-        sdfg.append_init_code("}} // end setup for context_{}".format(unique_id))
+            "__ort_session, /*provider_index=*/{provider_index}, &proto, &type_map, &__ort_context_{id}));\n"
+            .format(provider_index=provider_index, id=unique_id))
+        sdfg.append_init_code(
+            "}} // end setup for context_{}".format(unique_id))
 
         sdfg.prepend_exit_code(
             "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n".
