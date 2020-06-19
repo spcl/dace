@@ -54,8 +54,7 @@ def nest_state_subgraph(sdfg: SDFG,
         scope_node = scope_dict[node]
         if scope_node not in subgraph.nodes():
             if top_scopenode != -1 and top_scopenode != scope_node:
-                raise ValueError(
-                    'Subgraph is contained in more than one scope')
+                raise ValueError('Subgraph is contained in more than one scope')
             top_scopenode = scope_node
 
     scope = scope_tree[top_scopenode]
@@ -160,6 +159,7 @@ def nest_state_subgraph(sdfg: SDFG,
         if isinstance(node, nodes.NestedSDFG):
             node.sdfg.parent = nstate
             node.sdfg.parent_sdfg = nsdfg
+            node.sdfg.parent_nsdfg_node = node
 
     # Add access nodes and edges as necessary
     edges_to_offset = []
@@ -167,16 +167,16 @@ def nest_state_subgraph(sdfg: SDFG,
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge,
-                                nstate.add_edge(node, None, edge.dst,
-                                                edge.dst_conn, new_edge)))
+        edges_to_offset.append(
+            (edge, nstate.add_edge(node, None, edge.dst, edge.dst_conn,
+                                   new_edge)))
     for name, edge in zip(output_names, outputs):
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge,
-                                nstate.add_edge(edge.src, edge.src_conn, node,
-                                                None, new_edge)))
+        edges_to_offset.append(
+            (edge, nstate.add_edge(edge.src, edge.src_conn, node, None,
+                                   new_edge)))
 
     # Offset memlet paths inside nested SDFG according to subsets
     for original_edge, new_edge in edges_to_offset:
@@ -250,8 +250,7 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_memlet.subset) == 1
-                and ones == list(range(len(shape)))
+        if (len(internal_memlet.subset) == 1 and ones == list(range(len(shape)))
                 and (internal_memlet.subset[0] == (0, 0, 1)
                      or internal_memlet.subset[0] == 0)):
             to_unsqueeze = ones[1:]
@@ -263,10 +262,10 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         # Try to squeeze internal memlet
         result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
-            raise ValueError(
-                'Unexpected extra dimensions in internal memlet '
-                'while un-squeezing memlet.\nExternal memlet: %s\n'
-                'Internal memlet: %s' % (external_memlet, internal_memlet))
+            raise ValueError('Unexpected extra dimensions in internal memlet '
+                             'while un-squeezing memlet.\nExternal memlet: %s\n'
+                             'Internal memlet: %s' %
+                             (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
 

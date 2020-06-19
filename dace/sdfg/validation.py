@@ -4,7 +4,7 @@ import os
 from typing import Dict, Union
 import warnings
 
-from dace.dtypes import typeclass, validate_name
+from dace.dtypes import typeclass, validate_name, AccessType
 
 ###########################################
 # Validation
@@ -21,6 +21,7 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
     """ Verifies the correctness of an SDFG by applying multiple tests.
+        :param sdfg: The SDFG to verify.
 
         Raises an InvalidSDFGError with the erroneous node/edge
         on failure.
@@ -162,8 +163,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if isinstance(node, nd.CodeNode):
                 pass
             else:
-                raise InvalidSDFGNodeError("Isolated node", sdfg, state_id,
-                                           nid)
+                raise InvalidSDFGNodeError("Isolated node", sdfg, state_id, nid)
 
         # Scope tests
         ########################################
@@ -235,6 +235,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         'WARNING: Use of uninitialized transient "%s" in state %s'
                         % (node.data, state.label))
 
+            # Find writes to input-only arrays
+            if not arr.transient and state.in_degree(node) > 0:
+                nsdfg_node = sdfg.parent_nsdfg_node
+                if nsdfg_node is not None:
+                    if node.data not in nsdfg_node.out_connectors:
+                        raise InvalidSDFGNodeError(
+                            'Data descriptor %s is '
+                            'written to, but only given to nested SDFG as an '
+                            'input connector' % node.data, sdfg, state_id, nid)
+
         if (isinstance(node, nd.ConsumeEntry)
                 and "IN_stream" not in node.in_connectors):
             raise InvalidSDFGNodeError(
@@ -275,8 +285,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if incoming_edges > 1 and not isinstance(node, nd.ExitNode):
                 raise InvalidSDFGNodeError(
                     "Connector %s cannot have more "
-                    "than one incoming edge, found %d" %
-                    (conn, incoming_edges),
+                    "than one incoming edge, found %d" % (conn, incoming_edges),
                     sdfg,
                     state_id,
                     nid,
@@ -299,8 +308,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if outgoing_edges > 1 and isinstance(node, nd.ExitNode):
                 raise InvalidSDFGNodeError(
                     "Connector %s cannot have more "
-                    "than one outgoing edge, found %d" %
-                    (conn, outgoing_edges),
+                    "than one outgoing edge, found %d" % (conn, outgoing_edges),
                     sdfg,
                     state_id,
                     nid,
@@ -345,9 +353,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         dst_node = path[-1].dst
 
         # Check if memlet data matches src or dst nodes
-        if (e.data.data is not None
-                and (isinstance(src_node, nd.AccessNode)
-                     or isinstance(dst_node, nd.AccessNode))
+        if (e.data.data is not None and (isinstance(src_node, nd.AccessNode)
+                                         or isinstance(dst_node, nd.AccessNode))
                 and (not isinstance(src_node, nd.AccessNode)
                      or e.data.data != src_node.data)
                 and (not isinstance(dst_node, nd.AccessNode)
@@ -364,9 +371,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if e.data.data is not None and e.data.allow_oob == False:
             subset_node = (dst_node if isinstance(dst_node, nd.AccessNode)
                            and e.data.data == dst_node.data else src_node)
-            other_subset_node = (
-                dst_node if isinstance(dst_node, nd.AccessNode)
-                and e.data.data != dst_node.data else src_node)
+            other_subset_node = (dst_node if isinstance(dst_node, nd.AccessNode)
+                                 and e.data.data != dst_node.data else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
                 arr = sdfg.arrays[subset_node.data]
@@ -470,8 +476,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 )
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
-            raise InvalidSDFGEdgeError(
-                "Illegal memlet between disjoint scopes", sdfg, state_id, eid)
+            raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes",
+                                       sdfg, state_id, eid)
 
         # Check dimensionality of memory access
         if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
@@ -479,8 +485,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"
                     " (%dD for a %dD data node)" %
-                    (e.data.subset.dims(), len(
-                        sdfg.arrays[e.data.data].shape)),
+                    (e.data.subset.dims(), len(sdfg.arrays[e.data.data].shape)),
                     sdfg,
                     state_id,
                     eid,
@@ -512,6 +517,11 @@ class InvalidSDFGError(Exception):
         self.sdfg = sdfg
         self.state_id = state_id
 
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_id,
+                    state_id=self.state_id)
+
     def __str__(self):
         if self.state_id is not None:
             state = self.sdfg.nodes()[self.state_id]
@@ -526,6 +536,11 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
+
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_id,
+                    isedge_id=self.edge_id)
 
     def __str__(self):
         if self.edge_id is not None:
@@ -548,6 +563,12 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         self.sdfg = sdfg
         self.state_id = state_id
         self.node_id = node_id
+
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_id,
+                    state_id=self.state_id,
+                    node_id=self.node_id)
 
     def __str__(self):
         state = self.sdfg.nodes()[self.state_id]
@@ -577,6 +598,12 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         self.sdfg = sdfg
         self.state_id = state_id
         self.edge_id = edge_id
+
+    def to_json(self):
+        return dict(message=self.message,
+                    sdfg_id=self.sdfg.sdfg_id,
+                    state_id=self.state_id,
+                    edge_id=self.edge_id)
 
     def __str__(self):
         state = self.sdfg.nodes()[self.state_id]
