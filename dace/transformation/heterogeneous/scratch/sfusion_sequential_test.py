@@ -1,7 +1,6 @@
 
 import dace
-from dace.transformation.heterogeneous import MultiExpansion
-from dace.transformation.heterogeneous import SubgraphFusion
+from dace.transformation.heterogeneous.pipeline import expand_maps, expand_reduce, fusion
 from dace.transformation.heterogeneous.helpers import *
 from dace.measure import Runner
 import dace.sdfg.nodes as nodes
@@ -35,6 +34,16 @@ if __name__ == "__main__":
     sdfg = TEST.to_sdfg()
     state = sdfg.nodes()[0]
 
-    runner = Runner()
-    runner.go(sdfg, state, None, N,
-              output = ['B','C'])
+    A = np.random.rand(N.get()).astype(np.float64)
+    B = np.random.rand(N.get()).astype(np.float64)
+    C1 = np.random.rand(N.get()).astype(np.float64)
+    C2 = np.random.rand(N.get()).astype(np.float64)
+
+    csdfg = sdfg.compile()
+    csdfg(A=A,B=B,C=C1,N=N)
+
+    fusion(sdfg, state)
+    csdfg = sdfg.compile()
+    csdfg(A=A,B=B,C=C2,N=N)
+
+    assert np.allclose(C1, C2)

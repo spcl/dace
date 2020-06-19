@@ -1,5 +1,4 @@
 import copy
-from copy import deepcopy as dcpy
 import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
@@ -88,38 +87,53 @@ def config():
     return A, expected
 
 
-def test_subgraph():
-    A, expected = config()
-    B_init = np.random.rand(2)
+def test_offsets_array():
+    sdfg = dace.SDFG('mapfission_offsets2')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('interim', [1], dace.float64, transient=True)
+    state = sdfg.add_state()
+    me, mx = state.add_map('outer', dict(i='10:20'))
 
+    t1 = state.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
+    interim = state.add_access('interim')
+    t2 = state.add_tasklet('addtwo', {'a'}, {'b'}, 'b = a + 2')
 
-    graph = mapfission_sdfg()
-    graph.view()
-    graph.apply_transformations(MapFission)
-    dace.sdfg.propagation.propagate_memlets_sdfg(graph)
-    graph.view()
-    cgraph = graph.compile_directly()
+    aread = state.add_read('A')
+    awrite = state.add_write('A')
+    state.add_memlet_path(aread,
+                          me,
+                          t1,
+                          dst_conn='a',
+                          memlet=dace.Memlet.simple('A', 'i'))
+    state.add_edge(t1, 'b', interim, None,
+                   dace.Memlet.simple('interim', '0'))
+    state.add_edge(interim, None, t2, 'a',
+                   dace.Memlet.simple('interim', '0'))
+    state.add_memlet_path(t2,
+                          mx,
+                          awrite,
+                          src_conn='b',
+                          memlet=dace.Memlet.simple('A', 'i'))
 
-    print("FORWARD PASS")
-    B = dcpy(B_init)
-    cgraph(A=A, B=B)
-    assert np.allclose(B, expected)
-    print("PASS")
+    sdfg.apply_transformations(MapFission)
 
-    graph.validate()
-    print("PASS")
+    dace.propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
 
-    fusion(graph, graph.nodes()[0], None)
-    graph.view()
-    ccgraph = graph.compile_directly()
+    # Test
+    A = np.random.rand(20)
+    expected = A.copy()
+    expected[10:] += 3
+    A_cpy = A.copy()
+    csdfg = sdfg.compile()
+    csdfg(A=A_cpy)
+    assert (np.allclose(A_cpy, expected))
 
-    print("BACKWARD PASS")
-    B = dcpy(B_init)
-    ccgraph(A=A, B=B)
-    assert np.allclose(B, expected)
-    graph.validate()
-    print("PASS")
-
+    fusion(sdfg, sdfg.nodes()[0], None)
+    A_cpy = A.copy()
+    csdfg = sdfg.compile()
+    csdfg(A=A_cpy)
+    assert (np.allclose(A_cpy, expected))
 
 if __name__ == '__main__':
-    test_subgraph()
+    test_offsets_array()

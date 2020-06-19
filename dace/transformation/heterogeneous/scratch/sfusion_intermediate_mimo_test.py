@@ -7,7 +7,7 @@ import numpy as np
 import unittest
 import sys
 
-from dace.transformation.heterogeneous.pipeline import fusion
+from dace.transformation.heterogeneous.pipeline import expand_reduce, expand_maps, fusion
 
 
 N = dace.symbol('N')
@@ -40,10 +40,28 @@ def TEST(A: dace.float64[N], B: dace.float64[N], C:dace.float64[N], D:dace.float
             out1[1] = in1[1]*in1[1]
 
 def test_quantitatively(sdfg):
-    runner = dace.measure.Runner()
-    runner.go(sdfg, sdfg.nodes()[0], None,
-              N, pipeline = [dace.transformation.heterogeneous.pipeline.fusion],
-              output = ['C','D'])
+    graph = sdfg.nodes()[0]
+    A = np.random.rand(N.get()).astype(np.float64)
+    B = np.random.rand(N.get()).astype(np.float64)
+    C1 = np.random.rand(N.get()).astype(np.float64)
+    C2 = np.random.rand(N.get()).astype(np.float64)
+    D1 = np.random.rand(N.get()).astype(np.float64)
+    D2 = np.random.rand(N.get()).astype(np.float64)
+
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B, C=C1, D=D1, N=N)
+
+    expand_reduce(sdfg, graph)
+    expand_maps(sdfg, graph)
+    fusion(sdfg, graph)
+
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B, C=C2, D=D2, N=N)
+
+    assert np.allclose(C1, C2)
+    assert np.allclose(D1, D2)
+
+
 
 if __name__ == '__main__':
     sdfg = TEST.to_sdfg()
@@ -63,7 +81,3 @@ if __name__ == '__main__':
     sdfg.nodes()[0].remove_node(C2)
     sdfg.validate()
     test_quantitatively(sdfg)
-    sys.exit(0)
-
-    dace.transformation.heterogeneous.pipeline.fusion(sdfg, sdfg.nodes()[0])
-    sdfg.view()

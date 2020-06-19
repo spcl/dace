@@ -11,13 +11,18 @@ from dace.transformation.heterogeneous.pipeline import expand_reduce, expand_map
 
 import sys
 
-N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
+N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
 N.set(50)
 M.set(60)
 O.set(70)
-P.set(80)
-Q.set(90)
-R.set(100)
+
+A = np.random.rand(N.get()).astype(np.float64)
+B = np.random.rand(M.get()).astype(np.float64)
+C = np.random.rand(O.get()).astype(np.float64)
+OUT1 = np.ndarray((N.get(), M.get()), np.float64)
+OUT2 = np.ndarray((1), np.float64)
+OUT3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+
 
 
 @dace.program
@@ -101,20 +106,31 @@ def test_qualitatively(sdfg, graph):
     print("PASS")
 
 def test_quantitatively(sdfg, graph):
-    runner = dace.measure.Runner(view_all = True)
-    runner.go(sdfg, graph, None,
-              M, N, O,
-              output = ["OUT1", "OUT2", "OUT3"],
-              performance_spec = dace.perf.specs.PERF_CPU_CRAPBOOK
-              )
+    A = np.random.rand(N.get()).astype(np.float64)
+    B = np.random.rand(M.get()).astype(np.float64)
+    C = np.random.rand(O.get()).astype(np.float64)
+    OUT1_base = np.ndarray((N.get(), M.get()), np.float64)
+    OUT2_base = np.ndarray((1), np.float64)
+    OUT3_base = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+    OUT1 = np.ndarray((N.get(), M.get()), np.float64)
+    OUT2 = np.ndarray((1), np.float64)
+    OUT3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B, C=C, OUT1 = OUT1_base, OUT2 = OUT2_base, OUT3 = OUT3_base, N=N, M=M, O=O)
 
+    expand_reduce(sdfg, graph)
+    expand_maps(sdfg, graph)
+    fusion(sdfg, graph)
+    sdfg.validate()
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B, C=C, OUT1 = OUT1, OUT2 = OUT2, OUT3 = OUT3, N=N, M=M, O=O)
+
+    assert np.allclose(OUT1, OUT1_base)
+    assert np.allclose(OUT2, OUT2_base)
+    assert np.allclose(OUT3, OUT3_base)
 
 
 if __name__ == "__main__":
 
     sdfg = TEST.to_sdfg()
-    #sdfg.apply_strict_transformations()
-    #sdfg.apply_gpu_transformations()
-
-    test_qualitatively(sdfg, sdfg.nodes()[0])
-    #test_quantitatively(sdfg, sdfg.nodes()[0])
+    test_quantitatively(sdfg, sdfg.nodes()[0])

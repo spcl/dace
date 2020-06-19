@@ -69,6 +69,20 @@ if __name__ == "__main__":
     sdfg = TEST.to_sdfg()
     state = sdfg.nodes()[0]
 
-    runner = Runner()
-    runner.go(sdfg, state, None, N, M, O, P, Q, R,
-              output = [])
+    A = np.random.rand(N.get()).astype(np.float64)
+    B = np.random.rand(M.get()).astype(np.float64)
+    C = np.random.rand(O.get()).astype(np.float64)
+    D = np.random.rand(M.get()).astype(np.float64)
+    E = np.random.rand(N.get()).astype(np.float64)
+    F = np.random.rand(P.get()).astype(np.float64)
+    G = np.random.rand(M.get()).astype(np.float64)
+    H = np.random.rand(P.get()).astype(np.float64)
+    I = np.random.rand(N.get()).astype(np.float64)
+    J = np.random.rand(R.get()).astype(np.float64)
+    X = np.random.rand(N.get()).astype(np.float64)
+    Y = np.random.rand(M.get()).astype(np.float64)
+    Z = np.random.rand(P.get()).astype(np.float64)
+
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
+          N=N, M=M, O=O, P=P, R=R,Q=Q)
