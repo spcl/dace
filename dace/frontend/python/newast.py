@@ -873,10 +873,9 @@ class TaskletTransformer(ExtNodeTransformer):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
                         out_memlet = self.sdfg_outputs[name][0]
-                        out_memlet.num_accesses = memlet.num_accesses
-                        out_memlet.veclen = memlet.veclen
+                        out_memlet.volume = memlet.volume
                         out_memlet.wcr = memlet.wcr
-                        out_memlet.wcr_conflict = memlet.wcr_conflict
+                        out_memlet.wcr_nonatomic = memlet.wcr_nonatomic
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
                             self, node,
