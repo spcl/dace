@@ -108,7 +108,8 @@ def live_sets(sdfg):
                             and kill[j] in alloc_dealloc[a][1]
                             and kill[i] != kill[j]):
                         alloc_dealloc[a][1].remove(kill[j])
-            alloc_dealloc_nodes[alloc_dealloc[a][1][0]][1].append(a)
+            if alloc_dealloc[a][1]:
+                alloc_dealloc_nodes[alloc_dealloc[a][1][0]][1].append(a)
         alloc_dealloc_states[state] = alloc_dealloc_nodes
 
         ##############

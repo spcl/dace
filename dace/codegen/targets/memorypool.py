@@ -16,6 +16,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
         self._block_size = 512
 
+        self.free = set()
+
         # Mark all transients as CPU_Pool
         for s in sdfg.arrays:
             if sdfg.arrays[s].transient:
@@ -73,6 +75,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._dispatcher.register_node_dispatcher(self)
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+        callsite_stream.write("//{node}".format(node=node))
+
         state = sdfg.states()[state_id]
         if state in self.alloc_dealloc_states.keys():
             alloc_dealloc = self.alloc_dealloc_states[state]
@@ -82,30 +86,49 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                     callsite_stream.write(
                         '''MPool.Dealloc({array});'''.format(array=t)
                     )
+                    self.free.add(t)
+
                 for t in alloc:
-                    callsite_stream.write(
-                        '''double *{array} = (double*)MPool.Alloc({size});'''.format(
-                            array=t, size=sdfg.arrays[t].total_size)
-                    )
+                    if self.free:
+                        free_array = self.free.pop()
+                        callsite_stream.write(
+                            '''double *{array} = {free_array};'''.format(
+                                array=t, size=sdfg.arrays[t].total_size, free_array=free_array)
+                        )
+                    else:
+                        callsite_stream.write(
+                            '''double *{array} = (double*)MPool.Alloc({size});'''.format(
+                                array=t, size=sdfg.arrays[t].total_size)
+                        )
+
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.initialization:
-            m_size = 0
-            for t in sdfg.transients():
-                m_size += int((sdfg.arrays[t].total_size // self._block_size + 1) * self._block_size)
+            state = sdfg.states()[state_id]
+            if state in self.maximum_live_set_states.keys():
+                max_live_set = self.maximum_live_set_states[state]
 
-            callsite_stream.write(
-                '''MemoryPool<false> MPool;
-                   MPool.ReserveMemory({m_size},{block_size});'''.format(m_size=m_size, block_size=self._block_size)
-            )
-            for t in self.shared_transients:
+                m_size = 0
+                for t in max_live_set[0]:
+                    m_size += int((sdfg.arrays[t].total_size // self._block_size + 1)
+                                  * self._block_size)
+                for t in self.shared_transients:
+                    m_size += int((sdfg.arrays[t].total_size // self._block_size + 1)
+                                  * self._block_size)
+                m_size += self._block_size
                 callsite_stream.write(
-                    '''double *{array} = (double*)MPool.Alloc({size});'''.format(
-                    array=t, size=sdfg.arrays[node.data].total_size)
-            )
-            self.initialization = False
+                    '''MemoryPool<false> MPool({m_size},{block_size});'''.format(
+                        m_size=m_size, block_size=self._block_size)
+                )
+
+                for t in self.shared_transients:
+                    callsite_stream.write(
+                        '''double *{array} = (double*)MPool.Alloc({size});'''.format(
+                            array=t, size=sdfg.arrays[node.data].total_size)
+                    )
+                self.initialization = False
         self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
@@ -113,8 +136,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream,
                     callsite_stream):
-        self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream,
-                    callsite_stream)
+        self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge,
+                                      function_stream, callsite_stream)
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
         pass
