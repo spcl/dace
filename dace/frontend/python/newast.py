@@ -1305,7 +1305,7 @@ class ProgramVisitor(ExtNodeVisitor):
         internal_memlet = dace.Memlet.simple(ntrans, subsets.Indices([0]))
         external_memlet = dace.Memlet.simple(stream_name,
                                              subsets.Indices([0]),
-                                             num_accesses=dtypes.DYNAMIC)
+                                             num_accesses=-1)
 
         # Inject to internal tasklet
         if not dec.endswith('scope'):

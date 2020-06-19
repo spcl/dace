@@ -73,7 +73,6 @@ namespace dace
 
     enum NumAccesses
     {
-        NA_DYNAMIC = -1, // Dynamic number of accesses
         NA_RUNTIME = 0, // Given at runtime
     };
 

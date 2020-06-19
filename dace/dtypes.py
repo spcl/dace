@@ -138,9 +138,6 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
 }
 
-# Identifier for dynamic number of Memlet accesses.
-DYNAMIC = -1
-
 # Translation of types to C types
 _CTYPES = {
     int: "int",

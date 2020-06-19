@@ -71,8 +71,7 @@ class Memlet(object):
                         AccessNode.
             :param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
-                                 `dace.dtypes.DYNAMIC` (-1),
-                                 designates that the number of accesses is
+                                 -1, designates that the number of accesses is
                                  unknown at compile time.
             :param subset: The subset of `data` that is going to be accessed.
             :param vector_length: The length of a single unit of access to
@@ -163,8 +162,7 @@ class Memlet(object):
                                  information from the SDFG.
             :param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
-                                 `dace.dtypes.DYNAMIC` (-1),
-                                 designates that the number of accesses is
+                                 -1, designates that the number of accesses is
                                  unknown at compile time.
             :param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
