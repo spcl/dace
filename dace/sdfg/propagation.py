@@ -64,8 +64,7 @@ class SeparableMemlet(MemletPattern):
                          expr[dim][1].approx if isinstance(
                              expr[dim][1], symbolic.SymExpr) else expr[dim][1],
                          expr[dim][2].approx if isinstance(
-                             expr[dim][2],
-                             symbolic.SymExpr) else expr[dim][2]))
+                             expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
                 else:
                     dexprs.append(expr[dim])
 
@@ -134,13 +133,6 @@ class AffineSMemlet(SeparableMemletPattern):
         self.constant_min = None
         self.constant_max = None
 
-        # Obtain vector length
-        self.veclen = None
-        if dim_index == total_dims - 1:
-            for e in orig_edges:
-                self.veclen = e.veclen
-        if self.veclen is None:
-            self.veclen = 1
         ######################
 
         # Special case: Get the total internal access range
@@ -256,7 +248,7 @@ class AffineSMemlet(SeparableMemletPattern):
         # This should be using sympy.floor
         memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
         memlet_rlen = memlet_start_pts.expand() * rt
-        interval_len = (result_end - result_begin + 1) * self.veclen
+        interval_len = (result_end - result_begin + 1) * 1  # self.veclen
         num_elements = node_rlen * memlet_rlen
 
         if (interval_len == num_elements
@@ -266,8 +258,8 @@ class AffineSMemlet(SeparableMemletPattern):
             result_tile = 1
         else:
             if rt == 1:
-                result_skip = (result_end - result_begin - re +
-                               rb) / (node_re - node_rb)
+                result_skip = (result_end - result_begin - re + rb) / (node_re -
+                                                                       node_rb)
                 try:
                     if result_skip < 1:
                         result_skip = 1

@@ -372,14 +372,13 @@ class Memlet(object):
         return Memlet.simple(dataname, rng, wcr=wcr)
 
     def __hash__(self):
-        return hash((self.data, self.num_accesses, self.subset, self.veclen,
-                     str(self.wcr), self.other_subset))
+        return hash(
+            (self.volume, self.src_subset, self.dst_subset, str(self.wcr)))
 
     def __eq__(self, other):
         return all([
-            self.data == other.data, self.num_accesses == other.num_accesses,
-            self.subset == other.subset, self.veclen == other.veclen,
-            self.wcr == other.wcr, self.other_subset == other.other_subset
+            self.volume == other.volume, self.src_subset == other.src_subset,
+            self.dst_subset == other.dst_subset, self.wcr == other.wcr
         ])
 
     def num_elements(self):
@@ -421,9 +420,9 @@ class Memlet(object):
 
     @property
     def data(self):
-        if not self._initialized:
+        if self._data is not None:
             return self._data
-        elif self._data is not None:
+        elif not self._initialized:
             return self._data
         elif self._state is not None and self._edge is not None:
             # Try to obtain data from ends of memlet path
@@ -431,12 +430,17 @@ class Memlet(object):
             path = self._state.memlet_path(self._edge)
             path_src = path[0].src
             path_dst = path[-1].dst
+            # Cache and return result
             if self._is_data_src is not None:
-                return path_src.data if self._is_data_src else path_dst.data
+                self._data = (path_src.data
+                              if self._is_data_src else path_dst.data)
+                return self._data
             if isinstance(path_src, AccessNode):
-                return path_src.data
+                self._data = path_src.data
+                return self._data
             elif isinstance(path_dst, AccessNode):
-                return path_dst.data
+                self._data = path_dst.data
+                return self._data
         return None
 
     # End of legacy fields
