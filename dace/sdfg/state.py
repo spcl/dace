@@ -90,7 +90,8 @@ class StateGraphView(object):
         state = self._graph
 
         # If empty memlet, return itself as the path
-        if edge.src_conn is None and edge.dst_conn is None and edge.data.data is None:
+        if (edge.src_conn is None and edge.dst_conn is None
+                and edge.data.is_empty()):
             return result
 
         # Prepend incoming edges until reaching the source node
@@ -1122,7 +1123,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
         # If there are no inputs, add empty memlet
         if len(inputs) == 0:
-            self.add_edge(map_entry, None, tasklet, None, mm.EmptyMemlet())
+            self.add_edge(map_entry, None, tasklet, None, mm.Memlet())
 
         if external_edges:
             for inp, inpnode in inpdict.items():
@@ -1155,7 +1156,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
         # If there are no outputs, add empty memlet
         if len(outputs) == 0:
-            self.add_edge(tasklet, None, map_exit, None, mm.EmptyMemlet())
+            self.add_edge(tasklet, None, map_exit, None, mm.Memlet())
 
         if external_edges:
             for out, outnode in outdict.items():
@@ -1385,7 +1386,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Add edges first so that scopes can be understood
         edges = [
             self.add_edge(path_nodes[i], None, path_nodes[i + 1], None,
-                          mm.EmptyMemlet()) for i in range(len(path_nodes) - 1)
+                          mm.Memlet()) for i in range(len(path_nodes) - 1)
         ]
 
         if not isinstance(memlet, mm.Memlet):
@@ -1401,15 +1402,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         cur_memlet = memlet
 
         # Verify that connectors exist
-        if (not isinstance(memlet, mm.EmptyMemlet)
-                and hasattr(edges[0].src, "out_connectors")
+        if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors")
                 and isinstance(edges[0].src, nd.CodeNode)
                 and not isinstance(edges[0].src, nd.LibraryNode) and
             (src_conn is None or src_conn not in edges[0].src.out_connectors)):
             raise ValueError("Output connector {} does not exist in {}".format(
                 src_conn, edges[0].src.label))
-        if (not isinstance(memlet, mm.EmptyMemlet)
-                and hasattr(edges[-1].dst, "in_connectors")
+        if (not memlet.is_empty() and hasattr(edges[-1].dst, "in_connectors")
                 and isinstance(edges[-1].dst, nd.CodeNode)
                 and not isinstance(edges[-1].dst, nd.LibraryNode) and
             (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
@@ -1431,7 +1430,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                 dconn = dst_conn if i == 0 else ("IN_" +
                                                  edge.dst.last_connector())
 
-            if isinstance(cur_memlet, mm.EmptyMemlet):
+            if cur_memlet.is_empty():
                 if propagate_forward:
                     sconn = src_conn if i == 0 else None
                     dconn = dst_conn if i == len(edges) - 1 else None
@@ -1459,7 +1458,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             # Propagate current memlet to produce the next one
             if i < len(edges) - 1:
                 snode = edge.dst if propagate_forward else edge.src
-                if not isinstance(cur_memlet, mm.EmptyMemlet):
+                if not cur_memlet.is_empty():
                     if propagate:
                         cur_memlet = propagate_memlet(self, cur_memlet, snode,
                                                       True)

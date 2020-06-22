@@ -288,11 +288,10 @@ def make_read_sdfg():
 
     state.add_memlet_path(A,
                           A_pipe,
-                          memlet=Memlet(A_pipe,
-                                        1,
-                                        Indices(["0"]),
-                                        W.get(),
-                                        other_subset=Indices(["i"])))
+                          memlet=Memlet.simple(A_pipe,
+                                               '0',
+                                               other_subset_str='i',
+                                               veclen=W.get()))
 
     return sdfg
 
@@ -449,14 +448,13 @@ def make_main_state(sdfg):
                                          {"_A_pipe"})
 
     compute_sdfg = make_compute_sdfg()
-    compute_tasklet = state.add_nested_sdfg(
-        compute_sdfg, sdfg, {"_A_pipe", "ratio_nested"},
-        {"_B_pipe", "_valid_pipe", "count"})
+    compute_tasklet = state.add_nested_sdfg(compute_sdfg, sdfg,
+                                            {"_A_pipe", "ratio_nested"},
+                                            {"_B_pipe", "_valid_pipe", "count"})
 
     write_sdfg = make_write_sdfg()
     write_tasklet = state.add_nested_sdfg(write_sdfg, sdfg,
-                                          {"_B_pipe", "_valid_pipe"},
-                                          {"B_mem"})
+                                          {"_B_pipe", "_valid_pipe"}, {"B_mem"})
 
     state.add_memlet_path(A,
                           read_tasklet,
@@ -540,8 +538,7 @@ def make_sdfg(specialize):
 
     sdfg.add_edge(copy_to_device_state, compute_state,
                   dace.sdfg.InterstateEdge())
-    sdfg.add_edge(compute_state, copy_to_host_state,
-                  dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, copy_to_host_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
@@ -602,8 +599,8 @@ if __name__ == "__main__":
 
     if len(filtered) != outsize[0]:
         print(
-            "Difference in number of filtered items: %d (DaCe) vs. %d (numpy)"
-            % (outsize[0], len(filtered)))
+            "Difference in number of filtered items: %d (DaCe) vs. %d (numpy)" %
+            (outsize[0], len(filtered)))
         totalitems = min(outsize[0], N.get())
         print('DaCe:', B[:totalitems].view(type=np.ndarray))
         print('Regression:', filtered.view(type=np.ndarray))

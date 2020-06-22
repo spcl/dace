@@ -5,7 +5,7 @@ from typing import List, Optional
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg import SDFG, SDFGState
-from dace.memlet import EmptyMemlet, Memlet
+from dace.memlet import Memlet
 
 
 def nest_state_subgraph(sdfg: SDFG,
@@ -212,13 +212,13 @@ def nest_state_subgraph(sdfg: SDFG,
     for name in input_arrays:
         node = state.add_read(name)
         if entry is not None:
-            state.add_nedge(entry, node, EmptyMemlet())
+            state.add_nedge(entry, node, Memlet())
         state.add_edge(node, None, nested_sdfg, name,
                        Memlet.from_array(name, sdfg.arrays[name]))
     for name in output_arrays:
         node = state.add_write(name)
         if exit is not None:
-            state.add_nedge(node, exit, EmptyMemlet())
+            state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None,
                        Memlet.from_array(name, sdfg.arrays[name]))
 

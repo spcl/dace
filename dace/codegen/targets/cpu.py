@@ -62,9 +62,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
-        dispatcher.register_map_dispatcher([
-            dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential
-        ], self)
+        dispatcher.register_map_dispatcher(
+            [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential],
+            self)
 
         cpu_storage = [
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
@@ -83,8 +83,8 @@ class CPUCodeGen(TargetCodeGenerator):
         options = []
 
         if Config.get('compiler', 'cpu', 'executable'):
-            compiler = make_absolute(
-                Config.get('compiler', 'cpu', 'executable'))
+            compiler = make_absolute(Config.get('compiler', 'cpu',
+                                                'executable'))
             options.append('-DCMAKE_CXX_COMPILER="{}"'.format(compiler))
 
         if Config.get('compiler', 'cpu', 'args'):
@@ -171,9 +171,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if is_array_stream_view(sdfg, dfg, node):
                 if state_id is None:
-                    raise SyntaxError(
-                        "Stream-view of array may not be defined "
-                        "in more than one state")
+                    raise SyntaxError("Stream-view of array may not be defined "
+                                      "in more than one state")
 
                 arrnode = sdfg.arrays[nodedesc.sink]
                 state = sdfg.nodes()[state_id]
@@ -240,8 +239,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if nodedesc.storage == dtypes.StorageType.Register:
                 warnings.warn('Variable-length array %s with size %s '
                               'detected and was allocated on heap instead of '
-                              '%s' %
-                              (name, sym2cpp(arrsize), nodedesc.storage))
+                              '%s' % (name, sym2cpp(arrsize), nodedesc.storage))
 
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
@@ -414,9 +412,8 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(src_node, nodes.CodeNode) and isinstance(
                 dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
-            raise RuntimeError(
-                "Copying between code nodes is only supported as"
-                " part of the participating nodes")
+            raise RuntimeError("Copying between code nodes is only supported as"
+                               " part of the participating nodes")
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
@@ -456,17 +453,17 @@ class CPUCodeGen(TargetCodeGenerator):
                     and self._dispatcher.defined_vars.get(
                         vconn) == DefinedType.Scalar):
                 stream.write(
-                    "%s = %s;" %
-                    (vconn, self.memlet_ctor(sdfg, memlet, False)),
+                    "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, False)),
                     sdfg,
                     state_id,
                     [src_node, dst_node],
                 )
                 return
             # Writing from/to a stream
-            if isinstance(sdfg.arrays[memlet.data], data.Stream) or (
-                    isinstance(src_node, nodes.AccessNode)
-                    and isinstance(src_nodedesc, data.Stream)):
+            if isinstance(
+                    sdfg.arrays[memlet.data],
+                    data.Stream) or (isinstance(src_node, nodes.AccessNode)
+                                     and isinstance(src_nodedesc, data.Stream)):
                 # Identify whether a stream is writing to an array
                 if isinstance(dst_nodedesc,
                               (data.Scalar, data.Array)) and isinstance(
@@ -519,10 +516,9 @@ class CPUCodeGen(TargetCodeGenerator):
                         copysize = " * ".join(
                             [sym2cpp(s) for s in memlet.subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(
-                                s=dst_node.data,
-                                arr=src_node.data,
-                                size=copysize),
+                            "{s}.push({arr}, {size});".format(s=dst_node.data,
+                                                              arr=src_node.data,
+                                                              size=copysize),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
@@ -595,10 +591,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     stride_tmpl_args[j] = dst
                     j += 1
 
-            copy_args = ([src_expr, dst_expr] +
-                         ([] if memlet.wcr is None else
-                          [unparse_cr(sdfg, memlet.wcr)]) +
-                         sym2cpp(stride_tmpl_args))
+            copy_args = (
+                [src_expr, dst_expr] +
+                ([] if memlet.wcr is None else [unparse_cr(sdfg, memlet.wcr)]) +
+                sym2cpp(stride_tmpl_args))
 
             # Instrumentation: Pre-copy
             for instr in self._dispatcher.instrumentation.values():
@@ -631,9 +627,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     raise NotImplementedError(
                         "Accumulation of dynamically-shaped "
                         "arrays not yet implemented")
-                elif copy_shape == [
-                        1
-                ]:  # Special case: accumulating one element
+                elif copy_shape == [1
+                                    ]:  # Special case: accumulating one element
                     dst_expr = self.memlet_view_ctor(sdfg, memlet, True)
                     stream.write(
                         write_and_resolve_expr(sdfg, memlet, nc, dst_expr,
@@ -701,9 +696,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             # If the memlet is pointing into an array in an inner scope, then
             # the inner scope (i.e., the output array) must handle it
-            if scope_dict[
-                    node] != scope_dict[dst_node] and scope_contains_scope(
-                        scope_dict, node, dst_node):
+            if scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(
+                    scope_dict, node, dst_node):
                 continue
 
             # Array to tasklet (path longer than 1, handled at tasklet entry)
@@ -722,20 +716,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     could_be_scalar = not isinstance(node.sdfg.arrays[uconn],
                                                      data.Array)
 
-                try:
-                    positive_accesses = bool(memlet.num_accesses >= 0)
-                except TypeError:
-                    positive_accesses = False
-
-                if (memlet.subset.data_dims() == 0 and positive_accesses
+                if (memlet.subset.data_dims() == 0 and not memlet.dynamic
                         and could_be_scalar):
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
                         out_local_name = self.memlet_ctor(sdfg, memlet, True)
-                        in_memlets = [
-                            d for _, _, _, _, d in dfg.in_edges(node)
-                        ]
+                        in_memlets = [d for _, _, _, _, d in dfg.in_edges(node)]
                         assert len(in_memlets) == 1
                         in_local_name = self.memlet_ctor(
                             sdfg, in_memlets[0], False)
@@ -752,16 +739,14 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id, node)
                     else:
                         result.write(
-                            "%s.write(%s);\n" %
-                            (out_local_name, in_local_name),
+                            "%s.write(%s);\n" % (out_local_name, in_local_name),
                             sdfg,
                             state_id,
                             node,
                         )
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
-                if dst_node != node and not isinstance(dst_node,
-                                                       nodes.Tasklet):
+                if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
                     dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -1224,15 +1209,14 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write("{\n", sdfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), sdfg, state_id, node)
         callsite_stream.write("}\n", sdfg, state_id, node)
-        callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id,
-                              node)
+        callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
         self._dispatcher.defined_vars.exit_scope(node)
 
         callsite_stream.write(after_memlets_stream.getvalue())
 
-    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node,
-                               function_stream, callsite_stream):
+    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node, function_stream,
+                               callsite_stream):
         self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
                                callsite_stream)
 
@@ -1446,8 +1430,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
-                                               None, result)
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
+                                               result)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1523,8 +1507,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 "__dace_" + node.consume.label + "_element",
             )
             self._dispatcher.defined_vars.add(
-                "__dace_" + node.consume.label + "_element",
-                DefinedType.Scalar)
+                "__dace_" + node.consume.label + "_element", DefinedType.Scalar)
         else:
             chunk = "const %s *%s, size_t %s" % (
                 input_streamdesc.dtype.ctype,
@@ -1624,15 +1607,14 @@ class CPUCodeGen(TargetCodeGenerator):
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
-                                               None, result)
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
+                                               result)
 
             # Generate register definitions for inter-tasklet memlets
             scope_dict = dfg.scope_dict()
             for edge in dfg.edges():
                 # Only interested in edges within current scope
-                if scope_dict[edge.src] != node or scope_dict[
-                        edge.dst] != node:
+                if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
                     continue
                 if (isinstance(edge.src, nodes.CodeNode)
                         and isinstance(edge.dst, nodes.CodeNode)):

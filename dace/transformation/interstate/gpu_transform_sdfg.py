@@ -296,7 +296,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
                 # Map without inputs
                 if len(in_edges) == 0:
-                    state.add_nedge(me, gcode, memlet.EmptyMemlet())
+                    state.add_nedge(me, gcode, memlet.Memlet())
         #######################################################
         # Step 6: Change all top-level maps and library nodes to GPU schedule
 
