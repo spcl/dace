@@ -241,7 +241,8 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         :return: Offset Memlet to set on the resulting graph.
     """
     result = copy.deepcopy(internal_memlet)
-    result.data = external_memlet.data
+    # TODO: Remove
+    result._data = external_memlet.data
 
     shape = external_memlet.subset.size()
     if len(internal_memlet.subset) < len(external_memlet.subset):

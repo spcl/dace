@@ -822,7 +822,7 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                         + '{dststrides}, {is_async}>{accum}({args});').format(
                             func=funcname,
                             type=dst_node.desc(sdfg).dtype.ctype,
-                            veclen=memlet.veclen,
+                            veclen='1',#memlet.veclen,
                             bdims=', '.join(_topy(self._block_dims)),
                             dststrides=', '.join(_topy(dst_strides)),
                             is_async='false'
@@ -833,12 +833,13 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                                            _topy(copy_shape))), sdfg, state_id,
                                           [src_node, dst_node])
                 else:
+                    # TODO: Use connector type
                     callsite_stream.write((
                         '    {func}<dace::vec<{type}, {veclen}>, {bdims}, {copysize}, '
                         + '{dststrides}, {is_async}>{accum}({args});').format(
                             func=funcname,
                             type=dst_node.desc(sdfg).dtype.ctype,
-                            veclen=memlet.veclen,
+                            veclen='1',#memlet.veclen,
                             bdims=', '.join(_topy(self._block_dims)),
                             copysize=', '.join(_topy(copy_shape)),
                             dststrides=', '.join(_topy(dst_strides)),

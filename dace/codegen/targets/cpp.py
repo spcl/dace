@@ -1,6 +1,7 @@
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
@@ -41,18 +42,20 @@ def copy_expr(
             s = offset
         o = None
     if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o,
-                                        memlet.veclen if packed_types else 1)
+        # TODO: Fix w.r.t. vector length
+        offset_cppstr = cpp_offset_expr(
+            datadesc, s, o, 1 if packed_types else 1)  #veclen if packed
     else:
         offset_cppstr = "0"
     dt = ""
 
-    if memlet.veclen != 1 and not packed_types:
-        offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(memlet.veclen))
-        dt = "(dace::vec<%s, %s> *)" % (
-            datadesc.dtype.ctype,
-            sym2cpp(memlet.veclen),
-        )
+    warnings.warn('not done here yet')
+    # if memlet.veclen != 1 and not packed_types:
+    #     offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(memlet.veclen))
+    #     dt = "(dace::vec<%s, %s> *)" % (
+    #         datadesc.dtype.ctype,
+    #         sym2cpp(memlet.veclen),
+    #     )
 
     expr = dataname
 
@@ -207,16 +210,16 @@ def memlet_copy_to_absolute_strides(dispatcher,
             copy_shape, src_strides = reshape_strides(dst_subset, dst_strides,
                                                       src_strides, copy_shape)
 
-    if memlet.veclen != 1:
-        int_floor = sp.Function("int_floor")
-        src_strides[:-1] = [
-            int_floor(s, memlet.veclen) for s in src_strides[:-1]
-        ]
-        dst_strides[:-1] = [
-            int_floor(s, memlet.veclen) for s in dst_strides[:-1]
-        ]
-        if not packed_types:
-            copy_shape[-1] = int_floor(copy_shape[-1], memlet.veclen)
+    # if memlet.veclen != 1:
+    #     int_floor = sp.Function("int_floor")
+    #     src_strides[:-1] = [
+    #         int_floor(s, memlet.veclen) for s in src_strides[:-1]
+    #     ]
+    #     dst_strides[:-1] = [
+    #         int_floor(s, memlet.veclen) for s in dst_strides[:-1]
+    #     ]
+    #     if not packed_types:
+    #         copy_shape[-1] = int_floor(copy_shape[-1], memlet.veclen)
 
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
@@ -455,7 +458,7 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
         using atomics or critical sections. """
 
-    if edge.data.wcr_conflict is not None and not edge.data.wcr_conflict:
+    if edge.data.wcr_nonatomic is not None and edge.data.wcr_nonatomic:
         return False
 
     # If it's an entire SDFG, it's probably write-conflicted
@@ -466,8 +469,7 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
         if len(in_edges) != 1:
             return True
         if (isinstance(in_edges[0].src, nodes.ExitNode) and
-                in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential
-            ):
+                in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
             return False
         return True
 
@@ -537,8 +539,8 @@ def unparse_cr(sdfg, wcr_ast):
                                          for a in args), body_cpp)
 
 
-def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                    callsite_stream, locals, ldepth, toplevel_schedule):
+def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
+                    locals, ldepth, toplevel_schedule):
 
     if node.label is None or node.label == "":
         return ""
@@ -594,8 +596,8 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
         elif v == node:
             memlets[vconn] = (memlet, False, None)
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg,
-                          state_id, node)
+    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
+                          node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
@@ -661,8 +663,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     if wcr is not None:
                         newnode = ast.Name(id=write_and_resolve_expr(
                             self.sdfg, memlet, nc, '__' + target,
-                            cppunparse.cppunparse(value,
-                                                  expr_semicolon=False)))
+                            cppunparse.cppunparse(value, expr_semicolon=False)))
                     else:
                         newnode = ast.Name(id="__%s.write(%s);" % (
                             target,
@@ -713,8 +714,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         for i, d in enumerate(slice):
             if isinstance(d, tuple):
                 raise SyntaxError(
-                    "CPU backend does not yet support ranges as inputs/outputs"
-                )
+                    "CPU backend does not yet support ranges as inputs/outputs")
 
             result.write(sym2cpp(d))
 
@@ -835,8 +835,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
-                        callsite_stream):
+def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:

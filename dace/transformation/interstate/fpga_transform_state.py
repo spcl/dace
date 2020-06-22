@@ -255,7 +255,8 @@ class FPGATransformState(pattern_matching.Transformation):
                         if isinstance(n, dace.sdfg.nodes.AccessNode
                                       ) and n.data == dst_conn:
                             # assuming all memlets have the same vector length
-                            veclen_ = inner_state.all_edges(n)[0].data.veclen
+                            #veclen_ = inner_state.all_edges(n)[0].data.veclen
+                            pass
             if isinstance(src, dace.sdfg.nodes.NestedSDFG):
                 # this edge is coming from the nested SDFG
                 for inner_state in src.sdfg.states():
@@ -263,7 +264,8 @@ class FPGATransformState(pattern_matching.Transformation):
                         if isinstance(n, dace.sdfg.nodes.AccessNode
                                       ) and n.data == src_conn:
                             # assuming all memlets have the same vector length
-                            veclen_ = inner_state.all_edges(n)[0].data.veclen
+                            #veclen_ = inner_state.all_edges(n)[0].data.veclen
+                            pass
 
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data

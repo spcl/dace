@@ -40,7 +40,7 @@ class Edge(object):
         yield self._data
 
     def to_json(self, parent_graph):
-        memlet_ret = self.data.to_json(parent_graph)
+        memlet_ret = self.data.to_json()
         ret = {
             'type': type(self).__name__,
             'attributes': {

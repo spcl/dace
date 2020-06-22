@@ -123,9 +123,11 @@ class ImmaterialCodeGen(TargetCodeGenerator):
         result = ('auto __%s = ' % local_name +
                   self.memlet_view_ctor(sdfg, memlet, direction) + ';\n')
 
+        # TODO: Refactor to reuse CPP
+        # TODO: Use connector type
         # Allocate variable type
-        memlet_type = '    dace::vec<%s, %s>' % (
-            sdfg.arrays[memlet.data].dtype.ctype, sym2cpp(memlet.veclen))
+        memlet_type = '    dace::vec<%s, 1>' % (
+            sdfg.arrays[memlet.data].dtype.ctype)
         if memlet.subset.data_dims() == 0 and memlet.num_accesses >= 0:
             result += memlet_type + ' ' + local_name
             if direction == "in":
@@ -170,17 +172,16 @@ class ImmaterialCodeGen(TargetCodeGenerator):
             if len(nonIndexDims) > 1 and len(indexdims) > 0:
                 raise NotImplementedError(
                     'subviews of more than one dimension ' + 'not implemented')
-            elif len(
-                    nonIndexDims) == 1 and len(indexdims) > 0:  # One dimension
+            elif len(nonIndexDims) == 1 and len(indexdims) > 0:  # One dimension
                 indexdim = nonIndexDims[0]
 
                 # Contiguous dimension
                 if indexdim == dims - 1:
                     memlet_params[-1] += ' + %s' % cpp_array_expr(
                         sdfg, memlet, False)
-                    memlet_params.append(
-                        '0, %s' % (sym2cpp(memlet.subset.ranges[-1][1] -
-                                           memlet.subset.ranges[-1][0])))
+                    memlet_params.append('0, %s' %
+                                         (sym2cpp(memlet.subset.ranges[-1][1] -
+                                                  memlet.subset.ranges[-1][0])))
                 else:  # Non-contiguous dimension
                     useskip = True
                     memlet_params[-1] += ' + %s' % cpp_array_expr(
@@ -227,14 +228,12 @@ class ImmaterialCodeGen(TargetCodeGenerator):
 
         if dims == 0:
             return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t> ("%s", %s)' % (
-                'In' if direction == "in" else "Out", 'Skip'
-                if useskip else '', sdfg.arrays[memlet.data].dtype.ctype,
-                symbolic.symstr(
-                    memlet.veclen), memlet.data, ', '.join(memlet_params))
+                'In' if direction == "in" else "Out",
+                'Skip' if useskip else '', sdfg.arrays[memlet.data].dtype.ctype,
+                symbolic.symstr(1), memlet.data, ', '.join(memlet_params))
         else:
             return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t, %s> ("%s", %s)' % (
-                'In' if direction == "in" else "Out", 'Skip'
-                if useskip else '', sdfg.arrays[memlet.data].dtype.ctype,
-                symbolic.symstr(memlet.veclen), ', '.join([
-                    str(s) for s in memlet.subset.bounding_box_size()
-                ]), memlet.data, ', '.join(memlet_params))
+                'In' if direction == "in" else "Out", 'Skip' if useskip else '',
+                sdfg.arrays[memlet.data].dtype.ctype, symbolic.symstr(1),
+                ', '.join([str(s) for s in memlet.subset.bounding_box_size()
+                           ]), memlet.data, ', '.join(memlet_params))

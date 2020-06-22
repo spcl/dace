@@ -460,7 +460,7 @@ class Stream(Data):
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
     veclen = Property(dtype=int,
-                      desc="Vector length. Memlets must adhere to this.")
+                      desc="Vector length. Connectors must adhere to this.")
 
     def __init__(self,
                  dtype,

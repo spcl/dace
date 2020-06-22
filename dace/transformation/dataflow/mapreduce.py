@@ -145,7 +145,6 @@ class MapReduceFusion(pm.Transformation):
             Memlet.simple(array_edge.data.data,
                           array_edge.data.subset,
                           num_accesses=array_edge.data.num_accesses,
-                          veclen=array_edge.data.veclen,
                           wcr_str=reduce_node.wcr))
 
         # Add initialization state as necessary

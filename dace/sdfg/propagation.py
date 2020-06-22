@@ -248,7 +248,7 @@ class AffineSMemlet(SeparableMemletPattern):
         # This should be using sympy.floor
         memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
         memlet_rlen = memlet_start_pts.expand() * rt
-        interval_len = (result_end - result_begin + 1) * 1  # self.veclen
+        interval_len = (result_end - result_begin + 1)
         num_elements = node_rlen * memlet_rlen
 
         if (interval_len == num_elements
@@ -689,6 +689,7 @@ def propagate_memlet(dfg_state,
             [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
         ]
 
+        # TODO: Rewrite for src/dst_subset
         new_subset = None
         for md in aggdata:
             tmp_subset = None

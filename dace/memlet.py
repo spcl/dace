@@ -176,7 +176,7 @@ class Memlet(object):
         primarily used for connecting nodes to scopes without transferring 
         data to them. 
         """
-        return (self.data is None and self.src_subset is None
+        return (self._data is None and self.src_subset is None
                 and self.dst_subset is None)
 
     @property
@@ -206,7 +206,7 @@ class Memlet(object):
             :param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
             :param veclen: The length of a single unit of access to
-                           the data (used for vectorization optimizations).
+                           the data (UNUSED).
             :param wcr_str: A lambda function (as a string) specifying
                             how write-conflicts are resolved. The syntax
                             of the lambda function receives two elements:
@@ -410,6 +410,18 @@ class Memlet(object):
             return self.src_subset if self._is_data_src else self.dst_subset
         return self.src_subset
 
+    @subset.setter
+    def subset(self, value):
+        if not self._initialized:
+            self._subset = value
+        elif self._is_data_src is not None:
+            if self._is_data_src:
+                self.src_subset = value
+            else:
+                self.dst_subset = value
+        else:
+            self.src_subset = value
+
     @property
     def other_subset(self):
         if not self._initialized:
@@ -417,6 +429,18 @@ class Memlet(object):
         elif self._is_data_src is not None:
             return self.dst_subset if self._is_data_src else self.src_subset
         return self.dst_subset
+
+    @other_subset.setter
+    def other_subset(self, value):
+        if not self._initialized:
+            self._other_subset = value
+        elif self._is_data_src is not None:
+            if self._is_data_src:
+                self.dst_subset = value
+            else:
+                self.src_subset = value
+        else:
+            self.dst_subset = value
 
     @property
     def data(self):

@@ -6,6 +6,7 @@ import os
 import re
 from six import StringIO
 import numpy as np
+import warnings
 
 import dace
 from dace import registry, subsets, dtypes
@@ -1132,8 +1133,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         # The vector length tells us HOW MANY ELEMENTS ARE ASSIGNED, whereas
         # the memory width length tells us if its a VECTOR TYPE being assigned.
+        warnings.warn('we are not done here')
 
-        veclen_lhs = memlet.veclen
+        veclen_lhs = 1  #memlet.veclen
         try:
             memwidth_lhs = self.memory_widths[(memlet.data, self.sdfg)]
         except KeyError:
@@ -1141,7 +1143,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         try:
             # Detect vector width conversions in simple cases.
             # TODO: use type inference to detect this for arbitrary expressions
-            veclen_rhs = self.memlets[node.value.id][0].veclen
+            veclen_rhs = 1  #self.memlets[node.value.id][0].veclen
         except (AttributeError, KeyError):
             veclen_rhs = veclen_lhs  # Is not a data container
         if veclen_lhs != veclen_rhs:

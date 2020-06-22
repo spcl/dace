@@ -310,8 +310,8 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                                                node=node_id)
 
         output_memlet = output_edge.data
-        output_type = 'dace::vec<%s, %s>' % (
-            sdfg.arrays[output_memlet.data].dtype.ctype, output_memlet.veclen)
+        output_type = 'dace::vec<%s, 1>' % (
+            sdfg.arrays[output_memlet.data].dtype.ctype)
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '
@@ -529,8 +529,8 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         # Obtain some SDFG-related information
         input_memlet = input_edge.data
         output_memlet = output_edge.data
-        output_type = 'dace::vec<%s, %s>' % (
-            sdfg.arrays[output_memlet.data].dtype.ctype, output_memlet.veclen)
+        output_type = 'dace::vec<%s, 1>' % (
+            sdfg.arrays[output_memlet.data].dtype.ctype)
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '

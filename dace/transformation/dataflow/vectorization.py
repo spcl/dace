@@ -46,6 +46,9 @@ class Vectorization(pattern_matching.Transformation):
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
         found = False
 
+        warnings.warn("REDO")
+        return False
+
         # Check if all edges, adjacent to the tasklet,
         # use the parameter in their last dimension.
         for _src, _, _dest, _, memlet in graph.all_edges(tasklet):
@@ -62,7 +65,7 @@ class Vectorization(pattern_matching.Transformation):
 
             try:
                 subset = memlet.subset
-                veclen = memlet.veclen
+                veclen = 1  #memlet.veclen
             except AttributeError:
                 return False
 
@@ -103,8 +106,7 @@ class Vectorization(pattern_matching.Transformation):
         tasklet = candidate[Vectorization._tasklet]
         map_exit = candidate[Vectorization._map_exit]
 
-        return ' -> '.join(
-            str(node) for node in [map_entry, tasklet, map_exit])
+        return ' -> '.join(str(node) for node in [map_entry, tasklet, map_exit])
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
@@ -121,8 +123,7 @@ class Vectorization(pattern_matching.Transformation):
         if self.strided_map:
             map_entry.map.range[-1] = (dim_from, dim_to, vector_size)
         else:
-            map_entry.map.range[-1] = (dim_from,
-                                       (dim_to + 1) / vector_size - 1,
+            map_entry.map.range[-1] = (dim_from, (dim_to + 1) / vector_size - 1,
                                        dim_step)
 
         # TODO: Postamble and/or preamble non-vectorized map

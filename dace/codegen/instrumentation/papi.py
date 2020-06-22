@@ -23,8 +23,7 @@ import warnings
 VECTOR_COUNTER_SET = ('0x40000025', '0x40000026', '0x40000027', '0x40000028',
                       '0x40000021', '0x40000022', '0x40000023', '0x40000024')
 MEM_COUNTER_SET = ('PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS')
-CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN',
-                     'PAPI_CA_ITV')
+CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV')
 
 
 def _unified_id(node_id: int, state_id: int) -> int:
@@ -69,14 +68,12 @@ class PAPIInstrumentation(InstrumentationProvider):
         PAPIInstrumentation._counters &= set(counters.keys())
 
         # Compiler arguments for vectorization output
-        if Config.get_bool('instrumentation', 'papi',
-                           'vectorization_analysis'):
+        if Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
             Config.append(
                 'compiler',
                 'cpu',
                 'args',
-                value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt '
-            )
+                value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt ')
 
         # If no PAPI counters are available, disable PAPI
         if len(self._counters) == 0:
@@ -121,9 +118,8 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
             uid = _unified_id(-1, sdfg.node_id(state))
             local_stream.write("__perf_store.markSuperSectionStart(%d);" % uid)
 
-    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge,
-                      local_stream, global_stream, copy_shape, src_strides,
-                      dst_strides):
+    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream,
+                      global_stream, copy_shape, src_strides, dst_strides):
         if not self._papi_used:
             return
 
@@ -160,12 +156,11 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
         unique_cpy_id = self.get_unique_number()
 
         dst_nodedesc = dst_node.desc(sdfg)
-        ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype, memlet.veclen)
+        ctype = dst_nodedesc.dtype.ctype
 
         fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " +
                 "/".join(sym2cpp(dst_strides)))
-        copy_size = "sizeof(%s) * %s * (%s)" % (ctype, sym2cpp(
-            memlet.veclen), fac3)
+        copy_size = "sizeof(%s) * (%s)" % (ctype, fac3)
         node_id = _unified_id(state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it
         # would be a section with 1 entry))
@@ -349,8 +344,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if self.should_instrument_entry(node):
             # Mark the SuperSection start (if possible)
             result.write(
-                self.perf_get_supersection_start_string(
-                    node, state, unified_id),
+                self.perf_get_supersection_start_string(node, state,
+                                                        unified_id),
                 sdfg,
                 state_id,
                 node,
@@ -377,8 +372,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         # (instead of per-thread). This incurs additional overhead.
         if self.should_instrument_entry(node):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n"
-                 .format(id=unified_id)) +
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
+                 format(id=unified_id)) +
                 self.perf_counter_start_measurement_string(
                     unified_id,
                     "__perf_tlp_{id}.getAndIncreaseCounter()".format(
@@ -573,8 +568,8 @@ class PAPIUtils(object):
             # Resolve all symbols using the retparams-dict
 
             for x in dyn_syms:
-                target = sp.functions.Min(
-                    retparams[x] * (retparams[x] - 1) / 2, 0)
+                target = sp.functions.Min(retparams[x] * (retparams[x] - 1) / 2,
+                                          0)
                 bstr = str(element)
                 element = symbolic.pystr_to_symbolic(bstr)
                 element = element.subs(
@@ -808,7 +803,7 @@ class PAPIUtils(object):
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
                 return itcount * symbolic.pystr_to_symbolic(
-                    PAPIUtils.get_tasklet_byte_accesses(
-                        node, dfg, sdfg, state_id))
+                    PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg,
+                                                        state_id))
             else:
                 raise NotImplementedError

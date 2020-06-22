@@ -474,8 +474,7 @@ def add_indirection_subgraph(sdfg: SDFG,
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
     fullMemlet = Memlet.simple(memlet.data,
                                fullRange,
-                               num_accesses=memlet.num_accesses,
-                               veclen=memlet.veclen)
+                               num_accesses=memlet.num_accesses)
 
     if output:
         if isinstance(dst, nodes.ExitNode):
@@ -509,8 +508,7 @@ def add_indirection_subgraph(sdfg: SDFG,
 
     valueMemlet = Memlet.simple(tmp_name,
                                 indirectRange,
-                                num_accesses=1,
-                                veclen=memlet.veclen)
+                                num_accesses=1)
     if output:
         path = [src] + inp_base_path
         if isinstance(src, nodes.AccessNode):
@@ -1769,7 +1767,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                                'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
                         inner_memlet.num_accesses = memlet.num_accesses
-                        inner_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
                         vname = "{c}_out_of_{s}{n}".format(

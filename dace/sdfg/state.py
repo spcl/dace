@@ -90,7 +90,8 @@ class StateGraphView(object):
         state = self._graph
 
         # If empty memlet, return itself as the path
-        if edge.src_conn is None and edge.dst_conn is None and edge.data.data is None:
+        if (edge.src_conn is None and edge.dst_conn is None
+                and edge.data.is_empty()):
             return result
 
         # Prepend incoming edges until reaching the source node
