@@ -300,7 +300,8 @@ void __dace_exit_cuda({params}) {{
             return self.allocate_stream(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
-        result = StringIO()
+        result_decl = StringIO()
+        result_alloc = StringIO()
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize),
@@ -309,35 +310,37 @@ void __dace_exit_cuda({params}) {{
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            result.write('%s *%s = nullptr;\n' %
-                         (nodedesc.dtype.ctype, dataname))
+            result_decl.write('%s *%s = nullptr;\n' %
+                              (nodedesc.dtype.ctype, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
 
             # Strides are left to the user's discretion
-            result.write('cudaMalloc(&%s, %s);\n' % (dataname, arrsize_malloc))
+            result_alloc.write('cudaMalloc(&%s, %s);\n' %
+                               (dataname, arrsize_malloc))
             if node.setzero:
-                result.write('cudaMemset(%s, 0, %s);\n' %
-                             (dataname, arrsize_malloc))
+                result_alloc.write('cudaMemset(%s, 0, %s);\n' %
+                                   (dataname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            result.write('%s *%s = nullptr;\n' %
-                         (nodedesc.dtype.ctype, dataname))
+            result_decl.write('%s *%s = nullptr;\n' %
+                              (nodedesc.dtype.ctype, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
 
             # Strides are left to the user's discretion
-            result.write('cudaMallocHost(&%s, %s);\n' %
-                         (dataname, arrsize_malloc))
+            result_alloc.write('cudaMallocHost(&%s, %s);\n' %
+                               (dataname, arrsize_malloc))
             if node.setzero:
-                result.write('memset(%s, 0, %s);\n' %
-                             (dataname, arrsize_malloc))
+                result_alloc.write('memset(%s, 0, %s);\n' %
+                                   (dataname, arrsize_malloc))
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             if is_dynamically_sized:
                 raise NotImplementedError('Dynamic shared memory unsupported')
-            result.write("__shared__ %s %s[%s];\n" %
-                         (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
+            result_decl.write(
+                "__shared__ %s %s[%s];\n" %
+                (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
             if node.setzero:
-                result.write(
+                result_alloc.write(
                     'dace::ResetShared<{type}, {block_size}, {elements}, '
                     '1, false>::Reset({ptr});\n'.format(
                         type=nodedesc.dtype.ctype,
@@ -348,7 +351,7 @@ void __dace_exit_cuda({params}) {{
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
             szstr = ' = {0}' if node.setzero else ''
-            result.write(
+            result_decl.write(
                 "%s %s[%s]%s;\n" %
                 (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
@@ -356,7 +359,13 @@ void __dace_exit_cuda({params}) {{
             raise NotImplementedError("CUDA: Unimplemented storage type " +
                                       str(nodedesc.storage))
 
-        callsite_stream.write(result.getvalue(), sdfg, state_id, node)
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            function_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+            self._frame._initcode.write(result_alloc.getvalue(), sdfg, state_id,
+                                        node)
+        else:
+            callsite_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+            callsite_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
     def allocate_stream(self, sdfg, dfg, state_id, node, function_stream,
                         callsite_stream):
@@ -440,16 +449,21 @@ void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& 
                          callsite_stream):
         nodedesc = node.desc(sdfg)
         dataname = node.data
+
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            codestream = self._frame._exitcode
+        else:
+            codestream = callsite_stream
+
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node,
-                                          function_stream, callsite_stream)
+                                          function_stream, codestream)
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            callsite_stream.write('cudaFree(%s);\n' % dataname, sdfg, state_id,
-                                  node)
+            codestream.write('cudaFree(%s);\n' % dataname, sdfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            callsite_stream.write('cudaFreeHost(%s);\n' % dataname, sdfg,
-                                  state_id, node)
+            codestream.write('cudaFreeHost(%s);\n' % dataname, sdfg, state_id,
+                             node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
