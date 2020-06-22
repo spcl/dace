@@ -969,7 +969,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     callsite_stream.write('__syncthreads();', sdfg, state_id)
                     break
 
-        # In GPU_Persistent scopes states need global barriers between them, the DFGs inside of
+        # In GPU_Persistent scopes, states need global barriers between them, the DFGs inside of
         # a state are independent, so they don't need synchronization. DFGs in a GPU_Persistent
         # scope are per se executed by a single thread only. Maps however can be distributed
         # across multiple threads
@@ -983,6 +983,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     instr.on_state_begin(sdfg, state, callsite_stream,
                                          function_stream)
 
+            # reset streams in GPU persistent maps if the lifetime is scope, otherwise streams
+            # do not behave as expected
+            # TODO discuss how exactly streams should behave (between states)
+            for stream in [node for node in state.data_nodes()
+                           if isinstance(node.desc(sdfg), dace.nodes.data.Stream)
+                              and node.desc(sdfg).lifetime == dace.dtypes.AllocationLifetime.Scope]:
+                callsite_stream.write("{}.reset();".format(stream.data), sdfg, state.node_id)
+
             components = dace.sdfg.concurrent_subgraphs(state)
 
             for c in components:
@@ -990,9 +998,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 has_map = any(isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
 
                 if not has_map:
-                    callsite_stream.write("if (blockIdx.x == 0 && threadIdx.x == 0) {  // sub-graph begin")
+                    callsite_stream.write("if (blockIdx.x == 0 && threadIdx.x == 0) {  // sub-graph begin", sdfg, state.node_id)
                 else:
-                    callsite_stream.write("{  // subgraph begin")
+                    callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
 
                 # TODO this in not robust, replace by better solution (or wait for new codegen)
                 entry_node = list(v for v in c.nodes() if len(list(c.predecessors(v))) == 0)
@@ -1008,7 +1016,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                    callsite_stream,
                                                    skip_entry_node=skip_entry)
 
-                callsite_stream.write("}  // subgraph end")
+                callsite_stream.write("}  // subgraph end", sdfg, state.node_id)
 
             # Invoke all instrumentation providers
             for instr in self._dispatcher.instrumentation.values():
@@ -1580,9 +1588,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                                kernel_stream,
                                                skip_entry_node=True)
 
-        # if has_tbmap is False and has_dtbmap is False:
-        #     for _ in kernel_map.params:
-        #         kernel_stream.write('}', sdfg, state_id, node)
+        if not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
+            for _ in kernel_map.params:
+                kernel_stream.write('}', sdfg, state_id, node)
 
         self._block_dims = None
         self._kernel_map = None
@@ -1793,7 +1801,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                         condition += '%s < %s' % (v, _topy(maxel + 1))
 
                 if is_persistent:
-                    stride = 'gridDim.x * blockDim.x'
+                    stride = 'gridDim.x * {}'.format(_topy(block_dims[i]))
                 else:
                     stride = self._grid_dims[i] if has_tbmap \
                         else (kmap_max[i] + 1 - kmap_min[i])
