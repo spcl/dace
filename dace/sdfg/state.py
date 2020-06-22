@@ -749,7 +749,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
             new_edge = ret.add_edge(eret.src, eret.src_conn, eret.dst,
                                     eret.dst_conn, eret.data)
-            eret.data._edge = new_edge
 
         # Fix potentially broken scopes
         for n in nodes:

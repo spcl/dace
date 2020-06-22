@@ -105,8 +105,7 @@ class MultiConnectorEdge(MultiEdge):
         sdfg = context['sdfg_state']
         if sdfg is None:
             raise Exception("parent_graph must be defined for this method")
-        data = dace.serialize.from_json(json_obj['attributes']['data'],
-                                        context)
+        data = dace.serialize.from_json(json_obj['attributes']['data'], context)
         src_nid = json_obj['src']
         dst_nid = json_obj['dst']
 
@@ -119,6 +118,7 @@ class MultiConnectorEdge(MultiEdge):
         # Auto-create key (used when uniquely identifying networkx multigraph
         # edges)
         ret = MultiConnectorEdge(src, src_conn, dst, dst_conn, data, None)
+        data._edge = ret
 
         return ret
 
@@ -324,8 +324,7 @@ class Graph(object):
                     e = next(children)
                     if e.dst not in visited:
                         visited.add(e.dst)
-                        if condition is None or condition(
-                                e.src, e.dst, e.data):
+                        if condition is None or condition(e.src, e.dst, e.data):
                             yield e
                             stack.append(
                                 (e.dst, self.out_edges(e.dst).__iter__()))
@@ -579,11 +578,9 @@ class MultiDiConnectorGraph(MultiDiGraph):
     @staticmethod
     def _from_nx(edge):
         return MultiConnectorEdge(edge[0], edge[3]["src_conn"], edge[1],
-                                  edge[3]["dst_conn"], edge[3]["data"],
-                                  edge[2])
+                                  edge[3]["dst_conn"], edge[3]["data"], edge[2])
 
-    def add_edge(self, source, src_connector, destination, dst_connector,
-                 data):
+    def add_edge(self, source, src_connector, destination, dst_connector, data):
         key = self._nx.add_edge(source,
                                 destination,
                                 data=data,

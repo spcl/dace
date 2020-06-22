@@ -163,7 +163,11 @@ class Memlet(object):
     @staticmethod
     def from_json(json_obj, context=None):
         ret = Memlet()
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'data', 'subset', 'other_subset'})
         if context:
             ret._sdfg = context['sdfg']
             ret._state = context['sdfg_state']
@@ -461,9 +465,11 @@ class Memlet(object):
                 return self._data
             if isinstance(path_src, AccessNode):
                 self._data = path_src.data
+                self._is_data_src = True
                 return self._data
             elif isinstance(path_dst, AccessNode):
                 self._data = path_dst.data
+                self._is_data_src = False
                 return self._data
         return None
 
