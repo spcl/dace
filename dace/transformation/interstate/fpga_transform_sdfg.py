@@ -42,7 +42,7 @@ class FPGATransformSDFG(pattern_matching.Transformation):
         from dace.transformation.interstate import NestSDFG
         from dace.transformation.interstate import FPGATransformState
 
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         nesting = NestSDFG(sdfg_id, -1, {}, self.expr_index)
         nesting.promote_global_trans = True
         nesting.apply(sdfg)

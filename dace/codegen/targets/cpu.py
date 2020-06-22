@@ -1247,11 +1247,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         callsite_stream.write('{', sdfg, state_id, node)
         self._dispatcher.defined_vars.enter_scope(sdfg)
-
-        # If SDFG parent is not set, set it
         state_dfg = sdfg.nodes()[state_id]
-        node.sdfg.parent = state_dfg
-        node.sdfg._parent_sdfg = sdfg
 
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors & node.out_connectors)

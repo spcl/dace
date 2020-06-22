@@ -345,8 +345,7 @@ def match_pattern(state: SDFGState,
                                     e=e))
                 match_found = False
             if match_found:
-                yield pattern(sdfg.sdfg_list.index(sdfg), sdfg.node_id(state),
-                              subgraph, idx)
+                yield pattern(sdfg.sdfg_id, sdfg.node_id(state), subgraph, idx)
 
     # Recursive call for nested SDFGs
     for node in state.nodes():
@@ -400,7 +399,7 @@ def match_stateflow_pattern(sdfg,
                                     e=e))
                 match_found = False
             if match_found:
-                yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
+                yield pattern(sdfg.sdfg_id, -1, subgraph, idx)
 
     # Recursive call for nested SDFGs
     for state in sdfg.nodes():

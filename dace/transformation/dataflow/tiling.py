@@ -65,7 +65,7 @@ class MapTiling(pattern_matching.Transformation):
         stripmine_subgraph = {
             StripMining._map_entry: self.subgraph[MapTiling._map_entry]
         }
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         last_map_entry = None
         removed_maps = 0
 

@@ -74,8 +74,6 @@ class ExpandDotPure(ExpandTransformation):
             external_edges=True,
             output_nodes=output_nodes)
 
-        sdfg.parent_sdfg = parent_sdfg
-
         return sdfg
 
     @staticmethod
