@@ -166,8 +166,8 @@ class Memlet(object):
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         if context:
             ret._sdfg = context['sdfg']
-            ret._state = context['state']
-            ret._edge = context['edge']
+            ret._state = context['sdfg_state']
+        ret._initialized = True
         return ret
 
     def is_empty(self) -> bool:
@@ -369,7 +369,7 @@ class Memlet(object):
             :type datadesc: Data
         """
         rng = subsets.Range.from_array(datadesc)
-        return Memlet.simple(dataname, rng, wcr=wcr)
+        return Memlet.simple(dataname, rng, wcr_str=wcr)
 
     def __hash__(self):
         return hash(

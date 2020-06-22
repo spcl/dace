@@ -747,8 +747,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         for e in edges:
             eret = serialize.loads(serialize.dumps(e), context=rec_ci)
 
-            ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
-                         eret.data)
+            new_edge = ret.add_edge(eret.src, eret.src_conn, eret.dst,
+                                    eret.dst_conn, eret.data)
+            eret.data._edge = new_edge
 
         # Fix potentially broken scopes
         for n in nodes:
