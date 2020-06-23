@@ -189,7 +189,8 @@ class Memlet(object):
                other_subset_str=None,
                wcr_conflict=True,
                num_accesses=None,
-               debuginfo=None):
+               debuginfo=None,
+               dynamic=False):
         """ DEPRECATED: Constructs a Memlet from string-based expressions.
             :param data: The data object or name to access. 
             :type data: Either a string of the data descriptor name or an
@@ -217,7 +218,8 @@ class Memlet(object):
                                  unknown at compile time.
             :param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
-
+            :param dynamic: If True, the number of elements moved in this memlet
+                            is defined dynamically at runtime.
         """
         # warnings.warn(
         #     'This function is deprecated, please use the Memlet '
@@ -229,6 +231,8 @@ class Memlet(object):
             result.subset = subset_str
         else:
             result.subset = SubsetProperty.from_string(subset_str)
+
+        result.dynamic = dynamic
 
         if num_accesses is not None:
             if num_accesses == -1:

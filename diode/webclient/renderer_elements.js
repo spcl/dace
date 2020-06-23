@@ -242,12 +242,19 @@ class Edge extends SDFGElement {
             if (attr.wcr)
                 contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr, dsettings) + '</b>';
 
-            let num_accesses = sdfg_property_to_string(attr.volume, dsettings);
+            let num_accesses = null;
+            if (attr.volume)
+                num_accesses = sdfg_property_to_string(attr.volume, dsettings);
+            else
+                num_accesses = sdfg_property_to_string(attr.num_accesses, dsettings);
+
             if (attr.dynamic) {
                 if (num_accesses == 0 || num_accesses == -1)
                     num_accesses = "<b>Dynamic (unbounded)</b>";
                 else
-                    num_accesses = "Dynamic (up to " + num_accesses + ")";
+                    num_accesses = "<b>Dynamic</b> (up to " + num_accesses + ")";
+            } else if (num_accesses == -1) {
+                num_accesses = "<b>Dynamic (unbounded)</b>";
             }
 
             contents += '<br /><font style="font-size: 14px">Volume: ' + num_accesses + '</font>';

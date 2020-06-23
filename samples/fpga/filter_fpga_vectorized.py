@@ -247,12 +247,14 @@ count_out = std::min<unsigned>(W * count + elements_in_output, N);"""
                           memlet=Memlet.simple(B_pipe,
                                                "0",
                                                num_accesses="N",
+                                               dynamic=True,
                                                veclen=W.get()))
     state.add_memlet_path(tasklet,
                           valid_pipe,
                           src_conn="valid_pipe_out",
                           memlet=Memlet.simple(valid_pipe,
                                                "0",
+                                               dynamic=True,
                                                num_accesses="N"))
     state.add_memlet_path(tasklet,
                           count,
@@ -468,6 +470,7 @@ def make_main_state(sdfg):
                           src_conn="_A_pipe",
                           memlet=Memlet.simple(A_pipe_out,
                                                "0",
+                                               dynamic=True,
                                                num_accesses="N",
                                                veclen=W.get()))
 
@@ -488,12 +491,14 @@ def make_main_state(sdfg):
                           memlet=Memlet.simple(B_pipe_out,
                                                "0",
                                                num_accesses="N",
+                                               dynamic=True,
                                                veclen=W.get()))
     state.add_memlet_path(compute_tasklet,
                           valid_pipe_out,
                           src_conn="_valid_pipe",
                           memlet=Memlet.simple(valid_pipe_out,
                                                "0",
+                                               dynamic=True,
                                                num_accesses="N"))
     state.add_memlet_path(compute_tasklet,
                           outsize,

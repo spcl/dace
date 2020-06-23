@@ -232,7 +232,7 @@ class FPGATransformState(pattern_matching.Transformation):
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
                 full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet, simple('fpga_' + node.data, full_range)
+                mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
 
                 fpga_node = state.add_write('fpga_' + node.data)
