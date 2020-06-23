@@ -1428,6 +1428,23 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                               kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        nested_dtbmap = False
+        if not has_dtbmap:
+            for nested_sdfg in [node.sdfg for node in dfg_scope.nodes() if isinstance(node, nodes.NestedSDFG)]:
+                for node in nested_sdfg.nodes():
+                    if isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+                        nested_dtbmap = True
+                        break
+
+        if has_dtbmap or nested_dtbmap:
+            kernel_stream.write('__shared__ dace::DynamicMap<{fine_grained}, {block_size}>::shared_type dace_dyn_map_shared;'.format(
+                fine_grained=('true' if Config.get_bool(
+                    'compiler', 'cuda', 'dynamic_map_fine_grained') else
+                              'false'),
+                block_size=functools.reduce((lambda x, y: x * y),
+                                  [int(x) for x in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')])
+            ), sdfg, state_id, node)
+
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
         kernel_stream.write('{', sdfg, state_id, node)
@@ -1687,7 +1704,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
             callsite_stream.write(
                 'dace::DynamicMap<{fine_grained}, {bsize}>::'
-                'schedule(__dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
+                'schedule(dace_dyn_map_shared, __dace_dynmap_begin, __dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
                 'auto {param}) {{'.format(
                     fine_grained=('true' if Config.get_bool(
                         'compiler', 'cuda', 'dynamic_map_fine_grained') else
