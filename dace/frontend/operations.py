@@ -2,6 +2,7 @@ from __future__ import print_function
 from functools import partial
 
 from timeit import default_timer as timer
+from tqdm import tqdm
 import ast
 import numpy as np
 import sympy
@@ -30,7 +31,8 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     REPS = int(Config.get('treps'))
     times = [start] * (REPS + 1)
     ret = None
-    for i in range(REPS):
+    print('Profiling...')
+    for i in tqdm(range(REPS)):
         # Call function
         ret = f(*args, **kwargs)
         times[i + 1] = timer()
