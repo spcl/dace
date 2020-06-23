@@ -888,7 +888,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         else:
             # Active streams found. Generate state normally and sync with the
             # streams in the end
-            print('DEBUG frame {}'.format(self._frame))
             self._frame.generate_state(sdfg,
                                        state,
                                        function_stream,

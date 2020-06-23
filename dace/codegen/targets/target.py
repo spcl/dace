@@ -447,8 +447,6 @@ class TargetDispatcher(object):
             assert len(start_nodes) == 1
             nodes_to_skip.add(start_nodes[0])
 
-        print('DEBUG subgraph {}'.format(list(dfs_topological_sort(dfg, start_nodes))))
-
         for v in dfs_topological_sort(dfg, start_nodes):
             if v in nodes_to_skip:
                 continue
