@@ -5,6 +5,7 @@ import argparse
 import dace
 import numpy as np
 from dace.codegen.targets.memorypool import extend_dace
+from dace.transformation.interstate.gpu_transform_sdfg import GPUTransformSDFG
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -45,12 +46,21 @@ if __name__ == "__main__":
     D = np.random.rand(M.value, N.value).astype(np.float64)
     C = np.zeros([M.value, N.value], dtype=np.float64)
     C_regression = np.zeros_like(C)
+    C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B, D))
 
+    # CPU_Pool
     sdfg = operation.to_sdfg(args)
-
     sdfg(A=A, B=B, C=C, D=D)
-    C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B,D))
+    diff = np.linalg.norm(C_regression - C) / (M.value * N.value)
+    if diff > 1e-5:
+        print("Difference:", diff, 'C_reg', C_regression, 'C', C)
+        exit(1)
 
+    # GPU_Pool
+    C = np.zeros([M.value, N.value], dtype=np.float64)
+    sdfg_gpu = operation.to_sdfg(args)
+    sdfg_gpu.apply_transformations(GPUTransformSDFG)
+    sdfg_gpu(A=A, B=B, C=C, D=D)
     diff = np.linalg.norm(C_regression - C) / (M.value * N.value)
     if diff > 1e-5:
         print("Difference:", diff, 'C_reg', C_regression, 'C', C)
