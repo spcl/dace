@@ -68,16 +68,20 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._dispatcher.register_node_dispatcher(self)
 
         # Mark all transients as CPU_Pool/GPU_Pool
+        self.cpu_size = 0
+        self.gpu_size = 0
         for s in sdfg.arrays:
             array = sdfg.arrays[s]
             if array.transient:
                 original = array.storage
                 if array.storage in cpu_storages:
                     array.storage = dace.StorageType.CPU_Pool
+                    self.cpu_size += int((array.total_size * array.dtype.bytes
+                                          // self._block_size + 1) * self._block_size)
                 elif array.storage in gpu_storages:
                     array.storage = dace.StorageType.GPU_Pool
-
-                print(s, original, array.storage)
+                    self.gpu_size += int((array.total_size * array.dtype.bytes
+                                          // self._block_size + 1) * self._block_size)
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         callsite_stream.write("//{node}".format(node=node))
@@ -88,44 +92,66 @@ class MemoryPoolCodegen(TargetCodeGenerator):
             if node in alloc_dealloc:
                 alloc, dealloc = alloc_dealloc[node]
                 for t in dealloc:
-                    callsite_stream.write(
-                        '''MPool.Dealloc({name});'''.format(name=t)
-                    )
+                    array = sdfg.arrays[t]
+                    if array.storage == dace.StorageType.CPU_Pool:
+                        callsite_stream.write(
+                            '''CPU_Pool.Dealloc({name});'''.format(name=t)
+                        )
+                    elif array.storage == dace.StorageType.GPU_Pool:
+                        callsite_stream.write(
+                            '''GPU_Pool.Dealloc({name});'''.format(name=t)
+                        )
 
                 for t in alloc:
                     array = sdfg.arrays[t]
-                    callsite_stream.write(
-                        '''{type} *{name} = ({type}*)MPool.Alloc({size});'''.format(
-                            name=t, size=array.total_size*array.dtype.bytes,
-                            type=array.dtype.ctype
+                    if array.storage == dace.StorageType.CPU_Pool:
+                        callsite_stream.write(
+                            '''{type} *{name} = ({type}*)CPU_Pool.Alloc({size});'''.format(
+                                name=t, size=array.total_size*array.dtype.bytes,
+                                type=array.dtype.ctype
+                            )
                         )
-                    )
+                    elif array.storage == dace.StorageType.GPU_Pool:
+                        callsite_stream.write(
+                            '''{type} *{name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
+                                name=t, size=array.total_size*array.dtype.bytes,
+                                type=array.dtype.ctype
+                            )
+                        )
+
 
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.initialization:
-            m_size = 0
-            for t in set(sdfg.transients())-self.shared_transients:
-                array = sdfg.arrays[t]
-                m_size += int((array.total_size*array.dtype.bytes // self._block_size + 1)
-                              * self._block_size)
-            for t in self.shared_transients:
-                array = sdfg.arrays[t]
-                m_size += int((array.total_size*array.dtype.bytes  // self._block_size + 1)
-                              * self._block_size)
-            callsite_stream.write(
-                '''MemoryPool<false> MPool({m_size},{block_size});'''.format(
-                    m_size=m_size, block_size=self._block_size)
-            )
-            for t in self.shared_transients:
-                array = sdfg.arrays[t]
+            if self.cpu_size:
                 callsite_stream.write(
-                    '''{type} *{name} = ({type}*)MPool.Alloc({size});'''.format(
-                        name=t, size=array.total_size*array.dtype.bytes, type=array.dtype.ctype
-                    )
+                    '''MemoryPool<false> CPU_Pool({m_size},{block_size});'''.format(
+                        m_size=self.cpu_size, block_size=self._block_size)
                 )
+            elif self.gpu_size:
+                callsite_stream.write(
+                    '''MemoryPool<false> GPU_Pool({m_size},{block_size});'''.format(
+                        m_size=self.cpu_size, block_size=self._block_size)
+                )
+
+            for t in self.shared_transients:
+                array = sdfg.arrays[t]
+                if array.storage == dace.StorageType.CPU_Pool:
+                    callsite_stream.write(
+                        '''{type} *{name} = ({type}*)CPU_Pool.Alloc({size});'''.format(
+                            name=t, size=array.total_size*array.dtype.bytes, type=array.dtype.ctype
+                        )
+                    )
+                elif array.storage == dace.StorageType.GPU_Pool:
+                    callsite_stream.write(
+                        '''{type} *{name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
+                            name=t, size=array.total_size * array.dtype.bytes,
+                            type=array.dtype.ctype
+                        )
+                    )
+
             self.initialization = False
         self._dispatcher.defined_vars.add(node.label, DefinedType.Pointer)
 
