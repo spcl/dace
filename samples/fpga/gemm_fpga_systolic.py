@@ -841,7 +841,7 @@ def make_fpga_state(sdfg):
     state.add_memlet_path(write_C_sdfg_node,
                           C,
                           src_conn="mem",
-                          memlet=dace.memlet.Memlet.simple(C, "N * M"))
+                          memlet=dace.memlet.Memlet.simple(C, "0:N, 0:M"))
 
     return state
 
