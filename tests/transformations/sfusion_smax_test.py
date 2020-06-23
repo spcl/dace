@@ -15,7 +15,6 @@ from dace.sdfg.graph import SubgraphView
 
 import dace.libraries.standard as stdlib
 
-from dace.measure import Runner
 
 import timeit
 

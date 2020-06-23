@@ -125,6 +125,7 @@ def test_quantitatively(sdfg, graph):
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, OUT1 = OUT1, OUT2 = OUT2, OUT3 = OUT3, N=N, M=M, O=O)
 
+    sdfg.view()
     assert np.allclose(OUT1, OUT1_base)
     assert np.allclose(OUT2, OUT2_base)
     assert np.allclose(OUT3, OUT3_base)

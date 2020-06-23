@@ -96,7 +96,7 @@ def test_subgraph():
     graph = mapfission_sdfg()
     graph.apply_transformations(MapFission)
     dace.sdfg.propagation.propagate_memlets_sdfg(graph)
-    cgraph = graph.compile_directly()
+    cgraph = graph.compile()
 
     B = dcpy(B_init)
     cgraph(A=A, B=B)
@@ -105,7 +105,7 @@ def test_subgraph():
     graph.validate()
 
     fusion(graph, graph.nodes()[0], None)
-    ccgraph = graph.compile_directly()
+    ccgraph = graph.compile()
 
     B = dcpy(B_init)
     ccgraph(A=A, B=B)

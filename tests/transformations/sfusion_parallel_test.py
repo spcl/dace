@@ -4,7 +4,6 @@ from dace.transformation.heterogeneous.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
 
-from dace.measure import Runner
 
 
 N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]

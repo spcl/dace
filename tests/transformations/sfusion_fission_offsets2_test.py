@@ -123,14 +123,14 @@ def test_offsets():
     A_cpy = A.copy()
     expected = A.copy()
     expected[10:] += 3
-    csdfg = sdfg.compile_directly()
+    csdfg = sdfg.compile()
     csdfg(A=A_cpy)
     assert (np.allclose(A_cpy, expected))
 
 
     fusion(sdfg, sdfg.nodes()[0], None)
 
-    csdfg = sdfg.compile_directly()
+    csdfg = sdfg.compile()
     A_cpy = A.copy()
     csdfg(A=A_cpy)
     assert (np.allclose(A_cpy, expected))
