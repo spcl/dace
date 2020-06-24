@@ -1825,8 +1825,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     else:
                         condition += '%s < %s' % (v, _topy(maxel + 1))
 
-                if is_persistent:
+                if is_persistent and not has_tbmap:
                     stride = 'gridDim.x * {}'.format(_topy(block_dims[i]))
+                elif is_persistent and has_tbmap:
+                    stride = 'gridDim.x'
                 else:
                     stride = self._grid_dims[i] if has_tbmap \
                         else (kmap_max[i] + 1 - kmap_min[i])
