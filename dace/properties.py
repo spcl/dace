@@ -97,8 +97,7 @@ class Property:
                         raise TypeError(
                             'Default not properly defined for property')
                 else:
-                    raise TypeError(
-                        'Default not properly defined for property')
+                    raise TypeError('Default not properly defined for property')
 
         if choices is not None:
             for choice in choices:
@@ -207,6 +206,12 @@ class Property:
         # Accept all DaCe/numpy typeclasses as Python native types
         if isinstance(val, np.number):
             val = val.item()
+
+        # Edge cases for integer and float types
+        if isinstance(val, int) and self.dtype == float:
+            val = float(val)
+        if isinstance(val, float) and self.dtype == int and val == int(val):
+            val = int(val)
 
         # Check if type matches before setting
         if (self.dtype is not None and not isinstance(val, self.dtype)
@@ -387,10 +392,9 @@ def make_properties(cls):
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
             if hasattr(obj, name):
-                raise PropertyError(
-                    "Property {} already assigned in {}".format(
-                        name,
-                        type(obj).__name__))
+                raise PropertyError("Property {} already assigned in {}".format(
+                    name,
+                    type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
                     setattr(obj, name, prop.default)
@@ -442,9 +446,8 @@ def indirect_property(cls, f, prop, override):
 
     # Add the property to the class
     if not override and hasattr(cls, prop_name):
-        raise TypeError(
-            "Property \"{}\" already exists in class \"{}\"".format(
-                prop_name, cls.__name__))
+        raise TypeError("Property \"{}\" already exists in class \"{}\"".format(
+            prop_name, cls.__name__))
     setattr(cls, prop_name, prop_indirect)
 
 
