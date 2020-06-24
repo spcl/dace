@@ -1430,8 +1430,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         nested_dtbmap = False
         if not has_dtbmap:
             for nested_sdfg in [node.sdfg for node in dfg_scope.nodes() if isinstance(node, nodes.NestedSDFG)]:
-                for node in nested_sdfg.nodes():
-                    if isinstance(node, nodes.MapEntry) and node.map.schedule == dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+                for nested_node in nested_sdfg.nodes():
+                    if isinstance(nested_node, nodes.MapEntry) \
+                            and nested_node.map.schedule == dace.ScheduleType.GPU_ThreadBlock_Dynamic:
                         nested_dtbmap = True
                         break
 
@@ -1446,6 +1447,14 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
+        print('DEBUG: sdfg: {}, state_id: {}, node: {}'.format(
+            sdfg.name,
+            state_id,
+            node,
+        ))
+        print('DEBUG: subgraph source nodes: {}'.format(
+            dfg_scope.source_nodes()
+        ))
         kernel_stream.write('{', sdfg, state_id, node)
 
         # Add more opening braces for scope exit to close
