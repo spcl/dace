@@ -2,7 +2,6 @@ from __future__ import print_function
 from functools import partial
 
 from timeit import default_timer as timer
-from tqdm import tqdm
 import ast
 import numpy as np
 import sympy
@@ -31,8 +30,16 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     REPS = int(Config.get('treps'))
     times = [start] * (REPS + 1)
     ret = None
-    print('Profiling...')
-    for i in tqdm(range(REPS)):
+    print('\nProfiling...')
+    iterator = range(REPS)
+    try:
+        from tqdm import tqdm
+        iterator = tqdm(iterator)
+    except ImportError:
+        print('WARNING: Cannot show profiling progress, missing optional '
+              'dependency tqdm...\n\tTo see a live progress bar please install '
+              'tqdm (`pip install tqdm`)')
+    for i in iterator:
         # Call function
         ret = f(*args, **kwargs)
         times[i + 1] = timer()
