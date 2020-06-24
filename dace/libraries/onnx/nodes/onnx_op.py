@@ -7,6 +7,7 @@ import onnx
 
 import dace
 import dace.sdfg.nodes as nd
+import dace.data as dt
 from dace import SDFG, SDFGState, ScheduleType
 from dace.properties import make_properties, Property, ListProperty
 from dace.transformation.pattern_matching import ExpandTransformation
@@ -473,34 +474,58 @@ class ONNXOp(nd.LibraryNode):
                        parameter_name=parameter_name,
                        input_output_string=input_output_string))
 
-            tasklet_setup_code += """
-            int64_t {input_output_string}_{parameter_name}_dims[{dims_size}] = {{{dims}}};
-            """.format(input_output_string=input_output_string,
-                       parameter_name=parameter_name,
-                       dims_size=len(arr.shape),
-                       dims=", ".join(str(s) for s in arr.shape))
-
             ort_value_name = "ort_value_{input_output_string}_{parameter_name}".format(
                 input_output_string=input_output_string,
                 parameter_name=parameter_name)
-            tasklet_setup_code += """
-            OrtValue* {ort_value_name};
-            __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
-                __ort_mem_info,
-                const_cast<void*>(reinterpret_cast<const void*>({parameter_name})),
-                {data_size} * sizeof({ctype}),
-                {input_output_string}_{parameter_name}_dims,
-                {dims_size},
-                ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_str},
-                &{ort_value_name}
-            ));
-            """.format(input_output_string=input_output_string,
-                       parameter_name=parameter_name,
-                       data_size=reduce(lambda x, y: x * y, arr.shape),
-                       ctype=arr.dtype.ctype,
-                       dims_size=len(arr.shape),
-                       type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
-                       ort_value_name=ort_value_name)
+
+            if isinstance(arr, dt.Array):
+                # setup dims array
+                tasklet_setup_code += """
+                int64_t {input_output_string}_{parameter_name}_dims[{dims_size}] = {{{dims}}};
+                """.format(input_output_string=input_output_string,
+                           parameter_name=parameter_name,
+                           dims_size=len(arr.shape),
+                           dims=", ".join(str(s) for s in arr.shape))
+
+                tasklet_setup_code += """
+                OrtValue* {ort_value_name};
+                __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
+                    __ort_mem_info,
+                    const_cast<void*>(reinterpret_cast<const void*>({parameter_name})),
+                    {data_size} * sizeof({ctype}),
+                    {input_output_string}_{parameter_name}_dims,
+                    {dims_size},
+                    ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_str},
+                    &{ort_value_name}
+                ));
+                """.format(input_output_string=input_output_string,
+                           parameter_name=parameter_name,
+                           data_size=reduce(lambda x, y: x * y, arr.shape),
+                           ctype=arr.dtype.ctype,
+                           dims_size=len(arr.shape),
+                           type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
+                           ort_value_name=ort_value_name)
+            elif isinstance(arr, dt.Scalar):
+                tasklet_setup_code += """
+                OrtValue* {ort_value_name};
+                __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
+                    __ort_mem_info,
+                    &{parameter_name},
+                    {data_size} * sizeof({ctype}),
+                    nullptr,
+                    0,
+                    ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_str},
+                    &{ort_value_name}
+                ));
+                """.format(input_output_string=input_output_string,
+                           parameter_name=parameter_name,
+                           data_size=reduce(lambda x, y: x * y, arr.shape),
+                           ctype=arr.dtype.ctype,
+                           type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
+                           ort_value_name=ort_value_name)
+            else:
+                raise NotImplementedError("Data-descriptor type {} not supported for ONNX nodes".format(type(arr)))
+
 
             tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Set{input_output_string_capital}(" \
                             "__ort_context_{unique_id}, {position}, {ort_value_name}));\n".format(

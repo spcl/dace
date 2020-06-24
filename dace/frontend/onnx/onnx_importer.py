@@ -42,8 +42,8 @@ class ONNXModel:
 
         self.value_infos = {}
 
-        self.inputs = set()
-        self.outputs = set()
+        self.inputs = []
+        self.outputs = []
 
         for value, is_input in chain(
                 zip(graph.input, repeat(True)), zip(graph.output,
@@ -51,9 +51,9 @@ class ONNXModel:
             if not value.HasField("name"):
                 raise ValueError("Got input or output without name")
             if is_input:
-                self.inputs.add(value.name)
+                self.inputs.append(value.name)
             else:
-                self.outputs.add(value.name)
+                self.outputs.append(value.name)
 
             self.value_infos[value.name] = value
             self._add_value_info(value)
@@ -167,14 +167,17 @@ class ONNXModel:
         if not tensor.HasField("data_type"):
             raise ValueError("Initializer tensor '{}' has no type".format(tensor.name))
 
+        name = self._clean_array_name(tensor.name)
+        dtype = onnx_tensor_type_to_dace_type(tensor.data_type)
+
         if len(tensor.dims) == 0:
             # this is a scalar
-            dims = ()
+            self.sdfg.add_scalar(name, dtype)
         else:
             dims = [d for d in tensor.dims]
+            self.sdfg.add_array(name, dims, dtype)
 
         self.weights[tensor.name] = numpy_helper.to_array(tensor)
-        self.sdfg.add_array(self._clean_array_name(tensor.name), dims, onnx_tensor_type_to_dace_type(tensor.data_type))
 
     def _add_value_info(self, value_info: onnx.ValueInfoProto):
         if not value_info.HasField("name"):
@@ -208,44 +211,67 @@ class ONNXModel:
                     "Value '{}' does not have a shape in this graph."
                     " Please run shape inference before importing.".format(
                         name))
-
+        transient = name not in self.inputs and name not in self.outputs
         if len(shape) == 0:
             self.sdfg.add_scalar(self._clean_array_name(name),
                                  dtype=onnx_tensor_type_to_dace_type(
-                                     tensor_type.elem_type))
+                                     tensor_type.elem_type),
+                                 transient=transient)
         else:
             self.sdfg.add_array(self._clean_array_name(name),
                                 shape=shape,
                                 dtype=onnx_tensor_type_to_dace_type(
-                                    tensor_type.elem_type))
+                                    tensor_type.elem_type),
+                                transient=transient)
 
-    def get_sdfg_arrays(self):
-        """ Return arrays that need to be passed to the SDFG before running. This includes weights and zero initialized
-            intermediate values
-        """
+    def __call__(self, *args, **inputs):
 
-        # these values will be zeroed out
-        intermediate_values = set(self.value_infos).difference(self.inputs).difference(self.outputs).difference(self.weights)
-        result = {}
-        for val in intermediate_values:
-            clean_name = self._clean_array_name(val)
-            arr = self.sdfg.arrays[clean_name]
-            result[clean_name] = np.zeros(arr.shape, dtype=arr.dtype.as_numpy_dtype())
+        # convert the positional args to kwargs
+        if len(args) > len(self.inputs):
+            raise ValueError("Expected {} arguments, got {}".format(
+                len(self.inputs), len(args)))
+
+        inputs.update(dict(zip(self.inputs, args)))
+
+        # check that there are no missing inputs
+        if len(set(self.inputs).difference(inputs)) != 0:
+            raise ValueError("Missing inputs {}".format(", ".join(
+                set(self.inputs).difference(inputs))))
+
+        # check that there are no unknown inputs
+        if len(set(inputs).difference(self.inputs)) != 0:
+            raise ValueError("Unknown inputs {}".format(", ".join(
+                set(inputs).difference(self.inputs))))
+
+        inputs = {
+            self._clean_array_name(input): arr
+            for input, arr in inputs.items()
+        }
 
         # add the weights
-        result.update({
-        })
+        params = {}
         for name, arr in self.weights.items():
             if len(arr.shape) == 0:
-                result[self._clean_array_name(name)] = arr.copy().reshape([1,])
+                params[self._clean_array_name(name)] = arr[()]
             else:
-                result[self._clean_array_name(name)] =arr.copy()
+                params[self._clean_array_name(name)] = arr.copy()
 
-        return result
+        outputs = {}
+        # create numpy arrays for the outputs
+        for output in self.outputs:
+            clean_name = self._clean_array_name(output)
+            arr = self.sdfg.arrays[clean_name]
+            outputs[clean_name] = np.empty(arr.shape, dtype=arr.dtype.as_numpy_dtype())
 
+        self.sdfg(**inputs, **params, **outputs)
+
+        if len(outputs) == 1:
+            return next(iter(outputs.values()))
+
+        return tuple(outputs.values())
 
     @staticmethod
     def _clean_array_name(name: str) -> str:
         """Modifies a onnx array name that is potentially invalid in dace
            to make it valid"""
-        return "ONNX_" + name.replace(".", "__")
+        return "ONNX_" + name.replace(".", "DOT")

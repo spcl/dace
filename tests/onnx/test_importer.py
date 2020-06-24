@@ -18,10 +18,7 @@ def test_importer_resnet():
     sdfg.states()[0].instrument = dace.InstrumentationType.Timer
 
     test_input = np.random.rand(1, 3, 224, 224).astype(np.float32)
-    test_output = np.zeros((1, 1000), dtype=np.float32)
-    sdfg(ONNX_input__1=test_input,
-         ONNX_191=test_output,
-         **dace_model.get_sdfg_arrays())
+    test_output = dace_model(test_input)
 
     sess = rt.InferenceSession("/home/orausch/infer.onnx")
 
