@@ -271,11 +271,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         for sub_graph in gpu_persistent_subgraphs:
             for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
                                 if isinstance(n, nodes.NestedSDFG)]:
+                nested_shared_transients = set(nested_sdfg.shared_transients())
                 for nested_state in nested_sdfg.nodes():
                     nested_sid = nested_sdfg.node_id(nested_state)
                     nested_to_allocate = (
                         set(nested_state.top_level_transients())
-                        - set(nested_sdfg.shared_transients())
+                        - nested_shared_transients
                     )
                     nodes_to_allocate = [n for n in nested_state.data_nodes()
                                          if n.data in nested_to_allocate
@@ -329,7 +330,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         if generate_state_footer:
 
-            # allocate data needed in nested SDFGs
+            # Emit internal transient array deallocation for nested SDFGs
             gpu_persistent_subgraphs = [
                 state.scope_subgraph(node) for node in state.nodes()
                 if isinstance(node, dace.nodes.MapEntry)
@@ -338,15 +339,19 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             for sub_graph in gpu_persistent_subgraphs:
                 for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
                                     if isinstance(n, nodes.NestedSDFG)]:
+                    nested_shared_transients = \
+                        set(nested_sdfg.shared_transients())
                     for nested_state in nested_sdfg:
                         nested_sid = nested_sdfg.node_id(nested_state)
                         nested_to_allocate = (
                                 set(nested_state.top_level_transients())
-                                - set(nested_sdfg.shared_transients()))
+                                - nested_shared_transients
+                        )
                         nodes_to_deallocate = [
                             n for n in nested_state.data_nodes()
                             if n.data in nested_to_allocate
-                            and n.data not in nested_deallocated]
+                            and n.data not in nested_deallocated
+                        ]
                         for nested_node in nodes_to_deallocate:
                             nested_deallocated.add(nested_node.data)
                             self._dispatcher.dispatch_deallocate(
