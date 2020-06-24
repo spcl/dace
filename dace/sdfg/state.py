@@ -424,7 +424,6 @@ class StateGraphView(object):
         :return: An ordered dictionary of (name, data descriptor type) of all
                  the arguments, sorted as defined here.
         """
-
         sdfg: 'dace.sdfg.SDFG' = self.parent
         shared_transients = sdfg.shared_transients()
         sdict = self.scope_dict()
