@@ -14,6 +14,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
+        #self._gpu_codegen = [x[1] for x in self._dispatcher.get_predicated_node_dispatchers()
+        #                        if x[1].target_name == 'cuda'][0]
         self._block_size = 512
 
         # Get graph analysis
@@ -49,7 +51,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         ]
 
         for src_storage, dst_storage in itertools.product(
-                [_MP_STORAGE_TYPES[0]], cpu_storages):
+                [_MP_STORAGE_TYPES[0], _MP_STORAGE_TYPES[1]], cpu_storages):
             src_storage = dace.StorageType[src_storage]
             self._dispatcher.register_copy_dispatcher(src_storage, dst_storage,
                                                       None, self)
@@ -57,7 +59,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                                                       None, self)
 
         for src_storage, dst_storage in itertools.product(
-                [_MP_STORAGE_TYPES[1]], gpu_storages):
+                [_MP_STORAGE_TYPES[0],_MP_STORAGE_TYPES[1]], gpu_storages):
             src_storage = dace.StorageType[src_storage]
             self._dispatcher.register_copy_dispatcher(src_storage, dst_storage,
                                                       None, self)
@@ -118,8 +120,6 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                                 type=array.dtype.ctype
                             )
                         )
-
-
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
