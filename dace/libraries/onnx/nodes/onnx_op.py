@@ -1,5 +1,4 @@
 # TODO do checking on if type exists for non required fields (maybe automate this?)
-from abc import ABC, abstractmethod
 from collections import Iterable
 from itertools import chain, repeat, count
 from functools import reduce
@@ -79,7 +78,7 @@ def parse_variadic_param(param):
     name = split[0]
     number = split[1]
 
-    if number[0] == '0' and len(number > 1):
+    if number[0] == '0' and len(number) > 1:
         raise ValueError(
             "Variadic parameters must not be numbered with leading zeroes, got: '{}'"
             .format(number))
@@ -173,7 +172,7 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
     return init_code
 
 
-class ONNXOp(nd.LibraryNode, ABC):
+class ONNXOp(nd.LibraryNode):
     """ Abstract superclass for all ONNX ops"""
 
     # Global properties
@@ -187,6 +186,7 @@ class ONNXOp(nd.LibraryNode, ABC):
                       allow_none=True)
 
     def validate(self, sdfg: SDFG, state: SDFGState):
+        # TODO @orausch change errors to InvalidSDFGNodeError
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
 
@@ -308,22 +308,42 @@ class ONNXOp(nd.LibraryNode, ABC):
         for edge, is_input in chain(zip(in_edges, repeat(True)),
                                     zip(out_edges, repeat(False))):
             conn_name = edge.dst_conn if is_input else edge.src_conn
+
+            if '__' in conn_name:
+                parsed_name, number = parse_variadic_param(conn_name)
+            else:
+                parsed_name = conn_name
+
             matching = [
                 inp for inp in (
                     self.schema.inputs if is_input else self.schema.outputs)
-                if inp.name == conn_name
+                if inp.name == parsed_name
             ]
 
             if len(matching) != 1:
                 raise ValueError(
                     "Expected to find one {} parameter in schema with name '{}', but found {}"
-                    .format("input" if is_input else "output", conn_name,
+                    .format("input" if is_input else "output", parsed_name,
                             len(matching)))
             matched = matching[0]
 
+            if '__' in conn_name and matched.param_type != ONNXParameterType.Variadic:
+                raise ValueError(
+                    "Got variadic argument '{}' for non-variadic parameter '{}'."
+                    " Ensure that non-variadic args do not contain '__'".format(conn_name, matched.name))
+
+            if '__' not in conn_name and matched.param_type == ONNXParameterType.Variadic:
+                raise ValueError(
+                    "Expected variadic argument for variadic parameter '{}', got '{}'. Use '{}__i' as the connector"
+                    " name, where i is the desired index of the variadic parameter.".format(matched.name, conn_name, conn_name))
+
+
             edge_data = edge.data.data
             edge_dtype = sdfg.arrays[edge_data].dtype
-            if matched.type_str in assigned_params and assigned_params[
+            if matched.param_type == ONNXParameterType.Variadic and not matched.homogeneous:
+                # non homogeneous parameters don't need to be consistent
+                pass
+            elif matched.type_str in assigned_params and assigned_params[
                     matched.type_str] != edge_dtype:
                 raise ValueError(
                     "Could not solve type constraints;"
@@ -637,11 +657,12 @@ for schema in onnx.defs.get_all_schemas():
 
     attrs['__init__'] = __init__
 
-    cls = type(dace_schema.name, (ONNXOp, ), attrs)
+    cls_name = "ONNX" + dace_schema.name
+    cls = type(cls_name, (ONNXOp, ), attrs)
 
     cls = dace.library.node(cls)
-    globals()[schema.name] = cls
-    _ONNX_OPS_BY_NAME[schema.name] = cls
+    globals()[cls_name] = cls
+    _ONNX_OPS_BY_NAME[cls_name] = cls
 
 del cls
 
@@ -650,11 +671,11 @@ def has_onnx_node(name: str):
     """ Check if an ONNX operator is supported
         :param name: the operator name
     """
-    return name in _ONNX_OPS_BY_NAME
+    return ("ONNX" + name) in _ONNX_OPS_BY_NAME
 
 
 def get_onnx_node(name: str):
     """ Get the ONNX Operator node for an operator by name
         :param name: the operator name
     """
-    return _ONNX_OPS_BY_NAME[name]
+    return _ONNX_OPS_BY_NAME["ONNX" + name]

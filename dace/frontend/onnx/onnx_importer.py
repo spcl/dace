@@ -125,7 +125,7 @@ class ONNXModel:
                                     param_idx=param_idx,
                                     params_len=params_len))
                     conn_name = params[-1].name + "__" + str(param_idx -
-                                                             params_len)
+                                                             params_len + 1)
                 elif params[param_idx].param_type == ONNXParameterType.Variadic:
                     # this is a variadic parameter, and it is within the range of params, so it must be the first
                     # instance of a variadic parameter
