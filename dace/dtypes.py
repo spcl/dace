@@ -84,7 +84,7 @@ class AllocationLifetime(aenum.AutoNumberEnum):
     SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
     Global = ()  # Allocated throughout the entire program (outer SDFG)
     Persistent = ()  # Allocated throughout multiple invocations (init/exit)
-
+    Pool = ()
 
 @extensible_enum
 class Language(aenum.AutoNumberEnum):

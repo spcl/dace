@@ -1,4 +1,5 @@
 import aenum
+from collections import defaultdict
 import os
 import shutil  # which
 from typing import Dict
@@ -230,8 +231,8 @@ class TargetDispatcher(object):
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
         self.instrumentation = {}
 
-        self._array_dispatchers = {
-        }  # Type: dtypes.StorageType -> TargetCodeGenerator
+        self._generic_array_dispatchers = {} # Type: storage type -> target code generator
+        self._array_dispatchers = defaultdict(list)  # Type: dtypes.StorageType -> TargetCodeGenerator
         self._map_dispatchers = {
         }  # Type: dtypes.ScheduleType -> TargetCodeGenerator
         self._copy_dispatchers = {}  # Type: (dtypes.StorageType src,
@@ -341,7 +342,7 @@ class TargetDispatcher(object):
                              str(self._map_dispatchers[schedule_type]))
         self._map_dispatchers[schedule_type] = func
 
-    def register_array_dispatcher(self, storage_type, func):
+    def register_array_dispatcher(self, storage_type, func, predicate=None):
         """ Registers a function that processes data allocation,
             initialization, and deinitialization. Used when calling
             `dispatch_allocate/deallocate/initialize`.
@@ -352,12 +353,15 @@ class TargetDispatcher(object):
         """
         if isinstance(storage_type, list):
             for stype in storage_type:
-                self.register_array_dispatcher(stype, func)
+                self.register_array_dispatcher(stype, func, predicate)
             return
 
         if not isinstance(storage_type, dtypes.StorageType): raise TypeError
         if not isinstance(func, TargetCodeGenerator): raise TypeError
-        self._array_dispatchers[storage_type] = func
+        if predicate is None:
+            self._generic_array_dispatchers[storage_type] = func
+        else:
+            self._array_dispatchers[storage_type].append((predicate, func))
 
     def register_copy_dispatcher(self,
                                  src_storage,
@@ -514,10 +518,29 @@ class TargetDispatcher(object):
         nodedesc = node.desc(sdfg)
         storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
                    dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
 
-        self._array_dispatchers[storage].allocate_array(
+
+        # Check if the node satisfies any predicates that delegate to a
+        # specific code generator
+        satisfied_dispatchers = [
+            dispatcher for pred, dispatcher in self._array_dispatchers[storage]
+            if pred(sdfg, node)
+        ]
+        num_satisfied = len(satisfied_dispatchers)
+        if num_satisfied > 1:
+            raise RuntimeError(
+                "Multiple predicates satisfied for {}: {}".format(
+                    node, ", ".join(
+                        [type(x).__name__ for x in satisfied_dispatchers])))
+        elif num_satisfied == 1:
+            self._used_targets.add(satisfied_dispatchers[0])
+            satisfied_dispatchers[0].allocate_array(
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        else:  # num_satisfied == 0
+            # Otherwise use the generic code generator (CPU)
+            self._used_targets.add(self._generic_array_dispatchers[storage])
+            self._generic_array_dispatchers[storage].allocate_array(
+                sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
                             callsite_stream):
@@ -526,10 +549,28 @@ class TargetDispatcher(object):
         nodedesc = node.desc(sdfg)
         storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
                    dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
 
-        self._array_dispatchers[storage].deallocate_array(
+        # Check if the node satisfies any predicates that delegate to a
+        # specific code generator
+        satisfied_dispatchers = [
+            dispatcher for pred, dispatcher in self._array_dispatchers[storage]
+            if pred(sdfg, node)
+        ]
+        num_satisfied = len(satisfied_dispatchers)
+        if num_satisfied > 1:
+            raise RuntimeError(
+                "Multiple predicates satisfied for {}: {}".format(
+                    node, ", ".join(
+                        [type(x).__name__ for x in satisfied_dispatchers])))
+        elif num_satisfied == 1:
+            self._used_targets.add(satisfied_dispatchers[0])
+            satisfied_dispatchers[0].deallocate_array(
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        else:  # num_satisfied == 0
+            # Otherwise use the generic code generator (CPU)
+            self._used_targets.add(self._generic_array_dispatchers[storage])
+            self._generic_array_dispatchers[storage].deallocate_array(
+                sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
     # Dispatches copy code for a memlet
     def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id,
