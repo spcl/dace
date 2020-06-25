@@ -143,8 +143,14 @@ class Memlet(object):
         attrs = dace.serialize.all_properties_to_json(self)
 
         # Fill in new values
-        attrs['src_subset'] = self.src_subset
-        attrs['dst_subset'] = self.dst_subset
+        if self.src_subset is not None:
+            attrs['src_subset'] = self.src_subset.to_json()
+        else:
+            attrs['src_subset'] = None
+        if self.dst_subset is not None:
+            attrs['dst_subset'] = self.dst_subset.to_json()
+        else:
+            attrs['dst_subset'] = None
 
         return {"type": "Memlet", "attributes": attrs}
 
