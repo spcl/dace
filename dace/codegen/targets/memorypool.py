@@ -86,7 +86,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                                 type=array.dtype.ctype
                             )
                         )
-                    elif array.storage == self.gpu_storages:
+                    elif array.storage in self.gpu_storages:
                         callsite_stream.write(
                             '''{type} *{name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
                                 name=t, size=array.total_size*array.dtype.bytes,
