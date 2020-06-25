@@ -1,4 +1,5 @@
 import ast
+from copy import deepcopy as dcpy
 from functools import reduce
 import operator
 from typing import List, Set, Union
@@ -166,6 +167,29 @@ class Memlet(object):
             ret._sdfg = context['sdfg']
             ret._state = context['sdfg_state']
         return ret
+
+    def __deepcopy__(self, memo):
+        node = object.__new__(Memlet)
+
+        # Set properties
+        node.volume = dcpy(self.volume, memo=memo)
+        node._dynamic = self._dynamic
+        node.subset = dcpy(self.subset, memo=memo)
+        node.other_subset = dcpy(self.other_subset, memo=memo)
+        node.data = dcpy(self.data, memo=memo)
+        node.wcr = dcpy(self.wcr, memo=memo)
+        node._veclen = self._veclen
+        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node._wcr_nonatomic = self._wcr_nonatomic
+        node._allow_oob = self._allow_oob
+
+        # Nullify graph references
+        node._sdfg = None
+        node._state = None
+        node._edge = None
+        node._is_data_src = None
+
+        return node
 
     def is_empty(self) -> bool:
         """ 
