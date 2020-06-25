@@ -30,16 +30,6 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self.cpu_storages = [dace.StorageType.CPU_Heap, dace.StorageType.Default]
         self.gpu_storages = [dace.StorageType.GPU_Global]
 
-        # Register array allocation/deallocation
-        for dtype in [dace.StorageType.CPU_Heap, dace.StorageType.GPU_Global]:
-            self._dispatcher.register_array_dispatcher(
-                dtype, self,
-                lambda sdfg, node: node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Pool
-            )
-
-        # Register node dispatcher
-        self._dispatcher.register_node_dispatcher(self)
-
         # Mark all transients as CPU_Pool/GPU_Pool
         self.cpu_size = 0
         self.gpu_size = 0
@@ -55,6 +45,18 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                     array.lifetime = dace.AllocationLifetime.Pool
                     self.gpu_size += int((array.total_size * array.dtype.bytes
                                           // self._block_size + 1) * self._block_size)
+
+        # Register array allocation/deallocation
+        for dtype in [dace.StorageType.CPU_Heap, dace.StorageType.GPU_Global]:
+            self._dispatcher.register_array_dispatcher(
+                dtype, self,
+                lambda sdfg, node: node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Pool
+            )
+
+        # Register node dispatcher
+        self._dispatcher.register_node_dispatcher(self)
+
+
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         #callsite_stream.write("//{node}".format(node=node))
