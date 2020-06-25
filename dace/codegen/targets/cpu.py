@@ -713,8 +713,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 could_be_scalar = True
                 if isinstance(node, nodes.NestedSDFG):
-                    could_be_scalar = not isinstance(node.sdfg.arrays[uconn],
-                                                     data.Array)
+                    could_be_scalar = isinstance(node.sdfg.arrays[uconn],
+                                                 data.Scalar)
 
                 if (memlet.subset.data_dims() == 0 and not memlet.dynamic
                         and could_be_scalar):
