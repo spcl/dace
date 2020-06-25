@@ -7,17 +7,6 @@ import numpy as np
 import dace.libraries.cudnn as cudnn
 
 
-
-'''@make_properties
-class cuDNN(CodeLibraryNode):
-    def __init__(self):
-        super().__init__(input_names=['inp'], output_names=['out'])
-
-    def generate_code(self, inputs: Dict[str, Data],
-                      outputs: Dict[str, Data]):
-        code = 'test'
-        return code'''
-
 def test_cudnn_code():
     # Construct graph
     sdfg = dace.SDFG('custom_code')
@@ -28,7 +17,7 @@ def test_cudnn_code():
 
     a = state.add_read('A')
     b = state.add_read('B')
-    node = cudnn.conv2d.Conv2D('conv2d')
+    node = cudnn.conv2d.Conv2D('conv2d', [1,1,20,20], [1,1,20,20], 0, 0, [1,1,1,1], [0,0,0,0], 'NCHW')
     node.implementation = "cudnn"
     c = state.add_write('C')
     state.add_edge(a, None, node, 'x',
@@ -42,6 +31,7 @@ def test_cudnn_code():
     B = np.random.rand(20, 20)
     C = np.random.rand(20, 20)
     sdfg(A=A, B=B, C=C)
+
 
 if __name__ == '__main__':
     test_cudnn_code()
