@@ -743,7 +743,7 @@ def propagate_memlet(dfg_state,
     new_memlet.other_subset = None
 
     # Number of accesses in the propagated memlet is the sum of the internal
-    # number of accesses times the size of the map range set
+    # number of accesses times the size of the map range set (unbounded dynamic)
     new_memlet.num_accesses = (
         sum(m.num_accesses for m in aggdata) *
         functools.reduce(lambda a, b: a * b, scope_node.map.range.size(), 1))
@@ -753,5 +753,6 @@ def propagate_memlet(dfg_state,
             s not in defined_vars
             for s in new_memlet.num_accesses.free_symbols):
         new_memlet.dynamic = True
+        new_memlet.num_accesses = 0
 
     return new_memlet
