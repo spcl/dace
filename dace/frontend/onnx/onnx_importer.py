@@ -45,9 +45,8 @@ class ONNXModel:
         self.inputs = []
         self.outputs = []
 
-        for value, is_input in chain(
-                zip(graph.input, repeat(True)), zip(graph.output,
-                                                   repeat(False))):
+        for value, is_input in chain(zip(graph.input, repeat(True)),
+                                     zip(graph.output, repeat(False))):
             if not value.HasField("name"):
                 raise ValueError("Got input or output without name")
             if is_input:
@@ -94,12 +93,13 @@ class ONNXModel:
             for param_idx, (name, is_input) in chain(
                     enumerate(zip(node.input, repeat(True))),
                     enumerate(zip(node.output, repeat(False)))):
-                if self._clean_array_name(name) not in self.sdfg.arrays: #and self._clean_array_name(name) not in self.sdfg.constants_prop:
+                if self._clean_array_name(
+                        name
+                ) not in self.sdfg.arrays:  #and self._clean_array_name(name) not in self.sdfg.constants_prop:
                     if name not in self.value_infos:
                         raise ValueError(
                             "Could not find array with name '{}'".format(name))
                     self._add_value_info(self.value_infos[name])
-
 
                 # get the access node
                 if name in access_nodes:
@@ -141,16 +141,16 @@ class ONNXModel:
                         op_node.add_in_connector(conn_name)
                     self.state.add_edge(
                         access, None, op_node, conn_name,
-                        dace.Memlet.from_array(
-                            self._clean_array_name(name), data_desc))
+                        dace.Memlet.from_array(self._clean_array_name(name),
+                                               data_desc))
                 else:
                     if conn_name not in op_node.out_connectors:
                         op_node.add_out_connector(conn_name)
 
                     self.state.add_edge(
                         op_node, conn_name, access, None,
-                        dace.Memlet.from_array(
-                            self._clean_array_name(name), data_desc))
+                        dace.Memlet.from_array(self._clean_array_name(name),
+                                               data_desc))
 
     @staticmethod
     def _update_access_type(node: dace.nodes.AccessNode, is_input: bool):
@@ -163,9 +163,9 @@ class ONNXModel:
         if not tensor.HasField("name"):
             raise ValueError("Got tensor without name")
 
-
         if not tensor.HasField("data_type"):
-            raise ValueError("Initializer tensor '{}' has no type".format(tensor.name))
+            raise ValueError("Initializer tensor '{}' has no type".format(
+                tensor.name))
 
         name = self._clean_array_name(tensor.name)
         dtype = onnx_tensor_type_to_dace_type(tensor.data_type)
@@ -196,7 +196,6 @@ class ONNXModel:
             raise ValueError(
                 "Value '{}' does not have a type in this graph."
                 " Please run type inference before importing.".format(name))
-
 
         shape = []
         for d in tensor_type.shape.dim:
@@ -261,7 +260,8 @@ class ONNXModel:
         for output in self.outputs:
             clean_name = self._clean_array_name(output)
             arr = self.sdfg.arrays[clean_name]
-            outputs[clean_name] = np.empty(arr.shape, dtype=arr.dtype.as_numpy_dtype())
+            outputs[clean_name] = np.empty(arr.shape,
+                                           dtype=arr.dtype.as_numpy_dtype())
 
         self.sdfg(**inputs, **params, **outputs)
 
