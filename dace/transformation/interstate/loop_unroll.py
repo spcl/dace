@@ -124,7 +124,8 @@ class LoopUnroll(DetectLoop):
             raise NotImplementedError  # TODO(later)
 
         # Find the state prior to the loop
-        if str(rng[0]) == guard_inedges[0].data.assignments[itervar]:
+        if rng[0] == symbolic.pystr_to_symbolic(
+                guard_inedges[0].data.assignments[itervar]):
             before_state: sd.SDFGState = guard_inedges[0].src
             last_state: sd.SDFGState = guard_inedges[1].src
         else:
@@ -142,8 +143,7 @@ class LoopUnroll(DetectLoop):
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants)
-                              for r in rng)
+        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
 
         # Create states for loop subgraph
         unrolled_states = []
@@ -158,7 +158,7 @@ class LoopUnroll(DetectLoop):
             # Replace iterate with value in each state
             for state in new_states:
                 state.set_label(state.label + '_%s_%d' % (itervar, i))
-                state.replace(itervar, str(i))
+                state.replace(itervar, i)
 
             # Add subgraph to original SDFG
             for edge in loop_subgraph.edges():
