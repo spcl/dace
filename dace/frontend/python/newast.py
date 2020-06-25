@@ -476,6 +476,7 @@ def add_indirection_subgraph(sdfg: SDFG,
                                fullRange,
                                veclen=memlet.veclen,
                                num_accesses=memlet.num_accesses)
+    fullMemlet.dynamic = memlet.dynamic
 
     if output:
         if isinstance(dst, nodes.ExitNode):
@@ -875,6 +876,7 @@ class TaskletTransformer(ExtNodeTransformer):
                         out_memlet = self.sdfg_outputs[name][0]
                         out_memlet.veclen = memlet.veclen
                         out_memlet.volume = memlet.volume
+                        out_memlet.dynamic = memlet.dynamic
                         out_memlet.wcr = memlet.wcr
                         out_memlet.wcr_nonatomic = memlet.wcr_nonatomic
                     if connector in self.inputs or connector in self.outputs:
@@ -1770,6 +1772,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
                         inner_memlet.num_accesses = memlet.num_accesses
+                        inner_memlet.dynamic = memlet.dynamic
                         inner_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
