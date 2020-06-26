@@ -539,8 +539,8 @@ class Range(Subset):
                     idx += 1
         elif self.dims() == other.dims():
             # case 2: subsets have the same dimensions (but possibly different
-            # data_dims -> all non-data dims remain
-            for (idx, (rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+            # data_dims) -> all non-data dims remain
+            for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     if isinstance(other, Indices):
                         new_subset.append(rb)
