@@ -353,6 +353,11 @@ class Memlet(object):
         self._state = state
         self._edge = edge
 
+        # If memlet is code->code, ensure volume=1
+        if (isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode)
+                and self.volume == 0):
+            self.volume = 1
+
         # Find source/destination of memlet
         try:
             path = state.memlet_path(edge)
