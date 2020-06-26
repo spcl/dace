@@ -183,7 +183,3 @@ rgf_dense_saved.sdfg
 _build/
 
 /*.sdfg
-
-
-.DS_STORE
-.DS_Store
