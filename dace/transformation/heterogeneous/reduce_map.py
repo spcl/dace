@@ -49,7 +49,9 @@ class ReduceMap(pattern_matching.Transformation):
 
     reduce_implementation = Property(desc = "Reduce implementation of inner reduce",
                                      dtype = str,
-                                     default = 'pure')
+                                     default = 'pure',
+                                     choices = ['pure', 'OpenMP',
+                                                'CUDA (device)', 'CUDA (block)','CUDA (warp)'])
 
     reduction_type_update = {
         dtypes.ReductionType.Max: 'out = max(reduction_in, array_in)',
@@ -72,7 +74,7 @@ class ReduceMap(pattern_matching.Transformation):
         ]
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict = False):
-        reduce_node = candidate[ReduceMap._reduce]
+        reduce_node = graph.nodes()[candidate[ReduceMap._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
         input_dims = inedge.data.subset.data_dims()
         axes = reduce_node.axes
@@ -136,6 +138,8 @@ class ReduceMap(pattern_matching.Transformation):
                     outer_entry = node
                 else:
                     inner_entry = node
+            if isinstance(node, nodes.Tasklet):
+                tasklet_node = node
 
         inner_exit = nstate.exit_node(inner_entry)
         outer_exit = nstate.exit_node(outer_entry)
@@ -167,7 +171,7 @@ class ReduceMap(pattern_matching.Transformation):
             array_in = nstate.in_edges(outer_entry)[0].data.data
             local_storage_subgraph = {
                 LocalStorage._node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
-                LocalStorage._node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
+                LocalStorage._node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry )
             }
 
             local_storage = LocalStorage(nsdfg_id,
@@ -178,7 +182,6 @@ class ReduceMap(pattern_matching.Transformation):
             local_storage.apply(nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
 
-            # FORNOW
             nsdfg.sdfg.data(in_transient_node_inner.data).storage = dtypes.StorageType.Default
 
 
@@ -189,6 +192,7 @@ class ReduceMap(pattern_matching.Transformation):
         # find earliest parent read-write occurrence of array onto which
         # we perform the reduction:
         # do BFS, best complexity O(V+E)
+
 
         queue = [nsdfg]
         array_closest_ancestor = None
