@@ -348,7 +348,7 @@ class Memlet(object):
         Tries to initialize the internal fields of the memlet (e.g., src/dst 
         subset) once it is added to an SDFG as an edge.
         """
-        from dace.sdfg.nodes import AccessNode  # Avoid import loop
+        from dace.sdfg.nodes import AccessNode, CodeNode  # Avoid import loops
         self._sdfg = sdfg
         self._state = state
         self._edge = edge

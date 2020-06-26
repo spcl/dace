@@ -672,8 +672,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                             str(type(memlet)))
 
         self._clear_scopedict_cache()
-        return super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
-                                               memlet)
+        result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
+                                                 memlet)
+        memlet.try_initialize(self.parent, self, result)
+        return result
 
     def remove_edge(self, edge):
         self._clear_scopedict_cache()
@@ -698,6 +700,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             }
         except RuntimeError:
             scope_dict = {}
+
+        # Try to initialize edges before serialization
+        for edge in self.edges():
+            edge.data.try_initialize(self.parent, self, edge)
 
         ret = {
             'type':
@@ -766,6 +772,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                 n.map = ret.entry_node(n).map
             elif isinstance(n, nd.ConsumeExit):
                 n.consume = ret.entry_node(n).consume
+
+        # Reinitialize memlets
+        for edge in ret.edges():
+            edge.data.try_initialize(context['sdfg'], ret, edge)
 
         return ret
 
