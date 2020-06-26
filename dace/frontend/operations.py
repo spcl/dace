@@ -34,7 +34,7 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     iterator = range(REPS)
     try:
         from tqdm import tqdm
-        iterator = tqdm(iterator)
+        iterator = tqdm(iterator, desc="Profiling")
     except ImportError:
         print('WARNING: Cannot show profiling progress, missing optional '
               'dependency tqdm...\n\tTo see a live progress bar please install '
