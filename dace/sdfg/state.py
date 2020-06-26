@@ -511,6 +511,14 @@ class StateGraphView(object):
             if not k.startswith('__dace') and k not in sdfg.constants
         })
 
+        # Add scalar arguments from free symbols of data descriptors
+        for arg in data_args.values():
+            scalar_args.update({
+                str(k): dt.Scalar(k.dtype)
+                for k in arg.free_symbols if not str(k).startswith('__dace')
+                and str(k) not in sdfg.constants
+            })
+
         # Fill up ordered dictionary
         result = collections.OrderedDict()
         for k, v in itertools.chain(sorted(data_args.items()),

@@ -151,6 +151,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for inodename, inode in set(input_nodes):
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
+            if inode.storage == dtypes.StorageType.GPU_Global:
+                continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
@@ -161,6 +163,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
+                continue
+            if onode.storage == dtypes.StorageType.GPU_Global:
                 continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
