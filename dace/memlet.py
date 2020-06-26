@@ -153,6 +153,9 @@ class Memlet(object):
         else:
             attrs['dst_subset'] = None
 
+        # Fill in legacy (DEPRECATED) values for backwards compatibility
+        attrs['num_accesses'] = self.volume if not self.dynamic else -1
+
         return {"type": "Memlet", "attributes": attrs}
 
     @staticmethod
@@ -162,7 +165,7 @@ class Memlet(object):
             ret,
             json_obj,
             context=context,
-            ignore_properties={'src_subset', 'dst_subset'})
+            ignore_properties={'src_subset', 'dst_subset', 'num_accesses'})
         if context:
             ret._sdfg = context['sdfg']
             ret._state = context['sdfg_state']
