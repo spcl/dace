@@ -517,24 +517,49 @@ class Range(Subset):
     def compose(self, other):
         if not isinstance(other, Subset):
             raise TypeError("Cannot compose ranges with non-subsets")
-        if self.data_dims() != other.dims():
-            raise ValueError("Dimension mismatch in composition")
+
         new_subset = []
-        idx = 0
-        for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
-            if re - rb == 0:
-                if isinstance(other, Indices):
-                    new_subset.append(rb)
+        if self.data_dims() == other.dims():
+            # case 1: subsets may differ in dimensions, but data_dims correspond
+            #         to other dims -> all non-data dims are cut out
+            idx = 0
+            for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
+                if re - rb == 0:
+                    if isinstance(other, Indices):
+                        new_subset.append(rb)
+                    else:
+                        new_subset.append((rb, re, rs, rt))
                 else:
-                    new_subset.append((rb, re, rs, rt))
-            else:
-                if isinstance(other[idx], tuple):
-                    new_subset.append(
-                        (rb + rs * other[idx][0], rb + rs * other[idx][1],
-                         rs * other[idx][2], rt))
+                    if isinstance(other[idx], tuple):
+                        new_subset.append(
+                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
+                             rs * other[idx][2], rt))
+                    else:
+                        new_subset.append(rb + rs * other[idx])
+                    idx += 1
+        elif self.dims() == other.dims():
+            # case 2: subsets have the same dimensions (but possibly different
+            # data_dims -> all non-data dims remain
+            for (idx, (rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+                if re - rb == 0:
+                    if isinstance(other, Indices):
+                        new_subset.append(rb)
+                    else:
+                        new_subset.append((rb, re, rs, rt))
                 else:
-                    new_subset.append(rb + rs * other[idx])
-                idx += 1
+                    if isinstance(other[idx], tuple):
+                        new_subset.append(
+                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
+                             rs * other[idx][2], rt))
+                    else:
+                        new_subset.append(rb + rs * other[idx])
+
+        else:
+            raise ValueError("Dimension mismatch in composition:"
+                             "Subset composed must be either completely"
+                             "stripped of all non-data dimensions"
+                             "or be not stripped of latter at all.")
+
         if isinstance(other, Range):
             return Range(new_subset)
         elif isinstance(other, Indices):
