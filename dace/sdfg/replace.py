@@ -83,10 +83,14 @@ def replace_properties(node: Any, name: str, new_name: str):
                         replacement = 'auto %s = %s;\n' % (name, new_name)
                         propval.code = replacement + newcode
                     else:
-                        warnings.warn(
-                            'Replacement of %s with %s was not made '
-                            'for string tasklet code of language %s' %
-                            (name, new_name, lang))
+                        warnings.warn('Replacement of %s with %s was not made '
+                                      'for string tasklet code of language %s' %
+                                      (name, new_name, lang))
             elif propval.code is not None:
                 for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
+        elif (isinstance(propclass, properties.DictProperty)
+              and pname == 'symbol_mapping'):
+            # Symbol mappings for nested SDFGs
+            for symname, sym_mapping in propval.items():
+                propval[symname] = sym_mapping.subs(symrepl)
