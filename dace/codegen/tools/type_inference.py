@@ -165,10 +165,6 @@ def _Return(t, symbols, inferred_symbols):
         _dispatch(t.value, symbols, inferred_symbols)
 
 
-def _Constant(t, symbols, inferred_symbols):
-    pass
-
-
 def _generic_FunctionDef(t, symbols, inferred_symbols):
     for deco in t.decorator_list:
         _dispatch(deco, symbols, inferred_symbols)
@@ -281,6 +277,12 @@ def _Name(t, symbols, inferred_symbols):
 
 
 def _NameConstant(t, symbols, inferred_symbols):
+    return dtypes.result_type_of(
+        dtypes.typeclass(type(t.value)),
+        dtypes.typeclass(np.min_scalar_type(t.value).name))
+
+
+def _Constant(t, symbols, inferred_symbols):
     return dtypes.result_type_of(
         dtypes.typeclass(type(t.value)),
         dtypes.typeclass(np.min_scalar_type(t.value).name))
