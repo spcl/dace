@@ -155,7 +155,7 @@ class Memlet(object):
 
         # Fill in legacy (DEPRECATED) values for backwards compatibility
         attrs['num_accesses'] = \
-            self.volume.to_json() if not self.dynamic else -1
+            str(self.volume) if not self.dynamic else -1
 
         return {"type": "Memlet", "attributes": attrs}
 
