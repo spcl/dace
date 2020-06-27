@@ -607,6 +607,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         """ Returns the parent SDFG of this state. """
         return self._parent
 
+    @parent.setter
+    def parent(self, value):
+        self._parent = value
+
     def __str__(self):
         return self._label
 

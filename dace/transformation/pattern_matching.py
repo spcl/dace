@@ -8,6 +8,7 @@ import inspect
 from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
+from dace.sdfg.graph import SubgraphView
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
@@ -240,6 +241,18 @@ class ExpandTransformation(Transformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
+
+
+class SubgraphTransformation(object):
+    
+    @staticmethod
+    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+        pass
+    
+    def apply(self, sdfg: SDFG, subgraph: SubgraphView):
+        pass
+
+
 
 
 # Module functions ############################################################
