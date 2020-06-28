@@ -1113,7 +1113,8 @@ class SDFG(OrderedDiGraph):
                   allow_conflicts=False,
                   total_size=None,
                   find_new_name=False,
-                  alignment=0) -> Tuple[str, dt.Array]:
+                  alignment=0,
+                  may_alias=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1139,7 +1140,8 @@ class SDFG(OrderedDiGraph):
                         lifetime=lifetime,
                         alignment=alignment,
                         debuginfo=debuginfo,
-                        total_size=total_size)
+                        total_size=total_size,
+                        may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1210,7 +1212,8 @@ class SDFG(OrderedDiGraph):
                       allow_conflicts=False,
                       total_size=None,
                       find_new_name=False,
-                      alignment=0) -> Tuple[str, dt.Array]:
+                      alignment=0,
+                      may_alias=False) -> Tuple[str, dt.Array]:
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1226,6 +1229,7 @@ class SDFG(OrderedDiGraph):
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
                               alignment=alignment,
+                              may_alias=may_alias,
                               find_new_name=find_new_name)
 
     def temp_data_name(self):
@@ -1250,7 +1254,8 @@ class SDFG(OrderedDiGraph):
                            debuginfo=None,
                            allow_conflicts=False,
                            total_size=None,
-                           alignment=0):
+                           alignment=0,
+                           may_alias=False):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         return self.add_array(self.temp_data_name(),
@@ -1265,7 +1270,8 @@ class SDFG(OrderedDiGraph):
                               alignment=alignment,
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
-                              total_size=total_size)
+                              total_size=total_size,
+                              may_alias=may_alias)
 
     def add_datadesc(self,
                      name: str,

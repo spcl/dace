@@ -18,11 +18,12 @@ bfs.add_scalar('root', dtype=dace.int32)
 bfs.add_array('result', shape=[N], dtype=dace.int32)
 
 # Transients fot interstate data transfers
-bfs.add_transient('count1', shape=[1], dtype=dace.int32)
-bfs.add_transient('frontier1', shape=[N], dtype=dace.int32)
+# TODO: Replace may_alias with better code generation
+bfs.add_transient('count1', shape=[1], dtype=dace.int32, may_alias=True)
+bfs.add_transient('frontier1', shape=[N], dtype=dace.int32, may_alias=True)
 
-bfs.add_transient('count2', shape=[1], dtype=dace.int32)
-bfs.add_transient('frontier2', shape=[N], dtype=dace.int32)
+bfs.add_transient('count2', shape=[1], dtype=dace.int32, may_alias=True)
+bfs.add_transient('frontier2', shape=[N], dtype=dace.int32, may_alias=True)
 
 # Transient streams to accommodate dynamic size of frontier arrays
 bfs.add_stream('stream1', dtype=dace.int32, transient=True, buffer_size=N)
