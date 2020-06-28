@@ -34,7 +34,7 @@ x_in = test_state.add_read('x1')
 y_in = test_state.add_read('y1')
 z_out = test_state.add_write('z1')
 
-saxpy_node = blas.level1.axpy.Axpy("saxpy", dace.float32 , vecWidth=innerVecWidth)
+saxpy_node = blas.axpy.Axpy("saxpy", dace.float32 , vecWidth=innerVecWidth)
 saxpy_node.implementation = 'simple'
 
 # connect the blas node
@@ -78,7 +78,7 @@ scaling = np.float32(2.0)
 b_ref = np.copy(b)
 
 print("\n----- COMPILE & RUN -----")
-compiledSDFG(x1=a, y1=b, a=scaling, z1=b, n=np.int32(testSize))
+compiledSDFG(x1=a, y1=b, a=scaling, z1=c, n=np.int32(testSize))
 
 ref_result = scipy.linalg.blas.saxpy(a, b_ref, a=scaling)
 
@@ -89,10 +89,11 @@ print("Scale:\t", scaling)
 print("Res:\t", c[0:10])
 print("Ref:\t", ref_result[0:10])
 
-ref_norm = np.linalg.norm(ref_result)
-passed = (np.linalg.norm(c) - ref_norm) / ref_norm -  < 0.001
+
+ref_norm = np.linalg.norm(c - ref_result)
+passed = ref_norm < 0.001
 
 if not passed:
     raise RuntimeError('AXPY simple implementation wrong test results')
 
-print("Passed")
+print("\n----- PASSED -----")

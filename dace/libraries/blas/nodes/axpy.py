@@ -2,7 +2,7 @@ import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
-from ... import environments
+from .. import environments
 from dace import dtypes
 
 from dace.libraries.blas.utility.memoryOperations import *
@@ -334,7 +334,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "simple": Expand_AXPY_Vectorized,
-        "vector": Expand_AXPY_Vectorized,
         "fpga_stream": Expand_AXPY_FPGA_Streaming,
         "mkl": Expand_AXPY_MKL,
         "openblas": Expand_AXPY_OPENBLAS,
