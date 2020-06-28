@@ -1236,7 +1236,7 @@ class CPUCodeGen(TargetCodeGenerator):
         state_dfg = sdfg.nodes()[state_id]
 
         # Connectors that are both input and output share the same name
-        inout = set(node.in_connectors & node.out_connectors)
+        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         # TODO: Emit nested SDFG as a separate function
 

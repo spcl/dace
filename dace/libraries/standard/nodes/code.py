@@ -84,8 +84,10 @@ class CodeLibraryNode(LibraryNode):
                 code = self.generate_code(inputs, outputs)
                 # Replace this node with a C++ tasklet
                 return Tasklet('custom_code',
-                               set(inputs.keys()),
-                               set(outputs.keys()),
+                               {k: v.dtype
+                                for k, v in inputs.items()},
+                               {k: v.dtype
+                                for k, v in outputs.items()},
                                code,
                                language=dtypes.Language.CPP)
 

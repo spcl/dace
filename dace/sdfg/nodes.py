@@ -3,6 +3,7 @@
 
 import ast
 from copy import deepcopy as dcpy
+from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
@@ -29,15 +30,24 @@ import warnings
 class Node(object):
     """ Base node class. """
 
-    in_connectors = SetProperty(str,
-                                default=set(),
-                                desc="A set of input connectors for this node.")
-    out_connectors = SetProperty(
-        str, default=set(), desc="A set of output connectors for this node.")
+    in_connectors = DictProperty(
+        key_type=str,
+        value_type=dtypes.typeclass,
+        desc="A set of input connectors for this node.")
+    out_connectors = DictProperty(
+        key_type=str,
+        value_type=dtypes.typeclass,
+        desc="A set of output connectors for this node.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
-        self.in_connectors = in_connectors or set()
-        self.out_connectors = out_connectors or set()
+        # Convert connectors to typed connectors with autodetect type
+        if isinstance(in_connectors, (set, KeysView)):
+            in_connectors = {k: None for k in in_connectors}
+        if isinstance(out_connectors, (set, KeysView)):
+            out_connectors = {k: None for k in out_connectors}
+
+        self.in_connectors = in_connectors or {}
+        self.out_connectors = out_connectors or {}
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -85,12 +95,15 @@ class Node(object):
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
 
-    def add_in_connector(self, connector_name: str):
+    def add_in_connector(self,
+                         connector_name: str,
+                         dtype: dtypes.typeclass = None):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
+            :param dtype: The type of the connector, or None for auto-detect.
             :return: True if the operation is successful, otherwise False.
         """
 
@@ -98,16 +111,19 @@ class Node(object):
                 or connector_name in self.out_connectors):
             return False
         connectors = self.in_connectors
-        connectors.add(connector_name)
+        connectors[connector_name] = dtype
         self.in_connectors = connectors
         return True
 
-    def add_out_connector(self, connector_name: str):
+    def add_out_connector(self,
+                          connector_name: str,
+                          dtype: dtypes.typeclass = None):
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
+            :param dtype: The type of the connector, or None for auto-detect.
             :return: True if the operation is successful, otherwise False.
         """
 
@@ -115,7 +131,7 @@ class Node(object):
                 or connector_name in self.out_connectors):
             return False
         connectors = self.out_connectors
-        connectors.add(connector_name)
+        connectors[connector_name] = dtype
         self.out_connectors = connectors
         return True
 
@@ -127,7 +143,7 @@ class Node(object):
 
         if connector_name in self.in_connectors:
             connectors = self.in_connectors
-            connectors.remove(connector_name)
+            del connectors[connector_name]
             self.in_connectors = connectors
         return True
 
@@ -139,7 +155,7 @@ class Node(object):
 
         if connector_name in self.out_connectors:
             connectors = self.out_connectors
-            connectors.remove(connector_name)
+            del connectors[connector_name]
             self.out_connectors = connectors
         return True
 
@@ -329,8 +345,8 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors
-                                          | self.out_connectors)
+        return self.code.get_free_symbols(self.in_connectors.keys()
+                                          | self.out_connectors.keys())
 
     def __str__(self):
         if not self.label:
@@ -397,7 +413,7 @@ class NestedSDFG(CodeNode):
         from dace import SDFG  # Avoid import loop
 
         # We have to load the SDFG first.
-        ret = NestedSDFG("nolabel", SDFG('nosdfg'), set(), set())
+        ret = NestedSDFG("nolabel", SDFG('nosdfg'), {}, {})
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
 
@@ -437,7 +453,7 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
-        connectors = self.in_connectors | self.out_connectors
+        connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for dname, desc in self.sdfg.arrays.items():
             # TODO(later): Disallow scalars without access nodes (so that this
             #              check passes for them too).

@@ -140,6 +140,7 @@ SCOPEDEFAULT_SCHEDULE = {
 
 # Translation of types to C types
 _CTYPES = {
+    None: "void",
     int: "int",
     float: "float",
     bool: "bool",
@@ -161,6 +162,7 @@ _CTYPES = {
 
 # Translation of types to ctypes types
 _FFI_CTYPES = {
+    None: ctypes.c_void_p,
     int: ctypes.c_int,
     float: ctypes.c_float,
     bool: ctypes.c_bool,
@@ -182,6 +184,7 @@ _FFI_CTYPES = {
 
 # Number of bytes per data type
 _BYTES = {
+    None: 0,
     int: 4,
     float: 4,
     bool: 1,
@@ -267,10 +270,14 @@ class typeclass(object):
         return False
 
     def to_json(self):
+        if self.type is None:
+            return None
         return self.type.__name__
 
     @staticmethod
     def from_json(json_obj, context=None):
+        if json_obj is None:
+            return typeclass(None)
         return json_to_typeclass(json_obj, context)
 
     # Create a new type

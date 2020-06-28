@@ -33,7 +33,7 @@ class MapFission(pattern_matching.Transformation):
         with the nested SDFGs in question.
     """
     _map_entry = nodes.EntryNode()
-    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), set(), set())
+    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), {}, {})
 
     @staticmethod
     def annotates_memlets():
