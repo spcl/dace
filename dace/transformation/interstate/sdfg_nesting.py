@@ -328,8 +328,7 @@ class InlineSDFG(pattern_matching.Transformation):
                     state.add_edge(nsdfg_scope_entry, None, node, None,
                                    Memlet())
                 if state.out_degree(node) == 0:
-                    state.add_edge(node, None, nsdfg_scope_exit, None,
-                                   Memlet())
+                    state.add_edge(node, None, nsdfg_scope_exit, None, Memlet())
 
         # Replace nested SDFG parents with new SDFG
         for node in nstate.nodes():
@@ -518,8 +517,8 @@ class NestSDFG(pattern_matching.Transformation):
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
-                                                  inputs.values(),
-                                                  outputs.values())
+                                                  set(inputs.values()),
+                                                  set(outputs.values()))
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)
             outer_state.add_edge(

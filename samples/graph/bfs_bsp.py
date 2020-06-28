@@ -94,12 +94,20 @@ def create_computation_state(dstate, in_frontier, out_frontier, frontier_index):
 
     me, mx = dstate.add_map('frontiermap', dict(f='0:fsz%d' % frontier_index))
     me.in_connectors = {
-        'IN_F', 'IN_R', 'IN_C', 'IN_D',
-        'fsz%d' % frontier_index
+        'IN_F': None,
+        'IN_R': None,
+        'IN_C': None,
+        'IN_D': None,
+        'fsz%d' % frontier_index: None
     }
-    me.out_connectors = {'OUT_F', 'OUT_R', 'OUT_C', 'OUT_D'}
-    mx.in_connectors = {'IN_F', 'IN_FSZ', 'IN_D'}
-    mx.out_connectors = {'OUT_F', 'OUT_FSZ', 'OUT_D'}
+    me.out_connectors = {
+        'OUT_F': None,
+        'OUT_R': None,
+        'OUT_C': None,
+        'OUT_D': None
+    }
+    mx.in_connectors = {'IN_F': None, 'IN_FSZ': None, 'IN_D': None}
+    mx.out_connectors = {'OUT_F': None, 'OUT_FSZ': None, 'OUT_D': None}
 
     # Map inputs
     dstate.add_edge(
@@ -145,13 +153,14 @@ def create_computation_state(dstate, in_frontier, out_frontier, frontier_index):
     nme, nmx = dstate.add_map(
         'neighbormap', dict(nid='rowb{f}:rowe{f}'.format(f=frontier_index)))
     nme.in_connectors = {
-        'IN_C', 'IN_D',
-        'rowb%d' % frontier_index,
-        'rowe%d' % frontier_index
+        'IN_C': None,
+        'IN_D': None,
+        'rowb%d' % frontier_index: None,
+        'rowe%d' % frontier_index: None
     }
-    nme.out_connectors = {'OUT_C', 'OUT_D'}
-    nmx.in_connectors = {'IN_D', 'IN_FSZ', 'IN_F'}
-    nmx.out_connectors = {'OUT_D', 'OUT_FSZ', 'OUT_F'}
+    nme.out_connectors = {'OUT_C': None, 'OUT_D': None}
+    nmx.in_connectors = {'IN_D': None, 'IN_FSZ': None, 'IN_F': None}
+    nmx.out_connectors = {'OUT_D': None, 'OUT_FSZ': None, 'OUT_F': None}
 
     dstate.add_edge(
         rowb, None, nme, 'rowb%d' % frontier_index,

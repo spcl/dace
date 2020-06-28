@@ -41,9 +41,9 @@ class Node(object):
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
-        if isinstance(in_connectors, (set, KeysView)):
+        if isinstance(in_connectors, (set, list, KeysView)):
             in_connectors = {k: None for k in in_connectors}
-        if isinstance(out_connectors, (set, KeysView)):
+        if isinstance(out_connectors, (set, list, KeysView)):
             out_connectors = {k: None for k in out_connectors}
 
         self.in_connectors = in_connectors or {}

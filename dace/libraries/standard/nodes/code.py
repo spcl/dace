@@ -67,8 +67,8 @@ class CodeLibraryNode(LibraryNode):
                  **kwargs):
         super().__init__(name,
                          *args,
-                         inputs=input_names,
-                         outputs=output_names,
+                         inputs=set(input_names),
+                         outputs=set(output_names),
                          **kwargs)
 
         # Inline the class such that "self" is included in the expansion
