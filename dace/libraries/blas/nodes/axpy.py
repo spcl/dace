@@ -6,6 +6,7 @@ from ... import environments
 from dace import dtypes
 
 from dace.libraries.blas.utility.memoryOperations import *
+from dace.libraries.blas.utility.streaming import *
 
 
 
@@ -197,17 +198,6 @@ class Expand_AXPY_MKL(ExpandTransformation):
         # ---------- ----------
         # COMPUTE
         # ---------- ----------
-        # y_in = init_state.add_read('_y')
-        # res = init_state.add_write('_res')
-        # init_state.add_memlet_path(
-        #     y_in, res,
-        #     memlet=Memlet.simple(res.data, "0:{}".format(n))
-        # )
-
-        # axpy_sdfg.add_edge(init_state, axpy_state, dace.InterstateEdge(None))
-
-
-
         x_in = axpy_state.add_read('_x')
         y_out = axpy_state.add_write('_res')
 
@@ -343,7 +333,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "simple": Expand_AXPY_Simple,
+        "simple": Expand_AXPY_Vectorized,
         "vector": Expand_AXPY_Vectorized,
         "fpga_stream": Expand_AXPY_FPGA_Streaming,
         "mkl": Expand_AXPY_MKL,
@@ -374,14 +364,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         self.a = a
 
 
-    def new_symbols(self, sdfg, state, symbols):
-        """ Returns a mapping between symbols defined by this node (e.g., for
-            scope entries) to their type. """
-
-        print("TEST")
-        return {self.a.name: self.dtype}
-
-
     def compare(self, other):
 
         if (self.dtype == other.dtype and self.vecWidth == other.vecWidth
@@ -393,11 +375,10 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
 
     def streamProductionLatency(self):
-
         return 0
 
-    def streamConsumptionLatency(self):
 
+    def streamConsumptionLatency(self):
         return {
             "_x": 0,
             "_y": 0
@@ -416,7 +397,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
 
     def getStreamReader(self):
-        
         return {
             "_x" : streamReadVector(
                 '-',
@@ -432,8 +412,8 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             )
         }
 
+
     def getStreamWriter(self):
-        
         return {
             "_res" : streamWriteVector(
                 '-',

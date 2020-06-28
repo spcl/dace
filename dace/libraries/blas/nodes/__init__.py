@@ -4,3 +4,5 @@ from .gemv import Gemv
 from .gemm import Gemm
 from .batched_matmul import BatchedMatMul
 from .transpose import Transpose
+
+from .axpy import Axpy
