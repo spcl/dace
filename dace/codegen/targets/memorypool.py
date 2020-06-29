@@ -17,8 +17,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         self._block_size = 512
 
         # Get graph analysis
-        self.alloc_dealloc_states, self.maximum_live_set, \
-            self.maximum_live_set_states, self.shared_transients = live_sets(sdfg)
+        #self.alloc_dealloc_states, self.maximum_live_set, \
+        #    self.maximum_live_set_states, self.shared_transients = live_sets(sdfg)
 
         # Simple initialization of MemoryPool:
         self.initialization = True
@@ -54,47 +54,47 @@ class MemoryPoolCodegen(TargetCodeGenerator):
             )
 
         # Register node dispatcher
-        self._dispatcher.register_node_dispatcher(self)
+        #self._dispatcher.register_node_dispatcher(self)
 
 
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         #callsite_stream.write("//{node}".format(node=node))
 
-        state = sdfg.states()[state_id]
-        if state in self.alloc_dealloc_states.keys():
-            alloc_dealloc = self.alloc_dealloc_states[state]
-            if node in alloc_dealloc:
-                alloc, dealloc = alloc_dealloc[node]
-                for t in dealloc:
-                    array = sdfg.arrays[t]
-                    if array.storage in self.cpu_storages:
-                        callsite_stream.write(
-                            '''CPU_Pool.Dealloc({name});'''.format(name=t)
-                        )
-                    elif array.storage in self.gpu_storages:
-                        callsite_stream.write(
-                            '''GPU_Pool.Dealloc({name});'''.format(name=t)
-                        )
-
-                for t in alloc:
-                    array = sdfg.arrays[t]
-                    if array.storage in self.cpu_storages:
-                        callsite_stream.write(
-                            '''{type} *{name} = ({type}*)CPU_Pool.Alloc({size});'''.format(
-                                name=t, size=array.total_size*array.dtype.bytes,
-                                type=array.dtype.ctype
-                            )
-                        )
-                    elif array.storage in self.gpu_storages:
-                        callsite_stream.write(
-                            '''{type} *{name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
-                                name=t, size=array.total_size*array.dtype.bytes,
-                                type=array.dtype.ctype
-                            )
-                        )
-        self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
-                                        function_stream, callsite_stream)
+        # state = sdfg.states()[state_id]
+        # if state in self.alloc_dealloc_states.keys():
+        #     alloc_dealloc = self.alloc_dealloc_states[state]
+        #     if node in alloc_dealloc:
+        #         alloc, dealloc = alloc_dealloc[node]
+        #         for t in dealloc:
+        #             array = sdfg.arrays[t]
+        #             if array.storage in self.cpu_storages:
+        #                 callsite_stream.write(
+        #                     '''CPU_Pool.Dealloc({name});'''.format(name=t)
+        #                 )
+        #             elif array.storage in self.gpu_storages:
+        #                 callsite_stream.write(
+        #                     '''GPU_Pool.Dealloc({name});'''.format(name=t)
+        #                 )
+        #
+        #         for t in alloc:
+        #             array = sdfg.arrays[t]
+        #             if array.storage in self.cpu_storages:
+        #                 callsite_stream.write(
+        #                     '''{type} *{name} = ({type}*)CPU_Pool.Alloc({size});'''.format(
+        #                         name=t, size=array.total_size*array.dtype.bytes,
+        #                         type=array.dtype.ctype
+        #                     )
+        #                 )
+        #             elif array.storage in self.gpu_storages:
+        #                 callsite_stream.write(
+        #                     '''{type} *{name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
+        #                         name=t, size=array.total_size*array.dtype.bytes,
+        #                         type=array.dtype.ctype
+        #                     )
+        #                 )
+        '''self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
+                                        function_stream, callsite_stream)'''
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.initialization:
@@ -109,7 +109,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                         m_size=self.gpu_size, block_size=self._block_size)
                 )
 
-            for t in self.shared_transients:
+            for t in sdfg.transients():
                 array = sdfg.arrays[t]
                 if array.storage in self.cpu_storages:
                     callsite_stream.write(
