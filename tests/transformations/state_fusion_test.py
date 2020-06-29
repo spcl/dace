@@ -1,4 +1,5 @@
 import dace
+from dace.transformation.interstate import StateFusion
 
 
 def test_fuse_assignments():
@@ -9,7 +10,7 @@ def test_fuse_assignments():
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3,
                   dace.InterstateEdge(assignments=dict(k='k + 1')))
-    sdfg.apply_strict_transformations()
+    sdfg.apply_transformations_repeated(StateFusion)
     assert sdfg.number_of_nodes() == 3
 
 
