@@ -135,7 +135,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         exit_guard_state = None
         
         # generate entry guard state if needed
-        if (self.include_in_assignment and entry_state_out is not None):
+        if self.include_in_assignment and entry_state_out is not None:
             entry_edge = sdfg.edges_between(entry_state_out, entry_state_in)[0]
             if len(entry_edge.data.assignments) > 0:
                 entry_guard_state = sdfg.add_state(
@@ -212,6 +212,10 @@ class GPUPersistentKernel(SubgraphTransformation):
         edges = subgraph.edges()
         for edge in edges:
             kernel_sdfg.add_edge(edge.src, edge.dst, edge.data)
+        
+        # Setting entry node in nested SDFG if no entry guard was created  
+        if entry_guard_state is None:
+            kernel_sdfg.start_state = kernel_sdfg.node_id(entry_state_in)
 
         for state in subgraph:
             state.parent = kernel_sdfg
