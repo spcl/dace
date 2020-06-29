@@ -14,7 +14,6 @@ def test_importer_resnet():
     sdfg = dace_model.sdfg
     sdfg.validate()
     sdfg.save("/home/orausch/resnet.sdfg")
-    sdfg.view()
     sdfg.states()[0].instrument = dace.InstrumentationType.Timer
 
     test_input = np.random.rand(1, 3, 224, 224).astype(np.float32)
@@ -32,9 +31,9 @@ def test_importer_bert():
     dace_model = ONNXModel("bert", model)
     sdfg = dace_model.sdfg
     sdfg.validate()
-    sdfg.view()
+    sdfg.compile()
 
 
 if __name__ == "__main__":
-    #test_importer_bert()
+    test_importer_bert()
     test_importer_resnet()

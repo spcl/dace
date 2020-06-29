@@ -1,8 +1,10 @@
+import sys
 from itertools import chain
 import warnings
 
 import onnx
 import aenum
+import numpy as np
 
 import dace
 from dace.dtypes import typeclass
@@ -135,6 +137,8 @@ class ONNXAttributeType(aenum.AutoNumberEnum):
     Ints = ()
     Floats = ()
     Strings = ()
+    Tensor = ()
+    Unsupported = ()
 
 
 _ATTR_TYPE_TO_PYTHON_TYPE = {
@@ -144,6 +148,7 @@ _ATTR_TYPE_TO_PYTHON_TYPE = {
     ONNXAttributeType.Floats: float,
     ONNXAttributeType.String: str,
     ONNXAttributeType.Strings: str,
+    ONNXAttributeType.Tensor: np.ndarray
 }
 
 
@@ -161,6 +166,12 @@ class ONNXAttribute:
                              desc="The default value of this attribute",
                              default=None,
                              allow_none=True)
+
+    def validate(self):
+        if self.required and self.type == ONNXAttributeType.Unsupported:
+            raise NotImplementedError(
+                "Required attribute '{}' has an unsupported type"
+                .format(self.name))
 
     def __repr__(self):
         return self.name
@@ -237,7 +248,7 @@ class ONNXSchema:
                     param.type_str)
 
                 if parsed_typeclass is None:
-                    warnings.warn(
+                    print(
                         "Could not parse typeStr '{}' for parameter '{}'".
                         format(param.type_str, param.name))
 
@@ -253,7 +264,7 @@ class ONNXSchema:
                  or param.param_type == ONNXParameterType.Variadic)
                     and len(self.type_constraints[param.type_str].types) == 0):
                 raise NotImplementedError(
-                    "None of the types for {} are supported".format(self.name))
+                    "None of the types for parameter '{}' are supported".format(param.name))
 
         # check that all variadic parameter names do not contain "__"
         for param in chain(self.inputs, self.outputs):

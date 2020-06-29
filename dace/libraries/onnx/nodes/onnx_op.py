@@ -1,10 +1,14 @@
 # TODO do checking on if type exists for non required fields (maybe automate this?)
+import base64
+import traceback
 from collections import Iterable
 from itertools import chain, repeat, count
 from functools import reduce
 from typing import Iterator, Tuple, List
 
+import numpy as np
 import onnx
+from onnx.numpy_helper import from_array
 
 import dace
 import dace.sdfg.nodes as nd
@@ -118,14 +122,6 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
     attribute->set_name("{name}");
     """.format(name=attr.name, node_proto=node_proto)
 
-    attr_type_to_type = {
-        ONNXAttributeType.Int: int,
-        ONNXAttributeType.Float: float,
-        ONNXAttributeType.String: str,  # TODO @orausch: change to bytes
-        ONNXAttributeType.Ints: int,
-        ONNXAttributeType.Floats: float,
-        ONNXAttributeType.Strings: str,
-    }
     type_to_str = {
         ONNXAttributeType.Int: "int",
         ONNXAttributeType.Float: "float",
@@ -139,7 +135,7 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
             ONNXAttributeType.Int, ONNXAttributeType.Float,
             ONNXAttributeType.String
     ]:
-        assert_type(value, attr_type_to_type[attr.type])
+        assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
         init_code += """
         attribute->set_type(onnx::AttributeProto::{type_str});
         attribute->set_{short_type}({value});
@@ -160,13 +156,22 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
                     attr.name, value))
 
         for i in value:
-            assert_type(i, attr_type_to_type[attr.type])
+            assert_type(i, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
             init_code += "attribute->add_{type_str}s({value});\n".format(
                 type_str_decl='std::string' if attr.type
                 == ONNXAttributeType.String else type_to_str[attr.type],
                 type_str=type_to_str[attr.type],
                 value='"{}"'.format(i)
                 if attr.type == ONNXAttributeType.String else i)
+    elif attr.type == ONNXAttributeType.Tensor:
+        assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
+        init_code += """
+        attribute->set_type(onnx::AttributeProto::TENSOR);
+        onnx::TensorProto* t = attribute->mutable_t();
+        t->ParseFromString(base64_decode("{}"));
+        """.format(
+            base64.b64encode(from_array(value).SerializeToString()).decode('ascii')
+        )
     else:
         raise NotImplementedError(
             "Got unsupported attribute type {} for '{}'".format(
@@ -632,6 +637,7 @@ class ONNXOp(nd.LibraryNode):
 _ONNX_OPS_BY_NAME = {}
 # Generate all of the Op Nodes
 for schema in onnx.defs.get_all_schemas():
+    print("Attempting to import " + schema.name)
     try:
         dace_schema = ONNXSchema.from_onnx_proto(schema)
     except Exception as e:
@@ -647,7 +653,7 @@ for schema in onnx.defs.get_all_schemas():
     for name, attr in dace_schema.attributes.items():
         if attr.type in [
                 ONNXAttributeType.Int, ONNXAttributeType.String,
-                ONNXAttributeType.Float
+                ONNXAttributeType.Float, ONNXAttributeType.Tensor
         ]:
             attrs[name] = Property(dtype=_ATTR_TYPE_TO_PYTHON_TYPE[attr.type],
                                    desc=attr.description,
@@ -664,9 +670,10 @@ for schema in onnx.defs.get_all_schemas():
                 allow_none=True,
                 default=None
                 if attr.default_value is None else attr.default_value)
-        else:
+        elif attr.required:
             raise NotImplementedError(
-                "Got unsupported ONNXAttributeType: {}".format(attr.type))
+                "Required attribute '{}' has an unsupported type"
+                    .format(attr.name))
 
     required_attrs = {
         name

@@ -274,4 +274,4 @@ class ONNXModel:
     def _clean_array_name(name: str) -> str:
         """Modifies a onnx array name that is potentially invalid in dace
            to make it valid"""
-        return "ONNX_" + name.replace(".", "DOT")
+        return "ONNX_" + name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH")

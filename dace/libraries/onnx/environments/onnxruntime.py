@@ -50,6 +50,7 @@ class ONNXRuntime:
     cmake_files = []
 
     headers = [
+        "../include/dace_onnx.h",
         "onnx/onnx_pb.h",
         "onnxruntime_c_api.h",
         "cpu_provider_factory.h",

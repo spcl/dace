@@ -1,7 +1,10 @@
 import re
+import sys
 from typing import Union
+import warnings
 
 import onnx
+from onnx.numpy_helper import to_array
 
 from dace.dtypes import typeclass
 from dace import dtypes as dt
@@ -66,10 +69,11 @@ def convert_onnx_proto(attribute):
             return ONNXAttributeType.String
         elif attribute == onnx.defs.OpSchema.AttrType.STRINGS:
             return ONNXAttributeType.Strings
+        elif attribute == onnx.defs.OpSchema.AttrType.TENSOR:
+            return ONNXAttributeType.Tensor
         else:
-            raise NotImplementedError(
-                "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS attributes are supported, got {}"
-                .format(attribute))
+            print("Got unsupported attribute type {}".format(attribute))
+            return ONNXAttributeType.Unsupported
 
     if type(attribute) is onnx.AttributeProto:
         return convert_attribute_proto(attribute)
@@ -101,6 +105,8 @@ def convert_attribute_proto(proto):
                 inv_map[v] = lambda attr: list(
                     map(lambda x: x.decode('utf-8'),
                         get_proto_attr(attr, "strings")))
+            elif k == "TENSOR":
+                inv_map[v] = lambda attr: to_array(get_proto_attr(attr, "t"))
 
         convert_attribute_proto.inv_map = inv_map
 
@@ -115,7 +121,7 @@ def convert_attribute_proto(proto):
                     for k, v in onnx.AttributeProto.AttributeType.items()
                     }[onnx_type]
         raise NotImplementedError(
-            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS attributes are supported, got attribute with type {}"
+            "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}"
             .format(type_str))
 
     return inv_map[onnx_type](proto)
