@@ -456,7 +456,7 @@ class StateGraphView(object):
             if edge.data.data is not None and edge.data.data not in descs:
                 desc = sdfg.arrays[edge.data.data]
                 if isinstance(desc, dt.Scalar):
-                    # Ignore code->code edges. TODO: Remove when fixed
+                    # Ignore code->code edges.
                     if (isinstance(edge.src, nd.CodeNode)
                             and isinstance(edge.dst, nd.CodeNode)):
                         continue
