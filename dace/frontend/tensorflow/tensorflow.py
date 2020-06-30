@@ -566,6 +566,7 @@ class TFSession:
         nodes,
         feed_dict=None,
         gpu=False,
+        cudnn=False,
         transformations=None,
         validate=False,
         strict=True,
@@ -585,6 +586,7 @@ class TFSession:
                              transformations.
             :return: Tuple or dictionary of values in the same order as `nodes`.
         """
+        self.cudnn = gpu and cudnn
         self.winograd = winograd
         callfunc = self.compile(
             nodes,
@@ -1978,6 +1980,64 @@ class TFSession:
         if (7 in _tensorshape(node.inputs[0])[1:3]
                 and 3 in _tensorshape(node.inputs[1])[0:2] and self.winograd):
             winograd_convolution(self, node)
+        elif self.cudnn:
+            state = self.state
+            data_format = node.get_attr("data_format").decode("utf-8")
+            dilations = node.get_attr("dilations")
+            explicit_paddings = node.get_attr("explicit_paddings")
+            padding = node.get_attr("padding").decode("utf-8")
+            strides = node.get_attr("strides")
+            image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
+            filter, filter_params, filter_dims = self.create_and_add_input_node(node.inputs[1])
+            output = self.create_and_add_output_node(node)[0]
+            image_dims_list = image.desc(self.graph).shape
+            filter_dims_list = filter.desc(self.graph).shape
+            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
+
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            pad = strides[H] * (output.desc(self.graph).shape[H] - 1) + \
+                  filter.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
+            if padding == "SAME" and pad > 0:
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    image,
+                    image.desc(self.graph),
+                    output.desc(self.graph).shape[H],
+                    filter.desc(self.graph).shape[0],
+                    strides[H],
+                    image_dims,
+                )
+                paddedImage = paddedInput
+                image_dims_list = paddedImage.desc(self.graph).shape
+
+            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
+            # assuming pad_top = pad_bottom, pad_left = pad_right
+            padh = 0
+            padw = 0
+            if padding == "EXPLICIT":
+                padh = explicit_paddings[H * 2]
+                padw = explicit_paddings[W * 2]
+
+            # change filter format from RSCK to target format for cuDNN
+            idx = [3, 0, 1, 2]  # KRSC
+            if data_format == 'NCHW':
+                idx = [3, 2, 0, 1]  # KCRS
+            mapOutput = self.map_input_filter(node, idx, filter, filter_params, filter_dims)
+
+            import dace.libraries.cudnn as cudnn
+            tasklet = cudnn.conv2d.Conv2D('conv2d', image_dims_list, filter_dims_list, padh, padw, strides, dilations, data_format)
+            tasklet.implementation = "cudnn"
+            if padding == "SAME" and pad > 0:
+                state.add_edge(paddedImage, None, tasklet, 'x',
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
+            else:
+                state.add_edge(image, None, tasklet, 'x',
+                               Memlet.from_array(image.label, image.desc(self.graph)))
+            state.add_edge(mapOutput, None, tasklet, 'f',
+                           Memlet.from_array(mapOutput.label, mapOutput.desc(self.graph)))
+            state.add_edge(tasklet, 'y', output, None,
+                           Memlet.from_array(output.label, output.desc(self.graph)))
         else:
             local_ctr = str(next(_atomic_count))
             inputList = []
@@ -4027,3 +4087,57 @@ class TFSession:
         for dim in shape:
             dims.append("0:" + str(dim))
         return dims
+
+    def map_input_filter(self, node, idx, filter, filter_params, filter_dims):
+        """ Maps the filter dimensions according to idx,
+            :param node: tf.Operation
+            :param idx: the desired output index
+            :param filter: filter descriptor
+            :param filter_params: List of parameters as strings ["i0","i1",...]
+            :param filter_dims: List of dimensions as strings ["0:N","0:M",...]
+            :return: A dace access node
+        """
+        state = self.state
+        mapParams = [filter_params[i] for i in idx]
+        mapRange = [filter_dims[i] for i in idx]
+        mapDims = [filter.desc(self.graph).shape[i] for i in idx]
+        mapLabel = string_builder(node.type) + "_filter_map"
+        mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+        mapTasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+
+        mapOutputLabel = mapLabel + "_output"
+        mapOutput = state.add_transient(mapOutputLabel, mapDims, dace.float32)
+
+        self.add_out_memlets([mapOutput], mapExit, mapTasklet, [mapRange],
+                             [mapParams])
+        self.add_in_memlets([filter], mapEntry, mapTasklet, [filter_dims],
+                            [filter_params])
+        return mapOutput
+
+    def map_output_filter(self, node, idx, output):
+        """ Maps the filter dimensions according to idx.
+            :param node: tf.Operation
+            :param idx: index given by mapping output on input
+            :param output: output filter descriptor
+            :return: A dace access node
+        """
+        state = self.state
+        output_dims_list = output.desc(self.graph).shape
+        output_dims = self.get_default_dims(node.outputs[0])
+        output_params = self.get_default_params(node.outputs[0])
+        mapDims = [output_dims_list[i] for i in idx]
+        mapParams = [output_params[i] for i in idx]
+        mapRange = [output_dims[i] for i in idx]
+        mapLabel = string_builder(node.type) + "_filter_map"
+        mapEntry, mapExit = state.add_map(mapLabel, dict(zip(mapParams, mapRange)))
+        mapTasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+
+        mapInputLabel = mapLabel + "_input"
+        mapInput = state.add_transient(mapInputLabel, mapDims, dace.float32)
+
+        self.add_in_memlets([mapInput], mapEntry, mapTasklet, [mapRange],
+                            [mapParams])
+        self.add_out_memlets([output], mapExit, mapTasklet, [output_dims],
+                             [output_params])
+
+        return mapInput
