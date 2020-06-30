@@ -7,6 +7,7 @@ class ExpandConv2dCudnn(ExpandTransformation):
     environments = [cudnn.cuDNN]
     @staticmethod
     def expansion(node, state, sdfg: dace.SDFG):
+        name = sdfg._find_new_name(node.name)
         [N, H, W, C] = [node._data_format.find(x) for x in ['N', 'H', 'W', 'C']]
         code = '''
                      cudnnSetStream(cudnn_handle, __dace_current_stream);
@@ -17,8 +18,8 @@ class ExpandConv2dCudnn(ExpandTransformation):
                                              workSpace_{i}, workSpaceSizeInBytes_{i},
                                              &beta,
                                              yDesc_{i}, y));
-                '''.format(i=1)
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                '''.format(i=name)
+        tasklet = dace.sdfg.nodes.Tasklet(name,
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
@@ -100,7 +101,7 @@ class ExpandConv2dCudnn(ExpandTransformation):
         '''.format(N=node._image_dims_list[N], C=node._image_dims_list[C], H=node._image_dims_list[H], W=node._image_dims_list[W],
                        K=node._filter_dims_list[3], R=node._filter_dims_list[0], S=node._filter_dims_list[1],
                        padh=node._padh, padw=node._padw, vstr=node._strides[H], hstr=node._strides[W],
-                       dilh=node._dilations[H], dilw=node._dilations[W], i=1, format=node._data_format))
+                       dilh=node._dilations[H], dilw=node._dilations[W], i=name, format=node._data_format))
         sdfg.append_exit_code('''
             cudnnDestroy(cudnn_handle_{i});
             cudnnDestroyTensorDescriptor(xDesc_{i});
@@ -108,7 +109,7 @@ class ExpandConv2dCudnn(ExpandTransformation):
             cudnnDestroyFilterDescriptor(fDesc_{i});
             cudnnDestroyConvolutionDescriptor(convDesc_{i});
             cudaFree(workSpace_{i});
-        '''.format(i=1))
+        '''.format(i=name))
         return tasklet
 
 
