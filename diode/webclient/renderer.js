@@ -542,8 +542,8 @@ function calculateEdgeBoundingBox(edge) {
 
 function calculateNodeSize(sdfg_state, node, ctx) {
     let labelsize = ctx.measureText(node.label).width;
-    let inconnsize = 2 * LINEHEIGHT * node.attributes.layout.in_connectors.length - LINEHEIGHT;
-    let outconnsize = 2 * LINEHEIGHT * node.attributes.layout.out_connectors.length - LINEHEIGHT;
+    let inconnsize = 2 * LINEHEIGHT * Object.keys(node.attributes.layout.in_connectors).length - LINEHEIGHT;
+    let outconnsize = 2 * LINEHEIGHT * Object.keys(node.attributes.layout.out_connectors).length - LINEHEIGHT;
     let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
     let maxheight = 2 * LINEHEIGHT;
     maxheight += 4 * LINEHEIGHT;
@@ -730,7 +730,12 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 
         // Add input connectors
         let i = 0;
-        for (let cname of node.attributes.layout.in_connectors) {
+        let conns;
+        if (Array.isArray(node.attributes.layout.in_connectors))
+            conns = node.attributes.layout.in_connectors;
+        else
+            conns = Object.keys(node.attributes.layout.in_connectors);
+        for (let cname of conns) {
             let conn = new Connector({ name: cname }, i, sdfg, node.id);
             obj.in_connectors.push(conn);
             i += 1;
@@ -738,7 +743,11 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 
         // Add output connectors -- if collapsed, uses exit node connectors
         i = 0;
-        for (let cname of node.attributes.layout.out_connectors) {
+        if (Array.isArray(node.attributes.layout.out_connectors))
+            conns = node.attributes.layout.out_connectors;
+        else
+            conns = Object.keys(node.attributes.layout.out_connectors);
+        for (let cname of conns) {
             let conn = new Connector({ name: cname }, i, sdfg, node.id);
             obj.out_connectors.push(conn);
             i += 1;
@@ -789,8 +798,8 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
         }
         // Connector management 
         let SPACING = LINEHEIGHT;
-        let iconn_length = (LINEHEIGHT + SPACING) * node.attributes.layout.in_connectors.length - SPACING;
-        let oconn_length = (LINEHEIGHT + SPACING) * node.attributes.layout.out_connectors.length - SPACING;
+        let iconn_length = (LINEHEIGHT + SPACING) * Object.keys(node.attributes.layout.in_connectors).length - SPACING;
+        let oconn_length = (LINEHEIGHT + SPACING) * Object.keys(node.attributes.layout.out_connectors).length - SPACING;
         let iconn_x = gnode.x - iconn_length / 2.0 + LINEHEIGHT / 2.0;
         let oconn_x = gnode.x - oconn_length / 2.0 + LINEHEIGHT / 2.0;
 
@@ -819,7 +828,13 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
         let src_conn = null, dst_conn = null;
         if (edge.src_connector) {
             let src_node = g.node(edge.src);
-            let cindex = src_node.data.node.attributes.layout.out_connectors.indexOf(edge.src_connector);
+            let cindex = -1;
+            for (let i = 0; i < src_node.out_connectors.length; i++) {
+                if (src_node.out_connectors[i].data.name == edge.src_connector) {
+                    cindex = i;
+                    break;
+                }
+            }
             if (cindex >= 0) {
                 gedge.points[0].x = src_node.out_connectors[cindex].x;
                 gedge.points[0].y = src_node.out_connectors[cindex].y;
@@ -828,7 +843,13 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
         }
         if (edge.dst_connector) {
             let dst_node = g.node(edge.dst);
-            let cindex = dst_node.data.node.attributes.layout.in_connectors.indexOf(edge.dst_connector);
+            let cindex = -1;
+            for (let i = 0; i < dst_node.in_connectors.length; i++) {
+                if (dst_node.in_connectors[i].data.name == edge.dst_connector) {
+                    cindex = i;
+                    break;
+                }
+            }
             if (cindex >= 0) {
                 gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
                 gedge.points[gedge.points.length - 1].y = dst_node.in_connectors[cindex].y;
