@@ -198,6 +198,13 @@ class Node(object):
             scope entries) to their type. """
         return {}
 
+    def infer_connector_types(self, sdfg, state):
+        """
+        Infers and fills remaining connectors (i.e., set to None) with their
+        types.
+        """
+        pass
+
 
 # ------------------------------------------------------------------------------
 
@@ -348,6 +355,33 @@ class Tasklet(CodeNode):
         return self.code.get_free_symbols(self.in_connectors.keys()
                                           | self.out_connectors.keys())
 
+    def infer_connector_types(self, sdfg, state):
+        # If a Python tasklet, use type inference to figure out all None output
+        # connectors
+        if all(cval.type is not None for cval in self.out_connectors.values()):
+            return
+        if self.code.language != dtypes.Language.Python:
+            return
+
+        if any(cval.type is None for cval in self.in_connectors.values()):
+            raise TypeError('Cannot infer output connectors of tasklet "%s", '
+                            'not all input connectors have types' % str(self))
+
+        # Avoid import loop
+        from dace.codegen.tools.type_inference import infer_types
+
+        # Get symbols defined at beginning of node, and infer all types in
+        # tasklet
+        syms = state.symbols_defined_at(self)
+        new_syms = infer_types(self.code.code, syms)
+        for cname, oconn in self.out_connectors.items():
+            if oconn.type is None:
+                if cname not in new_syms:
+                    raise TypeError('Cannot infer type of tasklet %s output '
+                                    '"%s", please specify manually.' %
+                                    (self.label, cname))
+                self.out_connectors[cname] = new_syms[cname]
+
     def __str__(self):
         if not self.label:
             return "--Empty--"
@@ -437,6 +471,12 @@ class NestedSDFG(CodeNode):
             *(map(str,
                   pystr_to_symbolic(v).free_symbols)
               for v in self.location.values()))
+
+    def infer_connector_types(self, sdfg, state):
+        # Avoid import loop
+        from dace.sdfg.infer_types import infer_connector_types
+        # Infer internal connector types
+        infer_connector_types(self.sdfg)
 
     def __str__(self):
         if not self.label:
