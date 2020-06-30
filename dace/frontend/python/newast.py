@@ -2874,6 +2874,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                          value=ast.Tuple(elts=value),
                                          lineno=node.lineno,
                                          col_offset=node.col_offset)
+                assign_node = ast.fix_missing_locations(assign_node)
                 return self._visit_assign(assign_node, assign_node.targets,
                                           None)
 
