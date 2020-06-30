@@ -1310,7 +1310,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             callsite_stream.write(
                 '{dtype} __dacesym_{symname} = {symval};\n'.format(
-                    dtype=symbolic.symtype(symval),
+                    dtype=node.sdfg.symbols[symname],
                     symname=symname,
                     symval=sym2cpp(symval)), sdfg, state_id, node)
         for sym in sorted(node.symbol_mapping.keys()):
