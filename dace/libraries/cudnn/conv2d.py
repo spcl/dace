@@ -55,10 +55,13 @@ class ExpandConv2dCudnn(ExpandTransformation):
                                                 /*dilation_width=*/{dilw},
                                                 /*mode=*/CUDNN_CROSS_CORRELATION,
                                                 /*computeType=*/CUDNN_DATA_FLOAT));
-                                                
+                
+                int out_k = 0;
+                int out_c = 0;
+                int out_h = 0;
+                int out_w = 0;       
                 checkCUDNN(cudnnGetConvolution2dForwardOutputDim(convDesc_{i}, xDesc_{i}, fDesc_{i}, 
                                                                   &out_k , &out_c, &out_h, &out_w));
-
                 cudnnCreateTensorDescriptor(&yDesc_{i});
                 checkCUDNN(cudnnSetTensor4dDescriptor(yDesc_{i},
                                             /*format=*/CUDNN_TENSOR_{format},
@@ -107,11 +110,7 @@ class ExpandConv2dCudnn(ExpandTransformation):
             cudnnConvolutionFwdAlgo_t algo_{i};
             size_t workSpaceSizeInBytes_{i} = 0;
             void* workSpace_{i}{{nullptr}};
-            int out_k = 0;
-            int out_c = 0;
-            int out_h = 0;
-            int out_w = 0;
-            
+
             #define checkCUDNN(expression)                                   \\
             {{                                                                \\
               cudnnStatus_t status = (expression);                           \\
