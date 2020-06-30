@@ -10,29 +10,31 @@ import dace.libraries.cudnn as cudnn
 def test_cudnn_code():
     # Construct graph
     sdfg = dace.SDFG('custom_code')
-    sdfg.add_array('A', [20, 20], dace.float64)
-    sdfg.add_array('B', [5, 5], dace.float64)
-    sdfg.add_array('C', [20, 20], dace.float64)
+    sdfg.add_array('X', [10, 10], dace.float32)
+    sdfg.add_array('F', [3, 3], dace.float32)
+    sdfg.add_array('Y', [9, 9], dace.float32)
     state = sdfg.add_state()
 
-    a = state.add_read('A')
-    b = state.add_read('B')
-    node = cudnn.conv2d.Conv2D('conv2d', [1,1,20,20], [1,1,5,5], 0, 0, [1,1,1,1], [0,0,0,0], 'NCHW')
+    x = state.add_read('X')
+    f = state.add_read('F')
+    node = cudnn.conv2d.Conv2D('conv2d', [1,1,10,10], [3,3,1,1], 0, 0, [1,1,1,1], [1,1,1,1], 'NCHW')
     node.implementation = "cudnn"
-    c = state.add_write('C')
-    state.add_edge(a, None, node, 'x',
-                   dace.Memlet.simple('A', '0:20, 0:20'))
-    state.add_edge(b, None, node, 'f',
-                   dace.Memlet.simple('B', '0:5, 0:5'))
-    state.add_edge(node, 'y', c, None, dace.Memlet.simple('C', '0:20,0:20'))
+    y = state.add_write('Y')
+    state.add_edge(x, None, node, 'x',
+                   dace.Memlet.simple('X', '0:10, 0:10'))
+    state.add_edge(f, None, node, 'f',
+                   dace.Memlet.simple('F', '0:3, 0:3'))
+    state.add_edge(node, 'y', y, None, dace.Memlet.simple('Y', '0:9,0:9'))
 
     # Run graph with default node value
-    A = np.random.rand(20, 20)
-    B = np.random.rand(20, 20)
-    C = np.random.rand(20, 20)
+    X = np.random.rand(10, 10)
+    F = np.random.rand(3, 3)
+    Y = np.random.rand(9, 9)
     from dace.transformation.interstate.gpu_transform_sdfg import GPUTransformSDFG
     sdfg.apply_transformations(GPUTransformSDFG)
-    sdfg(A=A, B=B, C=C)
+    sdfg(X=X, F=F, Y=Y)
+
+    print(Y)
 
 
 if __name__ == '__main__':

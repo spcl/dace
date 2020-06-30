@@ -25,18 +25,6 @@ class ExpandConv2dCudnn(ExpandTransformation):
                                           code,
                                           language= dace.dtypes.Language.CPP)
         sdfg.append_init_code('''
-            cudnnHandle_t cudnn_handle_{i};
-            cudnnTensorDescriptor_t xDesc_{i};
-            cudnnFilterDescriptor_t fDesc_{i};
-            cudnnTensorDescriptor_t yDesc_{i};
-            cudnnConvolutionDescriptor_t convDesc_{i};
-            cudnnConvolutionFwdAlgo_t algo_{i};
-            size_t workSpaceSizeInBytes_{i} = 0;
-            void* workSpace_{i}{{nullptr}};
-            int out_k = 0;
-            int out_c = 0;
-            int out_h = 0;
-            int out_w = 0;
             
             cudnnCreate(&cudnn_handle_{i});
                 checkCUDNN(cudnnCreateTensorDescriptor(&xDesc_{i}));
