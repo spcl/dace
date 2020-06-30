@@ -15,12 +15,5 @@ class cuDNN:
 
     headers = ["cudnn.h"]
     init_code ='''
-    #define checkCUDNN(expression)                                   \\
-    {                                                                \\
-      cudnnStatus_t status = (expression);                           \\
-      if (status != CUDNN_STATUS_SUCCESS) {                          \\
-        printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
-      }                                                              \\
-    }
     '''
     finalize_code = ""

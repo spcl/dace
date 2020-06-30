@@ -10,7 +10,7 @@ class ExpandConv2dCudnn(ExpandTransformation):
         name = sdfg._find_new_name(node.name)
         [N, H, W, C] = [node._data_format.find(x) for x in ['N', 'H', 'W', 'C']]
         code = '''
-                     cudnnSetStream(cudnn_handle, __dace_current_stream);
+                     cudnnSetStream(cudnn_handle_{i}, __dace_current_stream);
                      float alpha = 1.0, beta = 0.0;
                      checkCUDNN(cudnnConvolutionForward(cudnn_handle_{i}, &alpha, xDesc_{i}, x,
                                              fDesc_{i}, f,
@@ -110,6 +110,29 @@ class ExpandConv2dCudnn(ExpandTransformation):
             cudnnDestroyConvolutionDescriptor(convDesc_{i});
             cudaFree(workSpace_{i});
         '''.format(i=name))
+        sdfg.append_global_code('''
+            cudnnHandle_t cudnn_handle_{i};
+            cudnnTensorDescriptor_t xDesc_{i};
+            cudnnFilterDescriptor_t fDesc_{i};
+            cudnnTensorDescriptor_t yDesc_{i};
+            cudnnConvolutionDescriptor_t convDesc_{i};
+            cudnnConvolutionFwdAlgo_t algo_{i};
+            size_t workSpaceSizeInBytes_{i} = 0;
+            void* workSpace_{i}{{nullptr}};
+            int out_k = 0;
+            int out_c = 0;
+            int out_h = 0;
+            int out_w = 0;
+            
+            #define checkCUDNN(expression)                                   \\
+            {{                                                                \\
+              cudnnStatus_t status = (expression);                           \\
+              if (status != CUDNN_STATUS_SUCCESS) {{                          \\
+                printf(\"%d: %s\\n\", __LINE__, cudnnGetErrorString(status));\\
+              }}                                                              \\
+            }}
+            
+            '''.format(i=name))
         return tasklet
 
 
