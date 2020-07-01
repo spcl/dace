@@ -589,9 +589,9 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                 dfg, edge, sdfg_schedule=toplevel_schedule)
             memlet_wcr = memlet.wcr
 
-            memlets[uconn] = (memlet, memlet_nc, memlet_wcr)
+            memlets[uconn] = (memlet, memlet_nc, memlet_wcr, u.out_connectors[uconn])
         elif v == node:
-            memlets[vconn] = (memlet, False, None)
+            memlets[vconn] = (memlet, False, None, v.in_connectors[vconn])
 
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
                           node)
@@ -650,7 +650,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[target]
+        memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(node.value)
 
         if not isinstance(node.targets[0], ast.Subscript):

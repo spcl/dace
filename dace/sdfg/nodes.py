@@ -609,10 +609,10 @@ class MapEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
 
-        # TODO: Get connector type from connector
+        # Get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+                result[e.dst_conn] = self.in_connectors[e.dst_conn]
 
         return result
 
@@ -819,10 +819,10 @@ class ConsumeEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
 
-        # TODO: Get connector type from connector
+        # Get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+                result[e.dst_conn] = self.in_connectors[e.dst_conn]
 
         return result
 
