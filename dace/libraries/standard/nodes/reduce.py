@@ -211,12 +211,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
                 out_offset.append('_o%d * %s' %
                                   (i, sym2cpp(output_data.strides[i])))
 
-        # HACK: This works around the current codegen, which infers scalars
-        if outedge.data.subset.num_elements() == 1:
-            outexpr = '_out'
-        else:
-            outexpr = '_out[%s]' % ' + '.join(out_offset)
-        # END HACK
+        outexpr = '_out[%s]' % ' + '.join(out_offset)
 
         # Write identity value first
         if node.identity is not None:
@@ -257,8 +252,9 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
             code += '}\n' * output_dims
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in': input_data.dtype},
-                                   {'_out': output_data.dtype},
+        tnode = dace.nodes.Tasklet('reduce',
+                                   {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
                                    code,
                                    language=dace.Language.CPP)
 
@@ -469,8 +465,9 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                     reduce_range_call=reduce_range_call))
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in': input_data.dtype},
-                                   {'_out': output_data.dtype},
+        tnode = dace.nodes.Tasklet('reduce',
+                                   {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
                                    host_localcode.getvalue(),
                                    language=dace.Language.CPP)
 
@@ -485,11 +482,6 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         output_edge._src_conn = '_out'
         node.add_in_connector('_in')
         node.add_out_connector('_out')
-
-        # HACK: Workaround to avoid issues with code generator inferring reads
-        # and writes when it shouldn't.
-        input_edge.data.dynamic = True
-        output_edge.data.dynamic = True
 
         return tnode
 
@@ -612,8 +604,9 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
                        output=output))
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in': input_data.dtype},
-                                   {'_out': output_data.dtype},
+        tnode = dace.nodes.Tasklet('reduce',
+                                   {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
                                    localcode.getvalue(),
                                    language=dace.Language.CPP)
 
@@ -625,11 +618,6 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         output_edge._src_conn = '_out'
         node.add_in_connector('_in')
         node.add_out_connector('_out')
-
-        # HACK: Workaround to avoid issues with code generator inferring reads
-        # and writes when it shouldn't.
-        input_edge.data.dynamic = True
-        output_edge.data.dynamic = True
 
         return tnode
 
