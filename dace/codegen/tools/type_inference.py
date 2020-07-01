@@ -283,6 +283,11 @@ def _NameConstant(t, symbols, inferred_symbols):
 
 
 def _Constant(t, symbols, inferred_symbols):
+    # String value
+    if isinstance(t.value, (str, bytes)):
+        return dtypes.pointer(dtypes.int8)
+
+    # Numeric value
     return dtypes.result_type_of(
         dtypes.typeclass(type(t.value)),
         dtypes.typeclass(np.min_scalar_type(t.value).name))
