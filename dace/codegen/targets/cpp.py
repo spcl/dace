@@ -588,10 +588,19 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             memlet_nc = not is_write_conflicted(
                 dfg, edge, sdfg_schedule=toplevel_schedule)
             memlet_wcr = memlet.wcr
+            if uconn in u.out_connectors:
+                conntype = u.out_connectors[uconn]
+            else:
+                conntype = None
 
-            memlets[uconn] = (memlet, memlet_nc, memlet_wcr, u.out_connectors[uconn])
+            memlets[uconn] = (memlet, memlet_nc, memlet_wcr, conntype)
         elif v == node:
-            memlets[vconn] = (memlet, False, None, v.in_connectors[vconn])
+            if vconn in v.in_connectors:
+                conntype = v.in_connectors[vconn]
+            else:
+                conntype = None
+
+            memlets[vconn] = (memlet, False, None, conntype)
 
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
                           node)

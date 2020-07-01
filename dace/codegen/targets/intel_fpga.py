@@ -1017,11 +1017,20 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         for edge in state_dfg.all_edges(node):
             u, uconn, v, vconn, memlet = edge
             if u == node:
+                if uconn in u.out_connectors:
+                    conntype = u.out_connectors[uconn]
+                else:
+                    conntype = None
+
                 # this could be a wcr
                 memlets[uconn] = (memlet, not edge.data.wcr_nonatomic,
-                                  edge.data.wcr, u.out_connectors[uconn])
+                                  edge.data.wcr, conntype)
             elif v == node:
-                memlets[vconn] = (memlet, False, None, v.in_connectors[vconn])
+                if vconn in v.in_connectors:
+                    conntype = v.in_connectors[vconn]
+                else:
+                    conntype = None
+                memlets[vconn] = (memlet, False, None, conntype)
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
@@ -1032,8 +1041,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
 
         for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
-                defined_symbols.update(
-                    {connector: conntype})
+                defined_symbols.update({connector: conntype})
 
         for stmt in body:  # for each statement in tasklet body
             stmt = copy.deepcopy(stmt)
