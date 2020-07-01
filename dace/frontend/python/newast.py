@@ -2990,6 +2990,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Num(self, node: ast.Num):
         return node.n
 
+    def visit_Constant(self, node: 'ast.Constant'):
+        return node.value
+
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global
         return self._visitname(node.id, node)
