@@ -3,6 +3,7 @@ from collections import OrderedDict
 import copy
 import itertools
 import re
+import sys
 from typing import Any, Dict, List, Tuple, Union, Callable, Optional
 
 import dace
@@ -579,7 +580,12 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                return ast.copy_location(ast.Num(n=self.globals[node.id]), node)
+                # Compatibility check since Python changed their AST nodes
+                if sys.version_info >= (3, 8):
+                    newnode = ast.Constant(value=self.globals[node.id], kind='')
+                else:
+                    newnode = ast.Num(n=self.globals[node.id])
+                return ast.copy_location(newnode, node)
         return node
 
 
@@ -1392,14 +1398,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return indices
 
-    def _parse_value(self, node: Union[ast.Name, ast.Num]):
+    def _parse_value(self, node: Union[ast.Name, ast.Num, ast.Constant]):
         """Parses a value
 
         Arguments:
-            node {Union[ast.Name, ast.Num]} -- Value node
+            node {Union[ast.Name, ast.Num, ast.Constant]} -- Value node
 
         Raises:
-            DaceSyntaxError: If node is not ast.Name or ast.Num
+            DaceSyntaxError: If node is not ast.Name or ast.Num/Constant
 
         Returns:
             str -- Value id or number as string
@@ -1409,6 +1415,8 @@ class ProgramVisitor(ExtNodeVisitor):
             return node.id
         elif isinstance(node, ast.Num):
             return str(node.n)
+        elif isinstance(node, ast.Constant):
+            return str(node.value)
         else:
             return str(pyexpr_to_symbolic(self.defined, node))
 
@@ -2350,12 +2358,12 @@ class ProgramVisitor(ExtNodeVisitor):
         results = []
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
-                if isinstance(n, ast.Num):
+                if isinstance(n, (ast.Num, ast.Constant)):
                     results.append(self._convert_num_to_array(n))
                 else:
                     results.extend(self._gettype(n))
         else:
-            if isinstance(node.value, ast.Num):
+            if isinstance(node.value, (ast.Constant, ast.Num)):
                 results.append(self._convert_num_to_array(node.value))
             else:
                 results.extend(self._gettype(node.value))
@@ -3044,7 +3052,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Num(self, node: ast.Num):
         return node.n
 
-    def visit_Constant(self, node: 'ast.Constant'):
+    def visit_Constant(self, node: ast.Constant):
         return node.value
 
     def visit_Name(self, node: ast.Name):
@@ -3103,7 +3111,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def _convert_num_to_array(self, node: ast.Num):
+    def _convert_num_to_array(self, node: Union[ast.Num, ast.Constant]):
         name = None
         if node.n not in self.numbers:
             dtype = None
@@ -3157,9 +3165,10 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = None, None
 
         if isinstance(node, ast.BinOp):
-            if op1type == 'Array' and isinstance(op2, ast.Num):
+            if op1type == 'Array' and isinstance(op2, (ast.Constant, ast.Num)):
                 operand2, op2type = self._convert_num_to_array(op2)
-            elif op2type == 'Array' and isinstance(op1, ast.Num):
+            elif op2type == 'Array' and isinstance(op1,
+                                                   (ast.Constant, ast.Num)):
                 operand1, op1type = self._convert_num_to_array(op1)
 
         func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
