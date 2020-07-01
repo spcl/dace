@@ -460,6 +460,17 @@ class ONNXOp(nd.LibraryNode):
             __ort_check_status(__ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dace_graph", &__ort_env));
             __ort_check_status(__ort_api->CreateSessionOptions(&__ort_session_options));
             __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, /*use_arena=*/0));
+            """)
+
+            if any(True for state in sdfg.nodes()
+                   for node in state.nodes()
+                   if hasattr(node, "schedule") and node.schedule == ScheduleType.GPU_Device):
+                # if the SDFG contains a GPU node, add the CUDA provider
+                sdfg.append_init_code("""
+                __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
+                """)
+
+            sdfg.append_init_code("""
             __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session));
             """)
 
@@ -471,12 +482,6 @@ class ONNXOp(nd.LibraryNode):
             """
             sdfg.prepend_exit_code(session_cleanup_code)
 
-        if node.schedule == ScheduleType.GPU_Device and "OrtSessionOptionsAppendExecutionProvider_CUDA" not in sdfg.global_code[
-                'frame'].as_string:
-            # the first time we expand a GPU node, we need to add the execution provider (only once)
-            sdfg.append_init_code("""
-            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
-            """)
 
         sdfg.append_global_code(
             "OrtExecutableKernelContext *__ort_context_{};\n".format(unique_id))
