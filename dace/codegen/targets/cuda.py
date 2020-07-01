@@ -1139,9 +1139,9 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     'DACE_CUDA_CHECK(cudaEventSynchronize(dace::cuda::__events[{ev}]));'
                     .format(ev=ev), sdfg, state_id, [e.src, e.dst])
             callsite_stream.write(
-                self._cpu_codegen.memlet_definition(sdfg, e.data, False,
-                                                    e.dst_conn), sdfg, state_id,
-                node)
+                self._cpu_codegen.memlet_definition(
+                    sdfg, e.data, False, e.dst_conn,
+                    e.dst.in_connectors[e.dst_conn]), sdfg, state_id, node)
 
         # Invoke kernel call
         callsite_stream.write(
@@ -1480,9 +1480,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False,
-                                                        e.dst_conn), sdfg,
-                    state_id, scope_entry)
+                    self._cpu_codegen.memlet_definition(
+                        sdfg, e.data, False, e.dst_conn,
+                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
+                    scope_entry)
 
             callsite_stream.write(
                 '__dace_dynmap_begin = {begin};\n'
