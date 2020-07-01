@@ -6,6 +6,7 @@ import inspect
 import numpy
 import re
 from functools import wraps
+from typing import Any
 from dace.config import Config
 from dace.registry import extensible_enum
 
@@ -956,3 +957,19 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
 
     # The rest (Registers) can be allocated everywhere
     return True
+
+
+def is_array(obj: Any) -> bool:
+    """
+    Returns True if an object implements the ``data_ptr()``,
+    ``__array_interface__`` or ``__cuda_array_interface__`` standards
+    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
+    supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
+    :param obj: The given object.
+    :return: True iff the object implements the array interface.
+    """
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
+        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False
