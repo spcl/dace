@@ -887,7 +887,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Convert from typeclass to Data
         if isinstance(conntype, dtypes.typeclass):
             if isinstance(conntype, dtypes.pointer):
-                conntype = data.Array(conntype.type, [1])
+                conntype = data.Array(conntype._typeclass, [1])
             else:
                 conntype = data.Scalar(conntype)
 
@@ -1140,7 +1140,7 @@ class CPUCodeGen(TargetCodeGenerator):
             ctype = cdtype.ctype
             # Convert dtype to data descriptor
             if isinstance(cdtype, dtypes.pointer):
-                arg_type = dace.data.Array(cdtype.type, [1])
+                arg_type = dace.data.Array(cdtype._typeclass, [1])
             else:
                 arg_type = dace.data.Scalar(cdtype)
 
