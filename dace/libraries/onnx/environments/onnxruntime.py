@@ -34,6 +34,7 @@ class ONNXRuntime:
         ORT_BUILD_PATH,
         os.path.join(ORT_PATH, "cmake", "external", "onnx"),
         os.path.join(ORT_PATH, "include"),
+        os.path.join(ORT_PATH, "cmake", "external", "protobuf", "src"),
         os.path.join(ORT_PATH, "include", "onnxruntime", "core", "session"),
         os.path.join(ORT_PATH, "include", "onnxruntime", "core", "providers",
                      "cpu"),
