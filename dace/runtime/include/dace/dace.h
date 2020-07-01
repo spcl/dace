@@ -25,6 +25,7 @@
 #ifdef __CUDACC__
 #include "cuda/copy.cuh"
 #include "cuda/dynmap.cuh"
+#include "cuda/reduce.cuh"
 #else
 #include "cudainterop.h"
 #endif
