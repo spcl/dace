@@ -548,7 +548,7 @@ required:
         title: Profiling
         description: Enable profiling support.
 
-    profiling-status:
+    profiling_status:
         type: bool
         default: true
         title: Status bar for profiling
