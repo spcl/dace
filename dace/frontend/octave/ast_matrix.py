@@ -124,7 +124,7 @@ class AST_Matrix(AST_Node):
             me, mx = sdfg.nodes()[state].add_map('init',
                                                  dict(i='0:' + str(arrlen)))
             sdfg.nodes()[state].add_edge(me, None, tasklet, None,
-                                         dace.memlet.EmptyMemlet())
+                                         dace.memlet.Memlet())
             sdfg.nodes()[state].add_edge(
                 tasklet, "out", mx, None,
                 dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
