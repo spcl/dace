@@ -190,7 +190,7 @@ class GPUPersistentKernel(SubgraphTransformation):
                     )
                 )
             
-        # If the launch state doesn't at this point then there is no othere
+        # If the launch state doesn't exist at this point then there is no other
         # states outside of the kernel, so create a stand alone launch state
         if launch_state is None:
             assert(entry_state_in is None and exit_state_out is None)
