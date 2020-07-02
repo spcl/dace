@@ -994,7 +994,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # reset streams in GPU persistent maps if the lifetime is scope,
             # otherwise streams do not behave as expected becasue they are
             # allocated on host side
-            # TODO discuss how exactly streams should behave (between states)
             streams_to_reset = [
                 node for node in state.data_nodes()
                 if isinstance(node.desc(sdfg), dace.nodes.data.Stream)
@@ -1104,7 +1103,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         kernel_args = dfg_scope.arglist()
 
         # handle dynamic map inputs
-        # TODO move this loop into dfg_scope.arglist()
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
