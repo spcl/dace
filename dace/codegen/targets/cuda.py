@@ -1253,7 +1253,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             self._localcode.write(
                 self._cpu_codegen.memlet_definition(
-                    sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                    sdfg, e.data, False, e.dst_conn,
+                    e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
                 scope_entry)
 
         self._localcode.write(
@@ -1489,7 +1490,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                                               dfg_scope.source_nodes()[0]):
             kernel_stream.write(
                 self._cpu_codegen.memlet_definition(
-                    sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                    sdfg, e.data, False, e.dst_conn,
+                    e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
                 dfg_scope.source_nodes()[0])
 
         # do not generate an index if the kernel map is persistent
@@ -1729,7 +1731,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
                     self._cpu_codegen.memlet_definition(
-                        sdfg, e.data, False, e.dst_conn), sdfg, state_id,
+                        sdfg, e.data, False, e.dst_conn,
+                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
                     scope_entry)
 
             # variables that need to be declared + the value they need to be initialized with
