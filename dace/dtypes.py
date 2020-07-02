@@ -952,7 +952,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage == StorageType.GPU_Shared:
         return schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
-            ScheduleType.GPU_ThreadBlock_Dynamic
+            ScheduleType.GPU_ThreadBlock_Dynamic,
+            ScheduleType.GPU_Persistent,
         ]
 
     # The rest (Registers) can be allocated everywhere
