@@ -142,9 +142,6 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
 }
 
-# Identifier for dynamic number of Memlet accesses.
-DYNAMIC = -1
-
 # Translation of types to C types
 _CTYPES = {
     int: "int",
@@ -639,8 +636,7 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i],
-                                                     data_type,
+                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i], data_type,
                                                      non_symbolic_sizes)
             return orig_function(*list_of_other_inputs)
 
@@ -840,12 +836,12 @@ class DebugInfo:
         IDE and debugging purposes. """
     def __init__(self,
                  start_line,
-                 start_column,
-                 end_line,
-                 end_column,
+                 start_column=0,
+                 end_line=-1,
+                 end_column=0,
                  filename=None):
         self.start_line = start_line
-        self.end_line = end_line
+        self.end_line = end_line if end_line >= 0 else start_line
         self.start_column = start_column
         self.end_column = end_column
         self.filename = filename

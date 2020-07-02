@@ -1879,7 +1879,7 @@ def _get_optimizer_class(class_override):
     if class_override is None:
         clazz = Config.get("optimizer", "interface")
 
-    if clazz == "" or clazz is False:
+    if clazz == "" or clazz is False or str(clazz).strip() == "":
         return None
 
     result = locate(clazz)

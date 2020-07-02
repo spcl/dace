@@ -25,9 +25,9 @@ class MergeArrays(pattern_matching.Transformation):
         g.add_node(MergeArrays._array2)
         g.add_node(MergeArrays._map_entry)
         g.add_edge(MergeArrays._array1, None, MergeArrays._map_entry, None,
-                   memlet.EmptyMemlet())
+                   memlet.Memlet())
         g.add_edge(MergeArrays._array2, None, MergeArrays._map_entry, None,
-                   memlet.EmptyMemlet())
+                   memlet.Memlet())
         return [g]
 
     @staticmethod

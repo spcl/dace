@@ -912,7 +912,7 @@ __kernel void \\
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     result += write_expr
-                elif memlet.num_accesses == -1:
+                elif memlet.dynamic:
                     # Variable number of reads or writes
                     pass
                 else:
@@ -1018,7 +1018,8 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
             u, uconn, v, vconn, memlet = edge
             if u == node:
                 # this could be a wcr
-                memlets[uconn] = (memlet, edge.data.wcr_conflict, edge.data.wcr)
+                memlets[uconn] = (memlet, not edge.data.wcr_nonatomic,
+                                  edge.data.wcr)
             elif v == node:
                 memlets[vconn] = (memlet, False, None)
 

@@ -6,7 +6,7 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
+from dace import memlet, registry, sdfg as sd, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -326,10 +326,10 @@ class InlineSDFG(pattern_matching.Transformation):
             for node in subgraph.nodes():
                 if state.in_degree(node) == 0:
                     state.add_edge(nsdfg_scope_entry, None, node, None,
-                                   EmptyMemlet())
+                                   Memlet())
                 if state.out_degree(node) == 0:
                     state.add_edge(node, None, nsdfg_scope_exit, None,
-                                   EmptyMemlet())
+                                   Memlet())
 
         # Replace nested SDFG parents with new SDFG
         for node in nstate.nodes():

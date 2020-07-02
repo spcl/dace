@@ -111,8 +111,7 @@ class AST_ArrayAccess(AST_Node):
                         str(self))
             else:
                 raise NotImplementedError(
-                    "Non-constant array indexing not implemented: " +
-                    str(self))
+                    "Non-constant array indexing not implemented: " + str(self))
         ret = dace.subsets.Range(rangelist)
         return ret
 
@@ -140,13 +139,9 @@ class AST_ArrayAccess(AST_Node):
 
         if self.is_data_dependent_access() == False:
             msubset = self.make_range_from_accdims()
-            memlet = dace.memlet.Memlet(arrnode,
-                                        msubset.num_elements(),
-                                        msubset,
-                                        1,
-                                        None,
-                                        None,
-                                        debuginfo=self.context)
+            memlet = dace.memlet.Memlet.simple(arrnode,
+                                               msubset,
+                                               debuginfo=self.context)
             sdfg.nodes()[state].add_edge(arrnode, None, resnode, None, memlet)
         else:
             # add a map around the access and feed the access dims that are
@@ -204,12 +199,10 @@ class AST_ArrayAccess(AST_Node):
                 dace.memlet.Memlet.simple(arrnode, ','.join(access_dims)))
             s.add_edge(
                 tasklet, 'out', mex, None,
-                dace.memlet.Memlet.from_array(resnode.data,
-                                              resnode.desc(sdfg)))
+                dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
             s.add_edge(
                 mex, None, resnode, None,
-                dace.memlet.Memlet.from_array(resnode.data,
-                                              resnode.desc(sdfg)))
+                dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
 
         print("The result of " + str(self) + " will be stored in " + str(name))
 

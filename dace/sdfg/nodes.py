@@ -221,9 +221,9 @@ class AccessNode(Node):
         node._access = self._access
         node._data = self._data
         node._setzero = self._setzero
-        node._in_connectors = self._in_connectors
-        node._out_connectors = self._out_connectors
-        node.debuginfo = dcpy(self.debuginfo)
+        node._in_connectors = dcpy(self._in_connectors, memo=memo)
+        node._out_connectors = dcpy(self._out_connectors, memo=memo)
+        node.debuginfo = dcpy(self.debuginfo, memo=memo)
         return node
 
     @property

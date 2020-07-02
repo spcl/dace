@@ -11,7 +11,7 @@ import math
 from typing import Any, List
 
 import dace
-from dace.memlet import Memlet, EmptyMemlet
+from dace.memlet import Memlet
 from dace import SDFG, SDFGState, dtypes
 from dace.data import Scalar
 from dace.sdfg.nodes import Tasklet, NestedSDFG

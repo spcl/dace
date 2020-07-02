@@ -42,8 +42,8 @@ def test_state_subgraph():
     nsdfg = state.add_nested_sdfg(nsdfg,
                                   None, {}, {},
                                   symbol_mapping=dict(l=L / 2, i='i'))
-    state.add_nedge(me, nsdfg, dace.EmptyMemlet())
-    state.add_nedge(nsdfg, mx, dace.EmptyMemlet())
+    state.add_nedge(me, nsdfg, dace.Memlet())
+    state.add_nedge(nsdfg, mx, dace.Memlet())
 
     # Entire graph
     assert state.free_symbols == {'L', 'N'}
