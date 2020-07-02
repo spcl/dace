@@ -489,8 +489,8 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
 
         # HACK: Workaround to avoid issues with code generator inferring reads
         # and writes when it shouldn't.
-        input_edge.data.num_accesses = dtypes.DYNAMIC
-        output_edge.data.num_accesses = dtypes.DYNAMIC
+        input_edge.data.dynamic = True
+        output_edge.data.dynamic = True
 
         return tnode
 
@@ -628,8 +628,8 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 
         # HACK: Workaround to avoid issues with code generator inferring reads
         # and writes when it shouldn't.
-        input_edge.data.num_accesses = dtypes.DYNAMIC
-        output_edge.data.num_accesses = dtypes.DYNAMIC
+        input_edge.data.dynamic = True
+        output_edge.data.dynamic = True
 
         return tnode
 

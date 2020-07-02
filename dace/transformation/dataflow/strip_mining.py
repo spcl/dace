@@ -327,7 +327,7 @@ class StripMining(pattern_matching.Transformation):
                     entry_out_conn.add('OUT_' + conn)
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
-                    if memlet.num_accesses == -1:
+                    if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
                         new_memlet.num_accesses = new_memlet.num_elements()
@@ -374,7 +374,7 @@ class StripMining(pattern_matching.Transformation):
                     exit_out_conn.add('OUT_' + conn)
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
-                    if memlet.num_accesses == -1:
+                    if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
                         new_memlet.num_accesses = new_memlet.num_elements()

@@ -126,7 +126,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
         # Allocate variable type
         memlet_type = '    dace::vec<%s, %s>' % (
             sdfg.arrays[memlet.data].dtype.ctype, sym2cpp(memlet.veclen))
-        if memlet.subset.data_dims() == 0 and memlet.num_accesses >= 0:
+        if memlet.subset.data_dims() == 0 and not memlet.dynamic:
             result += memlet_type + ' ' + local_name
             if direction == "in":
                 result += ' = __%s;\n' % local_name

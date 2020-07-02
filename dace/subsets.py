@@ -159,9 +159,8 @@ class Range(Subset):
         return Range(tuples)
 
     @staticmethod
-    def from_array(array):
-        """ Constructs a range that covers the full array given as input.
-            @type array: dace.data.Data """
+    def from_array(array: 'dace.data.Data'):
+        """ Constructs a range that covers the full array given as input. """
         return Range([(0, s - 1, 1) for s in array.shape])
 
     def __hash__(self):
@@ -602,8 +601,8 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
-        for i, ((rb, re, rs),
-                ts) in enumerate(zip(self.ranges, self.tile_sizes)):
+        for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges,
+                                                   self.tile_sizes)):
             self.ranges[i] = (
                 rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
                 re.subs(repl_dict) if symbolic.issymbolic(re) else re,
