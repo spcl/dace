@@ -40,7 +40,7 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
                 print('WARNING: Cannot show profiling progress, missing optional '
                     'dependency tqdm...\n\tTo see a live progress bar please install '
                     'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
-                    'this warning) set `profiling-status` to false in the dace '
+                    'this warning) set `profiling_status` to false in the dace '
                     'config (~/.dace.conf).')
     for i in iterator:
         # Call function
