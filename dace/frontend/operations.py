@@ -30,7 +30,19 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     REPS = int(Config.get('treps'))
     times = [start] * (REPS + 1)
     ret = None
-    for i in range(REPS):
+    print('\nProfiling...')
+    iterator = range(REPS)
+    if Config.get_bool('profiling_status'):
+        try:
+            from tqdm import tqdm
+            iterator = tqdm(iterator, desc="Profiling")
+        except ImportError:
+                print('WARNING: Cannot show profiling progress, missing optional '
+                    'dependency tqdm...\n\tTo see a live progress bar please install '
+                    'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
+                    'this warning) set `profiling_status` to false in the dace '
+                    'config (~/.dace.conf).')
+    for i in iterator:
         # Call function
         ret = f(*args, **kwargs)
         times[i + 1] = timer()
