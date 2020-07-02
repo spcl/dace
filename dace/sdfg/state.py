@@ -896,9 +896,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         debuginfo = _getdebuginfo(debuginfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, set):
+        if isinstance(inputs, (set, collections.abc.KeysView)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, set):
+        if isinstance(outputs, (set, collections.abc.KeysView)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
@@ -935,17 +935,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
         sdfg.update_sdfg_list([])
 
-        # Make inputs match the internal SDFG arrays, if exist
+        # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
-            inputs = {
-                k: sdfg.arrays[k].dtype if k in sdfg.arrays else None
-                for k in inputs
-            }
+            inputs = {k: None for k in inputs}
         if isinstance(outputs, (set, collections.abc.KeysView)):
-            outputs = {
-                k: sdfg.arrays[k].dtype if k in sdfg.arrays else None
-                for k in outputs
-            }
+            outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(
             name,
