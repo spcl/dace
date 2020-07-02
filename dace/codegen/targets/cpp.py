@@ -817,8 +817,7 @@ class StructInitializer(ExtNodeTransformer):
                 tname = node.func.id[len('__DACESTRUCT_'):]
 
             return ast.copy_location(
-                ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load),
-                node)
+                ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
 
         return self.generic_visit(node)
 
