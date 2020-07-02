@@ -353,9 +353,9 @@ def result_type_of(lhs, *rhs):
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
-    if lhs == None:
+    if lhs is None or lhs.type is None:
         return rhs  # Use RHS even if it's None
-    if rhs == None:
+    if rhs is None or rhs.type is None:
         return lhs  # Use LHS
 
     # Extract the numpy type so we can call issubdtype on them
