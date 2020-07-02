@@ -251,9 +251,23 @@ class SubgraphTransformation(object):
     """
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+        """
+        Tries to match the transformation on a given subgraph, returning
+        True if this transformation can be applied.
+        :param sdfg: The SDFG that includes the subgraph.
+        :param subgraph: The SDFG or state subgraph to try to apply the 
+                         transformation on.
+        :return: True if the subgraph can be transformed, or False otherwise.
+        """
         pass
     
     def apply(self, sdfg: SDFG, subgraph: SubgraphView):
+        """
+        Applies the transformation on the given subgraph.
+        :param sdfg: The SDFG that includes the subgraph.
+        :param subgraph: The SDFG or state subgraph to apply the
+                         transformation on.
+        """
         pass
 
 

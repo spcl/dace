@@ -151,7 +151,7 @@ init_scalar(s_reset2, count1_out, 0)
 # -------------------------------------------------------------
 
 
-# here is where the magic happens, the state is duplicated so the memory doesn't have to be copied from one to another
+# Here the state is duplicated so the memory doesn't have to be copied from one to another
 # array.
 def fill_update_state(state, front_in, front_in_count, front_out, front_out_count, s_frontier_io,
                       temp_ids_io, temp_ide_io):

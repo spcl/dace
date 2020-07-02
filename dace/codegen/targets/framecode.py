@@ -262,6 +262,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         callsite_stream.write('\n')
 
         # Emit internal transient array allocation for nested SDFGs
+        # TODO: Replace with global allocation management
         gpu_persistent_subgraphs = [
             state.scope_subgraph(node) for node in state.nodes()
             if isinstance(node, dace.nodes.MapEntry)
@@ -331,6 +332,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         if generate_state_footer:
 
             # Emit internal transient array deallocation for nested SDFGs
+            # TODO: Replace with global allocation management
             gpu_persistent_subgraphs = [
                 state.scope_subgraph(node) for node in state.nodes()
                 if isinstance(node, dace.nodes.MapEntry)

@@ -13,27 +13,27 @@ from dace.transformation.pattern_matching import SubgraphTransformation
 class GPUPersistentKernel(SubgraphTransformation):
     """
     This transformation takes a given subgraph of an SDFG and fuses the 
-    given states into a single persisten GPU kernel. Before this transfrom can
+    given states into a single persistent GPU kernel. Before this transformation can
     be applied the SDFG needs to be transformed to run on the GPU (e.g. with
-    the GPUTransformSDFG transform).
+    the GPUTransformSDFG transformation).
     
     If applicable the transform removes the selected states from the original
     SDFG and places a `launch` state in its place. The removed states will be
-    added to a nested SDFG in the launch state. If necesarry guard states will
+    added to a nested SDFG in the launch state. If necessary guard states will
     be added in the nested SDFG, in order to make sure global assignments on
     Interstate edges will be performed in the kernel (this can be disabled with
     the `include_in_assignment` property).
     
-    The given subgraph need to fulfill the following properties to be fused:
+    The given subgraph needs to fulfill the following properties to be fused:
     
-     - All state in the selected subgraph need to fulfill the following:
+     - All states in the selected subgraph need to fulfill the following:
         - access only GPU accessible memory
-        - all concurrent DFGs inside the state are either sequntial or inside
+        - all concurrent DFGs inside the state are either sequential or inside
           a GPU_Device map.
      - the selected subgraph has a single point of entry in the form of a 
        single InterstateEdge entering the subgraph (i.e. there is at most one
        state (not part of the subgraph) from which the kernel is entered and
-       exactly one state inside the subgraph from which the kernel start
+       exactly one state inside the subgraph from which the kernel starts
        execution)
      - the selected subgraph has a single point of exit in the form of a single
        state that is entered after the selected subgraph is left (There can be
@@ -59,7 +59,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     kernel_prefix = Property(
         desc="Name of the kernel. If no value is given the kerenl will be "
              "refrenced as `kernel`, if a value is given the kernel will be "
-             "named `<kernel_prefix>_kernel`. This is usefull if multiple "
+             "named `<kernel_prefix>_kernel`. This is useful if multiple "
              "kernels are created.",
         dtype=str,
         default='',
@@ -110,7 +110,6 @@ class GPUPersistentKernel(SubgraphTransformation):
         if reachable != set(subgraph.nodes()):
             return False
         
-        # space for more conditions
         
         return True
     
@@ -302,7 +301,7 @@ class GPUPersistentKernel(SubgraphTransformation):
                 memlet=Memlet.from_array(arg, sdfg.arrays[arg])
             )
 
-        # Create and connect writeable data access nodes
+        # Create and connect writable data access nodes
         for arg in kernel_args_write:
             write_node = launch_state.add_write(arg)
             launch_state.add_memlet_path(
@@ -315,7 +314,6 @@ class GPUPersistentKernel(SubgraphTransformation):
         if self.validate:
             sdfg.validate()
             
-        return
     
     
     @staticmethod
