@@ -242,7 +242,7 @@ class ExpandTransformation(Transformation):
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
 
-
+@make_registry
 class SubgraphTransformation(object):
     
     @staticmethod
