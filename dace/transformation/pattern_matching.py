@@ -244,7 +244,11 @@ class ExpandTransformation(Transformation):
 
 @make_registry
 class SubgraphTransformation(object):
-    
+    """
+    Base class for transformations that apply on arbitrary subgraphs, rather than
+    matching a specific pattern. Subclasses need to implement the `match` and `apply`
+    operations.
+    """
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         pass
