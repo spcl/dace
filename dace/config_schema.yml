@@ -554,7 +554,7 @@ required:
         title: Status bar for profiling
         description: >
             Enable tqdm status bar while profiling. If tqdm is not installed 
-            a warning will appear. To diable this feature (and the warning) set 
+            a warning will appear. To disable this feature (and the warning) set 
             this option to false.
 
     treps:
