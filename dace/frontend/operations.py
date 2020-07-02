@@ -32,7 +32,7 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     ret = None
     print('\nProfiling...')
     iterator = range(REPS)
-    if Config.get_bool('profiling-status'):
+    if Config.get_bool('profiling_status'):
         try:
             from tqdm import tqdm
             iterator = tqdm(iterator, desc="Profiling")
