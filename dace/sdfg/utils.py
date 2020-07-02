@@ -574,6 +574,48 @@ def concurrent_subgraphs(graph):
     ]
 
 
+def separate_maps(state, dfg, schedule):
+    """ Separates the given ScopeSubgraphView into subgraphs with and without
+        maps of the given schedule type. The function assumes that the given
+        ScopeSubgraph view does not contain any concurrent segments (i.e. pass
+        it through concurrent_subgraphs first). Only top level maps will be
+        accounted for, if the desired schedule occurs in another (undesired)
+        map, it will be ignored.
+
+        Returns a list with the subgraph views in order of the original DFG.
+        ScopeSubgraphViews for the parts with maps, StateSubgraphViews for the
+        parts without maps. """
+
+    from dace import nodes
+    from dace.sdfg.scope import StateSubgraphView
+
+    sorted_nodes = list(dfs_topological_sort(dfg, dfg.source_nodes()[0]))
+    nodes_to_skip = [dfg.source_nodes()[0], dfg.sink_nodes()[0]]
+    result = []
+
+    current = []
+    for node in sorted_nodes:
+        if node in nodes_to_skip:
+            continue
+        if isinstance(node, nodes.MapEntry):
+            if node.map.schedule == schedule:
+                result.append(StateSubgraphView(state, current))
+                result.append(state.scope_subgraph(node))
+                nodes_to_skip += result[-1].nodes()
+                current = []
+            else:
+                temp_nodes = state.scope_subgraph(node).nodes()
+                nodes_to_skip += temp_nodes
+                current += temp_nodes
+        else:
+            current.append(node)
+
+    if len(current) > 0:
+        result.append(StateSubgraphView(state, current))
+
+    return result
+
+
 def _transients_in_scope(sdfg, scope, scope_dict):
     return set(node.data
                for node in scope_dict[scope.entry if scope else scope]

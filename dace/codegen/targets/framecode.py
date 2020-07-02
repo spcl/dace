@@ -259,6 +259,38 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
                                                global_stream, callsite_stream)
 
+        callsite_stream.write('\n')
+
+        # Emit internal transient array allocation for nested SDFGs
+        # TODO: Replace with global allocation management
+        gpu_persistent_subgraphs = [
+            state.scope_subgraph(node) for node in state.nodes()
+            if isinstance(node, dace.nodes.MapEntry)
+            and node.map.schedule == dace.ScheduleType.GPU_Persistent
+        ]
+        nested_allocated = set()
+        for sub_graph in gpu_persistent_subgraphs:
+            for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
+                                if isinstance(n, nodes.NestedSDFG)]:
+                nested_shared_transients = set(nested_sdfg.shared_transients())
+                for nested_state in nested_sdfg.nodes():
+                    nested_sid = nested_sdfg.node_id(nested_state)
+                    nested_to_allocate = (
+                        set(nested_state.top_level_transients())
+                        - nested_shared_transients
+                    )
+                    nodes_to_allocate = [n for n in nested_state.data_nodes()
+                                         if n.data in nested_to_allocate
+                                         and n.data not in nested_allocated]
+                    for nested_node in nodes_to_allocate:
+                        nested_allocated.add(nested_node.data)
+                        self._dispatcher.dispatch_allocate(
+                            nested_sdfg, nested_state, nested_sid,
+                            nested_node, global_stream, callsite_stream,
+                        )
+
+        callsite_stream.write('\n')
+
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
@@ -298,6 +330,37 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         # Write state footer
 
         if generate_state_footer:
+
+            # Emit internal transient array deallocation for nested SDFGs
+            # TODO: Replace with global allocation management
+            gpu_persistent_subgraphs = [
+                state.scope_subgraph(node) for node in state.nodes()
+                if isinstance(node, dace.nodes.MapEntry)
+                and node.map.schedule == dace.ScheduleType.GPU_Persistent]
+            nested_deallocated = set()
+            for sub_graph in gpu_persistent_subgraphs:
+                for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
+                                    if isinstance(n, nodes.NestedSDFG)]:
+                    nested_shared_transients = \
+                        set(nested_sdfg.shared_transients())
+                    for nested_state in nested_sdfg:
+                        nested_sid = nested_sdfg.node_id(nested_state)
+                        nested_to_allocate = (
+                                set(nested_state.top_level_transients())
+                                - nested_shared_transients
+                        )
+                        nodes_to_deallocate = [
+                            n for n in nested_state.data_nodes()
+                            if n.data in nested_to_allocate
+                            and n.data not in nested_deallocated
+                        ]
+                        for nested_node in nodes_to_deallocate:
+                            nested_deallocated.add(nested_node.data)
+                            self._dispatcher.dispatch_deallocate(
+                                nested_sdfg, nested_state, nested_sid,
+                                nested_node, global_stream, callsite_stream
+                            )
+
             # Emit internal transient array deallocation
             deallocated = set()
             for node in state.data_nodes():

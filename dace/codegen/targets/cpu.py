@@ -1208,9 +1208,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         callsite_stream.write(outer_stream_begin.getvalue(), sdfg, state_id,
                               node)
-        callsite_stream.write("{\n", sdfg, state_id, node)
+        callsite_stream.write('{', sdfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), sdfg, state_id, node)
-        callsite_stream.write("}\n", sdfg, state_id, node)
+        callsite_stream.write('}', sdfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
         self._dispatcher.defined_vars.exit_scope(node)
