@@ -210,6 +210,8 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
                     i=i, sz=sym2cpp(sz))
                 out_offset.append('_o%d * %s' %
                                   (i, sym2cpp(output_data.strides[i])))
+        else:
+            out_offset.append('0')
 
         outexpr = '_out[%s]' % ' + '.join(out_offset)
 

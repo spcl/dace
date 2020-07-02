@@ -723,15 +723,11 @@ class CPUCodeGen(TargetCodeGenerator):
                         "Cannot copy memlet without a local connector: {} to {}"
                         .format(str(edge.src), str(edge.dst)))
 
-                could_be_scalar = True
-                if isinstance(node, nodes.NestedSDFG):
-                    could_be_scalar = (
-                        isinstance(node.sdfg.arrays[uconn], data.Scalar)
-                        or (isinstance(node.sdfg.arrays[uconn], data.Stream) and
-                            (memlet.volume == 1) == True))
+                is_scalar = not isinstance(node.out_connectors[uconn],
+                                           dtypes.pointer)
 
                 if (memlet.subset.data_dims() == 0 and not memlet.dynamic
-                        and could_be_scalar):
+                        and is_scalar):
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
