@@ -34,6 +34,7 @@ class NumpySerializer:
 _DACE_SERIALIZE_TYPES = {
     # Define these manually, so dtypes can stay independent
     "pointer": dace.dtypes.pointer,
+    "vector": dace.dtypes.vector,
     "callback": dace.dtypes.callback,
     "struct": dace.dtypes.struct,
     "ndarray": NumpySerializer,

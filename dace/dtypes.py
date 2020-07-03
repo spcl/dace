@@ -427,6 +427,42 @@ class pointer(typeclass):
         return numpy.dtype(self.as_ctypes())
 
 
+class vector(typeclass):
+    """ 
+    A data type for a vector-type of an existing typeclass.
+
+    Example use: `dace.vector(dace.float32, 4)` becomes float4. 
+    """
+    def __init__(self, dtype: typeclass, vector_length: int):
+        self.vtype = dtype
+        self.type = dtype.type
+        self.veclen = vector_length
+        self.bytes = dtype.bytes * vector_length
+        self.ctype = "dace::vec<%s, %d>" % (dtype.ctype, vector_length)
+        self.ctype_unaligned = self.ctype
+        self.dtype = self
+        self.materialize_func = None
+
+    def to_json(self):
+        return {
+            'type': 'vector',
+            'dtype': self.vtype.to_json(),
+            'elements': self.veclen
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return vector(json_to_typeclass(json_obj['dtype'], context),
+                      json_obj['elements'])
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type] * self.veclen
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
+
 def immaterial(dace_data, materialize_func):
     """ A data type with a materialize/serialize function. Data objects with
         this type do not allocate new memory. Whenever it is accessed, the
@@ -955,7 +991,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
         ]
