@@ -237,8 +237,12 @@ class CompiledSDFG(object):
                         (a, type(arg).__name__, atype.dtype.type))
             elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
-                print('WARNING: Passing %s array argument "%s" to a %s array' %
-                      (arg.dtype, a, atype.dtype.type.__name__))
+                # Make exception for vector types
+                if (isinstance(atype.dtype, dtypes.vector)
+                        and atype.dtype.vtype.as_numpy_dtype() != arg.dtype):
+                    print(
+                        'WARNING: Passing %s array argument "%s" to a %s array'
+                        % (arg.dtype, a, atype.dtype.type.__name__))
 
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
