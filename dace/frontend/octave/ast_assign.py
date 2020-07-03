@@ -135,12 +135,11 @@ class AST_Assign(AST_Node):
                     for a in acc_dims:
                         mapdict[a] = str(a)
                     men, mex = s.add_map('datedepwrite', mapdict)
-                    men._in_connectors.add(
-                        'IN_1')  # the data to write goes here
-                    men._out_connectors.add('OUT_1')  # and comes out here
+                    men.add_in_connector('IN_1')  # the data to write goes here
+                    men.add_out_connector('OUT_1')  # and comes out here
                     for d in acc_data_nodes:
                         dname = d.get_name_in_sdfg(sdfg)
-                        men._in_connectors.add(dname)
+                        men.add_in_connector(dname)
                         datanode = d.get_datanode(sdfg, state)
                         s.add_edge(
                             datanode, None, men, dname,

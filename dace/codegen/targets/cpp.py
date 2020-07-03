@@ -588,10 +588,19 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             memlet_nc = not is_write_conflicted(
                 dfg, edge, sdfg_schedule=toplevel_schedule)
             memlet_wcr = memlet.wcr
+            if uconn in u.out_connectors:
+                conntype = u.out_connectors[uconn]
+            else:
+                conntype = None
 
-            memlets[uconn] = (memlet, memlet_nc, memlet_wcr)
+            memlets[uconn] = (memlet, memlet_nc, memlet_wcr, conntype)
         elif v == node:
-            memlets[vconn] = (memlet, False, None)
+            if vconn in v.in_connectors:
+                conntype = v.in_connectors[vconn]
+            else:
+                conntype = None
+
+            memlets[vconn] = (memlet, False, None, conntype)
 
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
                           node)
@@ -650,7 +659,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[target]
+        memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(node.value)
 
         if not isinstance(node.targets[0], ast.Subscript):
@@ -808,8 +817,7 @@ class StructInitializer(ExtNodeTransformer):
                 tname = node.func.id[len('__DACESTRUCT_'):]
 
             return ast.copy_location(
-                ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load),
-                node)
+                ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
 
         return self.generic_visit(node)
 

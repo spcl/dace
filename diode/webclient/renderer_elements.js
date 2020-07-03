@@ -574,8 +574,8 @@ class NestedSDFG extends Node {
     set_layout() {
         if (this.data.node.attributes.is_collapsed) {
             let labelsize = this.data.node.attributes.label.length * LINEHEIGHT * 0.8;
-            let inconnsize = 2 * LINEHEIGHT * this.data.node.attributes.in_connectors.length - LINEHEIGHT;
-            let outconnsize = 2 * LINEHEIGHT * this.data.node.attributes.out_connectors.length - LINEHEIGHT;
+            let inconnsize = 2 * LINEHEIGHT * Object.keys(this.data.node.attributes.in_connectors).length - LINEHEIGHT;
+            let outconnsize = 2 * LINEHEIGHT * Object.keys(this.data.node.attributes.out_connectors).length - LINEHEIGHT;
             let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
             let maxheight = 2 * LINEHEIGHT;
             maxheight += 4 * LINEHEIGHT;

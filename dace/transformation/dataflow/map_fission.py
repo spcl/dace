@@ -33,7 +33,7 @@ class MapFission(pattern_matching.Transformation):
         with the nested SDFGs in question.
     """
     _map_entry = nodes.EntryNode()
-    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), set(), set())
+    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), {}, {})
 
     @staticmethod
     def annotates_memlets():
@@ -231,6 +231,8 @@ class MapFission(pattern_matching.Transformation):
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
+                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(
+                        nsdfg_node)[symname]
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:

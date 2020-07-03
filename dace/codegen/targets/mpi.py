@@ -103,13 +103,18 @@ void __dace_exit_mpi({params}) {{
             raise NotImplementedError(
                 'Multi-dimensional MPI maps are not supported')
 
+        state = sdfg.node(state_id)
+        symtypes = map_header.new_symbols(sdfg, state,
+                                          state.symbols_defined_at(map_header))
+
         for var, r in zip(map_header.map.params, map_header.map.range):
             begin, end, skip = r
 
             callsite_stream.write('{\n', sdfg, state_id, map_header)
             callsite_stream.write(
-                'auto %s = %s + __dace_comm_rank * (%s);\n' %
-                (var, cppunparse.pyexpr2cpp(symbolic.symstr(begin)),
+                '%s %s = %s + __dace_comm_rank * (%s);\n' %
+                (symtypes[var], var,
+                 cppunparse.pyexpr2cpp(symbolic.symstr(begin)),
                  cppunparse.pyexpr2cpp(symbolic.symstr(skip))), sdfg, state_id,
                 map_header)
 

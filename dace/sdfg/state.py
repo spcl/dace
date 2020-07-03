@@ -456,7 +456,7 @@ class StateGraphView(object):
             if edge.data.data is not None and edge.data.data not in descs:
                 desc = sdfg.arrays[edge.data.data]
                 if isinstance(desc, dt.Scalar):
-                    # Ignore code->code edges. TODO: Remove when fixed
+                    # Ignore code->code edges.
                     if (isinstance(edge.src, nd.CodeNode)
                             and isinstance(edge.dst, nd.CodeNode)):
                         continue
@@ -685,9 +685,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self._clear_scopedict_cache()
         super(SDFGState, self).remove_edge(edge)
         if edge.src_conn in edge.src.out_connectors:
-            edge.src._out_connectors.remove(edge.src_conn)
+            edge.src.remove_out_connector(edge.src_conn)
         if edge.dst_conn in edge.dst.in_connectors:
-            edge.dst._in_connectors.remove(edge.dst_conn)
+            edge.dst.remove_in_connector(edge.dst_conn)
 
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe
@@ -885,8 +885,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     def add_tasklet(
         self,
         name: str,
-        inputs: Set[str],
-        outputs: Set[str],
+        inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+        outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         code: str,
         language: dtypes.Language = dtypes.Language.Python,
         location: dict = None,
@@ -894,6 +894,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     ):
         """ Adds a tasklet to the SDFG state. """
         debuginfo = _getdebuginfo(debuginfo)
+
+        # Make dictionary of autodetect connector types from set
+        if isinstance(inputs, (set, collections.abc.KeysView)):
+            inputs = {k: None for k in inputs}
+        if isinstance(outputs, (set, collections.abc.KeysView)):
+            outputs = {k: None for k in outputs}
+
         tasklet = nd.Tasklet(
             name,
             inputs,
@@ -910,8 +917,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self,
         sdfg: 'dace.sdfg.SDFG',
         parent,
-        inputs: Set[str],
-        outputs: Set[str],
+        inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+        outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         symbol_mapping: Dict[str, Any] = None,
         name=None,
         schedule=dtypes.ScheduleType.Default,
@@ -927,6 +934,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         sdfg.parent_sdfg = self.parent
 
         sdfg.update_sdfg_list([])
+
+        # Make dictionary of autodetect connector types from set
+        if isinstance(inputs, (set, collections.abc.KeysView)):
+            inputs = {k: None for k in inputs}
+        if isinstance(outputs, (set, collections.abc.KeysView)):
+            outputs = {k: None for k in outputs}
 
         s = nd.NestedSDFG(
             name,
@@ -1097,10 +1110,21 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         """
         map_name = name + "_map"
         debuginfo = _getdebuginfo(debuginfo)
+
+        # Create appropriate dictionaries from inputs
+        tinputs = {
+            k: self.parent.arrays[v.data].dtype
+            for k, v in inputs.items()
+        }
+        toutputs = {
+            k: self.parent.arrays[v.data].dtype
+            for k, v in outputs.items()
+        }
+
         tasklet = nd.Tasklet(
             name,
-            set(inputs.keys()),
-            set(outputs.keys()),
+            tinputs,
+            toutputs,
             code,
             language=language,
             location=location,
@@ -1320,7 +1344,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         if scope_connector is None:
             # Pick out numbered connectors that do not lead into the scope range
             conn_id = 1
-            for conn in scope_node.in_connectors | scope_node.out_connectors:
+            for conn in (scope_node.in_connectors.keys()
+                         | scope_node.out_connectors.keys()):
                 if conn.startswith("IN_") or conn.startswith("OUT_"):
                     conn_name = conn[conn.find("_") + 1:]
                     try:
@@ -1631,7 +1656,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                     if edge.dst_conn is not None or edge.data.data is None:
                         continue
                     edge._dst_conn = "IN_" + str(num_inputs + 1)
-                    node._in_connectors.add(edge.dst_conn)
+                    node.add_in_connector(edge.dst_conn)
                     conn_to_data[edge.data.data] = num_inputs + 1
 
                     num_inputs += 1
@@ -1643,7 +1668,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                     if edge.data.data is None:
                         continue
                     edge._src_conn = "OUT_" + str(conn_to_data[edge.data.data])
-                    node._out_connectors.add(edge.src_conn)
+                    node.add_out_connector(edge.src_conn)
             ####################################################
             # Same treatment for scope exits
             if isinstance(node, nd.ExitNode):
@@ -1665,7 +1690,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                     if edge.src_conn is not None or edge.data.data is None:
                         continue
                     edge._src_conn = "OUT_" + str(num_outputs + 1)
-                    node._out_connectors.add(edge.src_conn)
+                    node.add_out_connector(edge.src_conn)
                     conn_to_data[edge.data.data] = num_outputs + 1
 
                     num_outputs += 1
@@ -1677,7 +1702,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                     if edge.data.data is None:
                         continue
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
-                    node._in_connectors.add(edge.dst_conn)
+                    node.add_in_connector(edge.dst_conn)
 
 
 class StateSubgraphView(SubgraphView, StateGraphView):

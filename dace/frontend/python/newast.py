@@ -331,15 +331,15 @@ def add_indirection_subgraph(sdfg: SDFG,
     #########################
     # Step 2
     if output:
-        ind_inputs = {'lookup'}
-        ind_outputs = {'__ind_' + local_name}
+        ind_inputs = {'lookup': None}
+        ind_outputs = {('__ind_' + local_name): None}
     else:
-        ind_inputs = {'__ind_' + local_name}
-        ind_outputs = {'lookup'}
+        ind_inputs = {('__ind_' + local_name): None}
+        ind_outputs = {'lookup': None}
     # Add accesses to inputs
     for arrname, arr_accesses in accesses.items():
         for i in range(len(arr_accesses)):
-            ind_inputs.add('index_%s_%d' % (arrname, i))
+            ind_inputs['index_%s_%d' % (arrname, i)] = None
 
     tasklet = nodes.Tasklet("Indirection", ind_inputs, ind_outputs)
 

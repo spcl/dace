@@ -11,6 +11,7 @@ from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_devicelevel_gpu, is_array_stream_view,
                        NodeNotExpandedError)
+from typing import Union
 
 
 @registry.autoregister_params(name='cpu')
@@ -420,7 +421,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, False, vconn),
+                "    " + self.memlet_definition(sdfg, memlet, False, vconn,
+                                                dst_node.in_connectors[vconn]),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
@@ -429,7 +431,8 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, True, uconn),
+                "    " + self.memlet_definition(sdfg, memlet, True, uconn,
+                                                src_node.out_connectors[uconn]),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
@@ -453,7 +456,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     and self._dispatcher.defined_vars.get(
                         vconn) == DefinedType.Scalar):
                 stream.write(
-                    "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, False)),
+                    "%s = %s;" %
+                    (vconn,
+                     self.memlet_ctor(sdfg, memlet, dst_nodedesc.dtype, False)),
                     sdfg,
                     state_id,
                     [src_node, dst_node],
@@ -629,7 +634,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         "arrays not yet implemented")
                 elif copy_shape == [1
                                     ]:  # Special case: accumulating one element
-                    dst_expr = self.memlet_view_ctor(sdfg, memlet, True)
+                    dst_expr = self.memlet_view_ctor(sdfg, memlet,
+                                                     dst_nodedesc.dtype, True)
                     stream.write(
                         write_and_resolve_expr(sdfg, memlet, nc, dst_expr,
                                                '*(' + src_expr + ')'), sdfg,
@@ -682,6 +688,12 @@ class CPUCodeGen(TargetCodeGenerator):
             # code->code (e.g., tasklet to tasklet)
             if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
                 shared_data_name = edge.data.data
+                if not shared_data_name:
+                    # Very unique name. TODO: Make more intuitive
+                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (
+                        sdfg.sdfg_id, state_id, dfg.node_id(node),
+                        dfg.node_id(dst_node), edge.src_conn)
+
                 result.write(
                     "%s = %s;" % (shared_data_name, edge.src_conn),
                     sdfg,
@@ -711,23 +723,21 @@ class CPUCodeGen(TargetCodeGenerator):
                         "Cannot copy memlet without a local connector: {} to {}"
                         .format(str(edge.src), str(edge.dst)))
 
-                could_be_scalar = True
-                if isinstance(node, nodes.NestedSDFG):
-                    could_be_scalar = (
-                        isinstance(node.sdfg.arrays[uconn], data.Scalar)
-                        or (isinstance(node.sdfg.arrays[uconn], data.Stream) and
-                            (memlet.volume == 1) == True))
+                is_scalar = not isinstance(node.out_connectors[uconn],
+                                           dtypes.pointer)
 
                 if (memlet.subset.data_dims() == 0 and not memlet.dynamic
-                        and could_be_scalar):
+                        and is_scalar):
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
-                        out_local_name = self.memlet_ctor(sdfg, memlet, True)
+                        out_local_name = self.memlet_ctor(
+                            sdfg, memlet, node.out_connectors[uconn], True)
                         in_memlets = [d for _, _, _, _, d in dfg.in_edges(node)]
                         assert len(in_memlets) == 1
                         in_local_name = self.memlet_ctor(
-                            sdfg, in_memlets[0], False)
+                            sdfg, in_memlets[0], node.out_connectors[uconn],
+                            False)
 
                     state_dfg = sdfg.nodes()[state_id]
 
@@ -760,7 +770,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         result,
                     )
 
-    def memlet_view_ctor(self, sdfg, memlet, is_output):
+    def memlet_view_ctor(self, sdfg, memlet, dtype, is_output):
         memlet_params = []
 
         memlet_name = memlet.data
@@ -855,17 +865,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise RuntimeError('Memlet type "%s" not implemented' %
                                    memlet.subset)
 
-        if memlet.num_accesses == 1:
-            num_accesses_str = "1"
-        else:  # symbolic.issymbolic(memlet.num_accesses, sdfg.constants):
-            num_accesses_str = "dace::NA_RUNTIME"
-
-        return "dace::ArrayView%s<%s, %d, %s, %s> (%s)" % (
+        return "dace::ArrayView%s<%s, %d, %s, 1> (%s)" % (
             "Out" if is_output else "In",
-            sdfg.arrays[memlet.data].dtype.ctype,
+            dtype.ctype,
             dims,
             sym2cpp(memlet.veclen),
-            num_accesses_str,
             ", ".join(memlet_params),
         )
 
@@ -874,15 +878,23 @@ class CPUCodeGen(TargetCodeGenerator):
                           memlet: mm.Memlet,
                           output: bool,
                           local_name: str,
-                          conntype: data.Data = None,
+                          conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False):
+        # Convert from typeclass to Data
+        if isinstance(conntype, dtypes.typeclass):
+            if isinstance(conntype, dtypes.pointer):
+                conntype = data.Array(conntype._typeclass, [1])
+            else:
+                conntype = data.Scalar(conntype)
+
         could_be_scalar = not conntype or not isinstance(conntype, data.Array)
         result = ("auto __%s = " % local_name +
-                  self.memlet_ctor(sdfg, memlet, output) + ";\n")
+                  self.memlet_ctor(sdfg, memlet, conntype.dtype, output) +
+                  ";\n")
 
         # Allocate variable type
         memlet_type = "dace::vec<%s, %s>" % (
-            sdfg.arrays[memlet.data].dtype.ctype,
+            conntype.dtype.ctype,
             sym2cpp(memlet.veclen),
         )
 
@@ -993,7 +1005,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         return "dace::make_streamview({})".format(expr)
 
-    def memlet_ctor(self, sdfg, memlet, is_output):
+    def memlet_ctor(self, sdfg, memlet, dtype, is_output):
 
         def_type = self._dispatcher.defined_vars.get(memlet.data)
 
@@ -1006,7 +1018,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif def_type in [
                 DefinedType.Pointer, DefinedType.Scalar, DefinedType.ArrayView
         ]:
-            return self.memlet_view_ctor(sdfg, memlet, is_output)
+            return self.memlet_view_ctor(sdfg, memlet, dtype, is_output)
 
         else:
             raise NotImplementedError(
@@ -1040,14 +1052,20 @@ class CPUCodeGen(TargetCodeGenerator):
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
+                ctype = node.in_connectors[edge.dst_conn].ctype
                 # Special case: code->code
                 if isinstance(src_node, nodes.CodeNode):
                     shared_data_name = edge.data.data
+                    if not shared_data_name:
+                        # Very unique name. TODO: Make more intuitive
+                        shared_data_name = '__dace_%d_%d_%d_%d_%s' % (
+                            sdfg.sdfg_id, state_id, dfg.node_id(src_node),
+                            dfg.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
                     inner_stream.write(
                         "const dace::vec<%s, %s>& %s = %s;" % (
-                            sdfg.arrays[memlet.data].dtype.ctype,
+                            ctype,
                             sym2cpp(memlet.veclen),
                             edge.dst_conn,
                             shared_data_name,
@@ -1072,8 +1090,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     )
 
                 # Also define variables in the C++ unparser scope
-                self._locals.define(edge.dst_conn, -1, self._ldepth + 1,
-                                    sdfg.arrays[memlet.data].dtype.ctype)
+                self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
                 arrays.add(edge.dst_conn)
 
         inner_stream.write("\n", sdfg, state_id, node)
@@ -1103,9 +1120,11 @@ class CPUCodeGen(TargetCodeGenerator):
                         inner_stream,
                     )
 
+                cdtype = node.out_connectors[edge.src_conn]
+
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
-                                    sdfg.arrays[edge.data.data].dtype.ctype)
+                                    cdtype.ctype)
                 tasklet_out_connectors.add(edge.src_conn)
 
         for edge in state_dfg.out_edges(node):
@@ -1113,21 +1132,34 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_node = state_dfg.memlet_path(edge)[-1].dst
             if edge.src_conn is None:
                 continue
-            elif (isinstance(dst_node, nodes.CodeNode)
-                  and edge.src_conn not in tasklet_out_connectors):
+            cdtype = node.out_connectors[edge.src_conn]
+            ctype = cdtype.ctype
+            # Convert dtype to data descriptor
+            if isinstance(cdtype, dtypes.pointer):
+                arg_type = dace.data.Array(cdtype._typeclass, [1])
+            else:
+                arg_type = dace.data.Scalar(cdtype)
+
+            if (isinstance(dst_node, nodes.CodeNode)
+                    and edge.src_conn not in tasklet_out_connectors):
                 memlet = edge.data
 
                 # Generate register definitions for inter-tasklet memlets
                 local_name = edge.data.data
+                if not local_name:
+                    # Very unique name. TODO: Make more intuitive
+                    local_name = '__dace_%d_%d_%d_%d_%s' % (
+                        sdfg.sdfg_id, state_id, dfg.node_id(node),
+                        dfg.node_id(dst_node), edge.src_conn)
+
                 # Allocate variable type
                 code = "dace::vec<%s, %s> %s;" % (
-                    sdfg.arrays[edge.data.data].dtype.ctype,
+                    ctype,
                     sym2cpp(edge.data.veclen),
                     local_name,
                 )
                 outer_stream_begin.write(code, sdfg, state_id,
                                          [edge.src, dst_node])
-                arg_type = sdfg.arrays[edge.data.data]
                 if (isinstance(arg_type, dace.data.Scalar)
                         or isinstance(arg_type, dace.dtypes.typeclass)):
                     self._dispatcher.defined_vars.add(local_name,
@@ -1151,7 +1183,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 inner_stream.write(
                     "dace::vec<%s, %s> %s;" % (
-                        sdfg.arrays[memlet.data].dtype.ctype,
+                        ctype,
                         sym2cpp(memlet.veclen),
                         edge.src_conn,
                     ),
@@ -1162,8 +1194,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 tasklet_out_connectors.add(edge.src_conn)
                 self._dispatcher.defined_vars.add(edge.src_conn,
                                                   DefinedType.Scalar)
-                self._locals.define(edge.src_conn, -1, self._ldepth + 1,
-                                    sdfg.arrays[memlet.data].dtype.ctype)
+                self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
                 locals_defined = True
 
         # Emit post-memlet tasklet preamble code
@@ -1236,7 +1267,7 @@ class CPUCodeGen(TargetCodeGenerator):
         state_dfg = sdfg.nodes()[state_id]
 
         # Connectors that are both input and output share the same name
-        inout = set(node.in_connectors & node.out_connectors)
+        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         # TODO: Emit nested SDFG as a separate function
 
@@ -1250,7 +1281,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                        in_memlet,
                                        False,
                                        vconn,
-                                       conntype=node.sdfg.arrays[vconn],
+                                       conntype=node.in_connectors[vconn],
                                        allow_shadowing=True), sdfg, state_id,
                 node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
@@ -1264,7 +1295,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         out_memlet,
                         True,
                         uconn,
-                        conntype=node.sdfg.arrays[uconn],
+                        conntype=node.out_connectors[uconn],
                         allow_shadowing=True)
 
                 callsite_stream.write(out_code, sdfg, state_id, node)
@@ -1282,7 +1313,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 continue
             callsite_stream.write(
                 '{dtype} __dacesym_{symname} = {symval};\n'.format(
-                    dtype=symbolic.symtype(symval),
+                    dtype=node.sdfg.symbols[symname],
                     symname=symname,
                     symval=sym2cpp(symval)), sdfg, state_id, node)
         for sym in sorted(node.symbol_mapping.keys()):
@@ -1349,7 +1380,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Define all input connectors of this map entry
         for e in dace.sdfg.dynamic_map_inputs(state_dfg, node):
             callsite_stream.write(
-                self.memlet_definition(sdfg, e.data, False, e.dst_conn), sdfg,
+                self.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                       e.dst.in_connectors[e.dst_conn]), sdfg,
                 state_id, node)
 
         inner_stream = CodeIOStream()
@@ -1618,13 +1650,20 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Only interested in edges within current scope
                 if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
                     continue
+                # code->code edges
                 if (isinstance(edge.src, nodes.CodeNode)
                         and isinstance(edge.dst, nodes.CodeNode)):
                     local_name = edge.data.data
+                    ctype = node.out_connectors[edge.src_conn].ctype
+                    if not local_name:
+                        # Very unique name. TODO: Make more intuitive
+                        local_name = '__dace_%d_%d_%d_%d_%s' % (
+                            sdfg.sdfg_id, state_id, dfg.node_id(
+                                edge.src), dfg.node_id(edge.dst), edge.src_conn)
+
                     # Allocate variable type
                     code = 'dace::vec<%s, %s> %s;' % (
-                        sdfg.arrays[edge.data.data].dtype.ctype,
-                        sym2cpp(edge.data.veclen), local_name)
+                        ctype, sym2cpp(edge.data.veclen), local_name)
                     result.write(code, sdfg, state_id, [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(local_name,
                                                       DefinedType.Scalar)

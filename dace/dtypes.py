@@ -6,6 +6,7 @@ import inspect
 import numpy
 import re
 from functools import wraps
+from typing import Any
 from dace.config import Config
 from dace.registry import extensible_enum
 
@@ -144,6 +145,7 @@ SCOPEDEFAULT_SCHEDULE = {
 
 # Translation of types to C types
 _CTYPES = {
+    None: "void",
     int: "int",
     float: "float",
     bool: "bool",
@@ -165,6 +167,7 @@ _CTYPES = {
 
 # Translation of types to ctypes types
 _FFI_CTYPES = {
+    None: ctypes.c_void_p,
     int: ctypes.c_int,
     float: ctypes.c_float,
     bool: ctypes.c_bool,
@@ -186,6 +189,7 @@ _FFI_CTYPES = {
 
 # Number of bytes per data type
 _BYTES = {
+    None: 0,
     int: 4,
     float: 4,
     bool: 1,
@@ -271,10 +275,14 @@ class typeclass(object):
         return False
 
     def to_json(self):
+        if self.type is None:
+            return None
         return self.type.__name__
 
     @staticmethod
     def from_json(json_obj, context=None):
+        if json_obj is None:
+            return typeclass(None)
         return json_to_typeclass(json_obj, context)
 
     # Create a new type
@@ -349,9 +357,9 @@ def result_type_of(lhs, *rhs):
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
-    if lhs == None:
+    if lhs is None or lhs.type is None:
         return rhs  # Use RHS even if it's None
-    if rhs == None:
+    if rhs is None or rhs.type is None:
         return lhs  # Use LHS
 
     # Extract the numpy type so we can call issubdtype on them
@@ -954,3 +962,19 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
 
     # The rest (Registers) can be allocated everywhere
     return True
+
+
+def is_array(obj: Any) -> bool:
+    """
+    Returns True if an object implements the ``data_ptr()``,
+    ``__array_interface__`` or ``__cuda_array_interface__`` standards
+    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
+    supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
+    :param obj: The given object.
+    :return: True iff the object implements the array interface.
+    """
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
+        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False

@@ -180,13 +180,13 @@ class AST_ArrayAccess(AST_Node):
             if len(mdict) == 0:
                 mdict = {'__DAPUNUSED_i': '0:1'}
             men, mex = s.add_map('datadepacc', mdict)
-            men._in_connectors.add('IN_1')
-            men._out_connectors.add('OUT_1')
+            men.add_in_connector('IN_1')
+            men.add_out_connector('OUT_1')
             s.add_edge(arrnode, None, men, 'IN_1',
                        dace.memlet.Memlet.from_array(arrnode.data, arrdesc))
             for a in access_data_nodes:
                 aname = a.get_name_in_sdfg(sdfg)
-                men._in_connectors.add(aname)
+                men.add_in_connector(aname)
                 datanode = a.get_datanode(sdfg, state)
                 s.add_edge(
                     datanode, None, men, aname,
