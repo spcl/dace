@@ -362,6 +362,16 @@ def result_type_of(lhs, *rhs):
     if rhs is None or rhs.type is None:
         return lhs  # Use LHS
 
+    # Vector types take precedence, largest vector size first
+    if isinstance(lhs, vector) and not isinstance(rhs, vector):
+        return lhs
+    elif not isinstance(lhs, vector) and isinstance(rhs, vector):
+        return rhs
+    elif isinstance(lhs, vector) and isinstance(rhs, vector):
+        if lhs.veclen == rhs.veclen:
+            return vector(result_type_of(lhs.vtype, rhs.vtype), lhs.veclen)
+        return lhs if lhs.veclen > rhs.veclen else rhs
+
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
     rhs_ = rhs.type if isinstance(rhs, typeclass) else rhs
