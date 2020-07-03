@@ -723,8 +723,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 is_scalar = not isinstance(node.out_connectors[uconn],
                                            dtypes.pointer)
 
-                if (memlet.subset.data_dims() == 0 and not memlet.dynamic
-                        and is_scalar):
+                if ((is_scalar or memlet.subset.data_dims() == 0)
+                        and not memlet.dynamic):
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
@@ -830,21 +830,27 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 # Dimensions to remove from view (due to having one value)
                 indexdims = []
+                strides = sdfg.arrays[memlet.data].strides
 
                 # Figure out dimensions for scalar version
+                dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
                 for dim, (rb, re, rs) in enumerate(memlet.subset.ranges):
                     try:
-                        if (re - rb) == 0:
+                        # Check for number of elements in contiguous dimension
+                        # (with respect to vector length)
+                        if strides[dim] == 1 and (re - rb) == dimlen - 1:
                             indexdims.append(dim)
-                    except TypeError:  # cannot determine truth value of Relational
+                        elif (re - rb) == 0:  # Elements in other dimensions
+                            indexdims.append(dim)
+                    except TypeError:
+                        # Cannot determine truth value of Relational
                         pass
 
                 # Remove index (one scalar) dimensions
                 dims -= len(indexdims)
 
                 if dims > 0:
-                    strides = memlet.subset.absolute_strides(
-                        sdfg.arrays[memlet.data].strides)
+                    strides = memlet.subset.absolute_strides(strides)
                     # Filter out index dims
                     strides = [
                         s for i, s in enumerate(strides) if i not in indexdims
@@ -861,6 +867,11 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 raise RuntimeError('Memlet type "%s" not implemented' %
                                    memlet.subset)
+
+        # If there is a type mismatch, cast pointer (used in vector
+        # packing/unpacking)
+        if dtype != sdfg.arrays[memlet.data].dtype:
+            memlet_params[0] = '(%s *)(%s)' % (dtype.ctype, memlet_params[0])
 
         return "dace::ArrayView%s<%s, %d, %s, 1> (%s)" % (
             "Out" if is_output else "In",
@@ -933,8 +944,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
         elif var_type == DefinedType.Pointer:
-            if (memlet.num_accesses == 1 and memlet.subset.num_elements() == 1
-                    and could_be_scalar):
+            if (could_be_scalar or (memlet.num_accesses == 1
+                                    and memlet.subset.num_elements() == 1)):
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
@@ -945,7 +956,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
             else:
-                if memlet.subset.data_dims() == 0 and could_be_scalar:
+                if memlet.subset.data_dims() == 0 or could_be_scalar:
                     # Forward ArrayView
                     result += "auto &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)

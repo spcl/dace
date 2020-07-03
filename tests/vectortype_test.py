@@ -73,4 +73,4 @@ def test_vector_type_cast():
 if __name__ == '__main__':
     test_vector_type()
     test_vector_type_inference()
-    # test_vector_type_cast()
+    test_vector_type_cast()
