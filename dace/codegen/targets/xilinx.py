@@ -5,7 +5,7 @@ import re
 import numpy as np
 
 import dace
-from dace import registry
+from dace import registry, dtypes
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -49,8 +49,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         target_platform = Config.get("compiler", "xilinx", "platform")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "xilinx", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool(
-            "compiler", "autobuild_bitstreams") else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
+                     else "OFF")
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -94,8 +94,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
-                         is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else
+                         unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -124,8 +125,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
                           "{separator}\n// Kernel: {kernel_name}"
-                          "\n{separator}\n\n{code}\n\n".format(
-                              separator="/" * 79, kernel_name=name, code=code)
+                          "\n{separator}\n\n{code}\n\n".format(separator="/" *
+                                                               79,
+                                                               kernel_name=name,
+                                                               code=code)
                           for (name, code) in self._host_codes
                       ])))
 
@@ -196,17 +199,19 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def define_local_array(self, var_name, desc, array_size, veclen,
                            function_stream, kernel_stream, sdfg, state_id,
                            node):
-        kernel_stream.write("dace::vec<{}, {}> {}[{}];\n".format(
-            desc.dtype.ctype, veclen, var_name, cpp.sym2cpp(array_size)))
+        dtype = desc.dtype
+        if veclen != 1:
+            dtype = dtypes.vector(dtype, veclen)
+        kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name,
+                                                  cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write(
-                "#pragma HLS ARRAY_PARTITION variable={} "
-                "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             if len(desc.shape) > 1:
-                kernel_stream.write(
-                    "#pragma HLS ARRAY_PARTITION variable={} "
-                    "block factor={}\n".format(var_name, desc.shape[-2]))
+                kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                    "block factor={}\n".format(
+                                        var_name, desc.shape[-2]))
         else:
             raise ValueError("Unsupported storage type: {}".format(
                 desc.storage.name))
@@ -217,8 +222,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
-        return "{}dace::vec<{}, {}>".format("const " if is_const else "",
-                                            dtype.ctype, vector_length)
+        dtype_new = dtype
+        if vector_length != 1:
+            dtype_new = dtypes.vector(dtype, vector_length)
+        return "{}{}".format("const " if is_const else "", dtype_new.ctype,
+                             vector_length)
 
     @staticmethod
     def make_kernel_argument(data, var_name, vector_length, is_output,
@@ -226,10 +234,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         if isinstance(data, dace.data.Array):
             var_name += "_" + ("out" if is_output else "in")
             if with_vectorization:
-                return "dace::vec<{}, {}> *{}".format(data.dtype.ctype,
-                                                      vector_length, var_name)
+                dtype = dtypes.vector(data.dtype, vector_length)
             else:
-                return "{} *{}".format(data.dtype.ctype, var_name)
+                dtype = data.dtype
+            return "{} *{}".format(dtype.ctype, var_name)
         else:
             return data.signature(with_types=True, name=var_name)
 
@@ -399,8 +407,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         for arg in kernel_args + ["return"]:
             var_name = re.findall("\w+", arg)[-1]
             kernel_stream.write(
-                "#pragma HLS INTERFACE s_axilite port={} bundle=control".
-                format(var_name))
+                "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
+                    var_name))
 
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
@@ -417,8 +425,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         added = set()
         arrays = list(
             sorted([
-                p
-                for p in parameters if not isinstance(p[2], dace.data.Scalar)
+                p for p in parameters if not isinstance(p[2], dace.data.Scalar)
             ],
                    key=lambda t: t[1]))
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
@@ -466,9 +473,12 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
-                kernel_args_module.append("dace::vec<{}, {}> {}*{}".format(
-                    p.dtype.ctype, self._memory_widths[(pname, sdfg)],
-                    "const " if not is_output else "", arr_name))
+                dtype = p.dtype
+                if self._memory_widths[(pname, sdfg)] != 1:
+                    dtype = dtypes.vector(dtype,
+                                          self._memory_widths[(pname, sdfg)])
+                kernel_args_module.append("{} {}*{}".format(
+                    dtype.ctype, "const " if not is_output else "", arr_name))
             else:
                 # Don't make duplicate arguments for other types than arrays
                 if pname in added:
@@ -512,11 +522,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                             "Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
-                        "{param} += {increment}) {{\n#pragma HLS UNROLL".
-                        format(param=p,
-                               begin=r[0],
-                               end=r[1] + 1,
-                               increment=r[2]))
+                        "{param} += {increment}) {{\n#pragma HLS UNROLL".format(
+                            param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
                     unrolled_loops += 1
 
         # Generate caller code in top-level function
@@ -628,9 +635,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             sdfg, state, kernel_name, global_data_parameters + sc_parameters,
             symbol_parameters, nested_global_transients, host_code_stream,
             function_stream, callsite_stream)
-        self.generate_host_function_body(
-            sdfg, state, kernel_name, global_data_parameters + sc_parameters,
-            symbol_parameters, host_code_stream)
+        self.generate_host_function_body(sdfg, state, kernel_name,
+                                         global_data_parameters + sc_parameters,
+                                         symbol_parameters, host_code_stream)
         # Store code to be passed to compilation phase
         self._host_codes.append((kernel_name, host_code_stream.getvalue()))
 
@@ -679,8 +686,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if isinstance(arg, dace.data.Array):
                 kernel_args.append(
                     arg.signature(with_types=True,
-                                  name=name +
-                                  ("_out" if is_output else "_in")))
+                                  name=name + ("_out" if is_output else "_in")))
             else:
                 if name in seen:
                     continue
@@ -773,9 +779,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
 
         # Process outgoing memlets
         self._cpu_codegen.process_out_memlets(sdfg, state_id, node, state_dfg,
-                                              self._dispatcher,
-                                              callsite_stream, True,
-                                              function_stream)
+                                              self._dispatcher, callsite_stream,
+                                              True, function_stream)
 
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
@@ -783,9 +788,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
                  or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
                     and edge.data.wcr is None):
-                self.generate_no_dependence_post(edge.src_conn,
-                                                 callsite_stream, sdfg,
-                                                 state_id, node)
+                self.generate_no_dependence_post(edge.src_conn, callsite_stream,
+                                                 sdfg, state_id, node)
 
         callsite_stream.write('}\n', sdfg, state_id, node)
 
@@ -799,5 +803,4 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             raise NotImplementedError("Shift register for Xilinx NYI")
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
-                                          dst_node, edge, None,
-                                          callsite_stream)
+                                          dst_node, edge, None, callsite_stream)

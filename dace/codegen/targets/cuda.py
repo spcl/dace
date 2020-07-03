@@ -729,8 +729,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 node_dtype = dst_node.desc(sdfg).dtype
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write(
-                        'for (auto __idx = 0; __idx < {arrlen}; ++__idx) '
-                        '{{'.format(arrlen=str(array_length)))
+                        'for (size_t __idx = 0; __idx < {arrlen}; ++__idx) '
+                        '{{'.format(arrlen=array_length))
                     for field_name, field_type in node_dtype._data.items():
                         if isinstance(field_type, dtypes.pointer):
                             tclass = field_type.type
@@ -832,11 +832,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         symbolic.issymbolic(s, sdfg.constants)
                         for s in copy_shape):
                     callsite_stream.write((
-                        '    {func}Dynamic<dace::vec<{type}, {veclen}>, {bdims}, '
+                        '    {func}Dynamic<{type}, {bdims}, '
                         + '{dststrides}, {is_async}>{accum}({args});').format(
                             func=funcname,
                             type=dst_node.desc(sdfg).dtype.ctype,
-                            veclen=memlet.veclen,
                             bdims=', '.join(_topy(self._block_dims)),
                             dststrides=', '.join(_topy(dst_strides)),
                             is_async='false'
@@ -848,7 +847,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                           [src_node, dst_node])
                 else:
                     callsite_stream.write((
-                        '    {func}<dace::vec<{type}, {veclen}>, {bdims}, {copysize}, '
+                        '    {func}<{type}, {bdims}, {copysize}, '
                         + '{dststrides}, {is_async}>{accum}({args});').format(
                             func=funcname,
                             type=dst_node.desc(sdfg).dtype.ctype,

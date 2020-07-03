@@ -49,10 +49,7 @@ def copy_expr(
 
     if memlet.veclen != 1 and not packed_types:
         offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(memlet.veclen))
-        dt = "(dace::vec<%s, %s> *)" % (
-            datadesc.dtype.ctype,
-            sym2cpp(memlet.veclen),
-        )
+        dt = "(%s *)" % datadesc.dtype.ctype
 
     expr = dataname
 

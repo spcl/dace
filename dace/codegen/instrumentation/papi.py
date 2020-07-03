@@ -160,7 +160,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
         unique_cpy_id = self.get_unique_number()
 
         dst_nodedesc = dst_node.desc(sdfg)
-        ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype, memlet.veclen)
+        ctype = dst_nodedesc.dtype.ctype
 
         fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " +
                 "/".join(sym2cpp(dst_strides)))

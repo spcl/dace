@@ -28,8 +28,7 @@ class CPUCodeGen(TargetCodeGenerator):
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
-        # Scope depth (for use of the 'auto' keyword when
-        # defining locals)
+        # Scope depth (for defining locals)
         self._ldepth = 0
 
         # Keep nested SDFG schedule when descending into it
@@ -219,8 +218,7 @@ class CPUCodeGen(TargetCodeGenerator):
             ###################################################################
             # Regular stream
 
-            dtype = "dace::vec<{}, {}>".format(nodedesc.dtype.ctype,
-                                               sym2cpp(nodedesc.veclen))
+            dtype = nodedesc.dtype.ctype
 
             if nodedesc.buffer_size != 0:
                 definition = "dace::Stream<{}> {}({});".format(
@@ -444,8 +442,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if write:
                 vconn = dst_node.data
-            ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype,
-                                           memlet.veclen)
+            ctype = dst_nodedesc.dtype.ctype
 
             #############################################
             # Corner cases
@@ -893,10 +890,7 @@ class CPUCodeGen(TargetCodeGenerator):
                   ";\n")
 
         # Allocate variable type
-        memlet_type = "dace::vec<%s, %s>" % (
-            conntype.dtype.ctype,
-            sym2cpp(memlet.veclen),
-        )
+        memlet_type = conntype.dtype.ctype
 
         var_type = self._dispatcher.defined_vars.get(memlet.data)
 
@@ -1064,9 +1058,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
                     # Read variable from shared storage
                     inner_stream.write(
-                        "const dace::vec<%s, %s>& %s = %s;" % (
+                        "const %s& %s = %s;" % (
                             ctype,
-                            sym2cpp(memlet.veclen),
                             edge.dst_conn,
                             shared_data_name,
                         ),
@@ -1153,11 +1146,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         dfg.node_id(dst_node), edge.src_conn)
 
                 # Allocate variable type
-                code = "dace::vec<%s, %s> %s;" % (
-                    ctype,
-                    sym2cpp(edge.data.veclen),
-                    local_name,
-                )
+                code = "%s %s;" % (ctype, local_name)
                 outer_stream_begin.write(code, sdfg, state_id,
                                          [edge.src, dst_node])
                 if (isinstance(arg_type, dace.data.Scalar)
@@ -1181,16 +1170,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     raise TypeError("Unrecognized argument type: {}".format(
                         type(arg_type).__name__))
 
-                inner_stream.write(
-                    "dace::vec<%s, %s> %s;" % (
-                        ctype,
-                        sym2cpp(memlet.veclen),
-                        edge.src_conn,
-                    ),
-                    sdfg,
-                    state_id,
-                    [edge.src, edge.dst],
-                )
+                inner_stream.write("%s %s;" % (ctype, edge.src_conn), sdfg,
+                                   state_id, [edge.src, edge.dst])
                 tasklet_out_connectors.add(edge.src_conn)
                 self._dispatcher.defined_vars.add(edge.src_conn,
                                                   DefinedType.Scalar)
@@ -1320,8 +1301,9 @@ class CPUCodeGen(TargetCodeGenerator):
             if sym in sdfg.constants:
                 continue
             callsite_stream.write(
-                'auto {symname} = __dacesym_{symname};\n'.format(symname=sym),
-                sdfg, state_id, node)
+                '{dtype} {symname} = __dacesym_{symname};\n'.format(
+                    symname=sym, dtype=node.sdfg.symbols[symname]), sdfg,
+                state_id, node)
         ## End of symbol mappings
 
         old_schedule = self._toplevel_schedule
@@ -1662,8 +1644,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 edge.src), dfg.node_id(edge.dst), edge.src_conn)
 
                     # Allocate variable type
-                    code = 'dace::vec<%s, %s> %s;' % (
-                        ctype, sym2cpp(edge.data.veclen), local_name)
+                    code = '%s %s;' % (ctype, local_name)
                     result.write(code, sdfg, state_id, [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(local_name,
                                                       DefinedType.Scalar)

@@ -131,8 +131,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                   self.memlet_view_ctor(sdfg, memlet, direction) + ';\n')
 
         # Allocate variable type
-        memlet_type = '    dace::vec<%s, %s>' % (dtype.ctype,
-                                                 sym2cpp(memlet.veclen))
+        memlet_type = dtype.ctype
         if memlet.subset.data_dims() == 0 and not memlet.dynamic:
             result += memlet_type + ' ' + local_name
             if direction == "in":
