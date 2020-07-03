@@ -89,6 +89,13 @@ def set_default_schedule_and_storage_types(
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces `ScheduleType.Default` and `StorageType.Default`
     with the corresponding types according to the parent scope's schedule. 
+    
+    The defaults for storage types are determined by the
+    ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device 
+    schedule, by default, will allocate containers on the shared memory); and
+    similarly for schedules by ``dtypes.SCOPEDEFAULT_SCHEDULE`` (e.g., a map
+    nested in a CPU multi-core map will by default run within a single thread).
+
     :param sdfg: The SDFG to infer.
     :param toplevel_schedule: The default top-level schedule for "global" nodes
                               (without parent scope nodes).
