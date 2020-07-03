@@ -372,6 +372,10 @@ class Memlet(object):
                 is_data_src = False
         self._is_data_src = is_data_src
 
+        # If subset is None, fill in with entire array
+        if (self.data is not None and self.subset is None):
+            self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
+
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
         """ Constructs a Memlet that transfers an entire array's contents.
