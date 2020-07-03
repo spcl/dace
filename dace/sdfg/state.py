@@ -643,6 +643,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     def nodes(self) -> List[nd.Node]:  # Added for type hints
         return super().nodes()
 
+    def all_edges_and_connectors(self, *nodes):
+        """
+        Returns an iterable to incoming and outgoing Edge objects, along 
+        with their connector types. 
+        """
+        for node in nodes:
+            for e in self.in_edges(node):
+                yield e, node.in_connectors[e.dst_conn]
+            for e in self.out_edges(node):
+                yield e, node.out_connectors[e.src_conn]
+
     def add_node(self, node):
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + str(type(node)) + " (" +
