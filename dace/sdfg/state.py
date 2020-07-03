@@ -1112,20 +1112,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         debuginfo = _getdebuginfo(debuginfo)
 
         # Create appropriate dictionaries from inputs
-        if isinstance(inputs, set):
-            tinputs = {k: None for k in inputs}
-        else:
-            tinputs = {
-                k: self.parent.arrays[v.data].dtype
-                for k, v in inputs.items()
-            }
-        if isinstance(outputs, set):
-            toutputs = {k: None for k in outputs}
-        else:
-            toutputs = {
-                k: self.parent.arrays[v.data].dtype
-                for k, v in outputs.items()
-            }
+        tinputs = {
+            k: self.parent.arrays[v.data].dtype
+            for k, v in inputs.items()
+        }
+        toutputs = {
+            k: self.parent.arrays[v.data].dtype
+            for k, v in outputs.items()
+        }
 
         tasklet = nd.Tasklet(
             name,
