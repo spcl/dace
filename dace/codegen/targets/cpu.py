@@ -593,10 +593,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     stride_tmpl_args[j] = dst
                     j += 1
 
-            copy_args = (
-                [src_expr, dst_expr] +
-                ([] if memlet.wcr is None else [unparse_cr(sdfg, memlet.wcr)]) +
-                sym2cpp(stride_tmpl_args))
+            copy_args = ([src_expr, dst_expr] +
+                         ([] if memlet.wcr is None else
+                          [unparse_cr(sdfg, memlet.wcr, dst_nodedesc.dtype)]) +
+                         sym2cpp(stride_tmpl_args))
 
             # Instrumentation: Pre-copy
             for instr in self._dispatcher.instrumentation.values():
@@ -634,8 +634,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     dst_expr = self.memlet_view_ctor(sdfg, memlet,
                                                      dst_nodedesc.dtype, True)
                     stream.write(
-                        write_and_resolve_expr(sdfg, memlet, nc, dst_expr,
-                                               '*(' + src_expr + ')'), sdfg,
+                        write_and_resolve_expr(sdfg,
+                                               memlet,
+                                               nc,
+                                               dst_expr,
+                                               '*(' + src_expr + ')',
+                                               dtype=dst_nodedesc.dtype), sdfg,
                         state_id, [src_node, dst_node])
                 else:
                     raise NotImplementedError("Accumulation of arrays "
@@ -723,8 +727,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 is_scalar = not isinstance(node.out_connectors[uconn],
                                            dtypes.pointer)
 
-                if ((is_scalar or memlet.subset.data_dims() == 0)
-                        and not memlet.dynamic):
+                if is_scalar and not memlet.dynamic:
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
@@ -742,9 +745,13 @@ class CPUCodeGen(TargetCodeGenerator):
                         nc = not is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         result.write(
-                            write_and_resolve_expr(sdfg, memlet, nc,
-                                                   out_local_name,
-                                                   in_local_name), sdfg,
+                            write_and_resolve_expr(
+                                sdfg,
+                                memlet,
+                                nc,
+                                out_local_name,
+                                in_local_name,
+                                dtype=node.out_connectors[uconn]), sdfg,
                             state_id, node)
                     else:
                         result.write(
@@ -888,6 +895,7 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False):
+        assert conntype is not None
         # Convert from typeclass to Data
         if isinstance(conntype, dtypes.typeclass):
             if isinstance(conntype, dtypes.pointer):
@@ -895,7 +903,7 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 conntype = data.Scalar(conntype)
 
-        could_be_scalar = not conntype or not isinstance(conntype, data.Array)
+        is_scalar = not isinstance(conntype, data.Array)
         result = ("auto __%s = " % local_name +
                   self.memlet_ctor(sdfg, memlet, conntype.dtype, output) +
                   ";\n")
@@ -944,8 +952,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
         elif var_type == DefinedType.Pointer:
-            if (could_be_scalar or (memlet.num_accesses == 1
-                                    and memlet.subset.num_elements() == 1)):
+            if is_scalar:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
@@ -956,7 +963,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
             else:
-                if memlet.subset.data_dims() == 0 or could_be_scalar:
+                if is_scalar:
                     # Forward ArrayView
                     result += "auto &{} = __{}.ref<{}>();".format(
                         local_name, local_name, memlet.veclen)
@@ -975,7 +982,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 DefinedType.Stream, DefinedType.StreamArray,
                 DefinedType.StreamView
         ]:
-            if memlet.num_accesses == 1:
+            if is_scalar:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:

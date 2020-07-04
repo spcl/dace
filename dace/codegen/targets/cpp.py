@@ -419,7 +419,13 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
+def write_and_resolve_expr(sdfg,
+                           memlet,
+                           nc,
+                           outname,
+                           inname,
+                           indices=None,
+                           dtype=None):
     """ Helper function that emits a write_and_resolve call from a memlet. """
 
     redtype = operations.detect_reduction_type(memlet.wcr)
@@ -436,7 +442,7 @@ def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
             redtype)[str(redtype).find(".") + 1:]
         reduction_tmpl = "<%s>" % credtype
     else:
-        custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr)
+        custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr, dtype)
 
     return "{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind});".format(
         oname=outname,
@@ -524,12 +530,14 @@ def unparse_cr_split(sdfg, wcr_ast):
                                   type(wcr_ast).__name__)
 
 
-def unparse_cr(sdfg, wcr_ast):
+def unparse_cr(sdfg, wcr_ast, dtype):
     """ Outputs a C++ version of a conflict resolution lambda. """
     body_cpp, args = unparse_cr_split(sdfg, wcr_ast)
 
+    ctype = 'auto' if dtype is None else dtype.ctype
+
     # Construct a C++ lambda function out of a function
-    return '[] (%s) { %s }' % (', '.join('const auto& %s' % a
+    return '[] (%s) { %s }' % (', '.join('const %s& %s' % (ctype, a)
                                          for a in args), body_cpp)
 
 
@@ -665,8 +673,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 if memlet is not None and memlet.dynamic:
                     if wcr is not None:
                         newnode = ast.Name(id=write_and_resolve_expr(
-                            self.sdfg, memlet, nc, '__' + target,
-                            cppunparse.cppunparse(value, expr_semicolon=False)))
+                            self.sdfg,
+                            memlet,
+                            nc,
+                            '__' + target,
+                            cppunparse.cppunparse(value, expr_semicolon=False),
+                            dtype=dtype))
                     else:
                         newnode = ast.Name(id="__%s.write(%s);" % (
                             target,
@@ -696,7 +708,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 "__" + target,
                 cppunparse.cppunparse(value, expr_semicolon=False),
                 indices=subscript,
-            ))
+                dtype=dtype))
         else:
             newnode = ast.Name(id="__%s.write(%s, %s);" % (
                 target,
