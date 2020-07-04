@@ -38,6 +38,7 @@ def test_vectorization_uneven():
     sdfg(A=A, N=20)
     assert np.allclose(A, result)
 
+    sdfg.apply_strict_transformations()
     assert sdfg.apply_transformations(Vectorization, options={'vector_len':
                                                               2}) == 1
     assert 'vec<double, 2>' in sdfg.generate_code()[0].code
