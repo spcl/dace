@@ -201,7 +201,7 @@ class Edge extends SDFGElement {
         if (style !== 'black')
             renderer.tooltip = (c) => this.tooltip(c, renderer);
         if (this.parent_id == null && style === 'black') {  // Interstate edge
-            style = 'blue';
+            style = '#86add9';
         }
         ctx.fillStyle = ctx.strokeStyle = style;
 
