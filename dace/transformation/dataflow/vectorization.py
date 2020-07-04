@@ -121,7 +121,6 @@ class Vectorization(pattern_matching.Transformation):
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
         tasklet = graph.nodes()[self.subgraph[Vectorization._tasklet]]
-        map_exit = graph.nodes()[self.subgraph[Vectorization._map_exit]]
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 
         # Create new vector size.
@@ -147,12 +146,17 @@ class Vectorization(pattern_matching.Transformation):
                 dim_from // vector_size, ((dim_to + 1) // vector_size) - 1, 1
             ]
 
-        # Create preamble non-vectorized map
+        # Create preamble non-vectorized map (replacing the original map)
         if create_preamble:
+            old_scope = graph.scope_subgraph(map_entry, True, True)
             new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, graph.scope_subgraph(map_entry, True, True))
+                sdfg, graph, old_scope)
             new_begin = dim_from + (vector_size - (dim_from % vector_size))
-            new_scope.entry.map.range[-1] = (dim_from, new_begin - 1, 1)
+            map_entry.map.range[-1] = (dim_from, new_begin - 1, 1)
+            # Replace map_entry with the replicated scope (so that the preamble
+            # will usually come first in topological sort)
+            map_entry = new_scope.entry
+            tasklet = new_scope.nodes()[old_scope.nodes().index(tasklet)]
             new_range[0] = new_begin
 
         # Create postamble non-vectorized map

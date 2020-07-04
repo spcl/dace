@@ -317,4 +317,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
         state.add_edge(new_exit, edge.src_conn, edge.dst, edge.dst_conn,
                        copy.deepcopy(edge.data))
 
+    # Set the exit node's map to match the entry node
+    new_exit.map = new_entry.map
+
     return ScopeSubgraphView(state, new_nodes, new_entry)
