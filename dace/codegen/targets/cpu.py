@@ -982,7 +982,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 DefinedType.Stream, DefinedType.StreamArray,
                 DefinedType.StreamView
         ]:
-            if is_scalar and not memlet.dynamic:
+            if not memlet.dynamic and memlet.num_accesses == 1:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
