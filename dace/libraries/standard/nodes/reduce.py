@@ -298,6 +298,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         cuda_exitcode = CodeIOStream()
         host_globalcode = CodeIOStream()
         host_localcode = CodeIOStream()
+        output_memlet = output_edge.data
 
         # Try to autodetect reduction type
         redtype = detect_reduction_type(node.wcr)
@@ -313,7 +314,6 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         else:
             dtype = sdfg.arrays[output_memlet.data].dtype
 
-        output_memlet = output_edge.data
         output_type = dtype.ctype
 
         if node.identity is None:
