@@ -923,7 +923,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # return whatever it supports.
 
         if var_type == DefinedType.Scalar:
-            if memlet.num_accesses == 1:
+            if not memlet.dynamic:
                 if not output:
                     # We can pre-read the value
                     result += "{} {} = __{}.val<{}>();".format(
@@ -952,7 +952,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
         elif var_type == DefinedType.Pointer:
-            if is_scalar:
+            if is_scalar and not memlet.dynamic:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
@@ -982,7 +982,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 DefinedType.Stream, DefinedType.StreamArray,
                 DefinedType.StreamView
         ]:
-            if is_scalar:
+            if is_scalar and not memlet.dynamic:
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
