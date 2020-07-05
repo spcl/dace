@@ -1,6 +1,7 @@
 from itertools import chain, repeat
 
 import numpy as np
+import numba.cuda
 import onnx
 from onnx import numpy_helper
 
@@ -8,7 +9,7 @@ import dace
 from dace.sdfg import SDFG, SDFGState
 from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_dace_type
 from dace.libraries.onnx import get_onnx_node, has_onnx_node, ONNXParameterType
-from dace.dtypes import AccessType
+from dace.dtypes import AccessType, StorageType
 import dace.sdfg.nodes as nd
 
 
@@ -25,16 +26,18 @@ def _nested_HasField(obj, full_attr):
 
 class ONNXModel:
     """Loads an ONNX model into an SDFG."""
-    def __init__(self, name, model: onnx.ModelProto):
+    def __init__(self, name, model: onnx.ModelProto, cuda=False):
         """
-        Constructs a new ONNXImporter
-        :param name: the name for the SDFG
-        :param model: the model to import
+        Constructs a new ONNXImporter.
+        :param name: the name for the SDFG.
+        :param model: the model to import.
+        :param cuda: if `True`, weights will be passed as cuda arrays.
         """
 
         graph: onnx.GraphProto = model.graph
 
         self.sdfg = SDFG(name)
+        self.cuda = cuda
         self.state = self.sdfg.add_state()
 
         # Add all values to the SDFG, check for unsupported ops
@@ -253,7 +256,15 @@ class ONNXModel:
             if len(arr.shape) == 0:
                 params[self._clean_array_name(name)] = arr[()]
             else:
-                params[self._clean_array_name(name)] = arr.copy()
+                if self.cuda:
+                    breakpoint()
+                    clean_name = self._clean_array_name(name)
+                    self.sdfg.arrays[clean_name].storage = StorageType.GPU_Global
+                    #params[clean_name] = numba.cuda.pinned_array(arr.shape, dtype=arr.dtype, strides=arr.strides)
+                    #params[clean_name][:] = arr
+                    params[clean_name] = numba.cuda.to_device(arr)
+                else:
+                    params[self._clean_array_name(name)] = arr.copy()
 
         outputs = {}
         # create numpy arrays for the outputs
