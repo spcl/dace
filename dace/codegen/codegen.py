@@ -58,7 +58,7 @@ def generate_dummy(sdfg) -> str:
             basetype = str(arg.dtype)
             allocations += "  " + str(arg.signature(name=argname, with_types=True)) + \
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
-            deallocations += "  free(" + str(arg) + ");\n"
+            deallocations += "  free(" + argname + ");\n"
 
     sdfg_call = '''
   __dace_init_{name}({params});
