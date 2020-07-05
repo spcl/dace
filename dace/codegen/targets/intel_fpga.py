@@ -194,6 +194,10 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, vector_length, is_const):
+        if isinstance(dtype, dtypes.vector) and vector_length == 1:
+            vector_length = dtype.veclen
+            dtype = dtype.vtype
+
         return "{}{}{}".format(
             "const " if is_const else "", dtype.ctype,
             vector_length if str(vector_length) != "1" else "")
@@ -775,11 +779,13 @@ __kernel void \\
             connector = edge.dst_conn
             is_output = False
             tasklet = edge.dst
+            conntype = tasklet.in_connectors[connector]
         elif isinstance(edge.src, dace.sdfg.nodes.CodeNode):
             # Output memlet
             connector = edge.src_conn
             is_output = True
             tasklet = edge.src
+            conntype = tasklet.out_connectors[connector]
         else:
             raise NotImplementedError("Not implemented for {} to {}".format(
                 type(edge.src), type(edge.dst)))
@@ -787,9 +793,15 @@ __kernel void \\
         memlet = edge.data
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
+
+        is_scalar = not isinstance(conntype, dtypes.pointer)
+        dtype = conntype if is_scalar else conntype._typeclass
         memory_width = self._memory_widths[(data_name, sdfg)]
-        memlet_type = self.make_vector_type(data_desc.dtype, memory_width,
-                                            False)
+        if isinstance(conntype, dtypes.vector):
+            memory_width = conntype.veclen
+            dtype = conntype.vtype
+
+        memlet_type = self.make_vector_type(dtype, memory_width, False)
         offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
                                      memory_width)
 
@@ -797,7 +809,7 @@ __kernel void \\
 
         def_type = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
-            if memlet.num_accesses == 1:
+            if not memlet.dynamic:
                 if not is_output:
                     # We can pre-read the value
                     result += "{} {} = {};".format(memlet_type, connector,
@@ -816,7 +828,7 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Pointer)
         elif def_type == DefinedType.Pointer:
-            if memlet.num_accesses == 1:
+            if is_scalar and not memlet.dynamic:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
@@ -834,7 +846,7 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Pointer)
         elif def_type == DefinedType.Stream:
-            if memlet.num_accesses == 1:
+            if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
@@ -847,7 +859,7 @@ __kernel void \\
                     connector, data_name)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream)
         elif def_type == DefinedType.StreamArray:
-            if memlet.num_accesses == 1:
+            if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
@@ -886,9 +898,16 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
             data_desc = sdfg.arrays[data_name]
+
+            conntype = node.out_connectors[connector]
+            is_scalar = not isinstance(conntype, dtypes.pointer)
+            dtype = conntype if is_scalar else conntype._typeclass
             memory_width = self._memory_widths[(data_name, sdfg)]
-            memlet_type = self.make_vector_type(data_desc.dtype, memory_width,
-                                                False)
+            if isinstance(conntype, dtypes.vector):
+                memory_width = conntype.veclen
+                dtype = conntype.vtype
+
+            memlet_type = self.make_vector_type(dtype, memory_width, False)
             offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
                                          memory_width)
 
@@ -908,31 +927,27 @@ __kernel void \\
                                          read_expr, memlet.wcr, False, 1)
 
             if isinstance(data_desc, dace.data.Scalar):
-                if memlet.num_accesses == 1:
+                if not memlet.dynamic:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     result += write_expr
-                elif memlet.dynamic:
+                else:
                     # Variable number of reads or writes
                     pass
-                else:
-                    raise dace.codegen.codegen.CodegenError(
-                        "Unsupported number of accesses {} for scalar {}".
-                        format(memlet.num_accesses, connector))
             elif isinstance(data_desc, dace.data.Array):
-                if memlet.num_accesses == 1:
+                if is_scalar and not memlet.dynamic:
                     result += write_expr
                 else:
                     pass
             elif isinstance(data_desc, dace.data.Stream):
                 if not data_desc.is_stream_array():
-                    if memlet.num_accesses == 1:
+                    if not memlet.dynamic and memlet.num_accesses == 1:
                         result += write_expr
                     else:
                         # Must happen directly in the code
                         pass
                 else:  # is array of streams
-                    if memlet.num_accesses == 1:
+                    if not memlet.dynamic and memlet.num_accesses == 1:
                         result += write_expr
                     else:
                         # Must happen directly in the code
@@ -1132,18 +1147,27 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[target]
+        is_scalar = not isinstance(dtype, dtypes.pointer)
+        dtype = dtype if is_scalar else dtype._typeclass
 
         value = cppunparse.cppunparse(self.visit(node.value),
                                       expr_semicolon=False)
 
         # The vector length tells us HOW MANY ELEMENTS ARE ASSIGNED, whereas
-        # the memory width length tells us if its a VECTOR TYPE being assigned.
+        # the memory width length tells us if it's a VECTOR TYPE being assigned.
+        if isinstance(dtype, dtypes.vector):
+            veclen_lhs = dtype.veclen
+            dtype = dtype.vtype
+        else:
+            veclen_lhs = memlet.veclen
 
-        veclen_lhs = memlet.veclen
         try:
             memwidth_lhs = self.memory_widths[(memlet.data, self.sdfg)]
         except KeyError:
             memwidth_lhs = 1  # Is not a data container
+        if isinstance(self.sdfg.arrays[memlet.data].dtype, dtypes.vector):
+            memwidth_lhs *= self.sdfg.arrays[memlet.data].dtype.veclen
+
         try:
             # Detect vector width conversions in simple cases.
             # TODO: use type inference to detect this for arbitrary expressions
@@ -1223,7 +1247,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # previously defined an output local var: we use that one
                 # instead of directly writing to channel
                 updated = ast.Name(id="{} = {};".format(target, value))
-        elif memlet is not None and memlet.num_accesses != 1:
+        elif memlet is not None and (not is_scalar or memlet.dynamic):
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:

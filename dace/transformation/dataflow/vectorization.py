@@ -174,7 +174,6 @@ class Vectorization(pattern_matching.Transformation):
         map_entry.map.range[-1] = tuple(new_range)
 
         # Vectorize connectors adjacent to the tasklet.
-        processed_edges = set()
         for edge in graph.all_edges(tasklet):
             connectors = (tasklet.in_connectors
                           if edge.dst == tasklet else tasklet.out_connectors)
@@ -201,10 +200,13 @@ class Vectorization(pattern_matching.Transformation):
             if str(param) not in map(str, symbols):
                 continue
 
-            # Vectorize connector
+            # Vectorize connector, if not already vectorized
             oldtype = connectors[conn]
             if oldtype is None or oldtype.type is None:
                 oldtype = desc.dtype
+            if isinstance(oldtype, dtypes.vector):
+                continue
+
             connectors[conn] = dtypes.vector(oldtype, vector_size)
 
             # Modify memlet subset to match vector length
@@ -219,35 +221,35 @@ class Vectorization(pattern_matching.Transformation):
             edge.data.subset = subsets.Range(newlist)
             edge.data.volume = vector_size
 
-            # TODO: Reinstate vector length propagation with data descriptors
-            # try:
-            #     # propagate vector length inside this SDFG
-            #     for e in graph.memlet_tree(edge):
-            #         e.data.veclen = vector_size
-            #         if not self.strided_map and e not in processed_edges:
-            #             e.data.subset.replace({param: vector_size * param})
-            #             processed_edges.add(e)
+        # Vector length propagation using data descriptors, recursive traversal
+        # outwards
+        if self.propagate_parent:
+            for edge in graph.all_edges(tasklet):
+                cursdfg = sdfg
+                curedge = edge
+                while cursdfg is not None:
+                    arrname = curedge.data.data
+                    dtype = cursdfg.arrays[arrname].dtype
 
-            #     # propagate to the parent (TODO: handle multiple level of nestings)
-            #     if self.propagate_parent and sdfg.parent is not None:
-            #         source_edge = graph.memlet_path(edge)[0]
-            #         sink_edge = graph.memlet_path(edge)[-1]
+                    # Change type and shape to vector
+                    if not isinstance(dtype, dtypes.vector):
+                        cursdfg.arrays[arrname].dtype = dtypes.vector(
+                            dtype, vector_size)
+                        new_shape = list(cursdfg.arrays[arrname].shape)
+                        contigidx = cursdfg.arrays[arrname].strides.index(1)
+                        new_shape[contigidx] /= vector_size
+                        cursdfg.arrays[arrname].shape = new_shape
 
-            #         # Find parent Nested SDFG node
-            #         parent_node = sdfg.parent_nsdfg_node
-
-            #         # continue in propagating the vector length following the
-            #         # path that arrives to source_edge or starts from sink_edge
-            #         for pe in sdfg.parent.all_edges(parent_node):
-            #             if str(pe.dst_conn) == str(source_edge.src) or str(
-            #                     pe.src_conn) == str(sink_edge.dst):
-            #                 for ppe in sdfg.parent.memlet_tree(pe):
-            #                     ppe.data.veclen = vector_size
-            #                     if (not self.strided_map
-            #                             and ppe not in processed_edges):
-            #                         ppe.data.subset.replace(
-            #                             {param: vector_size * param})
-            #                         processed_edges.add(ppe)
-
-            # except AttributeError:
-            #     raise
+                    # Find matching edge in parent
+                    nsdfg = cursdfg.parent_nsdfg_node
+                    if nsdfg is None:
+                        break
+                    tstate = cursdfg.parent
+                    curedge = ([
+                        e
+                        for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname
+                    ] + [
+                        e for e in tstate.out_edges(nsdfg)
+                        if e.src_conn == arrname
+                    ])[0]
+                    cursdfg = cursdfg.parent_sdfg
