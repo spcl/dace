@@ -802,8 +802,7 @@ __kernel void \\
             dtype = conntype.vtype
 
         memlet_type = self.make_vector_type(dtype, memory_width, False)
-        offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
-                                     memory_width)
+        offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None)
 
         result = ""
 
@@ -908,8 +907,7 @@ __kernel void \\
                 dtype = conntype.vtype
 
             memlet_type = self.make_vector_type(dtype, memory_width, False)
-            offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
-                                         memory_width)
+            offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None)
 
             result = ""
 
