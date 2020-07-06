@@ -12,6 +12,18 @@ N = dace.symbol('N')
 
 
 @dace.program
+def tovec_sym(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
+    @dace.map
+    def sum(i: _[0:N]):
+        xx << x[i]
+        yy << y[i]
+        zz << z[i]
+        out >> z[i]
+
+        out = xx + yy + zz
+
+
+@dace.program
 def tovec_uneven(A: dace.float64[N + 2]):
     for i in dace.map[1:N + 1]:
         with dace.tasklet:
@@ -48,6 +60,24 @@ def test_vectorization_uneven():
     assert np.allclose(A, result)
 
 
+def test_vectorization_postamble():
+    sdfg: dace.SDFG = tovec_sym.to_sdfg()
+    sdfg.apply_strict_transformations()
+    assert sdfg.apply_transformations(Vectorization) == 1
+    assert 'vec<float, 4>' in sdfg.generate_code()[0].code
+    csdfg = sdfg.compile()
+
+    for N in range(24, 29):
+        x = np.random.rand(N).astype(np.float32)
+        y = np.random.rand(N).astype(np.float32)
+        z = np.random.rand(N).astype(np.float32)
+        expected = x + y + z
+
+        csdfg(x=x, y=y, z=z, N=N)
+        assert np.allclose(z, expected)
+
+
 if __name__ == '__main__':
     test_vectorization()
     test_vectorization_uneven()
+    test_vectorization_postamble()

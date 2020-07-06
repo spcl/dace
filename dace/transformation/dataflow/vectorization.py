@@ -167,8 +167,10 @@ class Vectorization(pattern_matching.Transformation):
         if create_postamble:
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, graph.scope_subgraph(map_entry, True, True))
-            new_scope.entry.map.range[-1] = (dim_to - (dim_to % vector_size),
-                                             dim_to, 1)
+            dim_to_ex = dim_to + 1
+            new_scope.entry.map.range[-1] = (dim_to_ex -
+                                             (dim_to_ex % vector_size), dim_to,
+                                             1)
 
         # Change the step of the inner-most dimension.
         map_entry.map.range[-1] = tuple(new_range)
