@@ -448,8 +448,6 @@ class vector(typeclass):
         self.type = dtype.type
         self.veclen = vector_length
         self.bytes = dtype.bytes * vector_length
-        self.ctype = "dace::vec<%s, %d>" % (dtype.ctype, vector_length)
-        self.ctype_unaligned = self.ctype
         self.dtype = self
         self.materialize_func = None
 
@@ -462,8 +460,17 @@ class vector(typeclass):
 
     @staticmethod
     def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic
         return vector(json_to_typeclass(json_obj['dtype'], context),
-                      json_obj['elements'])
+                      pystr_to_symbolic(json_obj['elements']))
+
+    @property
+    def ctype(self):
+        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
