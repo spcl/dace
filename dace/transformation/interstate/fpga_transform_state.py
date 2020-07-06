@@ -243,30 +243,9 @@ class FPGATransformState(pattern_matching.Transformation):
             sdutil.change_edge_src(sdfg, state, post_state)
             sdfg.add_edge(state, post_state, sd.InterstateEdge())
 
-        veclen_ = 1
-
-        # propagate vector info from a nested sdfg
+        # propagate memlet info from a nested sdfg
         for src, src_conn, dst, dst_conn, mem in state.edges():
-            # need to go inside the nested SDFG and grab the vector length
-            if isinstance(dst, dace.sdfg.nodes.NestedSDFG):
-                # this edge is going to the nested SDFG
-                for inner_state in dst.sdfg.states():
-                    for n in inner_state.nodes():
-                        if isinstance(n, dace.sdfg.nodes.AccessNode
-                                      ) and n.data == dst_conn:
-                            # assuming all memlets have the same vector length
-                            veclen_ = inner_state.all_edges(n)[0].data.veclen
-            if isinstance(src, dace.sdfg.nodes.NestedSDFG):
-                # this edge is coming from the nested SDFG
-                for inner_state in src.sdfg.states():
-                    for n in inner_state.nodes():
-                        if isinstance(n, dace.sdfg.nodes.AccessNode
-                                      ) and n.data == src_conn:
-                            # assuming all memlets have the same vector length
-                            veclen_ = inner_state.all_edges(n)[0].data.veclen
-
             if mem.data is not None and mem.data in fpga_data:
                 mem.data = 'fpga_' + mem.data
-                mem.veclen = veclen_
 
         fpga_update(sdfg, state, 0)

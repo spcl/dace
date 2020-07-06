@@ -372,9 +372,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 for edge in state.all_edges(node):
                     if edge.data.is_empty() or edge.data.data is None:
                         continue
-                    if (isinstance(edge.src, dace.sdfg.nodes.AccessNode)
-                            and isinstance(edge.dst, dace.sdfg.nodes.AccessNode)
-                            and edge.data.veclen == 1):
+                    if (isinstance(edge.src, dace.sdfg.nodes.AccessNode) and
+                            isinstance(edge.dst, dace.sdfg.nodes.AccessNode)):
                         # Consistent vectorization is not enforced for
                         # memcopies, but if this memory is not found anywhere
                         # else, we need to set it to 1 later. Or, if a
@@ -384,17 +383,18 @@ class FPGACodeGen(TargetCodeGenerator):
                             memory_widths[key] = None
                         continue
                     if (key not in memory_widths or memory_widths[key] is None):
-                        if (isinstance(desc, dace.data.Stream)
-                                and desc.veclen != edge.data.veclen):
-                            raise ValueError(
-                                "Vector length on memlet {} ({}) doesn't "
-                                "match vector length of {} ({})".format(
-                                    edge.data, edge.data.veclen, node.data,
-                                    node.desc(sdfg).veclen))
-                        memory_widths[key] = edge.data.veclen
+                        if isinstance(desc, dace.data.Stream):
+                            memory_widths[key] = desc.veclen
+                        elif isinstance(desc.dtype, dace.dtypes.vector):
+                            memory_widths[key] = desc.dtype.veclen
+                        else:
+                            memory_widths[key] = 1
                     else:
+                        candidate_veclen = 1
+                        if isinstance(desc.dtype, dace.dtypes.vector):
+                            candidate_veclen = desc.dtype.veclen
                         if (memory_widths[key] is not None
-                                and memory_widths[key] != edge.data.veclen):
+                                and memory_widths[key] != candidate_veclen):
                             # If the vector length is inconsistent, set it to 1
                             memory_widths[key] = 1
         # Inherit the parent memory width for all aliased nested arrays
@@ -706,21 +706,12 @@ class FPGACodeGen(TargetCodeGenerator):
 
             ctype = src_node.desc(sdfg).dtype.ctype
 
-            # For a single vector access, tolerate not having set a range
-            if copy_shape[-1] != 1:
-                # Adjust for vectorization length
-                copy_shape[-1] = copy_shape[-1] / memlet.veclen
-
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 if len(copy_shape) != 1:
                     raise ValueError(
                         "Only single-dimensional writes "
                         "to shift registers supported: {}{}".format(
                             dst_node.data, copy_shape))
-                if copy_shape[-1] > memlet.veclen:
-                    raise ValueError("Only a single (vector) element can be "
-                                     "written to a shift register: {}{}".format(
-                                         dst_node.data, copy_shape[-1]))
 
             # Check if we are copying between vectorized and non-vectorized
             # types
@@ -844,18 +835,18 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Language specific
             read_expr = self.make_read(src_def_type, ctype, src_node.label,
-                                       memlet.veclen, src_expr, src_index,
+                                       1, src_expr, src_index,
                                        is_pack, packing_factor)
 
             # Language specific
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
-                    dst_def_type, ctype, dst_node.label, memlet.veclen,
+                    dst_def_type, ctype, dst_node.label, 1,
                     dst_expr, dst_index, read_expr, None, is_unpack,
                     packing_factor)
             else:
                 write_expr = self.make_write(dst_def_type, ctype,
-                                             dst_node.label, memlet.veclen,
+                                             dst_node.label, 1,
                                              dst_expr, dst_index, read_expr,
                                              None, is_unpack, packing_factor)
 

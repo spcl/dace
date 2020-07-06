@@ -113,7 +113,6 @@ def make_fpga_state(sdfg):
                           dst_conn="a",
                           memlet=dace.Memlet.simple("input_buffer",
                                                     "(w + W // 2) % W",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     state.add_memlet_path(tasklet,
@@ -122,7 +121,6 @@ def make_fpga_state(sdfg):
                           src_conn="b",
                           memlet=dace.Memlet.simple("output_buffer",
                                                     "w",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Test writing from unpacked to packed from inside tasklet

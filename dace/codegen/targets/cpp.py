@@ -41,15 +41,10 @@ def copy_expr(
             s = offset
         o = None
     if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o,
-                                        memlet.veclen if packed_types else 1)
+        offset_cppstr = cpp_offset_expr(datadesc, s, o)
     else:
         offset_cppstr = "0"
     dt = ""
-
-    if memlet.veclen != 1 and not packed_types:
-        offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(memlet.veclen))
-        dt = "(%s *)" % datadesc.dtype.ctype
 
     expr = dataname
 
@@ -203,17 +198,6 @@ def memlet_copy_to_absolute_strides(dispatcher,
         elif memlet.data == dst_node.data:
             copy_shape, src_strides = reshape_strides(dst_subset, dst_strides,
                                                       src_strides, copy_shape)
-
-    if memlet.veclen != 1:
-        int_floor = sp.Function("int_floor")
-        src_strides[:-1] = [
-            int_floor(s, memlet.veclen) for s in src_strides[:-1]
-        ]
-        dst_strides[:-1] = [
-            int_floor(s, memlet.veclen) for s in dst_strides[:-1]
-        ]
-        if not packed_types:
-            copy_shape[-1] = int_floor(copy_shape[-1], memlet.veclen)
 
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 

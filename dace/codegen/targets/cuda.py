@@ -853,7 +853,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                          '{dststrides}, {is_async}>{accum}({args});').format(
                              func=funcname,
                              type=dst_node.desc(sdfg).dtype.ctype,
-                             veclen=memlet.veclen,
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              dststrides=', '.join(_topy(dst_strides)),

@@ -164,8 +164,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
 
         fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " +
                 "/".join(sym2cpp(dst_strides)))
-        copy_size = "sizeof(%s) * %s * (%s)" % (ctype, sym2cpp(
-            memlet.veclen), fac3)
+        copy_size = "sizeof(%s) * (%s)" % (ctype, fac3)
         node_id = _unified_id(state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it
         # would be a section with 1 entry))

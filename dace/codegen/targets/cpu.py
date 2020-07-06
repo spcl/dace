@@ -794,10 +794,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # FIXME: _packed_types influences how this offset is
             # generated from the FPGA codegen. We should find a nicer solution.
             if self._packed_types is True:
-                offset = cpp_array_expr(sdfg,
-                                        memlet,
-                                        False,
-                                        packed_veclen=memlet.veclen)
+                offset = cpp_array_expr(sdfg, memlet, False)
             else:
                 offset = cpp_array_expr(sdfg, memlet, False)
 
@@ -815,11 +812,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 # generated from the FPGA codegen. We should find a nicer
                 # solution.
                 if self._packed_types is True:
-                    offset = cpp_offset_expr(
-                        sdfg.arrays[memlet.data],
-                        memlet.subset,
-                        packed_veclen=memlet.veclen,
-                    )
+                    offset = cpp_offset_expr(sdfg.arrays[memlet.data],
+                                             memlet.subset)
                 else:
                     offset = cpp_offset_expr(sdfg.arrays[memlet.data],
                                              memlet.subset)
@@ -862,12 +856,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     strides = [
                         s for i, s in enumerate(strides) if i not in indexdims
                     ]
-                    # FIXME: _packed_types influences how this offset is
-                    # generated from the FPGA codegen. We should find a nicer
-                    # solution.
-                    if self._packed_types and memlet.veclen > 1:
-                        for i in range(len(strides) - 1):
-                            strides[i] /= memlet.veclen
+                    # Use vector length to adapt strides
+                    for i in range(len(strides) - 1):
+                        strides[i] /= dimlen
                     memlet_params.extend(sym2cpp(strides))
                     dims = memlet.subset.data_dims()
 
@@ -880,11 +871,10 @@ class CPUCodeGen(TargetCodeGenerator):
         if dtype != sdfg.arrays[memlet.data].dtype:
             memlet_params[0] = '(%s *)(%s)' % (dtype.ctype, memlet_params[0])
 
-        return "dace::ArrayView%s<%s, %d, %s, 1> (%s)" % (
+        return "dace::ArrayView%s<%s, %d, 1, 1> (%s)" % (
             "Out" if is_output else "In",
             dtype.ctype,
             dims,
-            sym2cpp(memlet.veclen),
             ", ".join(memlet_params),
         )
 
@@ -926,8 +916,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if not memlet.dynamic:
                 if not output:
                     # We can pre-read the value
-                    result += "{} {} = __{}.val<{}>();".format(
-                        memlet_type, local_name, local_name, memlet.veclen)
+                    result += "{} {} = __{}.val<1>();".format(
+                        memlet_type, local_name, local_name)
                 else:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
@@ -940,13 +930,13 @@ class CPUCodeGen(TargetCodeGenerator):
                 if output:
                     # Variable number of writes: get reference to the target of
                     # the view to reflect writes at the data
-                    result += "auto &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen)
+                    result += "auto &{} = __{}.ref<1>();".format(
+                        local_name, local_name)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    result += "auto const &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen)
+                    result += "auto const &{} = __{}.ref<1>();".format(
+                        local_name, local_name)
                 self._dispatcher.defined_vars.add(
                     local_name,
                     DefinedType.Scalar,
@@ -956,8 +946,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 if output:
                     result += "{} {};".format(memlet_type, local_name)
                 else:
-                    result += "{} {} = __{}.val<{}>();".format(
-                        memlet_type, local_name, local_name, memlet.veclen)
+                    result += "{} {} = __{}.val<1>();".format(
+                        memlet_type, local_name, local_name)
                 self._dispatcher.defined_vars.add(
                     local_name,
                     DefinedType.Scalar,
@@ -965,15 +955,15 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 if is_scalar:
                     # Forward ArrayView
-                    result += "auto &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen)
+                    result += "auto &{} = __{}.ref<1>();".format(
+                        local_name, local_name)
                     self._dispatcher.defined_vars.add(
                         local_name,
                         DefinedType.Scalar,
                         allow_shadowing=allow_shadowing)
                 else:
-                    result += "auto *{} = __{}.ptr<{}>();".format(
-                        local_name, local_name, memlet.veclen)
+                    result += "auto *{} = __{}.ptr<1>();".format(
+                        local_name, local_name)
                     self._dispatcher.defined_vars.add(
                         local_name,
                         DefinedType.Pointer,

@@ -174,7 +174,6 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           dst_conn="_north",
                           memlet=dace.Memlet.simple(shift_register.data,
                                                     "u",  # North
-                                                    veclen=1,
                                                     num_accesses=1))
     state.add_memlet_path(shift_register,
                           unroll_entry,
@@ -182,7 +181,6 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           dst_conn="_west",
                           memlet=dace.Memlet.simple(shift_register.data,
                                                     "u + M - 1",  # West
-                                                    veclen=1,
                                                     num_accesses=1))
     state.add_memlet_path(shift_register,
                           unroll_entry,
@@ -190,7 +188,6 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           dst_conn="_east",
                           memlet=dace.Memlet.simple(shift_register.data,
                                                     "u + M + 1",  # East
-                                                    veclen=1,
                                                     num_accesses=1))
     state.add_memlet_path(shift_register,
                           unroll_entry,
@@ -198,7 +195,6 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           dst_conn="_south",
                           memlet=dace.Memlet.simple(shift_register.data,
                                                     "u + 2 * M",  # South
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Tasklet to buffer
@@ -208,7 +204,6 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           src_conn="result",
                           memlet=dace.Memlet.simple(output_buffer.data,
                                                     "u",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Pack buffer

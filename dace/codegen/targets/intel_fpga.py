@@ -1157,7 +1157,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             veclen_lhs = dtype.veclen
             dtype = dtype.vtype
         else:
-            veclen_lhs = memlet.veclen
+            veclen_lhs = 1
 
         try:
             memwidth_lhs = self.memory_widths[(memlet.data, self.sdfg)]
