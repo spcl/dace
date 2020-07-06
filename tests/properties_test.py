@@ -67,14 +67,7 @@ class PropertyTests(unittest.TestCase):
         sdfg.add_array("arr2", (16, 16), dace.dtypes.float32)
         state1.add_node(dace.sdfg.nodes.AccessNode('arr2'))
 
-        memlet = dace.memlet.Memlet('arr2', 1, "0:N", 1)
-
-        with self.assertRaises(TypeError):
-            # Must pass SDFG as second argument
-            memlet = dace.memlet.Memlet(
-                dace.memlet.Memlet.__properties__["data"].from_string("arr0"),
-                None, 1, "i", 1)
-
+        memlet = dace.memlet.Memlet.simple('arr2', '0:N', num_accesses=1)
         memlet.data = 'arr0'
 
         self.assertEqual(sdfg.arrays[memlet.data], arr0)

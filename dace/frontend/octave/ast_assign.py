@@ -41,8 +41,8 @@ class AST_Assign(AST_Node):
         self.rhs.provide_parents(self)
 
     def __repr__(self):
-        return "AST_Assign(" + str(self.lhs) + ", " + str(
-            self.op) + ", " + str(self.rhs) + ")"
+        return "AST_Assign(" + str(self.lhs) + ", " + str(self.op) + ", " + str(
+            self.rhs) + ")"
 
     def print_nodes(self, state):
         for n in state.nodes():
@@ -64,10 +64,7 @@ class AST_Assign(AST_Node):
                 name = self.lhs.get_name()
 
                 if name not in sdfg.arrays:
-                    sdfg.add_array(name,
-                                   dims,
-                                   basetype,
-                                   debuginfo=self.context)
+                    sdfg.add_array(name, dims, basetype, debuginfo=self.context)
                 rhs_datanode = self.rhs.get_datanode(sdfg, state)
                 lhs_datanode = self.lhs.get_datanode(sdfg, state)
 
@@ -108,13 +105,10 @@ class AST_Assign(AST_Node):
 
                 if self.lhs.is_data_dependent_access() == False:
                     msubset = self.lhs.make_range_from_accdims()
-                    writem = dace.memlet.Memlet(self.lhs.arrayname.get_name(),
-                                                msubset.num_elements(),
-                                                msubset,
-                                                1,
-                                                None,
-                                                None,
-                                                debuginfo=self.context)
+                    writem = dace.memlet.Memlet.simple(
+                        self.lhs.arrayname.get_name(),
+                        msubset,
+                        debuginfo=self.context)
 
                     sdfg.nodes()[state].add_edge(rhs_datanode, None, dn, None,
                                                  writem)
@@ -141,12 +135,11 @@ class AST_Assign(AST_Node):
                     for a in acc_dims:
                         mapdict[a] = str(a)
                     men, mex = s.add_map('datedepwrite', mapdict)
-                    men._in_connectors.add(
-                        'IN_1')  # the data to write goes here
-                    men._out_connectors.add('OUT_1')  # and comes out here
+                    men.add_in_connector('IN_1')  # the data to write goes here
+                    men.add_out_connector('OUT_1')  # and comes out here
                     for d in acc_data_nodes:
                         dname = d.get_name_in_sdfg(sdfg)
-                        men._in_connectors.add(dname)
+                        men.add_in_connector(dname)
                         datanode = d.get_datanode(sdfg, state)
                         s.add_edge(
                             datanode, None, men, dname,
@@ -161,7 +154,7 @@ class AST_Assign(AST_Node):
                         dace.memlet.Memlet.simple(
                             self.lhs.arrayname.get_name(),
                             ','.join([str(d) for d in acc_dims])))
-                    s.add_edge(dn, None, mex, None, dace.memlet.EmptyMemlet())
+                    s.add_edge(dn, None, mex, None, dace.memlet.Memlet())
 
             else:
                 raise NotImplementedError("Assignment with lhs of type " +

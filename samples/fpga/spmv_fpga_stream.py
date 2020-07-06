@@ -279,8 +279,7 @@ def make_compute_nested_sdfg():
                                        dtype,
                                        storage=StorageType.FPGA_Registers)
     else_tasklet = else_state.add_tasklet("b_wcr", {"_b_in", "b_prev"},
-                                          {"_b_out"},
-                                          "_b_out = b_prev + _b_in")
+                                          {"_b_out"}, "_b_out = b_prev + _b_in")
     else_state.add_memlet_path(b_tmp_else_in,
                                else_tasklet,
                                dst_conn="_b_in",
@@ -333,8 +332,10 @@ def make_compute_sdfg():
                          src_conn="b_out",
                          memlet=Memlet.simple(b_buffer_out, "0"))
 
-    b_buffer_post_in = post_state.add_scalar(
-        "b_buffer", dtype, transient=True, storage=StorageType.FPGA_Registers)
+    b_buffer_post_in = post_state.add_scalar("b_buffer",
+                                             dtype,
+                                             transient=True,
+                                             storage=StorageType.FPGA_Registers)
     b_pipe = post_state.add_stream("b_pipe",
                                    dtype,
                                    storage=StorageType.FPGA_Local)
@@ -767,31 +768,21 @@ def make_nested_compute_state(sdfg):
         {"row_begin", "row_end", "A_val_read", "A_col_read", "x_read"},
         {"b_write"})
 
-    state.add_memlet_path(
-        a_row,
-        row_entry,
-        rowptr,
-        memlet=dace.memlet.Memlet(
-            rowptr,
-            1,
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("i")))
+    state.add_memlet_path(a_row,
+                          row_entry,
+                          rowptr,
+                          memlet=dace.memlet.Memlet.simple(
+                              rowptr, "0", other_subset_str="i"))
     state.add_memlet_path(rowptr,
                           nested_sdfg_tasklet,
                           dst_conn="row_begin",
                           memlet=dace.memlet.Memlet.simple(rowptr, "0"))
 
-    state.add_memlet_path(
-        a_row,
-        row_entry,
-        rowend,
-        memlet=dace.memlet.Memlet(
-            rowend,
-            1,
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("i + 1")))
+    state.add_memlet_path(a_row,
+                          row_entry,
+                          rowend,
+                          memlet=dace.memlet.Memlet.simple(
+                              rowend, '0', other_subset_str='i + 1'))
     state.add_memlet_path(rowend,
                           nested_sdfg_tasklet,
                           dst_conn="row_end",

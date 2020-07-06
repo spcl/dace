@@ -97,8 +97,7 @@ class FPGATransformState(pattern_matching.Transformation):
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
-                    or
-                    candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
+                    or candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
                     or candidate_map.schedule ==
                     dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
@@ -189,8 +188,7 @@ class FPGATransformState(pattern_matching.Transformation):
                 pre_node = pre_state.add_read(node.data)
                 pre_fpga_node = pre_state.add_write('fpga_' + node.data)
                 full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet(node.data, full_range.num_elements(),
-                                    full_range, 1)
+                mem = memlet.Memlet.simple(node.data, full_range)
                 pre_state.add_edge(pre_node, None, pre_fpga_node, None, mem)
 
                 if node not in wcr_input_nodes:
@@ -234,8 +232,7 @@ class FPGATransformState(pattern_matching.Transformation):
                 post_node = post_state.add_write(node.data)
                 post_fpga_node = post_state.add_read('fpga_' + node.data)
                 full_range = subsets.Range([(0, s - 1, 1) for s in desc.shape])
-                mem = memlet.Memlet('fpga_' + node.data,
-                                    full_range.num_elements(), full_range, 1)
+                mem = memlet.Memlet.simple('fpga_' + node.data, full_range)
                 post_state.add_edge(post_fpga_node, None, post_node, None, mem)
 
                 fpga_node = state.add_write('fpga_' + node.data)

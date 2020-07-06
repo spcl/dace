@@ -6,7 +6,7 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
+from dace import memlet, registry, sdfg as sd, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -37,7 +37,7 @@ class InlineSDFG(pattern_matching.Transformation):
 
     """
 
-    _nested_sdfg = nodes.NestedSDFG('_', sd.SDFG('_'), set(), set())
+    _nested_sdfg = nodes.NestedSDFG('_', sd.SDFG('_'), {}, {})
 
     @staticmethod
     def annotates_memlets():
@@ -326,10 +326,9 @@ class InlineSDFG(pattern_matching.Transformation):
             for node in subgraph.nodes():
                 if state.in_degree(node) == 0:
                     state.add_edge(nsdfg_scope_entry, None, node, None,
-                                   EmptyMemlet())
+                                   Memlet())
                 if state.out_degree(node) == 0:
-                    state.add_edge(node, None, nsdfg_scope_exit, None,
-                                   EmptyMemlet())
+                    state.add_edge(node, None, nsdfg_scope_exit, None, Memlet())
 
         # Replace nested SDFG parents with new SDFG
         for node in nstate.nodes():
@@ -518,8 +517,8 @@ class NestSDFG(pattern_matching.Transformation):
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
-                                                  inputs.values(),
-                                                  outputs.values())
+                                                  set(inputs.values()),
+                                                  set(outputs.values()))
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)
             outer_state.add_edge(

@@ -32,7 +32,7 @@ state.add_memlet_path(matr,
                       tasklet,
                       dst_conn='mat_in',
                       memlet=dace.Memlet.simple('sparsemats_in', 'i'))
-# state.add_nedge(tasklet, omx, dace.EmptyMemlet())
+# state.add_nedge(tasklet, omx, dace.Memlet())
 state.add_memlet_path(tasklet,
                       omx,
                       matw,

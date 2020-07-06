@@ -8,7 +8,7 @@ import sympy
 import warnings
 
 from dace import registry, subsets, symbolic, dtypes
-from dace.memlet import EmptyMemlet, Memlet
+from dace.memlet import Memlet
 from dace.sdfg import nodes
 
 
@@ -64,8 +64,7 @@ class SeparableMemlet(MemletPattern):
                          expr[dim][1].approx if isinstance(
                              expr[dim][1], symbolic.SymExpr) else expr[dim][1],
                          expr[dim][2].approx if isinstance(
-                             expr[dim][2],
-                             symbolic.SymExpr) else expr[dim][2]))
+                             expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
                 else:
                     dexprs.append(expr[dim])
 
@@ -266,8 +265,8 @@ class AffineSMemlet(SeparableMemletPattern):
             result_tile = 1
         else:
             if rt == 1:
-                result_skip = (result_end - result_begin - re +
-                               rb) / (node_re - node_rb)
+                result_skip = (result_end - result_begin - re + rb) / (node_re -
+                                                                       node_rb)
                 try:
                     if result_skip < 1:
                         result_skip = 1
@@ -624,8 +623,8 @@ def _propagate_node(dfg_state, node):
         ]
 
     for edge in external_edges:
-        if isinstance(edge.data, EmptyMemlet):
-            new_memlet = EmptyMemlet()
+        if edge.data.is_empty():
+            new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges
                                  if e.data.data == edge.data.data)
@@ -658,8 +657,8 @@ def propagate_memlet(dfg_state,
         neighboring_edges = dfg_state.in_edges(scope_node)
     else:
         raise TypeError('Trying to propagate through a non-scope node')
-    if isinstance(memlet, EmptyMemlet):
-        return EmptyMemlet()
+    if memlet.is_empty():
+        return Memlet()
 
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors
@@ -744,15 +743,16 @@ def propagate_memlet(dfg_state,
     new_memlet.other_subset = None
 
     # Number of accesses in the propagated memlet is the sum of the internal
-    # number of accesses times the size of the map range set
+    # number of accesses times the size of the map range set (unbounded dynamic)
     new_memlet.num_accesses = (
         sum(m.num_accesses for m in aggdata) *
         functools.reduce(lambda a, b: a * b, scope_node.map.range.size(), 1))
-    if any(m.num_accesses == -1 for m in aggdata):
-        new_memlet.num_accesses = -1
+    if any(m.dynamic for m in aggdata):
+        new_memlet.dynamic = True
     elif symbolic.issymbolic(new_memlet.num_accesses) and any(
             s not in defined_vars
             for s in new_memlet.num_accesses.free_symbols):
-        new_memlet.num_accesses = -1
+        new_memlet.dynamic = True
+        new_memlet.num_accesses = 0
 
     return new_memlet

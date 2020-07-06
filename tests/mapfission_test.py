@@ -33,7 +33,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -240,7 +240,7 @@ class MapFissionTest(unittest.TestCase):
         nstate.add_edge(t, 'out', a, None, dace.Memlet.simple('a', '0'))
         nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'})
 
-        state.add_edge(me, None, nsdfg_node, None, dace.EmptyMemlet())
+        state.add_edge(me, None, nsdfg_node, None, dace.Memlet())
         anode = state.add_write('A')
         state.add_memlet_path(nsdfg_node,
                               mx,

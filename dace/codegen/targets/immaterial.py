@@ -72,11 +72,13 @@ class ImmaterialCodeGen(TargetCodeGenerator):
             if isinstance(dst_node, nodes.Tasklet) or \
                     (dst_node.desc(sdfg).storage == dtypes.StorageType.Register):
                 callsite_stream.write(
-                    self.memlet_definition(sdfg,
-                                           memlet,
-                                           arrayname,
-                                           direction="in"), sdfg, state_id,
-                    [src_node, dst_node])
+                    self.memlet_definition(
+                        sdfg,
+                        memlet,
+                        arrayname,
+                        direction="in",
+                        dtype=dst_node.in_connectors[edge.dst_conn]), sdfg,
+                    state_id, [src_node, dst_node])
             else:
                 callsite_stream.write("__dace_materialize(\"" + \
                                       sym2cpp(src_node) + "\", " + \
@@ -101,11 +103,13 @@ class ImmaterialCodeGen(TargetCodeGenerator):
             if isinstance(src_node, nodes.Tasklet) or \
                     (src_node.desc(sdfg).storage == dtypes.StorageType.Register):
                 callsite_stream.write(
-                    self.memlet_definition(sdfg,
-                                           memlet,
-                                           edge.src_conn,
-                                           direction="out"), sdfg, state_id,
-                    [src_node, dst_node])
+                    self.memlet_definition(
+                        sdfg,
+                        memlet,
+                        edge.src_conn,
+                        direction="out",
+                        dtype=src_node.out_connectors[edge.src_conn]), sdfg,
+                    state_id, [src_node, dst_node])
             else:
                 callsite_stream.write("__dace_serialize(\"" + \
                         sym2cpp(dst_node) + "\", " + \
@@ -116,17 +120,20 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                         ", " + sym2cpp(src_node.data) + ");\n",
                     sdfg, state_id, [src_node, dst_node])
 
-    def memlet_definition(self, sdfg, memlet, local_name, direction="in"):
-        if isinstance(memlet.data, data.Stream):
-            return 'auto& %s = %s;\n' % (local_name, memlet.data)
-
+    def memlet_definition(self,
+                          sdfg,
+                          memlet,
+                          local_name,
+                          direction="in",
+                          dtype=None):
+        dtype = dtype or sdfg.arrays[memlet.data].dtype
         result = ('auto __%s = ' % local_name +
                   self.memlet_view_ctor(sdfg, memlet, direction) + ';\n')
 
         # Allocate variable type
-        memlet_type = '    dace::vec<%s, %s>' % (
-            sdfg.arrays[memlet.data].dtype.ctype, sym2cpp(memlet.veclen))
-        if memlet.subset.data_dims() == 0 and memlet.num_accesses >= 0:
+        memlet_type = '    dace::vec<%s, %s>' % (dtype.ctype,
+                                                 sym2cpp(memlet.veclen))
+        if memlet.subset.data_dims() == 0 and not memlet.dynamic:
             result += memlet_type + ' ' + local_name
             if direction == "in":
                 result += ' = __%s;\n' % local_name
@@ -170,17 +177,16 @@ class ImmaterialCodeGen(TargetCodeGenerator):
             if len(nonIndexDims) > 1 and len(indexdims) > 0:
                 raise NotImplementedError(
                     'subviews of more than one dimension ' + 'not implemented')
-            elif len(
-                    nonIndexDims) == 1 and len(indexdims) > 0:  # One dimension
+            elif len(nonIndexDims) == 1 and len(indexdims) > 0:  # One dimension
                 indexdim = nonIndexDims[0]
 
                 # Contiguous dimension
                 if indexdim == dims - 1:
                     memlet_params[-1] += ' + %s' % cpp_array_expr(
                         sdfg, memlet, False)
-                    memlet_params.append(
-                        '0, %s' % (sym2cpp(memlet.subset.ranges[-1][1] -
-                                           memlet.subset.ranges[-1][0])))
+                    memlet_params.append('0, %s' %
+                                         (sym2cpp(memlet.subset.ranges[-1][1] -
+                                                  memlet.subset.ranges[-1][0])))
                 else:  # Non-contiguous dimension
                     useskip = True
                     memlet_params[-1] += ' + %s' % cpp_array_expr(
@@ -227,14 +233,14 @@ class ImmaterialCodeGen(TargetCodeGenerator):
 
         if dims == 0:
             return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t> ("%s", %s)' % (
-                'In' if direction == "in" else "Out", 'Skip'
-                if useskip else '', sdfg.arrays[memlet.data].dtype.ctype,
+                'In' if direction == "in" else "Out", 'Skip' if useskip else '',
+                sdfg.arrays[memlet.data].dtype.ctype,
                 symbolic.symstr(
                     memlet.veclen), memlet.data, ', '.join(memlet_params))
         else:
             return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t, %s> ("%s", %s)' % (
-                'In' if direction == "in" else "Out", 'Skip'
-                if useskip else '', sdfg.arrays[memlet.data].dtype.ctype,
+                'In' if direction == "in" else "Out", 'Skip' if useskip else '',
+                sdfg.arrays[memlet.data].dtype.ctype,
                 symbolic.symstr(memlet.veclen), ', '.join([
                     str(s) for s in memlet.subset.bounding_box_size()
                 ]), memlet.data, ', '.join(memlet_params))

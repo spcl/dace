@@ -1,11 +1,13 @@
 import ast
+from copy import deepcopy as dcpy
 from functools import reduce
 import operator
-from typing import List, Set
+from typing import List, Set, Union
+import warnings
 
 import dace
 import dace.serialize
-from dace import subsets, dtypes
+from dace import subsets, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty,
@@ -22,90 +24,196 @@ class Memlet(object):
     """
 
     # Properties
+    volume = SymbolicProperty(default=0,
+                              desc='The exact number of elements moved '
+                              'using this memlet, or the maximum number '
+                              'if dynamic=True (with 0 as unbounded)')
+    dynamic = Property(default=False,
+                       desc='Is the number of elements moved determined at '
+                       'runtime (e.g., data dependent)')
+    subset = SubsetProperty(allow_none=True,
+                            desc='Subset of elements to move from the data '
+                            'attached to this edge.')
+    other_subset = SubsetProperty(
+        allow_none=True,
+        desc='Subset of elements after reindexing to the data not attached '
+        'to this edge (e.g., for offsets and reshaping).')
+    data = DataProperty(desc='Data descriptor attached to this memlet')
+    wcr = LambdaProperty(allow_none=True,
+                         desc='If set, defines a write-conflict resolution '
+                         'lambda function. The syntax of the lambda function '
+                         'receives two elements: `current` value and `new` '
+                         'value, and returns the value after resolution')
     veclen = Property(dtype=int, desc="Vector length", default=1)
-    num_accesses = SymbolicProperty(default=0)
-    subset = SubsetProperty(default=subsets.Range([]))
-    other_subset = SubsetProperty(allow_none=True)
-    data = DataProperty()
-    debuginfo = DebugInfoProperty()
-    wcr = LambdaProperty(allow_none=True)
-    wcr_conflict = Property(dtype=bool, default=True)
+
+    # Code generation and validation hints
+    debuginfo = DebugInfoProperty(desc='Line information to track source and '
+                                  'generated code')
+    wcr_nonatomic = Property(dtype=bool,
+                             default=False,
+                             desc='If True, always generates non-conflicting '
+                             '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool,
                          default=False,
                          desc='Bypass out-of-bounds validation')
 
     def __init__(self,
-                 data,
-                 num_accesses,
-                 subset,
-                 vector_length,
-                 wcr=None,
-                 other_subset=None,
-                 debuginfo=None,
-                 wcr_conflict=True):
-        """ Constructs a Memlet.
-            :param data: The data object or name to access. B{Note:} this
-                         parameter will soon be deprecated.
-            @type data: Either a string of the data descriptor name or an
-                        AccessNode.
-            :param num_accesses: The number of times that the moved data
-                                 will be subsequently accessed. If
-                                 `dace.dtypes.DYNAMIC` (-1),
-                                 designates that the number of accesses is
-                                 unknown at compile time.
-            :param subset: The subset of `data` that is going to be accessed.
-            :param vector_length: The length of a single unit of access to
-                                  the data (used for vectorization
-                                  optimizations).
-            :param wcr: A lambda function specifying how write-conflicts
-                        are resolved. The syntax of the lambda function receives two elements: `current` value and `new` value,
-                        and returns the value after resolution. For example,
-                        summation is `lambda cur, new: cur + new`.
-            :param other_subset: The reindexing of `subset` on the other
-                                 connected data.
-            :param debuginfo: Source-code information (e.g., line, file)
-                              used for debugging.
-            :param wcr_conflict: If False, forces non-locked conflict
-                                 resolution when generating code. The default
-                                 is to let the code generator infer this
-                                 information from the SDFG.
+                 expr: str = None,
+                 data: str = None,
+                 subset: Union[str, subsets.Subset] = None,
+                 other_subset: Union[str, subsets.Subset] = None,
+                 veclen: int = 1,
+                 volume: Union[int, str, symbolic.SymbolicType] = None,
+                 dynamic: bool = False,
+                 wcr: Union[str, ast.AST] = None,
+                 debuginfo: dtypes.DebugInfo = None,
+                 wcr_nonatomic: bool = False,
+                 allow_oob: bool = False):
+        """ 
+        Constructs a Memlet.
+        :param expr: A string expression of the this memlet, given as an ease
+                     of use API. Must follow one of the following forms:
+                     1. ``ARRAY``,
+                     2. ``ARRAY[SUBSET]``,
+                     3. ``ARRAY[SUBSET] -> OTHER_SUBSET``.
+        :param data: (DEPRECATED) Data descriptor name attached to this memlet.
+        :param subset: The subset to take from the data attached to the edge,
+                       represented either as a string or a Subset object.
+        :param other_subset: The subset to offset into the other side of the
+                             memlet, represented either as a string or a Subset 
+                             object.
+        :param volume: The exact number of elements moved using this
+                       memlet, or the maximum number of elements if
+                       ``dynamic`` is set to True. If dynamic and this
+                       value is set to zero, the number of elements moved
+                       is runtime-defined and unbounded.
+        :param dynamic: If True, the number of elements moved in this memlet
+                        is defined dynamically at runtime.
+        :param wcr: A lambda function (represented as a string or Python AST) 
+                    specifying how write-conflicts are resolved. The syntax
+                    of the lambda function receives two elements: ``current`` 
+                    value and `new` value, and returns the value after 
+                    resolution. For example, summation is represented by
+                    ``'lambda cur, new: cur + new'``.
+        :param debuginfo: Line information from the generating source code.
+        :param wcr_nonatomic: If True, overrides the automatic code generator 
+                              decision and treat all write-conflict resolution
+                              operations as non-atomic, which might cause race
+                              conditions in the general case.
+        :param allow_oob: If True, bypasses the checks in SDFG validation for
+                          out-of-bounds accesses in memlet subsets.
         """
 
-        # Properties
-        self.num_accesses = num_accesses  # type: sympy.expr.Expr
-        self.subset = subset  # type: subsets.Subset
-        self.veclen = vector_length  # type: int
-        if hasattr(data, 'data'):
-            data = data.data
-        self.data = data  # type: str
+        # Will be set once memlet is added into an SDFG (in try_initialize)
+        self._sdfg = None
+        self._state = None
+        self._edge = None
 
-        # Annotates memlet with _how_ writing is performed in case of conflict
+        # Field caching which subset belongs to source or destination of memlet
+        self._is_data_src = None
+
+        # Initialize first by string expression
+        self.data = None
+        self.subset = None
+        self.other_subset = None
+        if expr is not None:
+            self._parse_memlet_from_str(expr)
+
+        # Set properties
+        self.data = self.data or data
+        self.subset = self.subset or subset
+        self.other_subset = self.other_subset or other_subset
+
+        if volume is not None:
+            self.volume = volume
+        else:
+            if self.subset is not None:
+                self.volume = self.subset.num_elements()
+            elif self.other_subset is not None:
+                self.volume = self.other_subset.num_elements()
+            else:
+                self.volume = 1
+
+        self.dynamic = dynamic
         self.wcr = wcr
-        self.wcr_conflict = wcr_conflict
-
-        # The subset of the other endpoint we are copying from/to (note:
-        # carries the dimensionality of the other endpoint too!)
-        self.other_subset = other_subset
-
+        self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
+        self.veclen = veclen
 
-    def to_json(self, parent_graph=None):
+    def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
 
-        retdict = {"type": "Memlet", "attributes": attrs}
+        # Fill in new values
+        if self.src_subset is not None:
+            attrs['src_subset'] = self.src_subset.to_json()
+        else:
+            attrs['src_subset'] = None
+        if self.dst_subset is not None:
+            attrs['dst_subset'] = self.dst_subset.to_json()
+        else:
+            attrs['dst_subset'] = None
 
-        return retdict
+        # Fill in legacy (DEPRECATED) values for backwards compatibility
+        attrs['num_accesses'] = \
+            str(self.volume) if not self.dynamic else -1
+
+        return {"type": "Memlet", "attributes": attrs}
 
     @staticmethod
     def from_json(json_obj, context=None):
-        if json_obj['type'] != "Memlet":
-            raise TypeError("Invalid data type")
-
-        # Create dummy object
-        ret = Memlet("", dace.dtypes.DYNAMIC, None, 1)
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
-
+        ret = Memlet()
+        dace.serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'src_subset', 'dst_subset', 'num_accesses'})
+        if context:
+            ret._sdfg = context['sdfg']
+            ret._state = context['sdfg_state']
         return ret
+
+    def __deepcopy__(self, memo):
+        node = object.__new__(Memlet)
+
+        # Set properties
+        node.volume = dcpy(self.volume, memo=memo)
+        node._dynamic = self._dynamic
+        node.subset = dcpy(self.subset, memo=memo)
+        node.other_subset = dcpy(self.other_subset, memo=memo)
+        node.data = dcpy(self.data, memo=memo)
+        node.wcr = dcpy(self.wcr, memo=memo)
+        node._veclen = self._veclen
+        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node._wcr_nonatomic = self._wcr_nonatomic
+        node._allow_oob = self._allow_oob
+
+        # Nullify graph references
+        node._sdfg = None
+        node._state = None
+        node._edge = None
+        node._is_data_src = None
+
+        return node
+
+    def is_empty(self) -> bool:
+        """ 
+        Returns True if this memlet carries no data. Memlets without data are
+        primarily used for connecting nodes to scopes without transferring 
+        data to them. 
+        """
+        return (self.data is None and self.src_subset is None
+                and self.dst_subset is None)
+
+    @property
+    def num_accesses(self):
+        """ 
+        Returns the total memory movement volume (in elements) of this memlet.
+        """
+        return self.volume
+
+    @num_accesses.setter
+    def num_accesses(self, value):
+        self.volume = value
 
     @staticmethod
     def simple(data,
@@ -115,11 +223,11 @@ class Memlet(object):
                other_subset_str=None,
                wcr_conflict=True,
                num_accesses=None,
-               debuginfo=None):
-        """ Constructs a Memlet from string-based expressions.
-            :param data: The data object or name to access. B{Note:} this
-                         parameter will soon be deprecated.
-            @type data: Either a string of the data descriptor name or an
+               debuginfo=None,
+               dynamic=False):
+        """ DEPRECATED: Constructs a Memlet from string-based expressions.
+            :param data: The data object or name to access. 
+            :type data: Either a string of the data descriptor name or an
                         AccessNode.
             :param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
@@ -140,41 +248,129 @@ class Memlet(object):
                                  information from the SDFG.
             :param num_accesses: The number of times that the moved data
                                  will be subsequently accessed. If
-                                 `dace.dtypes.DYNAMIC` (-1),
-                                 designates that the number of accesses is
+                                 -1, designates that the number of accesses is
                                  unknown at compile time.
             :param debuginfo: Source-code information (e.g., line, file)
                               used for debugging.
-
+            :param dynamic: If True, the number of elements moved in this memlet
+                            is defined dynamically at runtime.
         """
-        subset = SubsetProperty.from_string(subset_str)
-        if num_accesses is not None:
-            na = num_accesses
+        # warnings.warn(
+        #     'This function is deprecated, please use the Memlet '
+        #     'constructor instead', DeprecationWarning)
+
+        result = Memlet()
+
+        if isinstance(subset_str, subsets.Subset):
+            result.subset = subset_str
         else:
-            na = subset.num_elements()
+            result.subset = SubsetProperty.from_string(subset_str)
+
+        result.dynamic = dynamic
+
+        if num_accesses is not None:
+            if num_accesses == -1:
+                result.dynamic = True
+                result.volume = 0
+            else:
+                result.volume = num_accesses
+        else:
+            result.volume = result._subset.num_elements()
 
         if wcr_str is not None:
-            wcr = LambdaProperty.from_string(wcr_str)
-        else:
-            wcr = None
+            if isinstance(wcr_str, ast.AST):
+                result.wcr = wcr_str
+            else:
+                result.wcr = LambdaProperty.from_string(wcr_str)
 
         if other_subset_str is not None:
-            other_subset = SubsetProperty.from_string(other_subset_str)
+            if isinstance(other_subset_str, subsets.Subset):
+                result.other_subset = other_subset_str
+            else:
+                result.other_subset = SubsetProperty.from_string(
+                    other_subset_str)
         else:
-            other_subset = None
+            result.other_subset = None
 
         # If it is an access node or another memlet
         if hasattr(data, 'data'):
-            data = data.data
+            result.data = data.data
+        else:
+            result.data = data
 
-        return Memlet(data,
-                      na,
-                      subset,
-                      veclen,
-                      wcr=wcr,
-                      other_subset=other_subset,
-                      wcr_conflict=wcr_conflict,
-                      debuginfo=debuginfo)
+        result.wcr_nonatomic = not wcr_conflict
+        result.veclen = veclen
+
+        return result
+
+    def _parse_from_subexpr(self, expr: str):
+        if expr[-1] != ']':  # No subset given, try to use whole array
+            if not dtypes.validate_name(expr):
+                raise SyntaxError('Invalid memlet syntax "%s"' % expr)
+            return expr, None
+
+        # array[subset] syntax
+        arrname, subset_str = expr[:-1].split('[')
+        if not dtypes.validate_name(arrname):
+            raise SyntaxError('Invalid array name "%s" in memlet' % arrname)
+        return arrname, SubsetProperty.from_string(subset_str)
+
+    def _parse_memlet_from_str(self, expr: str):
+        """
+        Parses a memlet and fills in either the src_subset,dst_subset fields
+        or the _data,_subset fields.
+        :param expr: A string expression of the this memlet, given as an ease
+                of use API. Must follow one of the following forms:
+                1. ``ARRAY``,
+                2. ``ARRAY[SUBSET]``,
+                3. ``ARRAY[SUBSET] -> OTHER_SUBSET``.
+                Note that modes 2 and 3 are deprecated and will leave 
+                the memlet uninitialized until inserted into an SDFG.
+        """
+        expr = expr.strip()
+        if '->' not in expr:  # Options 1 and 2
+            self.data, self.subset = self._parse_from_subexpr(expr)
+            return
+
+        # Option 3
+        src_expr, dst_expr = expr.split('->')
+        src_expr = src_expr.strip()
+        dst_expr = dst_expr.strip()
+        if '[' not in src_expr and not dtypes.validate_name(src_expr):
+            raise SyntaxError('Expression without data name not yet allowed')
+
+        self.data, self.subset = self._parse_from_subexpr(src_expr)
+        self.other_subset = SubsetProperty.from_string(dst_expr)
+
+    def try_initialize(self, sdfg: 'dace.sdfg.SDFG',
+                       state: 'dace.sdfg.SDFGState',
+                       edge: 'dace.sdfg.graph.MultiConnectorEdge'):
+        """ 
+        Tries to initialize the internal fields of the memlet (e.g., src/dst 
+        subset) once it is added to an SDFG as an edge.
+        """
+        from dace.sdfg.nodes import AccessNode, CodeNode  # Avoid import loops
+        self._sdfg = sdfg
+        self._state = state
+        self._edge = edge
+
+        # If memlet is code->code, ensure volume=1
+        if (isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode)
+                and self.volume == 0):
+            self.volume = 1
+
+        # Find source/destination of memlet
+        try:
+            path = state.memlet_path(edge)
+        except (ValueError, AssertionError, StopIteration):
+            # Cannot initialize yet
+            return
+
+        is_data_src = True
+        if isinstance(path[-1].dst, AccessNode):
+            if path[-1].dst.data == self._data:
+                is_data_src = False
+        self._is_data_src = is_data_src
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
@@ -182,25 +378,28 @@ class Memlet(object):
             :param dataname: The name of the data descriptor in the SDFG.
             :param datadesc: The data descriptor object.
             :param wcr: The conflict resolution lambda.
-            @type datadesc: Data.
+            :type datadesc: Data
         """
-        range = subsets.Range.from_array(datadesc)
-        return Memlet(dataname, range.num_elements(), range, 1, wcr=wcr)
+        rng = subsets.Range.from_array(datadesc)
+        return Memlet.simple(dataname, rng, wcr_str=wcr)
 
     def __hash__(self):
-        return hash((self.data, self.num_accesses, self.subset, self.veclen,
-                     str(self.wcr), self.other_subset))
+        return hash(
+            (self.volume, self.src_subset, self.dst_subset, str(self.wcr)))
 
     def __eq__(self, other):
         return all([
-            self.data == other.data, self.num_accesses == other.num_accesses,
-            self.subset == other.subset, self.veclen == other.veclen,
-            self.wcr == other.wcr, self.other_subset == other.other_subset
+            self.volume == other.volume, self.src_subset == other.src_subset,
+            self.dst_subset == other.dst_subset, self.wcr == other.wcr
         ])
 
     def num_elements(self):
         """ Returns the number of elements in the Memlet subset. """
-        return self.subset.num_elements()
+        if self.subset:
+            return self.subset.num_elements()
+        elif self.other_subset:
+            return self.other_subset.num_elements()
+        return 0
 
     def bounding_box_size(self):
         """ Returns a per-dimension upper bound on the maximum number of
@@ -208,7 +407,24 @@ class Memlet(object):
 
             This bound will be tight in the case of Range.
         """
-        return self.subset.bounding_box_size()
+        if self.src_subset:
+            return self.src_subset.bounding_box_size()
+        elif self.dst_subset:
+            return self.dst_subset.bounding_box_size()
+        return []
+
+    # New fields
+    @property
+    def src_subset(self):
+        if self._is_data_src is not None:
+            return self.subset if self._is_data_src else self.other_subset
+        return self.subset
+
+    @property
+    def dst_subset(self):
+        if self._is_data_src is not None:
+            return self.other_subset if self._is_data_src else self.subset
+        return self.other_subset
 
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:
@@ -217,13 +433,13 @@ class Memlet(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
-        # Symbolic properties are in num_accesses, and the two subsets
+        # Symbolic properties are in volume, and the two subsets
         result = set()
-        result |= set(map(str, self.num_accesses.free_symbols))
-        if self.subset:
-            result |= self.subset.free_symbols
-        if self.other_subset:
-            result |= self.other_subset.free_symbols
+        result |= set(map(str, self.volume.free_symbols))
+        if self.src_subset:
+            result |= self.src_subset.free_symbols
+        if self.dst_subset:
+            result |= self.dst_subset.free_symbols
         return result
 
     def __label__(self, sdfg, state):
@@ -249,12 +465,10 @@ class Memlet(object):
             return result
 
         num_elements = self.subset.num_elements()
-        if self.num_accesses != num_elements:
-            if self.num_accesses == -1:
-                result += '(dyn) '
-            else:
-                result += '(%s) ' % SymbolicProperty.to_string(
-                    self.num_accesses)
+        if self.dynamic:
+            result += '(dyn) '
+        elif self.volume != num_elements:
+            result += '(%s) ' % SymbolicProperty.to_string(self.volume)
         arrayNotation = True
         try:
             if shape is not None and reduce(operator.mul, shape, 1) == 1:
@@ -283,13 +497,6 @@ class Memlet(object):
 
     def __repr__(self):
         return "Memlet (" + self.__str__() + ")"
-
-
-class EmptyMemlet(Memlet):
-    """ A memlet without data. Primarily used for connecting nodes to scopes
-        without transferring data to them. """
-    def __init__(self):
-        super(EmptyMemlet, self).__init__(None, 0, None, 1)
 
 
 class MemletTree(object):
