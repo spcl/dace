@@ -69,7 +69,7 @@ run_all() {
     run_sample pipeline_scope pipeline_scope "\n" 
 
     # Test shift register abstraction with stencil code
-    run_sample fpga_stencil fpga_stencil_test "\n"
+    # run_sample fpga_stencil fpga_stencil_test "\n"
 
     # ### MAP TILING ####
     # First tile then transform
@@ -77,7 +77,7 @@ run_all() {
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
-    run_sample intel_fpga/veclen_conversion "\n"
+    # run_sample intel_fpga/veclen_conversion "\n"
 
     # #### WCR ####
     # simple WCR (accumulates on scalar)
