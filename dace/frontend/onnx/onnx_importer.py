@@ -11,6 +11,7 @@ from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_
 from dace.libraries.onnx import get_onnx_node, has_onnx_node, ONNXParameterType
 from dace.dtypes import AccessType, StorageType
 import dace.sdfg.nodes as nd
+from dace.symbolic import pystr_to_symbolic
 
 
 def _nested_HasField(obj, full_attr):
@@ -205,9 +206,11 @@ class ONNXModel:
             if d.HasField("dim_value"):
                 shape.append(d.dim_value)
             elif d.HasField("dim_param"):
-                if not d.dim_param in self.sdfg.symbols:
-                    self.sdfg.add_symbol(d.dim_param, stype=int)
-                shape.append(d.dim_param)
+                parsed = pystr_to_symbolic(d.dim_param)
+                free_syms = {str(s) for s in parsed.free_symbols}
+                for sym in free_syms.difference(self.sdfg.symbols):
+                    self.sdfg.add_symbol(str(sym), stype=int)
+                shape.append(parsed)
             else:
                 raise ValueError(
                     "Value '{}' does not have a shape in this graph."
