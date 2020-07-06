@@ -149,14 +149,17 @@ function sdfg_property_to_string(prop, settings=null) {
  * value is false, upon which the sub-scope will not be visited.
  * The function also accepts an optional post-subscope callback (same signature as `func`).
  **/
-function traverse_sdfg_scopes(sdfg, func, post_subscope_func=null) {
+function traverse_sdfg_scopes(sdfg, func, post_subscope_func=null, skip_exit_nodes=false) {
     function scopes_recursive(graph, nodes, processed_nodes=null) {
         if (processed_nodes === null)
             processed_nodes = new Set();
 
         for (let nodeid of nodes) {
             let node = graph.node(nodeid);
-            if (node !== undefined && processed_nodes.has(node.id.toString()))
+            if (node === undefined || processed_nodes.has(node.id.toString()))
+                continue;
+            // Skip exit nodes when scopes are known
+            if (skip_exit_nodes && node.type().endsWith('Exit') && node.data.node.scope_entry >= 0)
                 continue;
 
             // Invoke function
