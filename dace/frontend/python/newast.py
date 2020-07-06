@@ -2185,7 +2185,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     op1 = state.add_read(op_name,
                                          debuginfo=self.current_lineinfo)
-                    op2 = state.add_write(wtarget_name)
                     op2 = state.add_write(wtarget_name,
                                           debuginfo=self.current_lineinfo)
                     memlet = Memlet.simple(wtarget_name, wtarget_subset)
