@@ -67,8 +67,8 @@ class CodeLibraryNode(LibraryNode):
                  **kwargs):
         super().__init__(name,
                          *args,
-                         inputs=input_names,
-                         outputs=output_names,
+                         inputs=set(input_names),
+                         outputs=set(output_names),
                          **kwargs)
 
         # Inline the class such that "self" is included in the expansion
@@ -84,8 +84,10 @@ class CodeLibraryNode(LibraryNode):
                 code = self.generate_code(inputs, outputs)
                 # Replace this node with a C++ tasklet
                 return Tasklet('custom_code',
-                               set(inputs.keys()),
-                               set(outputs.keys()),
+                               {k: v.dtype
+                                for k, v in inputs.items()},
+                               {k: v.dtype
+                                for k, v in outputs.items()},
                                code,
                                language=dtypes.Language.CPP)
 

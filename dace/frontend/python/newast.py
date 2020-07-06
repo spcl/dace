@@ -331,15 +331,15 @@ def add_indirection_subgraph(sdfg: SDFG,
     #########################
     # Step 2
     if output:
-        ind_inputs = {'lookup'}
-        ind_outputs = {'__ind_' + local_name}
+        ind_inputs = {'lookup': None}
+        ind_outputs = {('__ind_' + local_name): None}
     else:
-        ind_inputs = {'__ind_' + local_name}
-        ind_outputs = {'lookup'}
+        ind_inputs = {('__ind_' + local_name): None}
+        ind_outputs = {'lookup': None}
     # Add accesses to inputs
     for arrname, arr_accesses in accesses.items():
         for i in range(len(arr_accesses)):
-            ind_inputs.add('index_%s_%d' % (arrname, i))
+            ind_inputs['index_%s_%d' % (arrname, i)] = None
 
     tasklet = nodes.Tasklet("Indirection", ind_inputs, ind_outputs)
 
@@ -385,7 +385,7 @@ def add_indirection_subgraph(sdfg: SDFG,
                 conn = 'index_%s_%d' % (arr_name, i)
             arr = sdfg.arrays[arrname]
             # Memlet to load the indirection index
-            indexMemlet = Memlet(arrname, 1, subsets.Indices(access), 1)
+            indexMemlet = Memlet.simple(arrname, subsets.Indices(access))
             input_index_memlets.append(indexMemlet)
             read_node = graph.add_read(arrname)
             if PVisitor.nested or not isinstance(src, nodes.EntryNode):
@@ -472,8 +472,11 @@ def add_indirection_subgraph(sdfg: SDFG,
 
     # Create memlet that depends on the full array that we look up in
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
-    fullMemlet = Memlet(memlet.data, memlet.num_accesses, fullRange,
-                        memlet.veclen)
+    fullMemlet = Memlet.simple(memlet.data,
+                               fullRange,
+                               veclen=memlet.veclen,
+                               num_accesses=memlet.num_accesses)
+    fullMemlet.dynamic = memlet.dynamic
 
     if output:
         if isinstance(dst, nodes.ExitNode):
@@ -500,15 +503,15 @@ def add_indirection_subgraph(sdfg: SDFG,
 
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
-    # indirectMemlet = Memlet('__' + local_name + '_value', memlet.num_accesses,
-    #                         indirectRange, memlet.veclen)
+    # indirectMemlet = Memlet.simple('__' + local_name + '_value',
+    #                         indirectRange, num_accesses=memlet.num_accesses,
+    #                         veclen=memlet.veclen)
     # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
-    valueMemlet = Memlet(
-        tmp_name,
-        1,  # memlet.num_accesses,
-        indirectRange,
-        memlet.veclen)
+    valueMemlet = Memlet.simple(tmp_name,
+                                indirectRange,
+                                num_accesses=1,
+                                veclen=memlet.veclen)
     if output:
         path = [src] + inp_base_path
         if isinstance(src, nodes.AccessNode):
@@ -720,15 +723,15 @@ class TaskletTransformer(ExtNodeTransformer):
                 self.sdfg_inputs[var_name] = (dace.Memlet.from_array(
                     parent_name, parent_array), inner_indices)
             else:
-                self.sdfg_inputs[var_name] = (dace.Memlet(
-                    parent_name, rng.num_elements(), rng, 1), inner_indices)
+                self.sdfg_inputs[var_name] = (dace.Memlet.simple(
+                    parent_name, rng), inner_indices)
         else:
             if _subset_has_indirection(rng):
                 self.sdfg_outputs[var_name] = (dace.Memlet.from_array(
                     parent_name, parent_array), inner_indices)
             else:
-                self.sdfg_outputs[var_name] = (dace.Memlet(
-                    parent_name, rng.num_elements(), rng, 1), inner_indices)
+                self.sdfg_outputs[var_name] = (dace.Memlet.simple(
+                    parent_name, rng), inner_indices)
 
         return (var_name, squeezed_rng)
 
@@ -843,8 +846,7 @@ class TaskletTransformer(ExtNodeTransformer):
                                                      node.value.left,
                                                      self.sdfg.arrays)
                     if self.nested and _subset_has_indirection(rng):
-                        memlet = dace.Memlet(memlet.data, rng.num_elements(),
-                                             rng, 1)
+                        memlet = dace.Memlet.simple(memlet.data, rng)
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
                             self, node,
@@ -869,14 +871,14 @@ class TaskletTransformer(ExtNodeTransformer):
                                                      node.value.right,
                                                      self.sdfg.arrays)
                     if self.nested and _subset_has_indirection(rng):
-                        memlet = dace.Memlet(memlet.data, rng.num_elements(),
-                                             rng, 1)
+                        memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
                         out_memlet = self.sdfg_outputs[name][0]
-                        out_memlet.num_accesses = memlet.num_accesses
                         out_memlet.veclen = memlet.veclen
+                        out_memlet.volume = memlet.volume
+                        out_memlet.dynamic = memlet.dynamic
                         out_memlet.wcr = memlet.wcr
-                        out_memlet.wcr_conflict = memlet.wcr_conflict
+                        out_memlet.wcr_nonatomic = memlet.wcr_nonatomic
                     if connector in self.inputs or connector in self.outputs:
                         raise DaceSyntaxError(
                             self, node,
@@ -1302,9 +1304,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # Inject element to internal SDFG arrays
         ntrans = sdfg.temp_data_name()
         sdfg.add_array(ntrans, [1], self.sdfg.arrays[stream_name].dtype)
-        internal_memlet = dace.Memlet(ntrans, 1, subsets.Indices([0]), 1)
-        external_memlet = dace.Memlet(stream_name, dtypes.DYNAMIC,
-                                      subsets.Indices([0]), 1)
+        internal_memlet = dace.Memlet.simple(ntrans, subsets.Indices([0]))
+        external_memlet = dace.Memlet.simple(stream_name,
+                                             subsets.Indices([0]),
+                                             num_accesses=-1)
 
         # Inject to internal tasklet
         if not dec.endswith('scope'):
@@ -1625,8 +1628,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_edge(v, conn, internal_node, conn,
                                    dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
-                        state.add_edge(entry_node, None, v, None,
-                                       dace.EmptyMemlet())
+                        state.add_edge(entry_node, None, v, None, dace.Memlet())
                     continue
 
                 if isinstance(v, tuple):
@@ -1727,7 +1729,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_edge(read_node, None, internal_node, conn, memlet)
         else:
             if entry_node is not None:
-                state.add_nedge(entry_node, internal_node, dace.EmptyMemlet())
+                state.add_nedge(entry_node, internal_node, dace.Memlet())
 
         # Parse internal node outputs
         if outputs:
@@ -1770,6 +1772,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
                         inner_memlet.num_accesses = memlet.num_accesses
+                        inner_memlet.dynamic = memlet.dynamic
                         inner_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
@@ -1822,7 +1825,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                    inner_memlet)
         else:
             if exit_node is not None:
-                state.add_nedge(internal_node, exit_node, dace.EmptyMemlet())
+                state.add_nedge(internal_node, exit_node, dace.Memlet())
 
     def _add_nested_symbols(self, nsdfg_node: nodes.NestedSDFG):
         """ 
@@ -2043,8 +2046,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if op_subset.num_elements() != 1:
                 op1 = state.add_read(op_name)
                 op2 = state.add_write(target_name)
-                memlet = Memlet(target_name, target_subset.num_elements(),
-                                target_subset, 1)
+                memlet = Memlet.simple(target_name, target_subset)
                 memlet.other_subset = op_subset
                 state.add_nedge(op1, op2, memlet)
             else:
@@ -2139,8 +2141,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     op1 = state.add_read(op_name)
                     op2 = state.add_write(wtarget_name)
-                    memlet = Memlet(wtarget_name, wtarget_subset.num_elements(),
-                                    wtarget_subset, 1)
+                    memlet = Memlet.simple(wtarget_name, wtarget_subset)
                     memlet.other_subset = op_subset
                     if op is not None:
                         memlet.wcr = LambdaProperty.from_string(
@@ -2248,13 +2249,11 @@ class ProgramVisitor(ExtNodeVisitor):
         inner_indices = set(non_squeezed)
 
         if access_type == 'r':
-            self.inputs[var_name] = (dace.Memlet(parent_name,
-                                                 rng.num_elements(), rng,
-                                                 1), inner_indices)
+            self.inputs[var_name] = (dace.Memlet.simple(parent_name,
+                                                        rng), inner_indices)
         else:
-            self.outputs[var_name] = (dace.Memlet(parent_name,
-                                                  rng.num_elements(), rng,
-                                                  1), inner_indices)
+            self.outputs[var_name] = (dace.Memlet.simple(parent_name,
+                                                         rng), inner_indices)
 
         return var_name
 
@@ -2899,11 +2898,11 @@ class ProgramVisitor(ExtNodeVisitor):
             wnode = state.add_write(dst_name)
             state.add_nedge(
                 rnode, wnode,
-                Memlet(src_name,
-                       src_expr.accesses,
-                       subsets.Range.from_array(self.sdfg.arrays[src_name]),
-                       1,
-                       wcr=dst_expr.wcr))
+                Memlet.simple(src_name,
+                              subsets.Range.from_array(
+                                  self.sdfg.arrays[src_name]),
+                              num_accesses=src_expr.accesses,
+                              wcr_str=dst_expr.wcr))
             return
 
         # Calling reduction or other SDFGs / functions
@@ -2989,6 +2988,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Num(self, node: ast.Num):
         return node.n
+
+    def visit_Constant(self, node: 'ast.Constant'):
+        return node.value
 
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global
@@ -3196,7 +3198,10 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('slice_%s_%d' % (array, node.lineno))
         rnode = self.last_state.add_read(array)
         if _subset_has_indirection(expr.subset):
-            memlet = Memlet(array, expr.accesses, expr.subset, 1, expr.wcr)
+            memlet = Memlet.simple(array,
+                                   expr.subset,
+                                   num_accesses=expr.accesses,
+                                   wcr_str=expr.wcr)
             tmp = self.sdfg.temp_data_name()
             return add_indirection_subgraph(self.sdfg, self.last_state, rnode,
                                             None, memlet, tmp, self)
@@ -3209,8 +3214,11 @@ class ProgramVisitor(ExtNodeVisitor):
             wnode = self.last_state.add_write(tmp)
             self.last_state.add_nedge(
                 rnode, wnode,
-                Memlet(array, expr.accesses, expr.subset, 1, expr.wcr,
-                       other_subset))
+                Memlet.simple(array,
+                              expr.subset,
+                              num_accesses=expr.accesses,
+                              wcr_str=expr.wcr,
+                              other_subset_str=other_subset))
             return tmp
 
     ##################################

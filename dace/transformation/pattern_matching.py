@@ -8,6 +8,7 @@ import inspect
 from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
+from dace.sdfg.graph import SubgraphView
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
@@ -241,6 +242,36 @@ class ExpandTransformation(Transformation):
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
 
+@make_registry
+class SubgraphTransformation(object):
+    """
+    Base class for transformations that apply on arbitrary subgraphs, rather than
+    matching a specific pattern. Subclasses need to implement the `match` and `apply`
+    operations.
+    """
+    @staticmethod
+    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+        """
+        Tries to match the transformation on a given subgraph, returning
+        True if this transformation can be applied.
+        :param sdfg: The SDFG that includes the subgraph.
+        :param subgraph: The SDFG or state subgraph to try to apply the 
+                         transformation on.
+        :return: True if the subgraph can be transformed, or False otherwise.
+        """
+        pass
+    
+    def apply(self, sdfg: SDFG, subgraph: SubgraphView):
+        """
+        Applies the transformation on the given subgraph.
+        :param sdfg: The SDFG that includes the subgraph.
+        :param subgraph: The SDFG or state subgraph to apply the
+                         transformation on.
+        """
+        pass
+
+
+
 
 # Module functions ############################################################
 
@@ -345,8 +376,7 @@ def match_pattern(state: SDFGState,
                                     e=e))
                 match_found = False
             if match_found:
-                yield pattern(sdfg.sdfg_list.index(sdfg), sdfg.node_id(state),
-                              subgraph, idx)
+                yield pattern(sdfg.sdfg_id, sdfg.node_id(state), subgraph, idx)
 
     # Recursive call for nested SDFGs
     for node in state.nodes():
@@ -400,7 +430,7 @@ def match_stateflow_pattern(sdfg,
                                     e=e))
                 match_found = False
             if match_found:
-                yield pattern(sdfg.sdfg_list.index(sdfg), -1, subgraph, idx)
+                yield pattern(sdfg.sdfg_id, -1, subgraph, idx)
 
     # Recursive call for nested SDFGs
     for state in sdfg.nodes():

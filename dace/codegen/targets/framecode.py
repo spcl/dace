@@ -10,6 +10,7 @@ from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
+from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
@@ -158,8 +159,7 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' % sdfg.build_folder,
-                sdfg)
+                'dace::perf::report.save("%s/perf");' % sdfg.build_folder, sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -260,6 +260,38 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
                                                global_stream, callsite_stream)
 
+        callsite_stream.write('\n')
+
+        # Emit internal transient array allocation for nested SDFGs
+        # TODO: Replace with global allocation management
+        gpu_persistent_subgraphs = [
+            state.scope_subgraph(node) for node in state.nodes()
+            if isinstance(node, dace.nodes.MapEntry)
+            and node.map.schedule == dace.ScheduleType.GPU_Persistent
+        ]
+        nested_allocated = set()
+        for sub_graph in gpu_persistent_subgraphs:
+            for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
+                                if isinstance(n, nodes.NestedSDFG)]:
+                nested_shared_transients = set(nested_sdfg.shared_transients())
+                for nested_state in nested_sdfg.nodes():
+                    nested_sid = nested_sdfg.node_id(nested_state)
+                    nested_to_allocate = (
+                        set(nested_state.top_level_transients())
+                        - nested_shared_transients
+                    )
+                    nodes_to_allocate = [n for n in nested_state.data_nodes()
+                                         if n.data in nested_to_allocate
+                                         and n.data not in nested_allocated]
+                    for nested_node in nodes_to_allocate:
+                        nested_allocated.add(nested_node.data)
+                        self._dispatcher.dispatch_allocate(
+                            nested_sdfg, nested_state, nested_sid,
+                            nested_node, global_stream, callsite_stream,
+                        )
+
+        callsite_stream.write('\n')
+
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
@@ -299,6 +331,37 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         # Write state footer
 
         if generate_state_footer:
+
+            # Emit internal transient array deallocation for nested SDFGs
+            # TODO: Replace with global allocation management
+            gpu_persistent_subgraphs = [
+                state.scope_subgraph(node) for node in state.nodes()
+                if isinstance(node, dace.nodes.MapEntry)
+                and node.map.schedule == dace.ScheduleType.GPU_Persistent]
+            nested_deallocated = set()
+            for sub_graph in gpu_persistent_subgraphs:
+                for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
+                                    if isinstance(n, nodes.NestedSDFG)]:
+                    nested_shared_transients = \
+                        set(nested_sdfg.shared_transients())
+                    for nested_state in nested_sdfg:
+                        nested_sid = nested_sdfg.node_id(nested_state)
+                        nested_to_allocate = (
+                                set(nested_state.top_level_transients())
+                                - nested_shared_transients
+                        )
+                        nodes_to_deallocate = [
+                            n for n in nested_state.data_nodes()
+                            if n.data in nested_to_allocate
+                            and n.data not in nested_deallocated
+                        ]
+                        for nested_node in nodes_to_deallocate:
+                            nested_deallocated.add(nested_node.data)
+                            self._dispatcher.dispatch_deallocate(
+                                nested_sdfg, nested_state, nested_sid,
+                                nested_node, global_stream, callsite_stream
+                            )
+
             # Emit internal transient array deallocation
             deallocated = set()
             for node in state.data_nodes():
@@ -347,7 +410,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     [""]), sdfg, sid)
 
         callsite_stream.write(
-            "goto __state_{}_{};".format(sdfg.name, edge.dst.label), sdfg, sid)
+            "goto __state_{}_{};".format(sdfg.sdfg_id, edge.dst.label), sdfg,
+            sid)
 
         if not always_true:
             callsite_stream.write("}")
@@ -377,7 +441,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             sid = sdfg.node_id(state)
 
             callsite_stream.write(
-                "__state_{}_{}:\n".format(sdfg.name, state.label), sdfg, sid)
+                "__state_{}_{}:\n".format(sdfg.sdfg_id, state.label), sdfg, sid)
 
             # Don't generate brackets and comments for empty states
             if len([n for n in state.nodes()]) > 0:
@@ -459,11 +523,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                     sid)
 
                             # Generate loop body
-                            self.generate_states(
-                                sdfg, entry_edge.src.label + "_loop",
-                                control_flow, global_stream, callsite_stream,
-                                control.scope, states_generated,
-                                generated_edges)
+                            self.generate_states(sdfg,
+                                                 entry_edge.src.label + "_loop",
+                                                 control_flow, global_stream,
+                                                 callsite_stream, control.scope,
+                                                 states_generated,
+                                                 generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
 
@@ -486,7 +551,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
+                                        sdfg.sdfg_id,
                                         control.scope.exit.edge.dst))
                                 generated_edges.add(control.scope.exit.edge)
 
@@ -548,7 +613,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
+                                        sdfg.sdfg_id,
                                         control.scope.exit.edge.dst))
 
                         else:
@@ -578,8 +643,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                         pass
                     else:
                         self._generate_transition(sdfg, sid, callsite_stream,
-                                                  edge,
-                                                  assignments_to_generate)
+                                                  edge, assignments_to_generate)
                         # Assignments will be generated in the transition
                         generate_assignments = False
 
@@ -597,12 +661,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                   (len(states_to_generate) == 0)))
                     and (len(states_generated) != sdfg.number_of_nodes())):
                 callsite_stream.write(
-                    "goto __state_exit_{}_{};".format(sdfg.name, scope_label),
-                    sdfg, sid)
+                    "goto __state_exit_{}_{};".format(sdfg.sdfg_id,
+                                                      scope_label), sdfg, sid)
 
         # Write exit state
         callsite_stream.write(
-            "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
+            "__state_exit_{}_{}:;".format(sdfg.sdfg_id, scope_label), sdfg)
 
     def generate_code(
         self,
@@ -620,6 +684,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
+
+        if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
+            sdfg_id = '_%d' % sdfg.sdfg_id
 
         sdfg_label = sdfg.name + sdfg_id
 
@@ -919,8 +986,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
+                        sdfg, state, None, node, global_stream, callsite_stream)
                     deallocated.add(node.data)
 
         # Now that we have all the information about dependencies, generate
@@ -955,62 +1021,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             generated_code = callsite_stream.getvalue()
 
         # Return the generated global and local code strings
-        return (generated_header, generated_code,
-                self._dispatcher.used_targets,
+        return (generated_header, generated_code, self._dispatcher.used_targets,
                 self._dispatcher.used_environments)
 
-
-def set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
-    """ Sets default storage and schedule types throughout SDFG.
-        Replaces `ScheduleType.Default` and `StorageType.Default`
-        with the corresponding types according to the parent scope's
-        schedule. """
-    for state in sdfg.nodes():
-        scope_dict = state.scope_dict()
-        reverse_scope_dict = state.scope_dict(node_to_children=True)
-
-        def set_default_in_scope(parent_node):
-            if parent_node is None:
-                parent_schedule = toplevel_schedule
-            else:
-                parent_schedule = parent_node.map.schedule
-
-            for node in reverse_scope_dict[parent_node]:
-                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
-                # Set default schedule type
-                if isinstance(node, nodes.MapEntry):
-                    if node.map.schedule == dtypes.ScheduleType.Default:
-                        node.map.schedule = child_schedule
-                    # Also traverse children (recursively)
-                    set_default_in_scope(node)
-                elif isinstance(node, nodes.ConsumeEntry):
-                    if node.consume.schedule == dtypes.ScheduleType.Default:
-                        node.consume.schedule = child_schedule
-
-                    # Also traverse children (recursively)
-                    set_default_in_scope(node)
-                elif isinstance(node, nodes.NestedSDFG):
-                    # Nested SDFGs retain same schedule as their parent scope
-                    if node.schedule == dtypes.ScheduleType.Default:
-                        node.schedule = parent_schedule
-                elif getattr(node, 'schedule', False):
-                    if node.schedule == dtypes.ScheduleType.Default:
-                        node.schedule = child_schedule
-
-        ## End of recursive function
-
-        # Start with top-level nodes
-        set_default_in_scope(None)
-
-        # Set default storage type
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode):
-                if node.desc(sdfg).storage == dtypes.StorageType.Default:
-                    if scope_dict[node] is None:
-                        parent_schedule = toplevel_schedule
-                    else:
-                        parent_schedule = scope_dict[node].map.schedule
-
-                    node.desc(sdfg).storage = (
-                        dtypes.SCOPEDEFAULT_STORAGE[parent_schedule])
-        ### End of storage type loop

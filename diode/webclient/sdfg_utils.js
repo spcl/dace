@@ -98,7 +98,11 @@ function sdfg_range_elem_to_string(range, settings=null) {
 // Includes various properties and returns their string representation
 function sdfg_property_to_string(prop, settings=null) {
     if (prop === null) return prop;
-    if (prop.type === "Indices" || prop.type === "subsets.Indices") {
+    if (typeof prop === 'boolean') {
+        if (prop)
+            return 'True';
+        return 'False';
+    } else if (prop.type === "Indices" || prop.type === "subsets.Indices") {
         let indices = prop.indices;
         let preview = '[';
         for (let index of indices) {

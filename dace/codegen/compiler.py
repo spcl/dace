@@ -18,7 +18,7 @@ import warnings
 
 import dace
 from dace.frontend import operations
-from dace import symbolic, data as dt
+from dace import symbolic, data as dt, dtypes
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
@@ -63,9 +63,8 @@ class ReloadableDLL(object):
         """ Returns a symbol (e.g., function name) in the loaded library. """
 
         if self._lib is None or self._lib.value is None:
-            raise ReferenceError(
-                'ReloadableDLL can only be used with a ' +
-                '"with" statement or with load() and unload()')
+            raise ReferenceError('ReloadableDLL can only be used with a ' +
+                                 '"with" statement or with load() and unload()')
 
         func = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
         if func is None:
@@ -111,15 +110,25 @@ class ReloadableDLL(object):
                     raise DuplicateDLLError(
                         'Library %s is already loaded somewhere else ' %
                         os.path.basename(self._library_filename) +
-                        'and cannot be unloaded. Please use a different name '
-                        + 'for the SDFG/program.')
+                        'and cannot be unloaded. Please use a different name ' +
+                        'for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
 
         if self._lib.value is None:
-            raise RuntimeError('Could not load library %s' %
-                               os.path.basename(self._library_filename))
+            # Try to understand why the library is not loading, if dynamic
+            # linker is used
+            reason = ''
+            if os.name == 'posix':
+                result = subprocess.run(['ld', self._library_filename],
+                                        capture_output=True)
+                stderr = result.stderr.decode('utf-8')
+                reason = 'Reason:\n' + '\n'.join(
+                    [l for l in stderr.split('\n') if '_start' not in l])
+            raise RuntimeError(
+                'Could not load library %s. %s' %
+                (os.path.basename(self._library_filename), reason))
 
     def unload(self):
         """ Unloads the internal library using the stub. """
@@ -206,20 +215,18 @@ class CompiledSDFG(object):
 
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
-            if not _is_array(arg) and isinstance(atype, dt.Array):
+            if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
                 raise TypeError(
-                    'Passing an object (type %s) to an array in argument "%s"'
-                    % (type(arg).__name__, a))
-            elif _is_array(arg) and not isinstance(atype, dt.Array):
+                    'Passing an object (type %s) to an array in argument "%s"' %
+                    (type(arg).__name__, a))
+            elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
             elif not isinstance(atype, dt.Array) and not isinstance(
                     atype.dtype, dace.callback) and not isinstance(
-                        arg,
-                        (atype.dtype.type,
-                         sp.Basic)) and not (isinstance(arg, symbolic.symbol)
-                                             and arg.dtype == atype.dtype):
+                        arg, (atype.dtype.type, sp.Basic)) and not (isinstance(
+                            arg, symbolic.symbol) and arg.dtype == atype.dtype):
                 if isinstance(arg, int) and atype.dtype.type == np.int64:
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
@@ -228,9 +235,8 @@ class CompiledSDFG(object):
                     print(
                         'WARNING: Casting scalar argument "%s" from %s to %s' %
                         (a, type(arg).__name__, atype.dtype.type))
-            elif isinstance(
-                    atype,
-                    dt.Array) and atype.dtype.as_numpy_dtype() != arg.dtype:
+            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
+                  and atype.dtype.as_numpy_dtype() != arg.dtype):
                 print('WARNING: Passing %s array argument "%s" to a %s array' %
                       (arg.dtype, a, atype.dtype.type.__name__))
 
@@ -264,7 +270,7 @@ class CompiledSDFG(object):
         # Replace arrays with their base host/device pointers
         newargs = tuple(
             (ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
-             atype) if _is_array(arg) else (arg, actype, atype)
+             atype) if dtypes.is_array(arg) else (arg, actype, atype)
             for arg, actype, atype in callparams)
 
         newargs = tuple(
@@ -447,8 +453,7 @@ def generate_program_folder(sdfg,
         environments |= obj.environments
 
     # Write list of environments
-    with open(os.path.join(out_path, "dace_environments.csv"),
-              "w") as env_file:
+    with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
         env_file.write("\n".join(environments))
 
     # Copy snapshot of configuration script
@@ -597,8 +602,7 @@ def configure_and_compile(program_folder,
         "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(cmake_packages)),
         "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(cmake_includes)),
         "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(cmake_libraries)),
-        "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(
-            " ".join(cmake_compile_flags)),
+        "-DDACE_ENV_COMPILE_FLAGS=\"{}\"".format(" ".join(cmake_compile_flags)),
         # "-DDACE_ENV_LINK_FLAGS=\"{}\"".format(" ".join(cmake_link_flags)),
         "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(cmake_files)),
     ]
@@ -744,26 +748,11 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
                                             output.getvalue())
 
 
-def _is_array(obj: Any) -> bool:
-    """
-    Returns True if an object implements the ``data_ptr()``,
-    ``__array_interface__`` or ``__cuda_array_interface__`` standards
-    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
-    supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
-    :param obj: The given object.
-    :return: True iff the object implements the array interface.
-    """
-    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
-            or hasattr(obj, '__cuda_array_interface__')):
-        return hasattr(obj, 'shape') and len(obj.shape) > 0
-    return False
-
-
 def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
     """
-    If the given array implements ``__array_interface__`` (see ``_is_array``),
-    returns the base host or device pointer to the array's allocated memory.
+    If the given array implements ``__array_interface__`` (see 
+    ``dtypes.is_array``), returns the base host or device pointer to the 
+    array's allocated memory.
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Data descriptor of the array (used to get storage
                        location to determine whether it's a host or GPU device

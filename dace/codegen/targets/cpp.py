@@ -455,7 +455,7 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
         using atomics or critical sections. """
 
-    if edge.data.wcr_conflict is not None and not edge.data.wcr_conflict:
+    if edge.data.wcr_nonatomic:
         return False
 
     # If it's an entire SDFG, it's probably write-conflicted
@@ -466,8 +466,7 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
         if len(in_edges) != 1:
             return True
         if (isinstance(in_edges[0].src, nodes.ExitNode) and
-                in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential
-            ):
+                in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
             return False
         return True
 
@@ -537,8 +536,8 @@ def unparse_cr(sdfg, wcr_ast):
                                          for a in args), body_cpp)
 
 
-def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                    callsite_stream, locals, ldepth, toplevel_schedule):
+def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
+                    locals, ldepth, toplevel_schedule):
 
     if node.label is None or node.label == "":
         return ""
@@ -589,13 +588,22 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
             memlet_nc = not is_write_conflicted(
                 dfg, edge, sdfg_schedule=toplevel_schedule)
             memlet_wcr = memlet.wcr
+            if uconn in u.out_connectors:
+                conntype = u.out_connectors[uconn]
+            else:
+                conntype = None
 
-            memlets[uconn] = (memlet, memlet_nc, memlet_wcr)
+            memlets[uconn] = (memlet, memlet_nc, memlet_wcr, conntype)
         elif v == node:
-            memlets[vconn] = (memlet, False, None)
+            if vconn in v.in_connectors:
+                conntype = v.in_connectors[vconn]
+            else:
+                conntype = None
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg,
-                          state_id, node)
+            memlets[vconn] = (memlet, False, None, conntype)
+
+    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
+                          node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
@@ -651,18 +659,17 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[target]
+        memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(node.value)
 
         if not isinstance(node.targets[0], ast.Subscript):
             # Dynamic accesses -> every access counts
             try:
-                if memlet is not None and memlet.num_accesses < 0:
+                if memlet is not None and memlet.dynamic:
                     if wcr is not None:
                         newnode = ast.Name(id=write_and_resolve_expr(
                             self.sdfg, memlet, nc, '__' + target,
-                            cppunparse.cppunparse(value,
-                                                  expr_semicolon=False)))
+                            cppunparse.cppunparse(value, expr_semicolon=False)))
                     else:
                         newnode = ast.Name(id="__%s.write(%s);" % (
                             target,
@@ -713,8 +720,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         for i, d in enumerate(slice):
             if isinstance(d, tuple):
                 raise SyntaxError(
-                    "CPU backend does not yet support ranges as inputs/outputs"
-                )
+                    "CPU backend does not yet support ranges as inputs/outputs")
 
             result.write(sym2cpp(d))
 
@@ -811,8 +817,7 @@ class StructInitializer(ExtNodeTransformer):
                 tname = node.func.id[len('__DACESTRUCT_'):]
 
             return ast.copy_location(
-                ast.Name(id="(%s) { %s }" % (tname, fields), ctx=ast.Load),
-                node)
+                ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
 
         return self.generic_visit(node)
 
@@ -835,8 +840,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def synchronize_streams(sdfg, dfg, state_id, node, scope_exit,
-                        callsite_stream):
+def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:

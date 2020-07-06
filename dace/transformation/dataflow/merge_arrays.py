@@ -25,9 +25,9 @@ class MergeArrays(pattern_matching.Transformation):
         g.add_node(MergeArrays._array2)
         g.add_node(MergeArrays._map_entry)
         g.add_edge(MergeArrays._array1, None, MergeArrays._map_entry, None,
-                   memlet.EmptyMemlet())
+                   memlet.Memlet())
         g.add_edge(MergeArrays._array2, None, MergeArrays._map_entry, None,
-                   memlet.EmptyMemlet())
+                   memlet.Memlet())
         return [g]
 
     @staticmethod
@@ -77,8 +77,7 @@ class MergeArrays(pattern_matching.Transformation):
         arr = graph.node(candidate[MergeArrays._array1])
         map = graph.node(candidate[MergeArrays._map_entry])
         return '%s (%d, %d) -> %s' % (arr.data, candidate[MergeArrays._array1],
-                                      candidate[MergeArrays._array2],
-                                      map.label)
+                                      candidate[MergeArrays._array2], map.label)
 
     def apply(self, sdfg):
         graph = sdfg.node(self.state_id)
@@ -108,8 +107,9 @@ class MergeArrays(pattern_matching.Transformation):
         graph.remove_nodes_from(set(e.src for e in source_edges))
 
         # Remove connectors from scope entry
-        map.in_connectors -= set('IN_' + c for c in connectors_to_remove)
-        map.out_connectors -= set('OUT_' + c for c in connectors_to_remove)
+        for c in connectors_to_remove:
+            map.remove_in_connector('IN_' + c)
+            map.remove_out_connector('OUT_' + c)
 
         # Re-propagate memlets
         map_edge._data = propagate_memlet(dfg_state=graph,

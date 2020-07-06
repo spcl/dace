@@ -23,11 +23,10 @@ class MapReduceFusion(pm.Transformation):
         between the map and the reduction is not used anywhere else.
     """
 
-    no_init = Property(
-        dtype=bool,
-        default=False,
-        desc='If enabled, does not create initialization states '
-        'for reduce nodes with identity')
+    no_init = Property(dtype=bool,
+                       default=False,
+                       desc='If enabled, does not create initialization states '
+                       'for reduce nodes with identity')
 
     _tasklet = nodes.Tasklet('_')
     _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
@@ -137,16 +136,16 @@ class MapReduceFusion(pm.Transformation):
         # Modify edge from tasklet to map exit
         memlet_edge.data.data = out_array.data
         memlet_edge.data.wcr = reduce_node.wcr
-        memlet_edge.data.subset = type(
-            memlet_edge.data.subset)(filtered_subset)
+        memlet_edge.data.subset = type(memlet_edge.data.subset)(filtered_subset)
 
         # Add edge from map exit to output array
         graph.add_edge(
             memlet_edge.dst, 'OUT_' + memlet_edge.dst_conn[3:], array_edge.dst,
             array_edge.dst_conn,
-            Memlet(array_edge.data.data, array_edge.data.num_accesses,
-                   array_edge.data.subset, array_edge.data.veclen,
-                   reduce_node.wcr))
+            Memlet.simple(array_edge.data.data,
+                          array_edge.data.subset,
+                          num_accesses=array_edge.data.num_accesses,
+                          wcr_str=reduce_node.wcr))
 
         # Add initialization state as necessary
         if reduce_node.identity is not None:

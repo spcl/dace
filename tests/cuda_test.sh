@@ -188,6 +188,10 @@ runall() {
 
     runtestargs dynamic_tb_map_cudatest.py
     runtestargs kernel_fusion_cudatest.py
+
+    runtestargs persistent_map_cudatest.py
+    runtestargs persistent_tb_map_cudatest.py
+    runtestargs persistent_fusion_cudatest.py
 }
 
 

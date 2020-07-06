@@ -656,10 +656,10 @@ class PAPIUtils(object):
         :param memlet: Memlet to return size in bytes.
         :return: The size as a symbolic expression.
         """
-        if memlet.num_accesses < 0:  # Ignoring dynamic accesses
+        if memlet.dynamic:  # Ignoring dynamic accesses
             return 0
         memdata = sdfg.arrays[memlet.data]
-        return memlet.num_accesses * memdata.dtype.bytes
+        return memlet.volume * memdata.dtype.bytes
 
     @staticmethod
     def get_out_memlet_costs(sdfg, state_id, node, dfg):

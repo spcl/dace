@@ -221,7 +221,7 @@ class AccumulateTransient(pattern_matching.Transformation):
             LocalStorage._node_b:
             self.subgraph[AccumulateTransient._outer_map_exit]
         }
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         in_local_storage = LocalStorage(sdfg_id, self.state_id,
                                         local_storage_subgraph,
                                         self.expr_index)

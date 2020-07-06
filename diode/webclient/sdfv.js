@@ -2,7 +2,7 @@ var fr;
 var file = null;
 var renderer = null;
 
-function init_sdfv(sdfg) {
+function init_sdfv(sdfg, user_transform = null) {
     $('input[type="file"]').change(function(e){
         if (e.target.files.length < 1)
             return;
@@ -32,7 +32,7 @@ function init_sdfv(sdfg) {
 
     if (sdfg !== null)
         renderer = new SDFGRenderer(sdfg, document.getElementById('contents'),
-                                    mouse_event);
+                                    mouse_event, user_transform);
 }
 
 function reload_file() {

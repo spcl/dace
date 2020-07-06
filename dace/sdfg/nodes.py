@@ -3,6 +3,7 @@
 
 import ast
 from copy import deepcopy as dcpy
+from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
@@ -10,11 +11,12 @@ from typing import Any, Dict, Set
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
-from dace.properties import (
-    Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
-    SetProperty, make_properties, indirect_properties, DataProperty,
-    SymbolicProperty, ListProperty, SDFGReferenceProperty, DictProperty,
-    LibraryImplementationProperty, CodeBlock)
+from dace.properties import (Property, CodeProperty, LambdaProperty,
+                             RangeProperty, DebugInfoProperty, SetProperty,
+                             make_properties, indirect_properties, DataProperty,
+                             SymbolicProperty, ListProperty,
+                             SDFGReferenceProperty, DictProperty,
+                             LibraryImplementationProperty, CodeBlock)
 from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
@@ -28,14 +30,24 @@ import warnings
 class Node(object):
     """ Base node class. """
 
-    in_connectors = SetProperty(
-        str, default=set(), desc="A set of input connectors for this node.")
-    out_connectors = SetProperty(
-        str, default=set(), desc="A set of output connectors for this node.")
+    in_connectors = DictProperty(
+        key_type=str,
+        value_type=dtypes.typeclass,
+        desc="A set of input connectors for this node.")
+    out_connectors = DictProperty(
+        key_type=str,
+        value_type=dtypes.typeclass,
+        desc="A set of output connectors for this node.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
-        self.in_connectors = in_connectors or set()
-        self.out_connectors = out_connectors or set()
+        # Convert connectors to typed connectors with autodetect type
+        if isinstance(in_connectors, (set, list, KeysView)):
+            in_connectors = {k: None for k in in_connectors}
+        if isinstance(out_connectors, (set, list, KeysView)):
+            out_connectors = {k: None for k in out_connectors}
+
+        self.in_connectors = in_connectors or {}
+        self.out_connectors = out_connectors or {}
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -83,12 +95,15 @@ class Node(object):
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
 
-    def add_in_connector(self, connector_name: str):
+    def add_in_connector(self,
+                         connector_name: str,
+                         dtype: dtypes.typeclass = None):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
+            :param dtype: The type of the connector, or None for auto-detect.
             :return: True if the operation is successful, otherwise False.
         """
 
@@ -96,16 +111,19 @@ class Node(object):
                 or connector_name in self.out_connectors):
             return False
         connectors = self.in_connectors
-        connectors.add(connector_name)
+        connectors[connector_name] = dtype
         self.in_connectors = connectors
         return True
 
-    def add_out_connector(self, connector_name: str):
+    def add_out_connector(self,
+                          connector_name: str,
+                          dtype: dtypes.typeclass = None):
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
+            :param dtype: The type of the connector, or None for auto-detect.
             :return: True if the operation is successful, otherwise False.
         """
 
@@ -113,7 +131,7 @@ class Node(object):
                 or connector_name in self.out_connectors):
             return False
         connectors = self.out_connectors
-        connectors.add(connector_name)
+        connectors[connector_name] = dtype
         self.out_connectors = connectors
         return True
 
@@ -125,7 +143,7 @@ class Node(object):
 
         if connector_name in self.in_connectors:
             connectors = self.in_connectors
-            connectors.remove(connector_name)
+            del connectors[connector_name]
             self.in_connectors = connectors
         return True
 
@@ -137,7 +155,7 @@ class Node(object):
 
         if connector_name in self.out_connectors:
             connectors = self.out_connectors
-            connectors.remove(connector_name)
+            del connectors[connector_name]
             self.out_connectors = connectors
         return True
 
@@ -180,6 +198,13 @@ class Node(object):
             scope entries) to their type. """
         return {}
 
+    def infer_connector_types(self, sdfg, state):
+        """
+        Infers and fills remaining connectors (i.e., set to None) with their
+        types.
+        """
+        pass
+
 
 # ------------------------------------------------------------------------------
 
@@ -188,10 +213,9 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = Property(
-        choices=dtypes.AccessType,
-        desc="Type of access to this array",
-        default=dtypes.AccessType.ReadWrite)
+    access = Property(choices=dtypes.AccessType,
+                      desc="Type of access to this array",
+                      default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
@@ -220,9 +244,9 @@ class AccessNode(Node):
         node._access = self._access
         node._data = self._data
         node._setzero = self._setzero
-        node._in_connectors = self._in_connectors
-        node._out_connectors = self._out_connectors
-        node.debuginfo = dcpy(self.debuginfo)
+        node._in_connectors = dcpy(self._in_connectors, memo=memo)
+        node._out_connectors = dcpy(self._out_connectors, memo=memo)
+        node.debuginfo = dcpy(self.debuginfo, memo=memo)
         return node
 
     @property
@@ -285,10 +309,9 @@ class Tasklet(CodeNode):
     code = CodeProperty(desc="Tasklet code", default=CodeBlock(""))
     debuginfo = DebugInfoProperty()
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -329,8 +352,35 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors
-                                          | self.out_connectors)
+        return self.code.get_free_symbols(self.in_connectors.keys()
+                                          | self.out_connectors.keys())
+
+    def infer_connector_types(self, sdfg, state):
+        # If a Python tasklet, use type inference to figure out all None output
+        # connectors
+        if all(cval.type is not None for cval in self.out_connectors.values()):
+            return
+        if self.code.language != dtypes.Language.Python:
+            return
+
+        if any(cval.type is None for cval in self.in_connectors.values()):
+            raise TypeError('Cannot infer output connectors of tasklet "%s", '
+                            'not all input connectors have types' % str(self))
+
+        # Avoid import loop
+        from dace.codegen.tools.type_inference import infer_types
+
+        # Get symbols defined at beginning of node, and infer all types in
+        # tasklet
+        syms = state.symbols_defined_at(self)
+        new_syms = infer_types(self.code.code, syms)
+        for cname, oconn in self.out_connectors.items():
+            if oconn.type is None:
+                if cname not in new_syms:
+                    raise TypeError('Cannot infer type of tasklet %s output '
+                                    '"%s", please specify manually.' %
+                                    (self.label, cname))
+                self.out_connectors[cname] = new_syms[cname]
 
     def __str__(self):
         if not self.label:
@@ -355,28 +405,25 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
-        desc="SDFG schedule",
-        allow_none=True,
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
+    schedule = Property(dtype=dtypes.ScheduleType,
+                        desc="SDFG schedule",
+                        allow_none=True,
+                        choices=dtypes.ScheduleType,
+                        from_string=lambda x: dtypes.ScheduleType[x],
+                        default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(
         key_type=str,
         value_type=dace.symbolic.pystr_to_symbolic,
         desc="Mapping between internal symbols and their values, expressed as "
         "symbolic expressions")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -400,7 +447,7 @@ class NestedSDFG(CodeNode):
         from dace import SDFG  # Avoid import loop
 
         # We have to load the SDFG first.
-        ret = NestedSDFG("nolabel", SDFG('nosdfg'), set(), set())
+        ret = NestedSDFG("nolabel", SDFG('nosdfg'), {}, {})
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
 
@@ -408,6 +455,8 @@ class NestedSDFG(CodeNode):
             ret.sdfg.parent = context['sdfg_state']
         if context and 'sdfg' in context:
             ret.sdfg.parent_sdfg = context['sdfg']
+
+        ret.sdfg.parent_nsdfg_node = ret
 
         ret.sdfg.update_sdfg_list([])
 
@@ -422,6 +471,12 @@ class NestedSDFG(CodeNode):
             *(map(str,
                   pystr_to_symbolic(v).free_symbols)
               for v in self.location.values()))
+
+    def infer_connector_types(self, sdfg, state):
+        # Avoid import loop
+        from dace.sdfg.infer_types import infer_connector_types
+        # Infer internal connector types
+        infer_connector_types(self.sdfg)
 
     def __str__(self):
         if not self.label:
@@ -438,7 +493,7 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
-        connectors = self.in_connectors | self.out_connectors
+        connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for dname, desc in self.sdfg.arrays.items():
             # TODO(later): Disallow scalars without access nodes (so that this
             #              check passes for them too).
@@ -456,8 +511,8 @@ class NestedSDFG(CodeNode):
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
-            raise ValueError(
-                'Missing symbols on nested SDFG: %s' % (missing_symbols))
+            raise ValueError('Missing symbols on nested SDFG: %s' %
+                             (missing_symbols))
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -469,7 +524,6 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -480,7 +534,6 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -493,7 +546,6 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -557,10 +609,11 @@ class MapEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
 
-        # TODO: Get connector type from connector
+        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+                result[e.dst_conn] = (self.in_connectors[e.dst_conn]
+                                      or sdfg.arrays[e.data.data].dtype)
 
         return result
 
@@ -570,7 +623,6 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -585,8 +637,8 @@ class MapExit(ExitNode):
     def from_json(cls, json_obj, context=None):
         try:
             # Set map reference to map entry
-            entry_node = context['sdfg_state'].node(
-                int(json_obj['scope_entry']))
+            entry_node = context['sdfg_state'].node(int(
+                json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
         except IndexError:  # Entry node has a higher ID than exit node
@@ -635,30 +687,26 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
-    range = RangeProperty(
-        desc="Ranges of map parameters", default=sbs.Range([]))
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
-        desc="Map schedule",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
+    range = RangeProperty(desc="Ranges of map parameters",
+                          default=sbs.Range([]))
+    schedule = Property(dtype=dtypes.ScheduleType,
+                        desc="Map schedule",
+                        choices=dtypes.ScheduleType,
+                        from_string=lambda x: dtypes.ScheduleType[x],
+                        default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    collapse = Property(
-        dtype=int,
-        default=1,
-        desc="How many dimensions to"
-        " collapse into the parallel range")
+    collapse = Property(dtype=int,
+                        default=1,
+                        desc="How many dimensions to"
+                        " collapse into the parallel range")
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def __init__(self,
                  label,
@@ -683,9 +731,8 @@ class Map(object):
 
     def __str__(self):
         return self.label + "[" + ", ".join([
-            "{}={}".format(i, r)
-            for i, r in zip(self._params,
-                            [sbs.Range.dim_to_string(d) for d in self._range])
+            "{}={}".format(i, r) for i, r in zip(
+                self._params, [sbs.Range.dim_to_string(d) for d in self._range])
         ]) + "]"
 
     def validate(self, sdfg, state, node):
@@ -708,7 +755,6 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -774,10 +820,11 @@ class ConsumeEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
 
-        # TODO: Get connector type from connector
+        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+                result[e.dst_conn] = (self.in_connectors[e.dst_conn]
+                                      or sdfg.arrays[e.data.data].dtype)
 
         return result
 
@@ -787,7 +834,6 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -798,8 +844,8 @@ class ConsumeExit(ExitNode):
     def from_json(json_obj, context=None):
         try:
             # Set consume reference to entry node
-            entry_node = context['sdfg_state'].node(
-                int(json_obj['scope_entry']))
+            entry_node = context['sdfg_state'].node(int(
+                json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
         except IndexError:  # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
@@ -850,26 +896,22 @@ class Consume(object):
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
     condition = CodeProperty(desc="Quiescence condition", allow_none=True)
-    schedule = Property(
-        dtype=dtypes.ScheduleType,
-        desc="Consume schedule",
-        choices=dtypes.ScheduleType,
-        from_string=lambda x: dtypes.ScheduleType[x],
-        default=dtypes.ScheduleType.Default)
-    chunksize = Property(
-        dtype=int,
-        desc="Maximal size of elements to consume at a time",
-        default=1)
+    schedule = Property(dtype=dtypes.ScheduleType,
+                        desc="Consume schedule",
+                        choices=dtypes.ScheduleType,
+                        from_string=lambda x: dtypes.ScheduleType[x],
+                        default=dtypes.ScheduleType.Default)
+    chunksize = Property(dtype=int,
+                         desc="Maximal size of elements to consume at a time",
+                         default=1)
     debuginfo = DebugInfoProperty()
-    is_collapsed = Property(
-        dtype=bool,
-        desc="Show this node/scope/state as collapsed",
-        default=False)
+    is_collapsed = Property(dtype=bool,
+                            desc="Show this node/scope/state as collapsed",
+                            default=False)
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     def as_map(self):
         """ Compatibility function that allows to view the consume as a map,
@@ -900,8 +942,7 @@ class Consume(object):
                     (self._label, self.pe_index, self.num_pes,
                      CodeProperty.to_string(self.condition)))
         else:
-            return (
-                "%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
+            return ("%s [%s=0:%s]" % (self._label, self.pe_index, self.num_pes))
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
@@ -971,14 +1012,13 @@ class Pipeline(Map):
         initialization and drain phase (e.g., N*M + c iterations), which would
         otherwise need a flattened one-dimensional map.
     """
-    init_size = SymbolicProperty(
-        default=0, desc="Number of initialization iterations.")
+    init_size = SymbolicProperty(default=0,
+                                 desc="Number of initialization iterations.")
     init_overlap = Property(
         dtype=bool,
         default=True,
         desc="Whether to increment regular map indices during initialization.")
-    drain_size = SymbolicProperty(
-        default=1, desc="Number of drain iterations.")
+    drain_size = SymbolicProperty(default=1, desc="Number of drain iterations.")
     drain_overlap = Property(
         dtype=bool,
         default=True,
@@ -1083,8 +1123,9 @@ class LibraryNode(CodeNode):
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
             ret = cls(json_obj['attributes']['name'])
-            dace.serialize.set_properties_from_json(
-                ret, json_obj, context=context)
+            dace.serialize.set_properties_from_json(ret,
+                                                    json_obj,
+                                                    context=context)
             return ret
 
     def expand(self, sdfg, state, *args, **kwargs):
@@ -1133,7 +1174,7 @@ class LibraryNode(CodeNode):
             raise KeyError("Unknown implementation for node {}: {}".format(
                 type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
