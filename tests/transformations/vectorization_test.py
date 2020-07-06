@@ -77,7 +77,21 @@ def test_vectorization_postamble():
         assert np.allclose(z, expected)
 
 
+def test_propagate_parent():
+    sdfg: dace.SDFG = tovec.to_sdfg()
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'propagate_parent': True
+                                      }) == 1
+    assert 'vec<double, 2>' in sdfg.generate_code()[0].code
+    A = np.random.rand(20)
+    B = sdfg(A=A)
+    assert np.allclose(B.reshape(20), A * 2)
+
+
 if __name__ == '__main__':
     test_vectorization()
     test_vectorization_uneven()
     test_vectorization_postamble()
+    test_propagate_parent()

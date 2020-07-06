@@ -1,6 +1,6 @@
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, dtypes, registry, symbolic, subsets
-from dace.sdfg import nodes, SDFG
+from dace.sdfg import nodes, SDFG, propagation
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import pattern_matching
@@ -247,7 +247,13 @@ class Vectorization(pattern_matching.Transformation):
                         new_shape = list(cursdfg.arrays[arrname].shape)
                         contigidx = cursdfg.arrays[arrname].strides.index(1)
                         new_shape[contigidx] /= vector_size
+                        try:
+                            new_shape[contigidx] = int(new_shape[contigidx])
+                        except TypeError:
+                            pass
                         cursdfg.arrays[arrname].shape = new_shape
+
+                    propagation.propagate_memlets_sdfg(cursdfg)
 
                     # Find matching edge in parent
                     nsdfg = cursdfg.parent_nsdfg_node
