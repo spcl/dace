@@ -212,12 +212,19 @@ class Vectorization(pattern_matching.Transformation):
             # Modify memlet subset to match vector length
             if self.strided_map:
                 rb = newlist[contigidx][0]
-                newlist[contigidx] = (rb, rb + self.vector_len - 1, 1)
+                if self.propagate_parent:
+                    newlist[contigidx] = (rb / self.vector_len,
+                                          rb / self.vector_len, 1)
+                else:
+                    newlist[contigidx] = (rb, rb + self.vector_len - 1, 1)
             else:
                 rb = newlist[contigidx][0]
-                newlist[contigidx] = (self.vector_len * rb,
-                                      self.vector_len * rb + self.vector_len -
-                                      1, 1)
+                if self.propagate_parent:
+                    newlist[contigidx] = (rb, rb, 1)
+                else:
+                    newlist[contigidx] = (self.vector_len * rb,
+                                          self.vector_len * rb +
+                                          self.vector_len - 1, 1)
             edge.data.subset = subsets.Range(newlist)
             edge.data.volume = vector_size
 
