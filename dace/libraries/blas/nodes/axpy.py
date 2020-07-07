@@ -333,13 +333,13 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "simple": Expand_AXPY_Vectorized,
+        "pure": Expand_AXPY_Vectorized,
         "fpga_stream": Expand_AXPY_FPGA_Streaming,
         "mkl": Expand_AXPY_MKL,
         "openblas": Expand_AXPY_OPENBLAS,
         "cublas": Expand_AXPY_CUBLAS
     }
-    default_implementation = 'simple'
+    default_implementation = 'pure'
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
@@ -386,13 +386,45 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
 
     def validate(self, sdfg, state):
-        
-        # PENDING: implement validation
 
-        # TODO: for cublas, mkl implementation output and y must be same memory location if beta != 0
+        in_edges = state.in_edges(self)
+        if len(in_edges) != 2:
+            raise ValueError("Expected exactly two inputs to axpy")
 
+        in_memlets = [in_edges[0].data, in_edges[1].data]
+        out_edges = state.out_edges(self)
+        if len(out_edges) != 1:
+            raise ValueError("Expected exactly one output from axpy")
+
+        out_memlet = out_edges[0].data
+        size = in_memlets[0].subset.size()
+        veclen = in_memlets[0].veclen
+        if len(size) != 1:
+            raise ValueError("axpy only supported on 1-dimensional arrays")
+
+        if size != in_memlets[1].subset.size():
+            raise ValueError("Inputs to axpy must have equal size")
+
+        if size != out_memlet.subset.size():
+            raise ValueError("Output of axpy must have same size as input")
+
+        if veclen != in_memlets[1].veclen or veclen != out_memlet[1].veclen:
+            raise ValueError("Vector lengths of inputs/outputs to axpy must be identical")
+
+        if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
+                or out_memlet.wcr is not None):
+            raise ValueError("WCR on axpy memlets not supported")
+
+        if (self.implementation == "cublas" or self.implementation == "mkl" or
+                self.implementation == "openblas"):
+
+            memletNo = 0 if in_memlets[0].dst_conn == "_y" else 1
+
+            if in_memlets[memletNo].src != out_memlet.dst:
+                raise ValueError("y input and output of axpy must be same memory for " + self.implementation)
 
         return True
+
 
 
     def getStreamReader(self):
