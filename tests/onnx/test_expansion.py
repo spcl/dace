@@ -1,6 +1,6 @@
 import numpy as np
 import dace
-from dace.libraries.onnx.nodes.onnx_op import Conv
+from dace.libraries.onnx.nodes.onnx_op import ONNXConv
 
 import torch
 
@@ -16,7 +16,7 @@ def test_expansion():
     access_W = state.add_access("W_arr")
     access_Z = state.add_access("Z_arr")
 
-    c = Conv("Conv")
+    c = ONNXConv("Conv")
 
     state.add_node(c)
     state.add_edge(access_X, None, c, "X", sdfg.get_array_memlet("X_arr"))
