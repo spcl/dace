@@ -271,11 +271,8 @@ class ONNXModel:
                 params[self._clean_array_name(name)] = arr[()]
             else:
                 if self.cuda:
-                    breakpoint()
                     clean_name = self._clean_array_name(name)
                     self.sdfg.arrays[clean_name].storage = StorageType.GPU_Global
-                    #params[clean_name] = numba.cuda.pinned_array(arr.shape, dtype=arr.dtype, strides=arr.strides)
-                    #params[clean_name][:] = arr
                     params[clean_name] = numba.cuda.to_device(arr)
                 else:
                     params[self._clean_array_name(name)] = arr.copy()
