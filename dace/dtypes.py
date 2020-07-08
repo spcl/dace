@@ -467,7 +467,7 @@ class vector(typeclass):
         return {
             'type': 'vector',
             'dtype': self.vtype.to_json(),
-            'elements': self.veclen
+            'elements': str(self.veclen)
         }
 
     @staticmethod
