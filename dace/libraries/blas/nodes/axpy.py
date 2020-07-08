@@ -408,7 +408,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if size != out_memlet.subset.size():
             raise ValueError("Output of axpy must have same size as input")
 
-        if veclen != in_memlets[1].veclen or veclen != out_memlet[1].veclen:
+        if veclen != in_memlets[1].veclen or veclen != out_memlet.veclen:
             raise ValueError("Vector lengths of inputs/outputs to axpy must be identical")
 
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None

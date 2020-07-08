@@ -1,11 +1,17 @@
+#!/usr/bin/env python3
+
+import numpy as np
+from tqdm import tqdm
+
+import argparse
+import scipy
+import random
+
 import dace
 from dace.memlet import Memlet
-import dace.libraries.blas as blas
-import numpy as np
-import scipy
-from tqdm import tqdm
-import argparse
 
+import dace.libraries.blas as blas
+import dace.libraries.blas.utility.streaming as streaming
 from dace.transformation.interstate import GPUTransformSDFG
 
 
@@ -39,7 +45,7 @@ def pure_graph(vecWidth, precision, implementation="pure"):
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    test_sdfg = dace.SDFG("saxpy_test")
+    test_sdfg = dace.SDFG("axpy_test")
     test_state = test_sdfg.add_state("test_state")
 
     test_sdfg.add_symbol(a.name, precision)
@@ -82,7 +88,7 @@ def pure_graph(vecWidth, precision, implementation="pure"):
 
 def test_pure():
 
-    print("Run BLAS test: AXPY pure", end="")
+    print("Run BLAS test: AXPY pure...")
 
     configs = [
         (1.0, 1, dace.float32),
@@ -99,15 +105,25 @@ def test_pure():
         prec = np.float32 if config[2] == dace.float32 else np.float64
         a = np.random.randint(100, size=testN).astype(prec)
         b = np.random.randint(100, size=testN).astype(prec)
+        b_ref = b.copy()
 
-        c = np.zeros(testSize).astype(prec)
+        print("a: ", a)
+        print("b: ", b)
+        print(config[0])
+
+        c = np.zeros(testN).astype(prec)
         alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
 
-        ref_result = reference_result(a, b, alpha)
+        ref_result = reference_result(a, b_ref, alpha)
 
         compiledGraph = pure_graph(config[1], config[2])
 
         compiledGraph(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
+
+
+
+        print("Res: ", c)
+        print("Ref: ", ref_result)
 
         ref_norm = np.linalg.norm(c - ref_result) / testN
         passed = ref_norm < 1e-5
@@ -127,7 +143,7 @@ def cpu_graph(precision, implementation):
 
 def test_cpu(implementation):
     
-    print("Run BLAS test: AXPY", implementation, end="")
+    print("Run BLAS test: AXPY", implementation + "...")
 
     configs = [
         (1.0, 1, dace.float32),
@@ -144,7 +160,7 @@ def test_cpu(implementation):
         a = np.random.randint(100, size=testN).astype(prec)
         b = np.random.randint(100, size=testN).astype(prec)
 
-        # c = np.zeros(testSize).astype(prec)
+        # c = np.zeros(testN).astype(prec)
         alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
 
         ref_result = reference_result(a, b, alpha)
@@ -157,7 +173,7 @@ def test_cpu(implementation):
         passed = ref_norm < 1e-5
 
         if not passed:
-            raise RuntimeError("AXPY " + implementation + " implementation wrong test results')
+            raise RuntimeError("AXPY " + implementation + " implementation wrong test results")
 
     print(" --> passed")
 
@@ -180,14 +196,14 @@ def test_gpu():
 def fpga_graph(vecWidth, precision, vendor):
 
 
-    print("Run BLAS test: AXPY fpga", end="")
+    print("Run BLAS test: AXPY fpga...")
     
     DATATYPE = precision
 
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    test_sdfg = dace.SDFG("saxpy_perf_stream_double")
+    test_sdfg = dace.SDFG("axpy_test")
     test_state = test_sdfg.add_state("test_state")
 
     test_sdfg.add_symbol(a.name, DATATYPE)
@@ -196,7 +212,7 @@ def fpga_graph(vecWidth, precision, vendor):
     test_sdfg.add_array('y1', shape=[n], dtype=DATATYPE)
     test_sdfg.add_array('z1', shape=[n], dtype=DATATYPE)
 
-    saxpy_node = blas.level1.axpy.Axpy("saxpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
+    saxpy_node = blas.level1.axpy.Axpy("axpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
     saxpy_node.implementation = 'fpga_stream'
 
     x_stream = streaming.streamReadVector(
@@ -233,9 +249,13 @@ def fpga_graph(vecWidth, precision, vendor):
         outputMemoryBanks=[2]
     )
 
-
-
     test_sdfg.expand_library_nodes()
+
+    mode = "simulation" if vendor == "xilinx" else "emulator"
+    dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
+    dace.config.Config.set("compiler", vendor, "mode", value=mode)
+
+    return test_sdfg.compile(optimizer=False)
 
 
 def test_fpga(vendor):
