@@ -6,6 +6,7 @@ import onnx
 from onnx import numpy_helper
 
 import dace
+from dace.frontend.python.parser import infer_symbols_from_shapes
 from dace.sdfg import SDFG, SDFGState
 from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_dace_type
 from dace.libraries.onnx import get_onnx_node, has_onnx_node, ONNXParameterType
@@ -73,6 +74,7 @@ class ONNXModel:
             self._add_constant_tensor(init)
 
         access_nodes = {}
+        self._idx_to_node = []
         for i, node in enumerate(graph.node):
             if not has_onnx_node(node.op_type):
                 raise ValueError("Unsupported ONNX operator: '{}'".format(
@@ -93,6 +95,7 @@ class ONNXModel:
             # construct the dace node
             op_node = get_onnx_node(node.op_type)(node_name, **op_attributes)
             self.state.add_node(op_node)
+            self._idx_to_node.append(op_node)
 
             for param_idx, (name, is_input) in chain(
                     enumerate(zip(node.input, repeat(True))),
@@ -172,6 +175,7 @@ class ONNXModel:
                 tensor.name))
 
         name = self._clean_array_name(tensor.name)
+
         dtype = onnx_tensor_type_to_dace_type(tensor.data_type)
 
         if len(tensor.dims) == 0:
@@ -207,9 +211,12 @@ class ONNXModel:
                 shape.append(d.dim_value)
             elif d.HasField("dim_param"):
                 parsed = pystr_to_symbolic(d.dim_param)
-                free_syms = {str(s) for s in parsed.free_symbols}
-                for sym in free_syms.difference(self.sdfg.symbols):
-                    self.sdfg.add_symbol(str(sym), stype=int)
+
+                for sym in parsed.free_symbols:
+                    if self._clean_array_name(str(sym)) not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(self._clean_array_name(str(sym)), stype=int)
+                    parsed = parsed.subs(sym, dace.symbol(self._clean_array_name(str(sym))))
+
                 shape.append(parsed)
             else:
                 raise ValueError(
@@ -230,6 +237,7 @@ class ONNXModel:
                                 transient=transient)
 
     def __call__(self, *args, **inputs):
+        # TODO @orausch docstring, mention symbolic shapes
 
         # convert the positional args to kwargs
         if len(args) > len(self.inputs):
@@ -244,14 +252,17 @@ class ONNXModel:
                 set(self.inputs).difference(inputs))))
 
         # check that there are no unknown inputs
-        if len(set(inputs).difference(self.inputs)) != 0:
+        # NOTE symbols can only be passed as kwargs
+        if len(set(inputs).difference(self.inputs).difference(self.sdfg.free_symbols)) != 0:
             raise ValueError("Unknown inputs {}".format(", ".join(
                 set(inputs).difference(self.inputs))))
 
-        inputs = {
-            self._clean_array_name(input): arr
-            for input, arr in inputs.items()
-        }
+        clean_inputs = {}
+        for input, arr in inputs.items():
+            if input in self.sdfg.free_symbols:
+                clean_inputs[input] = arr
+            else:
+                clean_inputs[self._clean_array_name(input)] = arr
 
         # add the weights
         params = {}
@@ -269,15 +280,30 @@ class ONNXModel:
                 else:
                     params[self._clean_array_name(name)] = arr.copy()
 
+        inferred_symbols = infer_symbols_from_shapes(self.sdfg, {**clean_inputs, **params})
+        # TODO @orausch if this is removed the SDFG complains
+        # TypeError: Type mismatch for argument ONNX_unk__493: expected scalar type, got <class 'sympy.core.numbers.Integer'>
+        # fix this better
+        inferred_symbols = {k: int(v) for k, v in inferred_symbols.items()}
+
+        def eval_dim(dim):
+            for sym in dim.free_symbols:
+                dim = dim.subs(sym, inferred_symbols[sym.name])
+            return dim
+
         outputs = {}
         # create numpy arrays for the outputs
         for output in self.outputs:
             clean_name = self._clean_array_name(output)
             arr = self.sdfg.arrays[clean_name]
-            outputs[clean_name] = np.empty(arr.shape,
+
+            # TODO @orausch add error handling for evalf
+            shape = [eval_dim(d) if type(d) is dace.symbol else d
+                     for d in arr.shape]
+            outputs[clean_name] = np.empty(shape,
                                            dtype=arr.dtype.as_numpy_dtype())
 
-        self.sdfg(**inputs, **params, **outputs)
+        self.sdfg(**clean_inputs, **params, **outputs, **inferred_symbols)
 
         if len(outputs) == 1:
             return next(iter(outputs.values()))
