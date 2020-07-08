@@ -418,9 +418,12 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if (self.implementation == "cublas" or self.implementation == "mkl" or
                 self.implementation == "openblas"):
 
-            memletNo = 0 if in_memlets[0].dst_conn == "_y" else 1
+            print(in_memlets[0].__dict__)
+            memletNo = 0 if in_edges[0].dst_conn == "_y" else 1
 
-            if in_memlets[memletNo].src != out_memlet.dst:
+            print(in_edges[memletNo].src, out_edges[0].dst)
+
+            if str(in_edges[memletNo].src) != str(out_edges[0].dst):
                 raise ValueError("y input and output of axpy must be same memory for " + self.implementation)
 
         return True
