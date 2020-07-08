@@ -473,9 +473,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
                 dtype = p.dtype
-                # if self._memory_widths[(pname, sdfg)] != 1:
-                #     dtype = dtypes.vector(dtype,
-                #                           self._memory_widths[(pname, sdfg)])
                 kernel_args_module.append("{} {}*{}".format(
                     dtype.ctype, "const " if not is_output else "", arr_name))
             else:
@@ -489,12 +486,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                     if p.is_stream_array():
                         kernel_args_module.append(
                             "dace::FIFO<{}, {}, {}> {}[{}]".format(
-                                p.dtype.ctype, p.veclen, p.buffer_size, pname,
-                                p.size_string()))
+                                p.dtype.base_type.ctype, p.veclen,
+                                p.buffer_size, pname, p.size_string()))
                     else:
                         kernel_args_module.append(
                             "dace::FIFO<{}, {}, {}> &{}".format(
-                                p.dtype.ctype, p.veclen, p.buffer_size, pname))
+                                p.dtype.base_type.ctype, p.veclen,
+                                p.buffer_size, pname))
                 else:
                     kernel_args_call.append(
                         p.signature(with_types=False, name=pname))
@@ -581,7 +579,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                            if has_out_ptr else "nullptr")
                 module_body_stream.write(
                     "dace::ArrayInterface<{}, {}> {}({}, {});".format(
-                        dtype.ctype, self._memory_widths[(argname, sdfg)],
+                        dtype.base_type, dtype.veclen,
                         argname, in_ptr, out_ptr))
             module_body_stream.write("\n")
 

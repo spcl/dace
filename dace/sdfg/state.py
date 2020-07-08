@@ -645,8 +645,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
     def all_edges_and_connectors(self, *nodes):
         """
-        Returns an iterable to incoming and outgoing Edge objects, along 
-        with their connector types. 
+        Returns an iterable to incoming and outgoing Edge objects, along
+        with their connector types.
         """
         for node in nodes:
             for e in self.in_edges(node):
@@ -1564,7 +1564,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self,
         name,
         dtype,
-        veclen=1,
         buffer_size=1,
         shape=(1, ),
         storage=dtypes.StorageType.Default,
@@ -1584,7 +1583,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self.parent.add_stream(
             name,
             dtype,
-            veclen,
             buffer_size,
             shape,
             storage,

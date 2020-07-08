@@ -92,14 +92,12 @@ def make_iteration_space(sdfg, add_one=False):
 def make_compute_state(state):
 
     A_pipe = state.add_stream("_A_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Global)
     B_pipe = state.add_stream("_B_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Global)
     valid_pipe = state.add_stream("_valid_pipe",
                                   dtype=dtype,
@@ -279,9 +277,8 @@ def make_read_sdfg():
                         dtype=vtype,
                         storage=StorageType.FPGA_Global)
     A_pipe = state.add_stream("_A_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Local)
 
     state.add_memlet_path(A,
@@ -335,9 +332,8 @@ def make_write_sdfg():
                         dtype=vtype,
                         storage=StorageType.FPGA_Global)
     B_pipe = state.add_stream("_B_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Local)
     valid_pipe = state.add_stream("_valid_pipe",
                                   dtype=dace.dtypes.bool,
@@ -406,27 +402,23 @@ def make_main_state(sdfg):
                         storage=StorageType.FPGA_Global)
 
     A_pipe_in = state.add_stream("A_pipe",
-                                 dtype=dtype,
+                                 dtype=vtype,
                                  buffer_size=buffer_size,
-                                 veclen=W.get(),
                                  transient=True,
                                  storage=StorageType.FPGA_Local)
     A_pipe_out = state.add_stream("A_pipe",
-                                  dtype=dtype,
+                                  dtype=vtype,
                                   buffer_size=buffer_size,
-                                  veclen=W.get(),
                                   transient=True,
                                   storage=StorageType.FPGA_Local)
     B_pipe_in = state.add_stream("B_pipe",
-                                 dtype=dtype,
+                                 dtype=vtype,
                                  buffer_size=buffer_size,
-                                 veclen=W.get(),
                                  transient=True,
                                  storage=StorageType.FPGA_Local)
     B_pipe_out = state.add_stream("B_pipe",
-                                  dtype=dtype,
+                                  dtype=vtype,
                                   buffer_size=buffer_size,
-                                  veclen=W.get(),
                                   transient=True,
                                   storage=StorageType.FPGA_Local)
     valid_pipe_in = state.add_stream("valid_pipe",

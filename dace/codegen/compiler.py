@@ -754,8 +754,8 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
 
 def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
     """
-    If the given array implements ``__array_interface__`` (see 
-    ``dtypes.is_array``), returns the base host or device pointer to the 
+    If the given array implements ``__array_interface__`` (see
+    ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Data descriptor of the array (used to get storage

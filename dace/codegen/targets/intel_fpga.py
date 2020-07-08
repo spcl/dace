@@ -196,7 +196,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
     def make_vector_type(dtype, vector_length, is_const):
         if isinstance(dtype, dtypes.vector) and vector_length == 1:
             vector_length = dtype.veclen
-            dtype = dtype.vtype
+            dtype = dtype.base_type
 
         return "{}{}{}".format(
             "const " if is_const else "", dtype.ctype,
@@ -483,9 +483,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 continue
             added.add(pname)
             if isinstance(p, dace.data.Array):
-                arg = self.make_kernel_argument(
-                    p, pname, self._memory_widths[(pname, sdfg)], is_output,
-                    True)
+                arg = self.make_kernel_argument(p, pname, p.veclen, is_output,
+                                                True)
             else:
                 arg = self.make_kernel_argument(p, pname, 1, is_output, True)
             if arg is not None:
@@ -1059,8 +1058,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         for stmt in body:  # for each statement in tasklet body
             stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
-                sdfg, self._dispatcher.defined_vars, memlets,
-                self._memory_widths, sdfg.constants)
+                sdfg, self._dispatcher.defined_vars, memlets, sdfg.constants)
             if isinstance(stmt, ast.Expr):
                 rk = ocl_visitor.visit_TopLevelExpr(stmt)
             else:
@@ -1104,13 +1102,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double'
     ]
 
-    def __init__(self, sdfg, defined_vars, memlets, memory_widths, *args,
+    def __init__(self, sdfg, defined_vars, memlets, *args,
                  **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
         self.used_streams = [
         ]  # keep track of the different streams used in a tasklet
-        self.memory_widths = memory_widths
         self.width_converters = set()  # Pack and unpack vectors
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
@@ -1159,10 +1156,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         else:
             veclen_lhs = 1
 
-        try:
-            memwidth_lhs = self.memory_widths[(memlet.data, self.sdfg)]
-        except KeyError:
-            memwidth_lhs = 1  # Is not a data container
+        memwidth_lhs = self.sdfg.data(memlet.data).veclen
         if isinstance(self.sdfg.arrays[memlet.data].dtype, dtypes.vector):
             memwidth_lhs *= self.sdfg.arrays[memlet.data].dtype.veclen
 
@@ -1177,11 +1171,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 "Vectorization mismatch: {} ({}) and {} ({})".format(
                     target, veclen_lhs, value, veclen_rhs))
         veclen = veclen_lhs
-        try:
-            memwidth_rhs = self.memory_widths[(
-                self.memlets[node.value.id][0].data, self.sdfg)]
-        except (AttributeError, KeyError):
-            memwidth_rhs = veclen_rhs  # Is not a data container
+        memwidth_rhs = self.sdfg.data(
+            self.memlets[node.value.id][0].data).veclen
         if ((memwidth_lhs > memwidth_rhs and memwidth_rhs != 1)
                 or (memwidth_lhs < memwidth_rhs and memwidth_lhs != 1)):
             raise ValueError("Conflicting memory widths: {} and {}".format(
