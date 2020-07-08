@@ -197,12 +197,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
-    def define_local_array(self, var_name, desc, array_size, veclen,
+    def define_local_array(self, var_name, desc, array_size,
                            function_stream, kernel_stream, sdfg, state_id,
                            node):
         dtype = desc.dtype
-        if veclen != 1:
-            dtype = dtypes.vector(dtype, veclen)
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name,
                                                   cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
@@ -222,22 +220,18 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
-    def make_vector_type(dtype, vector_length, is_const):
-        dtype_new = dtype
-        if vector_length != 1:
-            dtype_new = dtypes.vector(dtype, vector_length)
-        return "{}{}".format("const " if is_const else "", dtype_new.ctype,
-                             vector_length)
+    def make_vector_type(dtype, is_const):
+        return "{}{}".format("const " if is_const else "",
+                             dtype.base_type.ctype, dtype.veclen)
 
     @staticmethod
-    def make_kernel_argument(data, var_name, vector_length, is_output,
-                             with_vectorization):
+    def make_kernel_argument(data, var_name, is_output, with_vectorization):
         if isinstance(data, dace.data.Array):
             var_name += "_" + ("out" if is_output else "in")
             if with_vectorization:
-                dtype = dtypes.vector(data.dtype, vector_length)
-            else:
                 dtype = data.dtype
+            else:
+                dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
         else:
             return data.signature(with_types=True, name=var_name)
@@ -271,7 +265,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
     @staticmethod
-    def make_read(defined_type, type_str, var_name, vector_length, expr, index,
+    def make_read(defined_type, dtype, var_name, expr, index,
                   is_pack, packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             read_expr = "{}.pop()".format(expr)
@@ -287,18 +281,18 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             else:
                 read_expr = expr
         if is_pack:
-            return "dace::Pack<{}, {}>({})".format(type_str, packing_factor,
-                                                   read_expr)
+            return "dace::Pack<{}, {}>({})".format(dtype.base_type.ctype,
+                                                   packing_factor, read_expr)
         else:
-            return "dace::Read<{}, {}>({})".format(type_str, vector_length,
-                                                   read_expr)
+            return "dace::Read<{}, {}>({})".format(dtype.base_type.ctype,
+                                                   dtype.veclen, read_expr)
 
     def generate_converter(*args, **kwargs):
         pass  # Handled in C++
 
     @staticmethod
-    def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr, is_unpack, packing_factor):
+    def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
+                   wcr, is_unpack, packing_factor):
         if defined_type in [
                 DefinedType.Stream, DefinedType.StreamView,
                 DefinedType.StreamArray
@@ -319,14 +313,15 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 write_expr = "{} + {}".format(write_expr, index)
             if is_unpack:
                 return "dace::Unpack<{}, {}>({}, {});".format(
-                    type_str, packing_factor, read_expr, write_expr)
+                    dtype.base_type.ctype, packing_factor, read_expr,
+                    write_expr)
             else:
                 return "dace::Write<{}, {}>({}, {});".format(
-                    type_str, vector_length, write_expr, read_expr)
+                    dtype.base_type.ctype, dtype.veclen, write_expr, read_expr)
 
-    def make_shift_register_write(self, defined_type, type_str, var_name,
-                                  vector_length, write_expr, index, read_expr,
-                                  wcr, is_unpack, packing_factor):
+    def make_shift_register_write(self, defined_type, dtype, var_name,
+                                  write_expr, index, read_expr, wcr, is_unpack,
+                                  packing_factor):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
@@ -365,7 +360,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # Build kernel signature
         array_args = []
         for is_output, dataname, data in arrays:
-            kernel_arg = self.make_kernel_argument(data, dataname, 1, is_output,
+            kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True)
             if kernel_arg:
                 array_args.append(kernel_arg)

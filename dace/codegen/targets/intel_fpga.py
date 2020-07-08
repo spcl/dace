@@ -162,7 +162,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
-        vec_type = self.make_vector_type(dtype.base_type, dtype.veclen, False)
+        vec_type = self.make_vector_type(dtype, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
         else:
@@ -178,7 +178,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
     def define_local_array(self, var_name, desc, array_size, veclen,
                            function_stream, kernel_stream, sdfg, state_id,
                            node):
-        vec_type = self.make_vector_type(desc.dtype, veclen, False)
+        vec_type = self.make_vector_type(desc.dtype, False)
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
             attributes = " __attribute__((register))"
         else:
@@ -193,21 +193,15 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         self.define_local_array(*args, **kwargs)
 
     @staticmethod
-    def make_vector_type(dtype, vector_length, is_const):
-        if isinstance(dtype, dtypes.vector) and vector_length == 1:
-            vector_length = dtype.veclen
-            dtype = dtype.base_type
-
-        return "{}{}{}".format(
-            "const " if is_const else "", dtype.ctype,
-            vector_length if str(vector_length) != "1" else "")
+    def make_vector_type(dtype, is_const):
+        return "{}{}{}".format("const " if is_const else "", dtype.ctype,
+                               dtype.veclen if str(dtype.veclen) != "1" else "")
 
     def make_kernel_argument(self, data, var_name, vector_length, is_output,
                              with_vectorization):
         if isinstance(data, dace.data.Array):
             if with_vectorization:
-                vec_type = self.make_vector_type(data.dtype, vector_length,
-                                                 False)
+                vec_type = self.make_vector_type(data.dtype, False)
             else:
                 vec_type = data.dtype.ctype
             return "__global volatile  {}* restrict {}".format(
@@ -336,9 +330,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
 
-    def make_shift_register_write(self, defined_type, type_str, var_name,
-                                  vector_length, write_expr, index, read_expr,
-                                  wcr, is_unpack, packing_factor):
+    def make_shift_register_write(self, defined_type, dtype, var_name,
+                                  write_expr, index, read_expr, wcr, is_unpack,
+                                  packing_factor):
         if defined_type != DefinedType.Pointer:
             raise TypeError("Intel shift register must be an array: "
                             "{} is {}".format(var_name, defined_type))
@@ -349,11 +343,10 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 #pragma unroll
 for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
   {name}[u_{name}] = {name}[u_{name} + {veclen}];
-}}\n""".format(name=var_name, size=arr_size, veclen=vector_length)
+}}\n""".format(name=var_name, size=arr_size, veclen=dtype.veclen)
         # Then do write
-        res += self.make_write(defined_type, type_str, var_name, vector_length,
-                               write_expr, index, read_expr, wcr, is_unpack,
-                               packing_factor)
+        res += self.make_write(defined_type, dtype, var_name, write_expr, index,
+                               read_expr, wcr, is_unpack, packing_factor)
         return res
 
     @staticmethod
@@ -795,12 +788,8 @@ __kernel void \\
 
         is_scalar = not isinstance(conntype, dtypes.pointer)
         dtype = conntype if is_scalar else conntype._typeclass
-        memory_width = self._memory_widths[(data_name, sdfg)]
-        if isinstance(conntype, dtypes.vector):
-            memory_width = conntype.veclen
-            dtype = conntype.vtype
 
-        memlet_type = self.make_vector_type(dtype, memory_width, False)
+        memlet_type = self.make_vector_type(dtype, False)
         offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None)
 
         result = ""
@@ -900,7 +889,7 @@ __kernel void \\
             conntype = node.out_connectors[connector]
             is_scalar = not isinstance(conntype, dtypes.pointer)
             dtype = conntype if is_scalar else conntype._typeclass
-            memory_width = self._memory_widths[(data_name, sdfg)]
+            memory_width = data_desc.veclen
             if isinstance(conntype, dtypes.vector):
                 memory_width = conntype.veclen
                 dtype = conntype.vtype

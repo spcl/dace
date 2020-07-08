@@ -451,8 +451,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if generate_scalar:
                     # Language-specific
                     define_str = "{} {};".format(
-                        self.make_vector_type(nodedesc.dtype, veclen, False),
-                        dataname)
+                        self.make_vector_type(nodedesc.dtype, False), dataname)
                     callsite_stream.write(define_str, sdfg, state_id, node)
                     self._dispatcher.defined_vars.add(dataname,
                                                       DefinedType.Scalar)
@@ -600,7 +599,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                 dst_node,
                                                 packed_types=True))
 
-            ctype = src_node.desc(sdfg).dtype.ctype
+            dtype = src_node.desc(sdfg).dtype
+            ctype = dtype.ctype
 
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 if len(copy_shape) != 1:
@@ -730,21 +730,20 @@ class FPGACodeGen(TargetCodeGenerator):
             dst_expr, dst_index = sanitize_index(dst_expr, dst_index)
 
             # Language specific
-            read_expr = self.make_read(src_def_type, ctype, src_node.label,
-                                       1, src_expr, src_index,
+            read_expr = self.make_read(src_def_type, dtype, src_node.label,
+                                       src_expr, src_index,
                                        is_pack, packing_factor)
 
             # Language specific
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
-                    dst_def_type, ctype, dst_node.label, 1,
-                    dst_expr, dst_index, read_expr, None, is_unpack,
-                    packing_factor)
+                    dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
+                    read_expr, None, is_unpack, packing_factor)
             else:
-                write_expr = self.make_write(dst_def_type, ctype,
-                                             dst_node.label, 1,
-                                             dst_expr, dst_index, read_expr,
-                                             None, is_unpack, packing_factor)
+                write_expr = self.make_write(dst_def_type, dtype,
+                                             dst_node.label, dst_expr,
+                                             dst_index, read_expr, None,
+                                             is_unpack, packing_factor)
 
             callsite_stream.write(write_expr)
 
