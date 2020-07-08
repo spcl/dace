@@ -1089,6 +1089,7 @@ class LibraryNode(CodeNode):
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
+    debuginfo = DebugInfoProperty()
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)

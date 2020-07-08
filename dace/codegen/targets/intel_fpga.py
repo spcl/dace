@@ -1285,7 +1285,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         ast.Name) and node.func.id in self.nptypes_to_ctypes:
             # if it as numpy type, convert to C type
             node.func.id = "({})".format(self.nptypes_to_ctypes(node.func.id))
-        elif (isinstance(node.func, ast.Num)
+        elif (isinstance(node.func, (ast.Num, ast.Constant))
               and (node.func.n.to_string() in self.ctypes
                    or node.func.n.to_string() in self.nptypes)):
             new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)
