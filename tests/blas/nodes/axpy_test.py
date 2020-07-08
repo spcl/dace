@@ -190,17 +190,18 @@ def test_cpu(implementation):
         prec = np.float32 if config[2] == dace.float32 else np.float64
         a = np.random.randint(100, size=testN).astype(prec)
         b = np.random.randint(100, size=testN).astype(prec)
+        b_ref = b.copy()
 
         # c = np.zeros(testN).astype(prec)
         alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
 
-        ref_result = reference_result(a, b, alpha)
+        ref_result = reference_result(a, b_ref, alpha)
 
         compiledGraph = cpu_graph(config[2], implementation, testCase=config[3])
 
         compiledGraph(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
 
-        ref_norm = np.linalg.norm(c - ref_result) / testN
+        ref_norm = np.linalg.norm(b - ref_result) / testN
         passed = ref_norm < 1e-5
 
         if not passed:
