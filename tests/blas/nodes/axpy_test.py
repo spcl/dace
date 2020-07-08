@@ -40,7 +40,7 @@ def reference_result(x_in, y_in, alpha):
 # ---------- ----------
 # Pure graph program
 # ---------- ----------
-def pure_graph(vecWidth, precision, implementation="pure"):
+def pure_graph(vecWidth, precision, implementation="pure", cache=False):
     
     n = dace.symbol("n")
     a = dace.symbol("a")
@@ -84,6 +84,8 @@ def pure_graph(vecWidth, precision, implementation="pure"):
 
     test_sdfg.expand_library_nodes()
 
+    dace.config.Config.set("compiler", "use_cache", value=cache)
+
     return test_sdfg.compile(optimizer=False)
 
 
@@ -92,11 +94,11 @@ def test_pure():
     print("Run BLAS test: AXPY pure...")
 
     configs = [
-        (1.0, 1, dace.float32),
-        (0.0, 1, dace.float32),
-        (random.random(), 1, dace.float32),
-        (1.0, 1, dace.float64),
-        (1.0, 4, dace.float64)
+        (1.0, 1, dace.float32, False),
+        (0.0, 1, dace.float32, True),
+        (random.random(), 1, dace.float32, True),
+        (1.0, 1, dace.float64, False),
+        (1.0, 4, dace.float64, False)
     ]
 
     testN = int(2**13)
@@ -117,7 +119,7 @@ def test_pure():
 
         ref_result = reference_result(a, b_ref, alpha)
 
-        compiledGraph = pure_graph(config[1], config[2])
+        compiledGraph = pure_graph(config[1], config[2], cache=config[3])
 
         compiledGraph(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
 
