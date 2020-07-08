@@ -102,7 +102,7 @@ class ONNXModel:
                     enumerate(zip(node.output, repeat(False)))):
                 if self._clean_array_name(
                         name
-                ) not in self.sdfg.arrays:  #and self._clean_array_name(name) not in self.sdfg.constants_prop:
+                ) not in self.sdfg.arrays:
                     if name not in self.value_infos:
                         raise ValueError(
                             "Could not find array with name '{}'".format(name))

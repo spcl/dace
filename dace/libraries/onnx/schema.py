@@ -127,7 +127,7 @@ class ONNXParameter:
                            desc="Whether this parameter is homogeneous")
 
     def __repr__(self):
-        return self.param_type + "\t" + self.name
+        return str(self.param_type) + "\t" + self.name
 
 
 class ONNXAttributeType(aenum.AutoNumberEnum):
