@@ -79,9 +79,6 @@ def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
         memlet=Memlet.simple(z_out, "0:n", veclen=vecWidth)
     )
 
-    if saxpy_node.implementation == "cublas":
-        test_sdfg.apply_transformations(GPUTransformSDFG)
-
     test_sdfg.expand_library_nodes()
 
     return test_sdfg.compile(optimizer=False)
@@ -95,8 +92,8 @@ def test_pure():
         (1.0, 1, dace.float32, "0"),
         (0.0, 1, dace.float32, "1"),
         (random.random(), 1, dace.float32, "2"),
-        (1.0, 1, dace.float64, "3"),
-        (1.0, 4, dace.float64, "4")
+        (1.0, 1, dace.float64, "3")
+        # (1.0, 4, dace.float64, "4")
     ]
 
     testN = int(2**13)
@@ -108,10 +105,6 @@ def test_pure():
         b = np.random.randint(100, size=testN).astype(prec)
         b_ref = b.copy()
 
-        print("a: ", a)
-        print("b: ", b)
-        print(config[0])
-
         c = np.zeros(testN).astype(prec)
         alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
 
@@ -120,11 +113,6 @@ def test_pure():
         compiledGraph = pure_graph(config[1], config[2], testCase=config[3])
 
         compiledGraph(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
-
-
-
-        print("Res: ", c)
-        print("Ref: ", ref_result)
 
         ref_norm = np.linalg.norm(c - ref_result) / testN
         passed = ref_norm < 1e-5
@@ -138,8 +126,50 @@ def test_pure():
 # ---------- ----------
 # CPU library graph program
 # ---------- ----------
-def cpu_graph(precision, implementation):
-    return pure_graph(1, precision, implementation=implementation)
+def cpu_graph(precision, implementation, testCase="0"):
+    
+    n = dace.symbol("n")
+    a = dace.symbol("a")
+
+    prec = "single" if precision == dace.float32 else "double"
+    test_sdfg = dace.SDFG("axpy_test_" + prec + "_" + implementation + "_" + testCase)
+    test_state = test_sdfg.add_state("test_state")
+
+    test_sdfg.add_symbol(a.name, precision)
+
+    test_sdfg.add_array('x1', shape=[n], dtype=precision)
+    test_sdfg.add_array('y1', shape=[n], dtype=precision)
+
+    x_in = test_state.add_read('x1')
+    y_in = test_state.add_read('y1')
+    z_out = test_state.add_write('y1')
+
+    saxpy_node = blas.axpy.Axpy("axpy", precision)
+    saxpy_node.implementation = implementation
+
+    test_state.add_memlet_path(
+        x_in, saxpy_node,
+        dst_conn='_x',
+        memlet=Memlet.simple(x_in, "0:n")
+    )
+    test_state.add_memlet_path(
+        y_in, saxpy_node,
+        dst_conn='_y',
+        memlet=Memlet.simple(y_in, "0:n")
+    )
+
+    test_state.add_memlet_path(
+        saxpy_node, z_out,
+        src_conn='_res',
+        memlet=Memlet.simple(z_out, "0:n")
+    )
+
+    if saxpy_node.implementation == "cublas":
+        test_sdfg.apply_transformations(GPUTransformSDFG)
+
+    test_sdfg.expand_library_nodes()
+
+    return test_sdfg.compile(optimizer=False)
 
 
 def test_cpu(implementation):
@@ -147,10 +177,10 @@ def test_cpu(implementation):
     print("Run BLAS test: AXPY", implementation + "...")
 
     configs = [
-        (1.0, 1, dace.float32),
-        (0.0, 1, dace.float32),
-        (random.random(), 1, dace.float32),
-        (1.0, 1, dace.float64)
+        (1.0, 1, dace.float32, "0"),
+        (0.0, 1, dace.float32, "1"),
+        (random.random(), 1, dace.float32, "2"),
+        (1.0, 1, dace.float64, "3")
     ]
 
     testN = int(2**13)
@@ -166,7 +196,7 @@ def test_cpu(implementation):
 
         ref_result = reference_result(a, b, alpha)
 
-        compiledGraph = cpu_graph(config[2], implementation)
+        compiledGraph = cpu_graph(config[2], implementation, testCase=config[3])
 
         compiledGraph(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
 
