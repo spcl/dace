@@ -170,8 +170,8 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
         onnx::TensorProto* t = attribute->mutable_t();
         t->ParseFromString(base64_decode("{}"));
         """.format(
-            base64.b64encode(from_array(value).SerializeToString()).decode('ascii')
-        )
+            base64.b64encode(
+                from_array(value).SerializeToString()).decode('ascii'))
     else:
         raise NotImplementedError(
             "Got unsupported attribute type {} for '{}'".format(
@@ -237,6 +237,13 @@ class ONNXOp(nd.LibraryNode):
     def validate(self, sdfg: SDFG, state: SDFGState):
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
+
+        # check that we don't have connectors to None
+        all_connectors = {edge.dst_conn
+                          for edge in in_edges}.union(edge.src_conn
+                                                      for edge in out_edges)
+        if None in all_connectors:
+            raise ValueError("Edges to ONNX Ops must not have connector None")
 
         # check that we have all required in_edges
         ##########################################
@@ -462,9 +469,9 @@ class ONNXOp(nd.LibraryNode):
             __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, /*use_arena=*/0));
             """)
 
-            if any(True for state in sdfg.nodes()
-                   for node in state.nodes()
-                   if hasattr(node, "schedule") and node.schedule == ScheduleType.GPU_Device):
+            if any(True for state in sdfg.nodes() for node in state.nodes()
+                   if hasattr(node, "schedule")
+                   and node.schedule == ScheduleType.GPU_Device):
                 # if the SDFG contains a GPU node, add the CUDA provider
                 sdfg.append_init_code("""
                 __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
@@ -481,7 +488,6 @@ class ONNXOp(nd.LibraryNode):
             __ort_api->ReleaseEnv(__ort_env);
             """
             sdfg.prepend_exit_code(session_cleanup_code)
-
 
         sdfg.append_global_code(
             "OrtExecutableKernelContext *__ort_context_{};\n".format(unique_id))
@@ -676,8 +682,8 @@ for schema in onnx.defs.get_all_schemas():
                 if attr.default_value is None else attr.default_value)
         elif attr.required:
             raise NotImplementedError(
-                "Required attribute '{}' has an unsupported type"
-                    .format(attr.name))
+                "Required attribute '{}' has an unsupported type".format(
+                    attr.name))
 
     required_attrs = {
         name
