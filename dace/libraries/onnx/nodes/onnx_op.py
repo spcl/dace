@@ -642,7 +642,6 @@ class ONNXOp(nd.LibraryNode):
 _ONNX_OPS_BY_NAME = {}
 # Generate all of the Op Nodes
 for schema in onnx.defs.get_all_schemas():
-    print("Attempting to import " + schema.name)
     try:
         dace_schema = ONNXSchema.from_onnx_proto(schema)
     except Exception as e:
