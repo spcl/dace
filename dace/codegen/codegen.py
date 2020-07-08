@@ -7,6 +7,7 @@ from dace import data
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
+from dace.sdfg.infer_types import infer_connector_types
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpu
@@ -98,6 +99,9 @@ def generate_code(sdfg) -> List[CodeObject]:
 
         # Run with the deserialized version
         sdfg = sdfg2
+
+    # Before generating the code, run type inference on the SDFG connectors
+    infer_connector_types(sdfg)
 
     frame = framecode.DaCeCodeGenerator()
 

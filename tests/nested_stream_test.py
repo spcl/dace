@@ -4,7 +4,7 @@ from dace.memlet import Memlet
 
 # Create nested SDFG
 nsdfg = dace.SDFG('nested')
-nsdfg.add_stream('nout', dace.int32)
+nsdfg.add_scalar('nout', dace.int32)
 state = nsdfg.add_state()
 t = state.add_tasklet('task', set(), {'o'}, 'o = 2')
 w = state.add_write('nout')

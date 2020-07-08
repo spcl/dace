@@ -912,7 +912,7 @@ __kernel void \\
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     result += write_expr
-                elif memlet.num_accesses == -1:
+                elif memlet.dynamic:
                     # Variable number of reads or writes
                     pass
                 else:
@@ -1017,10 +1017,20 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         for edge in state_dfg.all_edges(node):
             u, uconn, v, vconn, memlet = edge
             if u == node:
+                if uconn in u.out_connectors:
+                    conntype = u.out_connectors[uconn]
+                else:
+                    conntype = None
+
                 # this could be a wcr
-                memlets[uconn] = (memlet, edge.data.wcr_conflict, edge.data.wcr)
+                memlets[uconn] = (memlet, not edge.data.wcr_nonatomic,
+                                  edge.data.wcr, conntype)
             elif v == node:
-                memlets[vconn] = (memlet, False, None)
+                if vconn in v.in_connectors:
+                    conntype = v.in_connectors[vconn]
+                else:
+                    conntype = None
+                memlets[vconn] = (memlet, False, None, conntype)
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
@@ -1029,11 +1039,9 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
-        # TODO: Use connector types
-        for connector, (memlet, _, _) in memlets.items():
+        for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
-                defined_symbols.update(
-                    {connector: sdfg.arrays[memlet.data].dtype})
+                defined_symbols.update({connector: conntype})
 
         for stmt in body:  # for each statement in tasklet body
             stmt = copy.deepcopy(stmt)
@@ -1123,12 +1131,10 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[target]
+        memlet, nc, wcr, dtype = self.memlets[target]
 
         value = cppunparse.cppunparse(self.visit(node.value),
                                       expr_semicolon=False)
-
-        dtype = self.sdfg.data(memlet.data).dtype
 
         # The vector length tells us HOW MANY ELEMENTS ARE ASSIGNED, whereas
         # the memory width length tells us if its a VECTOR TYPE being assigned.
@@ -1235,7 +1241,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         if node.id not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[node.id]
+        memlet, nc, wcr, dtype = self.memlets[node.id]
         defined_type = self.defined_vars.get(node.id)
         updated = node
 
@@ -1279,7 +1285,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         ast.Name) and node.func.id in self.nptypes_to_ctypes:
             # if it as numpy type, convert to C type
             node.func.id = "({})".format(self.nptypes_to_ctypes(node.func.id))
-        elif (isinstance(node.func, ast.Num)
+        elif (isinstance(node.func, (ast.Num, ast.Constant))
               and (node.func.n.to_string() in self.ctypes
                    or node.func.n.to_string() in self.nptypes)):
             new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)

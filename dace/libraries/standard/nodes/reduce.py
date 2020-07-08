@@ -14,8 +14,8 @@ from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, CodeProperty, LambdaProperty,
                              RangeProperty, DebugInfoProperty, SetProperty,
-                             make_properties, indirect_properties,
-                             DataProperty, SymbolicProperty, ListProperty,
+                             make_properties, indirect_properties, DataProperty,
+                             SymbolicProperty, ListProperty,
                              SDFGReferenceProperty, DictProperty,
                              LibraryImplementationProperty)
 from dace.frontend.operations import detect_reduction_type
@@ -185,8 +185,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         # Get reduction type for OpenMP
         redtype = detect_reduction_type(node.wcr, openmp=True)
         if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
-            raise ValueError('Reduction type not supported for "%s"' %
-                             node.wcr)
+            raise ValueError('Reduction type not supported for "%s"' % node.wcr)
         omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
 
         # Standardize axes
@@ -211,13 +210,10 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
                     i=i, sz=sym2cpp(sz))
                 out_offset.append('_o%d * %s' %
                                   (i, sym2cpp(output_data.strides[i])))
-
-        # HACK: This works around the current codegen, which infers scalars
-        if outedge.data.subset.num_elements() == 1:
-            outexpr = '_out'
         else:
-            outexpr = '_out[%s]' % ' + '.join(out_offset)
-        # END HACK
+            out_offset.append('0')
+
+        outexpr = '_out[%s]' % ' + '.join(out_offset)
 
         # Write identity value first
         if node.identity is not None:
@@ -258,7 +254,9 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
             code += '}\n' * output_dims
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in'}, {'_out'},
+        tnode = dace.nodes.Tasklet('reduce',
+                                   {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
                                    code,
                                    language=dace.Language.CPP)
 
@@ -362,8 +360,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         if (not reduce_all_axes) and (not reduce_last_axes):
             raise NotImplementedError(
                 'Multiple axis reductions not supported on GPUs. Please use '
-                'the pure expansion or make reduce axes the last in the array.'
-            )
+                'the pure expansion or make reduce axes the last in the array.')
 
         # Verify that data is on the GPU
         if input_data.storage not in [
@@ -405,8 +402,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             segment_size = ' * '.join([symstr(s) for s in reduce_axes])
 
             reduce_type = 'DeviceSegmentedReduce'
-            iterator = 'dace::stridedIterator({size})'.format(
-                size=segment_size)
+            iterator = 'dace::stridedIterator({size})'.format(size=segment_size)
             reduce_range = '{num}, {it}, {it} + 1'.format(num=num_segments,
                                                           it=iterator)
             reduce_range_def = 'size_t num_segments, size_t segment_size'
@@ -471,7 +467,9 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                     reduce_range_call=reduce_range_call))
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in'}, {'_out'},
+        tnode = dace.nodes.Tasklet('reduce',
+                                   {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
                                    host_localcode.getvalue(),
                                    language=dace.Language.CPP)
 
@@ -486,11 +484,6 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         output_edge._src_conn = '_out'
         node.add_in_connector('_in')
         node.add_out_connector('_out')
-
-        # HACK: Workaround to avoid issues with code generator inferring reads
-        # and writes when it shouldn't.
-        input_edge.data.num_accesses = dtypes.DYNAMIC
-        output_edge.data.num_accesses = dtypes.DYNAMIC
 
         return tnode
 
@@ -613,7 +606,9 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
                        output=output))
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in'}, {'_out'},
+        tnode = dace.nodes.Tasklet('reduce',
+                                   {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
                                    localcode.getvalue(),
                                    language=dace.Language.CPP)
 
@@ -625,11 +620,6 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         output_edge._src_conn = '_out'
         node.add_in_connector('_in')
         node.add_out_connector('_out')
-
-        # HACK: Workaround to avoid issues with code generator inferring reads
-        # and writes when it shouldn't.
-        input_edge.data.num_accesses = dtypes.DYNAMIC
-        output_edge.data.num_accesses = dtypes.DYNAMIC
 
         return tnode
 
@@ -656,7 +646,6 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty(default='lambda a, b: a')
     identity = Property(allow_none=True)
-    debuginfo = DebugInfoProperty()
 
     def __init__(self,
                  wcr='lambda a, b: a',

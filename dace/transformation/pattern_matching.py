@@ -8,6 +8,7 @@ import inspect
 from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
+from dace.sdfg.graph import SubgraphView
 from dace.properties import make_properties, Property, SubgraphProperty
 from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
@@ -228,9 +229,10 @@ class ExpandTransformation(Transformation):
                                               sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
-                                              name=node.name)
+                                              name=node.name,
+                                              debuginfo=node.debuginfo)
         elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
-            pass
+            expansion.debuginfo = node.debuginfo
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(
@@ -240,6 +242,36 @@ class ExpandTransformation(Transformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
+
+@make_registry
+class SubgraphTransformation(object):
+    """
+    Base class for transformations that apply on arbitrary subgraphs, rather than
+    matching a specific pattern. Subclasses need to implement the `match` and `apply`
+    operations.
+    """
+    @staticmethod
+    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+        """
+        Tries to match the transformation on a given subgraph, returning
+        True if this transformation can be applied.
+        :param sdfg: The SDFG that includes the subgraph.
+        :param subgraph: The SDFG or state subgraph to try to apply the 
+                         transformation on.
+        :return: True if the subgraph can be transformed, or False otherwise.
+        """
+        pass
+    
+    def apply(self, sdfg: SDFG, subgraph: SubgraphView):
+        """
+        Applies the transformation on the given subgraph.
+        :param sdfg: The SDFG that includes the subgraph.
+        :param subgraph: The SDFG or state subgraph to apply the
+                         transformation on.
+        """
+        pass
+
+
 
 
 # Module functions ############################################################
