@@ -45,7 +45,8 @@ def pure_graph(vecWidth, precision, implementation="pure"):
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    test_sdfg = dace.SDFG("axpy_test")
+    prec = "single" if precision == dace.float32 else "double"
+    test_sdfg = dace.SDFG("axpy_test_" + prec + "_v" + str(vecWidth) + "_" + implementation)
     test_state = test_sdfg.add_state("test_state")
 
     test_sdfg.add_symbol(a.name, precision)
@@ -78,7 +79,7 @@ def pure_graph(vecWidth, precision, implementation="pure"):
         memlet=Memlet.simple(z_out, "0:n", num_accesses=n, veclen=vecWidth)
     )
 
-    if saxpy_node.implementation == "cublas":  
+    if saxpy_node.implementation == "cublas":
         test_sdfg.apply_transformations(GPUTransformSDFG)
 
     test_sdfg.expand_library_nodes()
@@ -129,7 +130,7 @@ def test_pure():
         passed = ref_norm < 1e-5
 
         if not passed:
-            raise RuntimeError('AXPY pure implementation wrong test results')
+            raise RuntimeError('AXPY pure implementation wrong test results on config: ', config)
 
     print(" --> passed")
 
