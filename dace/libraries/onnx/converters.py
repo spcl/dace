@@ -135,7 +135,7 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
     'int64': dt.int64,
     'uint8': dt.uint8,
     'uint16': dt.uint16,
-    'uint32': dt.int32,
+    'uint32': dt.uint32,
     'uint64': dt.uint64,
     'float16': dt.float16,
     'float': dt.float32,
