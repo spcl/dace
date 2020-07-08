@@ -364,9 +364,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # Build kernel signature
         array_args = []
         for is_output, dataname, data in arrays:
-            kernel_arg = self.make_kernel_argument(
-                data, dataname, self._memory_widths[(dataname, sdfg)],
-                is_output, True)
+            kernel_arg = self.make_kernel_argument(data, dataname, 1, is_output,
+                                                   True)
             if kernel_arg:
                 array_args.append(kernel_arg)
         kernel_args = array_args + [
@@ -474,9 +473,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 kernel_args_call.append(arr_name)
                 dtype = p.dtype
-                if self._memory_widths[(pname, sdfg)] != 1:
-                    dtype = dtypes.vector(dtype,
-                                          self._memory_widths[(pname, sdfg)])
+                # if self._memory_widths[(pname, sdfg)] != 1:
+                #     dtype = dtypes.vector(dtype,
+                #                           self._memory_widths[(pname, sdfg)])
                 kernel_args_module.append("{} {}*{}".format(
                     dtype.ctype, "const " if not is_output else "", arr_name))
             else:
@@ -575,12 +574,14 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 has_out_ptr = argname in out_args
                 if not has_in_ptr and not has_out_ptr:
                     continue
+                dtype = (arg.dtype.vtype if isinstance(
+                    arg.dtype, dace.dtypes.vector) else arg.dtype)
                 in_ptr = ("{}_in".format(argname) if has_in_ptr else "nullptr")
                 out_ptr = ("{}_out".format(argname)
                            if has_out_ptr else "nullptr")
                 module_body_stream.write(
                     "dace::ArrayInterface<{}, {}> {}({}, {});".format(
-                        arg.dtype.ctype, self._memory_widths[(argname, sdfg)],
+                        dtype.ctype, self._memory_widths[(argname, sdfg)],
                         argname, in_ptr, out_ptr))
             module_body_stream.write("\n")
 
