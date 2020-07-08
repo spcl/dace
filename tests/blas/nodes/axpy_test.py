@@ -65,18 +65,18 @@ def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
     test_state.add_memlet_path(
         x_in, saxpy_node,
         dst_conn='_x',
-        memlet=Memlet.simple(x_in, "0:n", num_accesses=n, veclen=vecWidth)
+        memlet=Memlet.simple(x_in, "0:n", veclen=vecWidth)
     )
     test_state.add_memlet_path(
         y_in, saxpy_node,
         dst_conn='_y',
-        memlet=Memlet.simple(y_in, "0:n", num_accesses=n, veclen=vecWidth)
+        memlet=Memlet.simple(y_in, "0:n", veclen=vecWidth)
     )
 
     test_state.add_memlet_path(
         saxpy_node, z_out,
         src_conn='_res',
-        memlet=Memlet.simple(z_out, "0:n", num_accesses=n, veclen=vecWidth)
+        memlet=Memlet.simple(z_out, "0:n", veclen=vecWidth)
     )
 
     if saxpy_node.implementation == "cublas":
