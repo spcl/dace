@@ -184,14 +184,15 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         return [host_code_obj] + kernel_code_objs
 
     @staticmethod
-    def define_stream(dtype, vector_length, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream):
+    def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
+                      kernel_stream):
         if cpp.sym2cpp(array_size) == "1":
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}(\"{}\");".format(
-                dtype.ctype, vector_length, buffer_size, var_name, var_name))
+                dtype.base_type.ctype, dtype.veclen, buffer_size, var_name,
+                var_name))
         else:
             kernel_stream.write("dace::FIFO<{}, {}, {}> {}[{}];\n".format(
-                dtype.ctype, vector_length, buffer_size, var_name,
+                dtype.base_type.ctype, dtype.veclen, buffer_size, var_name,
                 cpp.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
@@ -572,14 +573,12 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 has_out_ptr = argname in out_args
                 if not has_in_ptr and not has_out_ptr:
                     continue
-                dtype = (arg.dtype.vtype if isinstance(
-                    arg.dtype, dace.dtypes.vector) else arg.dtype)
                 in_ptr = ("{}_in".format(argname) if has_in_ptr else "nullptr")
                 out_ptr = ("{}_out".format(argname)
                            if has_out_ptr else "nullptr")
                 module_body_stream.write(
                     "dace::ArrayInterface<{}, {}> {}({}, {});".format(
-                        dtype.base_type, dtype.veclen,
+                        arg.dtype.base_type, arg.dtype.veclen,
                         argname, in_ptr, out_ptr))
             module_body_stream.write("\n")
 

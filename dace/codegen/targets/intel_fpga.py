@@ -160,9 +160,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
         return [host_code_obj] + kernel_code_objs
 
-    def define_stream(self, dtype, vector_length, buffer_size, var_name,
-                      array_size, function_stream, kernel_stream):
-        vec_type = self.make_vector_type(dtype, vector_length, False)
+    def define_stream(self, dtype, buffer_size, var_name, array_size,
+                      function_stream, kernel_stream):
+        vec_type = self.make_vector_type(dtype.base_type, dtype.veclen, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
         else:
