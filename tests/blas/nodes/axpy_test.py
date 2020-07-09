@@ -266,21 +266,21 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     x_stream = streaming.streamReadVector(
         'x1',
         n,
-        typeDace,
+        DATATYPE,
         vecWidth=vecWidth
     )
 
     y_stream = streaming.streamReadVector(
         'y1',
         n,
-        typeDace,
+        DATATYPE,
         vecWidth=vecWidth
     )
 
     z_stream = streaming.streamWriteVector(
         'z1',
         n,
-        typeDace,
+        DATATYPE,
         vecWidth=vecWidth
     )
 
