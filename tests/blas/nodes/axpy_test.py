@@ -314,7 +314,7 @@ def test_fpga(vendor):
         (1.0, 1, dace.float32, "0"),
         (0.0, 1, dace.float32, "1"),
         (random.random(), 1, dace.float32, "2"),
-        (1.0, 1, dace.float64, "3")
+        (1.0, 1, dace.float64, "3"),
         (1.0, 4, dace.float64, "4")
     ]
 
