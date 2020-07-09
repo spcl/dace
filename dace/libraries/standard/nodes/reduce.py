@@ -654,7 +654,6 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty(default='lambda a, b: a')
     identity = Property(allow_none=True)
-    debuginfo = DebugInfoProperty()
 
     def __init__(self,
                  wcr='lambda a, b: a',

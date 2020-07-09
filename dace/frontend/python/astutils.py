@@ -49,6 +49,8 @@ def rname(node):
         return str(node.n)
     if isinstance(node, ast.Name):  # form x
         return node.id
+    if isinstance(node, ast.Constant):
+        return str(node.value)
     if isinstance(node, ast.Subscript):  # form A[a:b,...,c:d]
         return rname(node.value)
     if isinstance(node, ast.Attribute):  # form @dace.attr_noparams
@@ -255,8 +257,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                                 or field == 'orelse') and isinstance(
                                     value, ast.Expr):
                             clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname,
-                                       False):
+                            if getattr(self, "visit_TopLevel" + clsname, False):
                                 value = getattr(self, "visit_TopLevel" +
                                                 clsname)(value)
                             else:
@@ -298,10 +299,8 @@ class ExtNodeVisitor(ast.NodeVisitor):
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field == 'orelse'):
                             clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname,
-                                       False):
-                                getattr(self,
-                                        "visit_TopLevel" + clsname)(value)
+                            if getattr(self, "visit_TopLevel" + clsname, False):
+                                getattr(self, "visit_TopLevel" + clsname)(value)
                             else:
                                 self.visit(value)
                         else:
