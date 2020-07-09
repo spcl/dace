@@ -365,3 +365,5 @@ if __name__ == "__main__":
 
     if args.intel_fpga:
         test_fpga("intel_fpga")
+
+    exit(0)
