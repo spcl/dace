@@ -965,7 +965,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
     for (int u = 0; u < {veclen}; ++u) {{
         ptr[u] = value[u];
     }}
-}}\n\n""".format(dtype=dtype, veclen=veclen), sdfg, state_id, node)
+}}\n\n""".format(dtype=dtype.base_type, veclen=veclen), sdfg, state_id, node)
         else:
             function_stream.write(
                 """\
@@ -976,7 +976,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         vec[u] = ptr[u];
     }}
     return vec;
-}}\n\n""".format(dtype=dtype, veclen=veclen), sdfg, state_id, node)
+}}\n\n""".format(dtype=dtype.base_type, veclen=veclen), sdfg, state_id, node)
         self.converters_generated.add((is_unpack, dtype, veclen))
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
@@ -1162,10 +1162,10 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 memwidth_lhs, memwidth_rhs))
         if memwidth_rhs > memwidth_lhs:
             self.width_converters.add((True, dtype, veclen))
-            unpack_str = "unpack_{}{}".format(dtype.ctype, veclen)
+            unpack_str = "unpack_{}{}".format(dtype.base_type.ctype, veclen)
         if memwidth_lhs > memwidth_rhs:
             self.width_converters.add((False, dtype, veclen))
-            pack_str = "pack_{}{}".format(dtype.ctype, veclen)
+            pack_str = "pack_{}{}".format(dtype.base_type.ctype, veclen)
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":

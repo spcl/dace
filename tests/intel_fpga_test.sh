@@ -61,47 +61,47 @@ run_all() {
 
     # Throw error when kernel names are too long
     run_sample intel_fpga/name_too_long name_too_long "\n"
-    
+
     # Test removing degenerate loops that only have a single iteration
     run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
-    
+
     # Test pipeline scopes 
     run_sample pipeline_scope pipeline_scope "\n" 
 
     # Test shift register abstraction with stencil code
-    # run_sample fpga_stencil fpga_stencil_test "\n"
+    run_sample fpga_stencil fpga_stencil_test "\n"
 
-    # ### MAP TILING ####
+    ### MAP TILING ####
     # First tile then transform
     run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
-    # run_sample intel_fpga/veclen_conversion "\n"
+    run_sample intel_fpga/veclen_conversion "\n"
 
     # #### WCR ####
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 
-    # #### REDUCE ####
+    #### REDUCE ####
     # Simple reduce
     run_sample intel_fpga/vector_reduce vector_reduce "FPGATransformSDFG\$0\n"
 
     # GEMM sample
     run_sample ../samples/simple/gemm gemm "FPGATransformSDFG\$0\n"
 
-    # #### TYPE INFERENCE ####
+    #### TYPE INFERENCE ####
     run_sample ../samples/simple/mandelbrot mandelbrot "FPGATransformSDFG\$0\n"
 
     # type inference for statements with annotation
     run_sample intel_fpga/type_inference type_inference "FPGATransformSDFG\$0\n"
 
-    # #### SYSTOLIC ARRAY ###
+    #### SYSTOLIC ARRAY ###
     run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
     run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
     run_sample ../samples/fpga/jacobi_fpga_systolic jacobi_fpga_systolic_8_Hx8192xT "\n"
 
-    # #### MISCELLANEA ####
+    #### MISCELLANEOUS ####
     # Execute some of the compatible tests in samples/fpga (some of them have C++ code in tasklet)
     # They contain streams
     run_sample intel_fpga/async async_test "\n" 

@@ -456,9 +456,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     # Language-specific
                     if (nodedesc.storage ==
                             dace.dtypes.StorageType.FPGA_ShiftRegister):
-                        self.define_shift_register(dataname, nodedesc,
-                                                   arrsize_vec, function_stream,
-                                                   result, sdfg, state_id, node)
+                        self.define_shift_register(dataname, nodedesc, arrsize,
+                                                   function_stream, result,
+                                                   sdfg, state_id, node)
                     else:
                         self.define_local_array(dataname, nodedesc, arrsize,
                                                 function_stream, result, sdfg,
@@ -653,7 +653,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         "Destination vectorization width {} "
                         "is not divisible by source vectorization width {}.".
                         format(memwidth_dst, memwidth_src))
-                self.generate_converter(False, ctype, packing_factor, dst_node,
+                self.generate_converter(False, dtype, packing_factor, dst_node,
                                         state_id, sdfg, function_stream)
             elif memwidth_src > memwidth_dst:
                 is_pack = False
@@ -664,7 +664,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         "Source vectorization width {} is not divisible "
                         "by destination vectorization width {}.".format(
                             memwidth_dst, memwidth_src))
-                self.generate_converter(True, ctype, packing_factor, dst_node,
+                self.generate_converter(True, dtype, packing_factor, dst_node,
                                         state_id, sdfg, function_stream)
             else:
                 is_pack = False
