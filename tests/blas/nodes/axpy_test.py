@@ -244,17 +244,14 @@ def test_gpu():
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
-def fpga_graph(vecWidth, precision, vendor):
-
-
-    print("Run BLAS test: AXPY fpga...")
+def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     
     DATATYPE = precision
 
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    test_sdfg = dace.SDFG("axpy_test")
+    test_sdfg = dace.SDFG("axpy_test_v" + str(vecWidth) + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
 
     test_sdfg.add_symbol(a.name, DATATYPE)
@@ -310,8 +307,42 @@ def fpga_graph(vecWidth, precision, vendor):
 
 
 def test_fpga(vendor):
-    pass
+    
+    print("Run BLAS test: AXPY fpga", vendor + "...")
 
+    configs = [
+        (1.0, 1, dace.float32, "0"),
+        (0.0, 1, dace.float32, "1"),
+        (random.random(), 1, dace.float32, "2"),
+        (1.0, 1, dace.float64, "3")
+        (1.0, 4, dace.float64, "4")
+    ]
+
+    testN = int(2**13)
+
+    for config in configs:
+
+        prec = np.float32 if config[2] == dace.float32 else np.float64
+        a = np.random.randint(100, size=testN).astype(prec)
+        b = np.random.randint(100, size=testN).astype(prec)
+        b_ref = b.copy()
+
+        # c = np.zeros(testN).astype(prec)
+        alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
+
+        ref_result = reference_result(a, b_ref, alpha)
+
+        compiledGraph = fpga_graph(config[1], config[2], vendor, testCase=config[3])
+
+        compiledGraph(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
+
+        ref_norm = np.linalg.norm(b - ref_result) / testN
+        passed = ref_norm < 1e-5
+
+        if not passed:
+            raise RuntimeError("AXPY " + vendor + " implementation wrong test results")
+
+    print(" --> passed")
 
 
 if __name__ == "__main__":
