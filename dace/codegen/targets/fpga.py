@@ -522,10 +522,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
             dims = memlet.subset.dims()
             copy_shape = memlet.subset.bounding_box_size()
-            copysize = ' * '.join([
-                cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
-                for s in copy_shape
-            ])
             offset = cpp_array_expr(sdfg, memlet, with_brackets=False)
 
             if (not sum(copy_shape) == 1
@@ -534,24 +530,63 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise NotImplementedError("Only contiguous copies currently "
                                           "supported for FPGA codegen.")
 
+            if host_to_device or device_to_device:
+                host_dtype = sdfg.data(src_node.data).dtype
+                device_dtype = sdfg.data(dst_node.data).dtype
+            elif device_to_host:
+                device_dtype = sdfg.data(src_node.data).dtype
+                host_dtype = sdfg.data(dst_node.data).dtype
+            cast = False
+            if not device_to_device and host_dtype != device_dtype:
+                if ((isinstance(host_dtype, dace.vector)
+                     or isinstance(device_dtype, dace.vector))
+                        and host_dtype.base_type == device_dtype.base_type):
+                    if host_dtype.veclen > device_dtype.veclen:
+                        copy_shape[-1] *= (host_dtype.veclen //
+                                           device_dtype.veclen)
+                    else:
+                        copy_shape[-1] //= (device_dtype.veclen //
+                                            host_dtype.veclen)
+                    cast = True
+                else:
+                    raise TypeError(
+                        "Memory copy type mismatch: {} vs {}".format(
+                            host_dtype, device_dtype))
+
+            copysize = " * ".join([
+                cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
+                for s in copy_shape
+            ])
+
             if host_to_device:
+
+                ptr_str = (src_node.data +
+                           (" + {}".format(offset)
+                            if outgoing_memlet and str(offset) != "0" else ""))
+                if cast:
+                    ptr_str = "reinterpret_cast<{} const *>({})".format(
+                        device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
                         dst_node.data, (offset if not outgoing_memlet else 0),
-                        copysize, src_node.data +
-                        (" + {}".format(offset) if outgoing_memlet else "")),
-                    sdfg, state_id, [src_node, dst_node])
+                        copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_host:
+
+                ptr_str = (dst_node.data +
+                           (" + {}".format(offset)
+                            if outgoing_memlet and str(offset) != "0" else ""))
+                if cast:
+                    ptr_str = "reinterpret_cast<{} *>({})".format(
+                        device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
                         src_node.data, (offset if outgoing_memlet else 0),
-                        copysize,
-                        dst_node.data + (" + {}".format(offset)
-                                         if not outgoing_memlet else "")), sdfg,
-                    state_id, [src_node, dst_node])
+                        copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_device:
 
