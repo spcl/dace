@@ -16,7 +16,7 @@ from dace.transformation.interstate import GPUTransformSDFG
 
 
 # ---------- ----------
-# Arguments
+# Arguments & Utility
 # ---------- ----------
 cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
@@ -28,6 +28,25 @@ cmdParser.add_argument("--xilinx", dest="xilinx", action='store_true')
 cmdParser.add_argument("--intel_fpga", dest="intel_fpga", action='store_true')
 
 args = cmdParser.parse_args()
+
+
+def aligned_ndarray(arr, alignment=64):
+    """
+    Allocates a and returns a copy of ``arr`` as an ``alignment``-byte aligned
+    array. Useful for aligned vectorized access.
+    
+    Based on https://stackoverflow.com/a/20293172/6489142
+    """
+    if (arr.ctypes.data % alignment) == 0:
+        return arr
+
+    extra = alignment // arr.itemsize
+    buf = np.empty(arr.size + extra, dtype=arr.dtype)
+    ofs = (-buf.ctypes.data % alignment) // arr.itemsize
+    result = buf[ofs:ofs + arr.size].reshape(arr.shape)
+    np.copyto(result, arr)
+    assert (result.ctypes.data % alignment) == 0
+    return result
 
 
 # ---------- ----------
@@ -101,11 +120,11 @@ def test_pure():
     for config in configs:
 
         prec = np.float32 if config[2] == dace.float32 else np.float64
-        a = np.random.randint(100, size=testN).astype(prec)
-        b = np.random.randint(100, size=testN).astype(prec)
+        a = alinged_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
+        b = aligned_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
         b_ref = b.copy()
 
-        c = np.zeros(testN).astype(prec)
+        c = aligned_ndarray(np.zeros(testN).astype(prec), alignment=256)
         alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
 
         ref_result = reference_result(a, b_ref, alpha)

@@ -9,7 +9,6 @@ from dace.libraries.blas.utility.memoryOperations import *
 from dace.libraries.blas.utility.streaming import *
 
 
-
 @dace.library.expansion
 class Expand_AXPY_Vectorized(ExpandTransformation):
 
@@ -418,10 +417,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if (self.implementation == "cublas" or self.implementation == "mkl" or
                 self.implementation == "openblas"):
 
-            print(in_memlets[0].__dict__)
             memletNo = 0 if in_edges[0].dst_conn == "_y" else 1
-
-            print(in_edges[memletNo].src, out_edges[0].dst)
 
             if str(in_edges[memletNo].src) != str(out_edges[0].dst):
                 raise ValueError("y input and output of axpy must be same memory for " + self.implementation)
