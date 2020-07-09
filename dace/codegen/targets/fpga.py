@@ -443,9 +443,6 @@ class FPGACodeGen(TargetCodeGenerator):
                         "fast memory not allowed: {}, size {}".format(
                             dataname, arrsize))
 
-                # Absorb vector size into type and adjust array size
-                # accordingly
-                veclen = nodedesc.dtype.veclen
                 generate_scalar = sym2cpp(arrsize) == "1"
 
                 if generate_scalar:
@@ -460,13 +457,12 @@ class FPGACodeGen(TargetCodeGenerator):
                     if (nodedesc.storage ==
                             dace.dtypes.StorageType.FPGA_ShiftRegister):
                         self.define_shift_register(dataname, nodedesc,
-                                                   arrsize_vec, veclen,
-                                                   function_stream, result,
-                                                   sdfg, state_id, node)
+                                                   arrsize_vec, function_stream,
+                                                   result, sdfg, state_id, node)
                     else:
                         self.define_local_array(dataname, nodedesc, arrsize,
-                                                veclen, function_stream, result,
-                                                sdfg, state_id, node)
+                                                function_stream, result, sdfg,
+                                                state_id, node)
 
             else:
                 raise NotImplementedError("Unimplemented storage type " +

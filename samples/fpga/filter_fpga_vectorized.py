@@ -267,29 +267,6 @@ def make_compute_sdfg():
     return sdfg
 
 
-def make_read_sdfg():
-
-    sdfg = SDFG("filter_read")
-
-    state = make_iteration_space(sdfg)
-
-    A = state.add_array("A_mem", [N / W],
-                        dtype=vtype,
-                        storage=StorageType.FPGA_Global)
-    A_pipe = state.add_stream("_A_pipe",
-                              dtype=vtype,
-                              buffer_size=buffer_size,
-                              storage=StorageType.FPGA_Local)
-
-    state.add_memlet_path(A,
-                          A_pipe,
-                          memlet=Memlet.simple(A_pipe,
-                                               '0',
-                                               other_subset_str='i'))
-
-    return sdfg
-
-
 def make_write_sdfg():
 
     sdfg = SDFG("filter_write")
@@ -432,10 +409,6 @@ def make_main_state(sdfg):
                                       transient=True,
                                       storage=StorageType.FPGA_Local)
 
-    read_sdfg = make_read_sdfg()
-    read_tasklet = state.add_nested_sdfg(read_sdfg, sdfg, {"A_mem"},
-                                         {"_A_pipe"})
-
     compute_sdfg = make_compute_sdfg()
     compute_tasklet = state.add_nested_sdfg(compute_sdfg, sdfg,
                                             {"_A_pipe", "ratio_nested"},
@@ -446,16 +419,8 @@ def make_main_state(sdfg):
                                           {"_B_pipe", "_valid_pipe"}, {"B_mem"})
 
     state.add_memlet_path(A,
-                          read_tasklet,
-                          dst_conn="A_mem",
-                          memlet=Memlet.simple(A, "0:N/W", num_accesses="N/W"))
-    state.add_memlet_path(read_tasklet,
                           A_pipe_out,
-                          src_conn="_A_pipe",
-                          memlet=Memlet.simple(A_pipe_out,
-                                               "0",
-                                               dynamic=True,
-                                               num_accesses="N/W"))
+                          memlet=Memlet.simple(A, "0:N/W", num_accesses="N/W"))
 
     state.add_memlet_path(A_pipe_in,
                           compute_tasklet,

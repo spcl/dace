@@ -572,9 +572,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 out_ptr = ("{}_out".format(argname)
                            if has_out_ptr else "nullptr")
                 module_body_stream.write(
-                    "dace::ArrayInterface<{}, {}> {}({}, {});".format(
-                        arg.dtype.base_type, arg.dtype.veclen,
-                        argname, in_ptr, out_ptr))
+                    "dace::ArrayInterface<{}> {}({}, {});".format(
+                        arg.dtype.ctype, argname, in_ptr, out_ptr))
             module_body_stream.write("\n")
 
         # Allocate local transients
