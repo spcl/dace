@@ -193,7 +193,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}{}".format("const " if is_const else "", dtype.ctype,
+        return "{}{}{}".format("const " if is_const else "",
+                               dtype.base_type.ctype,
                                dtype.veclen if str(dtype.veclen) != "1" else "")
 
     def make_kernel_argument(self, data, var_name, vector_length, is_output,
@@ -1142,8 +1143,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             veclen_lhs = 1
 
         memwidth_lhs = self.sdfg.data(memlet.data).veclen
-        if isinstance(self.sdfg.arrays[memlet.data].dtype, dtypes.vector):
-            memwidth_lhs *= self.sdfg.arrays[memlet.data].dtype.veclen
 
         try:
             # Detect vector width conversions in simple cases.
