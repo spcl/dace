@@ -197,7 +197,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                                dtype.base_type.ctype,
                                dtype.veclen if str(dtype.veclen) != "1" else "")
 
-    def make_kernel_argument(self, data, var_name, vector_length, is_output,
+    def make_kernel_argument(self, data, var_name, is_output,
                              with_vectorization):
         if isinstance(data, dace.data.Array):
             if with_vectorization:
@@ -477,11 +477,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if pname in added:
                 continue
             added.add(pname)
-            if isinstance(p, dace.data.Array):
-                arg = self.make_kernel_argument(p, pname, p.veclen, is_output,
-                                                True)
-            else:
-                arg = self.make_kernel_argument(p, pname, 1, is_output, True)
+            arg = self.make_kernel_argument(p, pname, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.signature(True, name=pname))
