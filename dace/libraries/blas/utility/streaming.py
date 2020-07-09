@@ -5,7 +5,7 @@ Various helper functions and classes for streaming
 import dace
 from dace.memlet import Memlet
 from dace import dtypes
-# from dace.libraries.blas.utility import memoryOperations as memOps
+from dace.libraries.blas.utility import memoryOperations as memOps
 
 
 
