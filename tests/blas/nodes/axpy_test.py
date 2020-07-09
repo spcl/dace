@@ -120,7 +120,7 @@ def test_pure():
     for config in configs:
 
         prec = np.float32 if config[2] == dace.float32 else np.float64
-        a = alinged_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
+        a = aligned_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
         b = aligned_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
         b_ref = b.copy()
 
