@@ -12,6 +12,7 @@ from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
 import dace.libraries.blas.utility.streaming as streaming
+from dace.libraries.blas.utility import memoryOperations as memOps
 from dace.transformation.interstate import GPUTransformSDFG
 
 
