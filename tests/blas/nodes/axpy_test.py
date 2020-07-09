@@ -260,7 +260,7 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     test_sdfg.add_array('y1', shape=[n], dtype=DATATYPE)
     test_sdfg.add_array('z1', shape=[n], dtype=DATATYPE)
 
-    saxpy_node = blas.level1.axpy.Axpy("axpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
+    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
     saxpy_node.implementation = 'fpga_stream'
 
     x_stream = streaming.streamReadVector(
