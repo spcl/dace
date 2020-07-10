@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from itertools import chain, repeat
 
 import numpy as np
@@ -288,7 +289,7 @@ class ONNXModel:
                 dim = dim.subs(sym, inferred_symbols[sym.name])
             return dim
 
-        outputs = {}
+        outputs = OrderedDict()
         # create numpy arrays for the outputs
         for output in self.outputs:
             clean_name = self._clean_array_name(output)
