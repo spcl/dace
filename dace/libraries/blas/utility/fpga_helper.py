@@ -2,8 +2,8 @@
 Various helper functions and classes for streaming BLAS operators on the FPGA
 
 - FPGA state setup with copy to device and back to host
-- streaming classes to stream data from and to memory arrays into FIFO queues
-    using different patterns
+- streaming classes to stream data from/to memory arrays from/to FIFO queues
+    using different access patterns
 """
 
 import dace
@@ -18,7 +18,10 @@ from dace.libraries.blas.utility import memoryOperations as memOps
 # ---------- ---------- ---------- ----------
 
 
-def fpga_setupStates(sdfg, computeState):
+def fpga_setup_states(sdfg, computeState):
+    """
+    Add states for copying data from and to the FPGA
+    """
 
     preState = sdfg.add_state('copyToFPGA')
     postState = sdfg.add_state('copyToCPU')
@@ -29,7 +32,7 @@ def fpga_setupStates(sdfg, computeState):
     return (preState, postState)
 
 
-def fpga_setupConnectStreamers(
+def fpga_setup_connect_streamers(
         sdfg,
         state,
         libNodeIn,
@@ -41,8 +44,13 @@ def fpga_setupConnectStreamers(
         inputMemoryBanks=None,
         outputMemoryBanks=None
     ):
+    """
+    Add states for copying data from and to the FPGA
+    and connect the given streaming classes with their
+    access pattern and mem. location to the BLAS node
+    """
 
-    preState, postState = fpga_setupStates(sdfg, state)
+    preState, postState = fpga_setup_states(sdfg, state)
 
     for i, stream, libCon in zip(range(len(libNodeInCons)), inputStreams, libNodeInCons):
 
@@ -76,7 +84,7 @@ def fpga_setupConnectStreamers(
 
 
 
-def fpga_setupConnectStreamersMultiNode(
+def fpga_setup_ConnectStreamersMultiNode(
         sdfg,
         state,
         libNodeIns,
@@ -88,8 +96,13 @@ def fpga_setupConnectStreamersMultiNode(
         inputMemoryBanks=None,
         outputMemoryBanks=None
     ):
+    """
+    Add states for copying data from and to the FPGA
+    and connect the given streaming classes with their
+    access pattern and mem. location to multiple diff. BLAS nodes
+    """
 
-    preState, postState = fpga_setupStates(sdfg, state)
+    preState, postState = fpga_setup_states(sdfg, state)
 
     for i, stream, libCon, libNodeIn in zip(range(len(libNodeInCons)), inputStreams, libNodeInCons, libNodeIns):
 

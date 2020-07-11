@@ -111,7 +111,7 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None):
                 desc.location = {"bank": bank[i]}
             else:
                 desc.location = {"bank": bank}
-            print("Set bank of:", name, " to ", desc.location)
+            # print("Set bank of:", name, " to ", desc.location)
 
         cpu_in = state.add_read(src)
         fpga_out = state.add_write(dest)
@@ -151,7 +151,7 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None):
                 desc.location = {"bank": bank[i]}
             else:
                 desc.location = {"bank": bank}
-            print("Set bank of:", name, " to ", desc.location)
+            # print("Set bank of:", name, " to ", desc.location)
 
         fpga_in = state.add_read(src)
         cpu_out = state.add_write(dest)

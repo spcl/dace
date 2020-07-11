@@ -11,24 +11,15 @@ import dace
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
-import dace.libraries.blas.utility.streaming as streaming
-from dace.libraries.blas.utility import memoryOperations as memOps
+import dace.libraries.blas.utility.fpga_helper as streaming
+from dace.libraries.blas.utility import memory_operations as memOps
 from dace.transformation.interstate import GPUTransformSDFG
 
 
 # ---------- ----------
-# Arguments & Utility
+# Utility
 # ---------- ----------
-cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
-cmdParser.add_argument("--cublas", dest="cublas", action='store_true')
-cmdParser.add_argument("--mkl", dest="mkl", action='store_true')
-cmdParser.add_argument("--openblas", dest="openblas", action='store_true')
-cmdParser.add_argument("--pure", dest="pure", action='store_true')
-cmdParser.add_argument("--xilinx", dest="xilinx", action='store_true')
-cmdParser.add_argument("--intel_fpga", dest="intel_fpga", action='store_true')
-
-args = cmdParser.parse_args()
 
 
 def aligned_ndarray(arr, alignment=64):
@@ -48,6 +39,46 @@ def aligned_ndarray(arr, alignment=64):
     np.copyto(result, arr)
     assert (result.ctypes.data % alignment) == 0
     return result
+
+
+def run_test(configs, target, implementation, overwrite_y=False):
+
+    testN = int(2**13)
+
+    for config in configs:
+
+        prec = np.float32 if config[2] == dace.float32 else np.float64
+        a = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec), alignment=256)
+        b = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec), alignment=256)
+        b_ref = b.copy()
+
+        c = aligned_ndarray(np.zeros(testN).astype(prec), alignment=256)
+        alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
+
+        ref_result = reference_result(a, b_ref, alpha)
+
+        program = None
+        if target == "cpu":
+            program = cpu_graph(config[2], implementation, testCase=config[3])
+        elif target == "fpga":
+            program = fpga_graph(config[1], config[2], implementation, testCase=config[3])
+        else:
+            program = pure_graph(config[1], config[2], testCase=config[3])
+
+
+        ref_norm = 0
+        if overwrite_y:
+            program(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
+            ref_norm = np.linalg.norm(b - ref_result) / testN
+        else:
+            program(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
+            ref_norm = np.linalg.norm(c - ref_result) / testN
+
+        passed = ref_norm < 1e-5
+
+        if not passed:
+            raise RuntimeError('AXPY pure implementation wrong test results on config: ', config)
+
 
 
 # ---------- ----------
@@ -116,29 +147,7 @@ def test_pure():
         # (1.0, 4, dace.float64, "4")
     ]
 
-    testN = int(2**13)
-
-    for config in configs:
-
-        prec = np.float32 if config[2] == dace.float32 else np.float64
-        a = aligned_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
-        b = aligned_ndarray(np.random.randint(100, size=testN).astype(prec), alignment=256)
-        b_ref = b.copy()
-
-        c = aligned_ndarray(np.zeros(testN).astype(prec), alignment=256)
-        alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
-
-        ref_result = reference_result(a, b_ref, alpha)
-
-        compiledGraph = pure_graph(config[1], config[2], testCase=config[3])
-
-        compiledGraph(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
-
-        ref_norm = np.linalg.norm(c - ref_result) / testN
-        passed = ref_norm < 1e-5
-
-        if not passed:
-            raise RuntimeError('AXPY pure implementation wrong test results on config: ', config)
+    run_test(configs, "pure", "pure")
 
     print(" --> passed")
 
@@ -203,29 +212,7 @@ def test_cpu(implementation):
         (1.0, 1, dace.float64, "3")
     ]
 
-    testN = int(2**13)
-
-    for config in configs:
-
-        prec = np.float32 if config[2] == dace.float32 else np.float64
-        a = np.random.randint(100, size=testN).astype(prec)
-        b = np.random.randint(100, size=testN).astype(prec)
-        b_ref = b.copy()
-
-        # c = np.zeros(testN).astype(prec)
-        alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
-
-        ref_result = reference_result(a, b_ref, alpha)
-
-        compiledGraph = cpu_graph(config[2], implementation, testCase=config[3])
-
-        compiledGraph(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
-
-        ref_norm = np.linalg.norm(b - ref_result) / testN
-        passed = ref_norm < 1e-5
-
-        if not passed:
-            raise RuntimeError("AXPY " + implementation + " implementation wrong test results")
+    run_test(configs, "cpu", implementation, overwrite_y=True)
 
     print(" --> passed")
 
@@ -238,7 +225,7 @@ def test_cpu(implementation):
 
 
 def test_gpu():
-    test_cpu("cublas")
+    test_cpu("cuBLAS")
 
 
 
@@ -285,7 +272,7 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
         vecWidth=vecWidth
     )
 
-    preState, postState = streaming.fpga_setupConnectStreamers(
+    preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
         saxpy_node,
@@ -319,43 +306,32 @@ def test_fpga(vendor):
         (1.0, 4, dace.float64, "4")
     ]
 
-    testN = int(2**13)
-
-    for config in configs:
-
-        prec = np.float32 if config[2] == dace.float32 else np.float64
-        a = np.random.randint(100, size=testN).astype(prec)
-        b = np.random.randint(100, size=testN).astype(prec)
-        b_ref = b.copy()
-
-        # c = np.zeros(testN).astype(prec)
-        alpha = np.float32(config[0]) if config[2] == dace.float32 else np.float64(config[0])
-
-        ref_result = reference_result(a, b_ref, alpha)
-
-        compiledGraph = fpga_graph(config[1], config[2], vendor, testCase=config[3])
-
-        compiledGraph(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
-
-        ref_norm = np.linalg.norm(b - ref_result) / testN
-        passed = ref_norm < 1e-5
-
-        if not passed:
-            raise RuntimeError("AXPY " + vendor + " implementation wrong test results")
+    run_test(configs, "fpga", vendor)
 
     print(" --> passed")
 
 
 if __name__ == "__main__":
+
+    cmdParser = argparse.ArgumentParser(allow_abbrev=False)
+
+    cmdParser.add_argument("--cublas", dest="cublas", action='store_true')
+    cmdParser.add_argument("--mkl", dest="mkl", action='store_true')
+    cmdParser.add_argument("--openblas", dest="openblas", action='store_true')
+    cmdParser.add_argument("--pure", dest="pure", action='store_true')
+    cmdParser.add_argument("--xilinx", dest="xilinx", action='store_true')
+    cmdParser.add_argument("--intel_fpga", dest="intel_fpga", action='store_true')
+
+    args = cmdParser.parse_args()
     
     if args.pure:
         test_pure()
 
     if args.mkl:
-        test_cpu("mkl")
+        test_cpu("MKL")
 
     if args.openblas:
-        test_cpu("openblas")
+        test_cpu("OpenBLAS")
 
     if args.cublas:
         test_gpu()

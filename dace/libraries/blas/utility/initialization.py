@@ -7,13 +7,9 @@ from dace import dtypes
 
 
 
-def initArray(state, array, length, value):
+def init_array(state, array, length, value):
     """Initialize memory array in given state from 0 to length (excl.)
-    Args:
-        state: dace.state
-        array: dace.memory (str)
-        legnth (str): upper bound of initialization
-        value (str or numeric): init. value
+        with the given value
     """
     buf_write_init = state.add_write(array)
 
@@ -37,13 +33,9 @@ out = {}
 
 
 
-def fpga_initArray(state, array, length, value, unroll=False):
+def fpga_init_array(state, array, length, value, unroll=False):
     """Initialize memory array in given state from 0 to length (excl.)
-    Args:
-        state: dace.state
-        array: dace.memory (str)
-        legnth (str): upper bound of initialization
-        value (str or numeric): init. value
+        with the given value on the FPGA; optional unrolling.
     """
     buf_write_init = state.add_write(array)
 
