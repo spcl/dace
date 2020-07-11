@@ -8,37 +8,7 @@ from dace.libraries.blas.utility.initialization import *
 from dace import dtypes
 
 
-def simpleCopy(state, src, dest, memSize):
-
-    data_in = state.add_read(src)
-    data_out = state.add_write(dest)
-
-    copyMap_entry, copyMap_exit = state.add_map(
-        'copyToLocal_map',
-        dict(i='0:{}'.format(memSize))
-    )
-
-    copy_tasklet = state.add_tasklet(
-        'copyToLocal_task',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
-    )
-
-    state.add_memlet_path(
-        data_in, copyMap_entry, copy_tasklet,
-        dst_conn='inCon',
-        memlet=Memlet.simple(data_in.data, 'i')
-    )
-
-    state.add_memlet_path(
-        copy_tasklet, copyMap_exit, data_out,
-        src_conn='outCon',
-        memlet=Memlet.simple(data_out.data, 'i')
-    )
-
-
-def fpga_copyGlobalToLocal(sdfg, state, src, memSize, dtype):
+def fpga_copy_global_to_local(sdfg, state, src, memSize, dtype):
 
     descriptor = src + "_local"
     sdfg.add_array(descriptor,
@@ -78,7 +48,7 @@ def fpga_copyGlobalToLocal(sdfg, state, src, memSize, dtype):
 
     return buf_out, descriptor
 
-def fpga_copyGlobalToRegister(sdfg, state, src, memSize, dtype):
+def fpga_copy_global_to_register(sdfg, state, src, memSize, dtype):
 
     descriptor = src + "_reg"
     sdfg.add_array(descriptor,
@@ -119,7 +89,7 @@ def fpga_copyGlobalToRegister(sdfg, state, src, memSize, dtype):
     return buf_out, descriptor
 
 
-def fpga_copyCPUToGlobal(sdfg, state, sources, sizes, types, bank=None):
+def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None):
 
     inputs = zip(sources, sizes, types, range(len(sources)))
     outputs = []
@@ -159,7 +129,7 @@ def fpga_copyCPUToGlobal(sdfg, state, sources, sizes, types, bank=None):
 
 
 
-def fpga_copyGlobalToCPU(sdfg, state, destinations, sizes, types, bank=None):
+def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None):
 
     inputs = zip(destinations, sizes, types, range(len(sizes)))
     outputs = []
@@ -197,7 +167,7 @@ def fpga_copyGlobalToCPU(sdfg, state, destinations, sizes, types, bank=None):
     return (outputs, names)
 
 
-def fpga_copyGlobalToLocalSubset(state, src, dest, size, start):
+def fpga_copy_global_to_local_subset(state, src, dest, size, start):
 
     x_in = state.add_read(src)
     x_buf = state.add_write(dest)
@@ -229,7 +199,7 @@ def fpga_copyGlobalToLocalSubset(state, src, dest, size, start):
     )
 
 
-def fpga_copyGlobalToLocalTile(state, src, dest, rowSize, rowStart, colSize, colStart, globalCol):
+def fpga_copy_global_to_local_tile(state, src, dest, rowSize, rowStart, colSize, colStart, globalCol):
 
     x_in = state.add_read(src)
     x_buf = state.add_write(dest)
@@ -268,7 +238,7 @@ def fpga_copyGlobalToLocalTile(state, src, dest, rowSize, rowStart, colSize, col
     )
 
 
-def fpga_streamToLocal(state, srcData, dest, size):
+def fpga_stream_to_local(state, srcData, dest, size):
 
     data_out = state.add_write(dest)
 

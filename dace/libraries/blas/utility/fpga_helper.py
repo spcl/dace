@@ -1,5 +1,9 @@
 """
-Various helper functions and classes for streaming
+Various helper functions and classes for streaming BLAS operators on the FPGA
+
+- FPGA state setup with copy to device and back to host
+- streaming classes to stream data from and to memory arrays into FIFO queues
+    using different patterns
 """
 
 import dace

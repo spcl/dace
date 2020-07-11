@@ -10,7 +10,7 @@ from dace.libraries.blas.utility.streaming import *
 
 
 @dace.library.expansion
-class Expand_AXPY_Vectorized(ExpandTransformation):
+class ExpandAxpyVectorized(ExpandTransformation):
 
     environments = []
 
@@ -76,11 +76,11 @@ class Expand_AXPY_Vectorized(ExpandTransformation):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) + ".")
-        return Expand_AXPY_Vectorized.make_sdfg(node.dtype, node.vecWidth, node.n, node.a)
+        return ExpandAxpyVectorized.make_sdfg(node.dtype, node.vecWidth, node.n, node.a)
 
 
 @dace.library.expansion
-class Expand_AXPY_FPGA_Streaming(ExpandTransformation):
+class ExpandAxpyFPGAStreaming(ExpandTransformation):
 
     environments = []
 
@@ -164,13 +164,13 @@ class Expand_AXPY_FPGA_Streaming(ExpandTransformation):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) + ".")
-        return Expand_AXPY_FPGA_Streaming.make_sdfg(node.dtype, int(node.vecWidth), node.n, node.a)
+        return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.vecWidth), node.n, node.a)
 
 
 
 
 @dace.library.expansion
-class Expand_AXPY_MKL(ExpandTransformation):
+class ExpandAxpyMKL(ExpandTransformation):
 
     environments = [environments.intel_mkl.IntelMKL]
 
@@ -235,23 +235,23 @@ class Expand_AXPY_MKL(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
 
-        return Expand_AXPY_MKL.make_sdfg(node.dtype, node.n, node.a)
+        return ExpandAxpyMKL.make_sdfg(node.dtype, node.n, node.a)
 
 
 
 @dace.library.expansion
-class Expand_AXPY_OPENBLAS(ExpandTransformation):
+class ExpandAxpyOpenBLAS(ExpandTransformation):
 
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, state, sdfg):
-        return Expand_AXPY_MKL.expansion(node, state, sdfg)
+        return ExpandAxpyMKL.expansion(node, state, sdfg)
 
 
 
 
-class Expand_AXPY_CUBLAS(ExpandTransformation):
+class ExpandAxpyCuBLAS(ExpandTransformation):
 
     environments = [environments.cublas.cuBLAS]
 
@@ -323,7 +323,7 @@ class Expand_AXPY_CUBLAS(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
 
-        return Expand_AXPY_CUBLAS.make_sdfg(node.dtype, node.n, node.a, node)
+        return ExpandAxpyCuBLAS.make_sdfg(node.dtype, node.n, node.a, node)
 
 
 
@@ -332,11 +332,11 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "pure": Expand_AXPY_Vectorized,
-        "fpga_stream": Expand_AXPY_FPGA_Streaming,
-        "mkl": Expand_AXPY_MKL,
-        "openblas": Expand_AXPY_OPENBLAS,
-        "cublas": Expand_AXPY_CUBLAS
+        "pure": ExpandAxpyVectorized,
+        "fpga_stream": ExpandAxpyFPGAStreaming,
+        "MKL": ExpandAxpyMKL,
+        "OpenBLAS": ExpandAxpyOpenBLAS,
+        "cuBLAS": ExpandAxpyCuBLAS
     }
     default_implementation = 'pure'
 
