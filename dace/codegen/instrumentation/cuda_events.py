@@ -1,5 +1,5 @@
 from dace import dtypes, registry
-from dace.sdfg import nodes
+from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 
 
@@ -11,17 +11,6 @@ class CUDAEventProvider(InstrumentationProvider):
 
         # For other file headers
         sdfg.append_global_code('\n#include <cuda_runtime.h>', None)
-
-    def _idstr(self, sdfg, state, node):
-        if state is not None:
-            if node is not None:
-                node = state.node_id(node)
-            else:
-                node = ''
-            state = sdfg.node_id(state)
-        else:
-            state = ''
-        return str(state) + '_' + str(node)
 
     def _get_sobj(self, node):
         # Get object behind scope
@@ -55,8 +44,9 @@ dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
         state_id = sdfg.node_id(state)
         # Create CUDA events for each instrumented scope in the state
         for node in state.nodes():
-            if isinstance(node, nodes.EntryNode):
-                s = self._get_sobj(node)
+            if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
+                s = (self._get_sobj(node)
+                     if isinstance(node, nodes.EntryNode) else node)
                 if s.instrument == dtypes.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(self._create_event('b' + idstr), sdfg,
@@ -82,15 +72,14 @@ dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
             local_stream.write(
                 self._report('State %s' % state.label, sdfg, state), sdfg,
                 state_id)
-            local_stream.write(self._destroy_event('b' + idstr), sdfg,
-                               state_id)
-            local_stream.write(self._destroy_event('e' + idstr), sdfg,
-                               state_id)
+            local_stream.write(self._destroy_event('b' + idstr), sdfg, state_id)
+            local_stream.write(self._destroy_event('e' + idstr), sdfg, state_id)
 
         # Destroy CUDA events for scopes in the state
         for node in state.nodes():
-            if isinstance(node, nodes.EntryNode):
-                s = self._get_sobj(node)
+            if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
+                s = (self._get_sobj(node)
+                     if isinstance(node, nodes.EntryNode) else node)
                 if s.instrument == dtypes.InstrumentationType.CUDA_Events:
                     idstr = self._idstr(sdfg, state, node)
                     local_stream.write(self._destroy_event('b' + idstr), sdfg,
@@ -121,5 +110,34 @@ dace::perf::report.add("cudaev_{timer_name}", __dace_ms_{id});'''.format(
             outer_stream.write(self._record_event(idstr, node._cuda_stream),
                                sdfg, state_id, node)
             outer_stream.write(
-                self._report('%s %s' % (type(s).__name__, s.label), sdfg,
-                             state, entry_node), sdfg, state_id, node)
+                self._report('%s %s' % (type(s).__name__, s.label), sdfg, state,
+                             entry_node), sdfg, state_id, node)
+
+    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
+                      global_stream):
+        if (not isinstance(node, nodes.CodeNode)
+                or is_devicelevel_gpu(sdfg, state, node)):
+            return
+        # Only run for host nodes
+        # TODO(later): Implement "clock64"-based GPU counters
+        if node.instrument == dtypes.InstrumentationType.CUDA_Events:
+            state_id = sdfg.node_id(state)
+            idstr = 'b' + self._idstr(sdfg, state, node)
+            outer_stream.write(self._record_event(idstr, node._cuda_stream),
+                               sdfg, state_id, node)
+
+    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
+                    global_stream):
+        if (not isinstance(node, nodes.Tasklet)
+                or is_devicelevel_gpu(sdfg, state, node)):
+            return
+        # Only run for host nodes
+        # TODO(later): Implement "clock64"-based GPU counters
+        if node.instrument == dtypes.InstrumentationType.CUDA_Events:
+            state_id = sdfg.node_id(state)
+            idstr = 'e' + self._idstr(sdfg, state, node)
+            outer_stream.write(self._record_event(idstr, node._cuda_stream),
+                               sdfg, state_id, node)
+            outer_stream.write(
+                self._report('%s %s' % (type(node).__name__, node.label), sdfg,
+                             state, node), sdfg, state_id, node)
