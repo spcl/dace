@@ -15,30 +15,8 @@ import dace.libraries.blas.utility.fpga_helper as streaming
 from dace.libraries.blas.utility import memory_operations as memOps
 from dace.transformation.interstate import GPUTransformSDFG
 
+from dace.libraries.blas.utility.memory_operations import aligned_ndarray
 
-# ---------- ----------
-# Utility
-# ---------- ----------
-
-
-
-def aligned_ndarray(arr, alignment=64):
-    """
-    Allocates a and returns a copy of ``arr`` as an ``alignment``-byte aligned
-    array. Useful for aligned vectorized access.
-    
-    Based on https://stackoverflow.com/a/20293172/6489142
-    """
-    if (arr.ctypes.data % alignment) == 0:
-        return arr
-
-    extra = alignment // arr.itemsize
-    buf = np.empty(arr.size + extra, dtype=arr.dtype)
-    ofs = (-buf.ctypes.data % alignment) // arr.itemsize
-    result = buf[ofs:ofs + arr.size].reshape(arr.shape)
-    np.copyto(result, arr)
-    assert (result.ctypes.data % alignment) == 0
-    return result
 
 
 def run_test(configs, target, implementation, overwrite_y=False):
@@ -239,7 +217,8 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    test_sdfg = dace.SDFG("axpy_test_v" + str(vecWidth) + "_" + testCase)
+    vendor_mark = "x" if vendor == "xilinx" else "i"
+    test_sdfg = dace.SDFG("axpy_test_" + vendor_mark + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
 
     test_sdfg.add_symbol(a.name, DATATYPE)
@@ -299,8 +278,8 @@ def test_fpga(vendor):
     print("Run BLAS test: AXPY fpga", vendor + "...")
 
     configs = [
-        (1.0, 1, dace.float32, "0"),
-        (0.0, 1, dace.float32, "1"),
+        (0.0, 1, dace.float32, "0"),
+        (1.0, 1, dace.float32, "1"),
         (random.random(), 1, dace.float32, "2"),
         (1.0, 1, dace.float64, "3"),
         (1.0, 4, dace.float64, "4")

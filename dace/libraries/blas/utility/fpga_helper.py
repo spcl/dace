@@ -9,7 +9,7 @@ Various helper functions and classes for streaming BLAS operators on the FPGA
 import dace
 from dace.memlet import Memlet
 from dace import dtypes
-from dace.libraries.blas.utility import memoryOperations as memOps
+from dace.libraries.blas.utility import memory_operations as memOps
 
 
 
@@ -241,7 +241,7 @@ class streamReadVector(streamReadBase):
     def copyToFPGA(self, sdfg, preState, bank=None):
 
 
-        fpga_inputs, fpgaIn_names = memOps.fpga_copyCPUToGlobal(
+        fpga_inputs, fpgaIn_names = memOps.fpga_copy_CPU_to_global(
             sdfg,
             preState,
             [self.source],
@@ -405,7 +405,7 @@ class streamWriteVector(streamWriteBase):
 
     def copyToCPU(self, sdfg, postState, bank=None):
 
-        fpga_outputs, fpgaOut_names = memOps.fpga_copyGlobalToCPU(
+        fpga_outputs, fpgaOut_names = memOps.fpga_copy_global_to_CPU(
             sdfg,
             postState,
             [self.destination],
