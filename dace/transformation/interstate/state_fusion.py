@@ -226,26 +226,26 @@ class StateFusion(pattern_matching.Transformation):
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
         # Merge common (data) nodes
-        for node in first_input:
-            try:
-                old_node = next(x for x in second_input
-                                if x.label == node.label)
-            except StopIteration:
-                continue
-            sdutil.change_edge_src(first_state, old_node, node)
-            first_state.remove_node(old_node)
-            second_input.remove(old_node)
-            node.access = dtypes.AccessType.ReadWrite
-        for node in first_output:
-            try:
-                new_node = next(x for x in second_input
-                                if x.label == node.label)
-            except StopIteration:
-                continue
-            sdutil.change_edge_dest(first_state, node, new_node)
-            first_state.remove_node(node)
-            second_input.remove(new_node)
-            new_node.access = dtypes.AccessType.ReadWrite
+        # for node in first_input:
+        #     try:
+        #         old_node = next(x for x in second_input
+        #                         if x.label == node.label)
+        #     except StopIteration:
+        #         continue
+        #     sdutil.change_edge_src(first_state, old_node, node)
+        #     first_state.remove_node(old_node)
+        #     second_input.remove(old_node)
+        #     node.access = dtypes.AccessType.ReadWrite
+        # for node in first_output:
+        #     try:
+        #         new_node = next(x for x in second_input
+        #                         if x.label == node.label)
+        #     except StopIteration:
+        #         continue
+        #     sdutil.change_edge_dest(first_state, node, new_node)
+        #     first_state.remove_node(node)
+        #     second_input.remove(new_node)
+        #     new_node.access = dtypes.AccessType.ReadWrite
         # Check if any input nodes of the second state have to be merged with
         # non-input/output nodes of the first state.
         for node in second_input:
