@@ -55,15 +55,11 @@ def run_test(configs, target, implementation, overwrite_y=False):
 
         ref_norm = 0
         if target == "fpga":
-
-            print("----> Start config:", config[3])
             queue = Queue()
             p = Process(target=run_program, args=(program, a, b, c, alpha, testN, ref_result, queue))
             p.start()
             p.join()
             ref_norm = queue.get()
-            print("----> End config:", config[3])
-            
         elif overwrite_y:
             program(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
             ref_norm = np.linalg.norm(b - ref_result) / testN
