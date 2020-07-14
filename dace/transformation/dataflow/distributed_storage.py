@@ -5,6 +5,7 @@ import copy
 import warnings
 from abc import ABC
 import random
+import sympy
 
 from dace import dtypes, registry, symbolic, subsets, sdfg as sd
 from dace.properties import (LambdaProperty, Property, ShapeProperty, DictProperty,
@@ -130,34 +131,66 @@ class DataDistribution(pattern_matching.Transformation):
             local_ranges = [(0, 0, 1)] * 2 * dims
             dist_ranges = [(0, 0, 1)] * pdims
             for k, v in self.arrayspace_mapping.items():
+                # Nasty hack because sympy cannot do 0 // symbol
+                # but does 0 / symbol
+                op0 = "//"
+                op1 = "//"
+                if isinstance(e.data.subset, subsets.Range):
+                    subset0 = e.data.subset[k][0]
+                    subset1 = e.data.subset[k][1]
+                    if e.data.subset[k][0] == 0:
+                        op0 = "/"
+                    if e.data.subset[k][1] == 0:
+                        op1 = "/"
+                else:
+                    subset0 = e.data.subset[k]
+                    subset1 = e.data.subset[k]
+                    if e.data.subset[k] == 0:
+                        op0 = "/"
+                        op1 = "/"
                 local_ranges[k] = (
                     symbolic.pystr_to_symbolic(
-                        "({}) // (({}) * ({}))".format(
-                            e.data.subset[k][0],
+                        "({}) {} (({}) * ({}))".format(
+                            subset0, op0,
                             space.block_sizes[v],
                             space.process_grid[v])),
                     symbolic.pystr_to_symbolic(
-                        "({}) // (({}) * ({}))".format(
-                            e.data.subset[k][1],
+                        "({}) {} (({}) * ({}))".format(
+                            subset1, op1,
                             space.block_sizes[v],
                             space.process_grid[v])), 1)
                 local_ranges[k + dims] = (
                     symbolic.pystr_to_symbolic(
-                        "({}) % ({})".format(e.data.subset[k][0],
-                                             space.block_sizes[v])),
+                        "({}) % ({})".format(subset0, space.block_sizes[v])),
                     symbolic.pystr_to_symbolic(
-                        "({}) % ({})".format(e.data.subset[k][1],
-                                             space.block_sizes[v])), 1)
+                        "({}) % ({})".format(subset1, space.block_sizes[v])), 1)
             for k, v in inv_mapping.items():
+                # Nasty hack because sympy cannot do 0 // symbol
+                # but does 0 / symbol
+                op0 = "//"
+                op1 = "//"
+                if isinstance(e.data.subset, subsets.Range):
+                    subset0 = e.data.subset[v][0]
+                    subset1 = e.data.subset[v][1]
+                    if e.data.subset[v][0] == 0:
+                        op0 = "/"
+                    if e.data.subset[v][1] == 0:
+                        op1 = "/"
+                else:
+                    subset0 = e.data.subset[v]
+                    subset1 = e.data.subset[v]
+                    if e.data.subset[v] == 0:
+                        op0 = "/"
+                        op1 = "/"
                 dist_ranges[k] = (
                     symbolic.pystr_to_symbolic(
-                        "(({}) // ({})) % ({})".format(
-                            e.data.subset[v][0],
+                        "(({}) {} ({})) % ({})".format(
+                            subset0, op0, 
                             space.block_sizes[k],
                             space.process_grid[k])),
                     symbolic.pystr_to_symbolic(
-                        "(({}) // ({})) % ({})".format(
-                            e.data.subset[v][1],
+                        "(({}) {} ({})) % ({})".format(
+                            subset1, op1,
                             space.block_sizes[k],
                             space.process_grid[k])), 1)
             e.data.subset = subsets.Range(local_ranges)
@@ -232,10 +265,14 @@ class MapDistribution(pattern_matching.Transformation):
         for k, v in self.iterationspace_mapping.items():
             inv_mapping[v] = k
 
-        pidx = ['p_' + str(i) for i in range(pdims)]
-        for k, v in inv_mapping.items():
-            pidx[k] = 'p_' + midx[v]
-        pspace = [(0, s-1, 1) for s in space.process_grid]
+        # pidx = ['p_' + str(i) for i in range(pdims)]
+        # for k, v in inv_mapping.items():
+        #     pidx[k] = 'p_' + midx[v]
+        # pspace = [(0, s-1, 1) for s in space.process_grid]
+        pidx = ['p_' + idx for idx in midx]
+        pspace = [None] * dims
+        for k, v in self.iterationspace_mapping.items():
+            pspace[k] = (0, space.process_grid[v] - 1, 1)
         pmap = nodes.Map('p_' + mname, pidx, subsets.Range(pspace))
         pentry = nodes.MapEntry(pmap)
         pexit = nodes.MapExit(pmap)
@@ -252,10 +289,10 @@ class MapDistribution(pattern_matching.Transformation):
             ospace[k] = (
                 "{} + ({} * ({}) + {}) * ({})".format(
                     mspace[k][0], lidx[k], space.process_grid[v],
-                    pidx[v], space.block_sizes[v]),
+                    pidx[k], space.block_sizes[v]),
                  "{} + ({} * ({}) + {} + 1) * ({}) - 1".format(
                     mspace[k][0], lidx[k], space.process_grid[v],
-                    pidx[v], space.block_sizes[v]), 1)
+                    pidx[k], space.block_sizes[v]), 1)
         lmap = nodes.Map('l_' + mname, lidx, subsets.Range(lspace))
         lentry = nodes.MapEntry(lmap)
         lexit = nodes.MapExit(lmap)
@@ -270,6 +307,10 @@ class MapDistribution(pattern_matching.Transformation):
 
         graph.remove_nodes_from([mentry, mexit])
 
+        fidx = sympy.Wild("fidx")
+        proc = sympy.Wild("proc")
+        block = sympy.Wild("block")
+
         for e1 in mentry_out_edges:
             for e2 in mentry_in_edges:
                 if e2.data.data == e1.data.data:
@@ -279,11 +320,29 @@ class MapDistribution(pattern_matching.Transformation):
                         new_subset = [None] * len(data.shape)
                         new_dist_subset = [(0, 0, 1)] * pdims
                         for k, v in data.arrayspace_mapping.items():
-                            new_subset[k] = (lidx[v], lidx[v], 1)
-                            new_subset[k + len(data.shape) // 2] = (
-                                "{} - ({})".format(oidx[v], ospace[v][0]),
-                                "{} - ({})".format(oidx[v], ospace[v][0]), 1)
-                            new_dist_subset[v] = (pidx[v], pidx[v], 1)
+                            simplify = False
+                            matches = mem.subset[k][0].match(
+                                fidx // (proc * block))
+                            if matches and v in inv_mapping.keys():
+                                idx_expr = matches[fidx]
+                                actual_v = inv_mapping[v]
+                                if (symbolic.pystr_to_symbolic(oidx[actual_v])
+                                        in idx_expr.free_symbols):
+                                    simplify = True
+                            if simplify:
+                                new_subset[k] = (lidx[actual_v],
+                                                 lidx[actual_v], 1)
+                                new_subset[k + len(data.shape) // 2] = (
+                                    "{} - ({})".format(oidx[actual_v],
+                                                       ospace[actual_v][0]),
+                                    "{} - ({})".format(oidx[actual_v],
+                                                       ospace[actual_v][0]), 1)
+                                new_dist_subset[v] = (pidx[actual_v],
+                                                      pidx[actual_v], 1)
+                            else:
+                                new_subset[k] = mem.subset[k]
+                                new_subset[k + len(data.shape) // 2] = mem.subset[k + len(data.shape) // 2]
+                                new_dist_subset[v] = mem.dist_subset[v]
                         mem.subset = subsets.Range(new_subset)
                         mem.dist_subset = subsets.Range(new_dist_subset)
                     graph.add_memlet_path(
@@ -299,11 +358,29 @@ class MapDistribution(pattern_matching.Transformation):
                         new_subset = [None] * len(data.shape)
                         new_dist_subset = [(0, 0, 1)] * pdims
                         for k, v in data.arrayspace_mapping.items():
-                            new_subset[k] = (lidx[v], lidx[v], 1)
-                            new_subset[k + len(data.shape) // 2] = (
-                                "{} - ({})".format(oidx[v], ospace[v][0]),
-                                "{} - ({})".format(oidx[v], ospace[v][0]), 1)
-                            new_dist_subset[v] = (pidx[v], pidx[v], 1)
+                            simplify = False
+                            matches = mem.subset[k][0].match(
+                                fidx // (proc * block))
+                            if matches and v in inv_mapping.keys():
+                                idx_expr = matches[fidx]
+                                actual_v = inv_mapping[v]
+                                if (symbolic.pystr_to_symbolic(oidx[actual_v])
+                                        in idx_expr.free_symbols):
+                                    simplify = True
+                            if simplify:
+                                new_subset[k] = (lidx[actual_v],
+                                                 lidx[actual_v], 1)
+                                new_subset[k + len(data.shape) // 2] = (
+                                    "{} - ({})".format(oidx[actual_v],
+                                                       ospace[actual_v][0]),
+                                    "{} - ({})".format(oidx[actual_v],
+                                                       ospace[actual_v][0]), 1)
+                                new_dist_subset[v] = (pidx[actual_v],
+                                                      pidx[actual_v], 1)
+                            else:
+                                new_subset[k] = mem.subset[k]
+                                new_subset[k + len(data.shape) // 2] = mem.subset[k + len(data.shape) // 2]
+                                new_dist_subset[v] = mem.dist_subset[v]
                         mem.subset = subsets.Range(new_subset)
                         mem.dist_subset = subsets.Range(new_dist_subset)
                     graph.add_memlet_path(

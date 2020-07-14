@@ -6,6 +6,8 @@ import numpy as np
 import scipy as sp
 
 N = dace.symbol('N')
+P = dace.symbol('P')
+B = dace.symbol('B')
 
 
 @dace.program(dace.float64, dace.float64[N], dace.float64[N])
@@ -36,14 +38,40 @@ if __name__ == "__main__":
     X = np.random.rand(N.get()).astype(np.float64)
     Y = np.random.rand(N.get()).astype(np.float64)
 
-    A_regression = np.float64()
+    A_regression = np.float64(0)
     X_regression = np.ndarray([N.get()], dtype=np.float64)
     Y_regression = np.ndarray([N.get()], dtype=np.float64)
     A_regression = A
     X_regression[:] = X[:]
     Y_regression[:] = Y[:]
 
-    axpy(A, X, Y)
+    # axpy(A, X, Y)
+
+    from dace.transformation.dataflow import (MapTiling, MapDistribution,
+                                              DataDistribution, InLocalStorage,
+                                              AccumulateTransient)
+    sdfg = axpy.to_sdfg()
+    sdfg.add_space("axpy", (P,), (B,))
+    sdfg.apply_transformations([DataDistribution, DataDistribution,
+                                MapDistribution],
+                                options=[
+                                    {'array': 'X',
+                                     'space': 'axpy',
+                                     'arrayspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]},
+                                    {'array': 'Y',
+                                     'space': 'axpy',
+                                     'arrayspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]},
+                                    {'space': 'axpy',
+                                     'iterationspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]}],
+                                validate=False)
+
+    sdfg(A=A, X=X, Y=Y, N=N, P=P, B=B)
 
     c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
                                            arrays=(X_regression, Y_regression))

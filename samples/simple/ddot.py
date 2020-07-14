@@ -6,6 +6,8 @@ import dace
 import numpy as np
 
 N = dace.symbol("N")
+P = dace.symbol("P")
+Bl = dace.symbol("Bl")
 
 
 @dace.program
@@ -37,14 +39,45 @@ if __name__ == "__main__":
     out_AB[0] = np.float64(0)
     out_AA[0] = np.float64(0)
 
-    cdot = dace.compile(dot, A, B, out_AB)
-    cdot(A=A, B=B, out=out_AB, N=N)
+    from dace.transformation.dataflow import (MapTiling, MapDistribution,
+                                              DataDistribution, InLocalStorage,
+                                              AccumulateTransient)
+    sdfg = dot.to_sdfg()
+    sdfg.add_space("dot", (P,), (Bl,))
+    sdfg.apply_transformations([DataDistribution, DataDistribution,
+                                DataDistribution, MapDistribution],
+                                options=[
+                                    {'array': 'A',
+                                     'space': 'dot',
+                                     'arrayspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]},
+                                    {'array': 'B',
+                                     'space': 'dot',
+                                     'arrayspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]},
+                                    {'array': 'out',
+                                     'space': 'dot',
+                                     'arrayspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]},
+                                    {'space': 'dot',
+                                     'iterationspace_mapping': {0: 0},
+                                     'constant_offset': [0],
+                                     'dependent_offset': [0]}],
+                                validate=False)
 
-    # To allow reloading the SDFG code file with the same name
-    del cdot
+    sdfg(A=A, B=B, out=out_AB, N=N, P=P, Bl=Bl)
 
-    cdot_self = dace.compile(dot, A, A, out_AA)
-    cdot_self(A=A, B=A, out=out_AA, N=N)
+    # cdot = dace.compile(dot, A, B, out_AB)
+    # cdot(A=A, B=B, out=out_AB, N=N)
+
+    # # To allow reloading the SDFG code file with the same name
+    # del cdot
+
+    # cdot_self = dace.compile(dot, A, A, out_AA)
+    # cdot_self(A=A, B=A, out=out_AA, N=N)
 
     diff_ab = np.linalg.norm(np.dot(A, B) - out_AB) / float(N.get())
     diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(N.get())
