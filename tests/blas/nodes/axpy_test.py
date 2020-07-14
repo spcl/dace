@@ -20,7 +20,7 @@ from dace.libraries.blas.utility.memory_operations import aligned_ndarray
 from multiprocessing import Process, Queue
 
 
-def run_program(program, a, b, c, alpha, n, queue):
+def run_program(program, a, b, c, alpha, testN, queue):
 
     program(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
     ref_norm = np.linalg.norm(c - ref_result) / testN
