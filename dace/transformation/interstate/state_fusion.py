@@ -136,7 +136,7 @@ class StateFusion(pattern_matching.Transformation):
 
                 # Otherwise, check if any of the second state's connected
                 # components for matching input
-                for node in cc_output:
+                for node in out_nodes:
                     if (next((x for x in second_input if x.label == node.label),
                              None) is not None):
                         check_strict -= 1
