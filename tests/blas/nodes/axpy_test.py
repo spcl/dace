@@ -20,7 +20,7 @@ from dace.libraries.blas.utility.memory_operations import aligned_ndarray
 from multiprocessing import Process, Queue
 
 
-def run_program(program, a, b, c, alpha, testN, queue):
+def run_program(program, a, b, c, alpha, testN, ref_result, queue):
 
     program(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
     ref_norm = np.linalg.norm(c - ref_result) / testN
@@ -57,7 +57,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
         ref_norm = 0
         if target == "fpga":
             queue = Queue()
-            p = Process(target=run_program, args=(program, a, b, c, alpha, testN, queue))
+            p = Process(target=run_program, args=(program, a, b, c, alpha, testN, ref_result, queue))
             p.start()
             p.join()
             ref_norm = queue.get()
