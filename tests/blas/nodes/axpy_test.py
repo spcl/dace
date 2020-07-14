@@ -186,7 +186,7 @@ def cpu_graph(precision, implementation, testCase="0"):
         memlet=Memlet.simple(z_out, "0:n")
     )
 
-    if saxpy_node.implementation == "cublas":
+    if saxpy_node.implementation == "cuBLAS":
         test_sdfg.apply_transformations(GPUTransformSDFG)
 
     test_sdfg.expand_library_nodes()
