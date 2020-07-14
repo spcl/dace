@@ -159,7 +159,8 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' % sdfg.build_folder, sdfg)
+                'dace::perf::report.save("%s/perf");' %
+                sdfg.build_folder.replace('\\', '/'), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
