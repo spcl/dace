@@ -32,6 +32,13 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
 from dace.properties import (make_properties, Property, CodeProperty,
                              DictProperty, OrderedDictProperty, CodeBlock)
+from dace.distributions import ProcessGrid
+from dace.symbolic import symbol
+
+Integer = Union[int, symbol]
+ShapeTuple = Tuple[Integer]
+ShapeList = List[Integer]
+Shape = Union[ShapeTuple, ShapeList]
 
 
 def _arrays_to_json(arrays):
@@ -189,6 +196,10 @@ class SDFG(OrderedDiGraph):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
+    _process_grids = Property(dtype=dict,
+                              desc="Process grids for this SDFG",
+                              to_json=_arrays_to_json,  # TODO: Does this work?
+                              from_json=_arrays_from_json)
     symbols = DictProperty(str,
                            dtypes.typeclass,
                            desc="Global symbols for this SDFG")
@@ -238,6 +249,7 @@ class SDFG(OrderedDiGraph):
         self._sdfg_list = [self]
         self._start_state = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self._process_grids = {}  # type: Dict[str, distributions.ProcessGrid]
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -311,6 +323,13 @@ class SDFG(OrderedDiGraph):
             in this SDFG, with an extra `None` entry for empty memlets.
         """
         return self._arrays
+
+    @property
+    def process_grids(self):
+        """ Returns a dictionary of process grids (`ProcessGrid` objects)
+            used in this SDFG.
+        """
+        return self._process_grids
 
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
@@ -1302,6 +1321,39 @@ class SDFG(OrderedDiGraph):
                 self.add_symbol(sym.name, sym.dtype)
 
         return name
+
+    def add_process_grid(self,
+                         name: str,
+                         pgrid: Shape,
+                         find_new_name: bool=False):
+        """ Adds a process grid to the SDFG process grid store. """
+
+        if not isinstance(name, str):
+            raise TypeError("Process grid name must be a string. Got %s" %
+                            type(name).__name__)
+
+        # If exists, fail
+        if name in self._process_grids:
+            if not find_new_name:
+                raise NameError(
+                    'Process grid with name "%s" already exists '
+                    "in SDFG" % name)
+            else:
+                name = self._find_new_name(name)
+
+        # convert strings to int if possible
+        newpgrid = []
+        for s in pgrid:
+            try:
+                newpgrid.append(int(s))
+            except:
+                newpgrid.append(dace.symbolic.pystr_to_symbolic(s))
+        pgrid = newpgrid
+
+        grid = ProcessGrid(pgrid)
+
+        self._process_grids[name] = grid
+        return name, grid
 
     def add_loop(
         self,

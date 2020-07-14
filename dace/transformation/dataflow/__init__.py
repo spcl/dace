@@ -34,3 +34,6 @@ from .mpi import MPITransformMap
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
+
+# Distributed
+from .block_cyclic_distribution import BlockCyclicData, BlockCyclicMap

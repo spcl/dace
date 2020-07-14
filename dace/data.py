@@ -43,6 +43,7 @@ class Data(object):
 
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
+    dist_shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
     storage = Property(dtype=dtypes.StorageType,
                        desc="Storage location",
@@ -60,10 +61,11 @@ class Data(object):
         desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    def __init__(self, dtype, shape, transient, storage, location, lifetime,
-                 debuginfo):
+    def __init__(self, dtype, shape, dist_shape, transient, storage, location,
+                 lifetime, debuginfo):
         self.dtype = dtype
         self.shape = shape
+        self.dist_shape = dist_shape
         self.transient = transient
         self.storage = storage
         self.location = location if location is not None else {}
@@ -138,8 +140,9 @@ class Scalar(Data):
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage,
-                                     location, lifetime, debuginfo)
+        dist_shape = []
+        super(Scalar, self).__init__(dtype, shape, dist_shape, transient,
+                                     storage, location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -273,6 +276,7 @@ class Array(Data):
     def __init__(self,
                  dtype,
                  shape,
+                 dist_shape=[],
                  materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
@@ -286,8 +290,8 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
-        super(Array, self).__init__(dtype, shape, transient, storage, location,
-                                    lifetime, debuginfo)
+        super(Array, self).__init__(dtype, shape, dist_shape, transient,
+                                    storage, location, lifetime, debuginfo)
 
         if shape is None:
             raise IndexError('Shape must not be None')
@@ -315,11 +319,11 @@ class Array(Data):
         return 'Array (dtype=%s, shape=%s)' % (self.dtype, self.shape)
 
     def clone(self):
-        return Array(self.dtype, self.shape, self.materialize_func,
-                     self.transient, self.allow_conflicts, self.storage,
-                     self.location, self.strides, self.offset, self.may_alias,
-                     self.lifetime, self.alignment, self.debuginfo,
-                     self.total_size)
+        return Array(self.dtype, self.shape, self.dist_shape,
+                     self.materialize_func, self.transient,
+                     self.allow_conflicts, self.storage, self.location,
+                     self.strides, self.offset, self.may_alias, self.lifetime,
+                     self.alignment, self.debuginfo, self.total_size)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -408,9 +412,15 @@ class Array(Data):
         # Test dimensionality
         if len(self.shape) != len(other.shape):
             return False
+        if len(self.dist_shape) != len(other.dist_shape):
+            return False
 
         # Test shape
         for dim, otherdim in zip(self.shape, other.shape):
+            # Any other case (constant vs. constant), check for equality
+            if otherdim != dim:
+                return False
+        for dim, otherdim in zip(self.dist_shape, other.dist_shape):
             # Any other case (constant vs. constant), check for equality
             if otherdim != dim:
                 return False
@@ -467,6 +477,7 @@ class Stream(Data):
                  veclen,
                  buffer_size,
                  shape=None,
+                 dist_shape=[],
                  transient=False,
                  storage=dtypes.StorageType.Default,
                  location=None,
@@ -487,8 +498,8 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage,
-                                     location, lifetime, debuginfo)
+        super(Stream, self).__init__(dtype, shape, dist_shape, transient,
+                                     storage, location, lifetime, debuginfo)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -523,8 +534,8 @@ class Stream(Data):
 
     def clone(self):
         return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
-                      self.transient, self.storage, self.location, self.offset,
-                      self.lifetime, self.debuginfo)
+                      self.dist_shape, self.transient, self.storage,
+                      self.location, self.offset, self.lifetime, self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
@@ -538,9 +549,14 @@ class Stream(Data):
         # Test dimensionality
         if len(self.shape) != len(other.shape):
             return False
+        if len(self.dist_shape) != len(other.dist_shape):
+            return False
 
         # Test shape
         for dim, otherdim in zip(self.shape, other.shape):
+            if dim != otherdim:
+                return False
+        for dim, otherdim in zip(self.dist_shape, other.dist_shape):
             if dim != otherdim:
                 return False
         return True

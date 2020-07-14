@@ -246,7 +246,12 @@ class Edge extends SDFGElement {
                 return;
             }
             let contents = attr.data;
-            contents += sdfg_property_to_string(attr.subset, dsettings);
+            if (attr.dist_subset) {
+                let dist_subset = sdfg_property_to_string(attr.dist_subset, dsettings).slice(1, -1);
+                let subset = sdfg_property_to_string(attr.subset, dsettings).slice(1, -1);
+                contents += '[<span style="color: turquoise">' + dist_subset + '</span>, ' + subset + ']';
+            } else
+                contents += sdfg_property_to_string(attr.subset, dsettings);
 
             if (attr.other_subset)
                 contents += ' -> ' + sdfg_property_to_string(attr.other_subset, dsettings);

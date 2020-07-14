@@ -34,6 +34,9 @@ class Memlet(object):
     subset = SubsetProperty(allow_none=True,
                             desc='Subset of elements to move from the data '
                             'attached to this edge.')
+    dist_subset = SubsetProperty(default=None, allow_none=True,
+                                 desc='Distributed ubset of elements to move '
+                                 'from the data attached to this edge.')
     other_subset = SubsetProperty(
         allow_none=True,
         desc='Subset of elements after reindexing to the data not attached '
@@ -61,6 +64,7 @@ class Memlet(object):
                  expr: str = None,
                  data: str = None,
                  subset: Union[str, subsets.Subset] = None,
+                 dist_subset: Union[str, subsets.Subset] = None,
                  other_subset: Union[str, subsets.Subset] = None,
                  veclen: int = 1,
                  volume: Union[int, str, symbolic.SymbolicType] = None,
@@ -79,6 +83,9 @@ class Memlet(object):
         :param data: (DEPRECATED) Data descriptor name attached to this memlet.
         :param subset: The subset to take from the data attached to the edge,
                        represented either as a string or a Subset object.
+        :param dist_subset: The distributed subset to take from the data
+                            attached to the edge, represented either as a string
+                            or a Subset object.
         :param other_subset: The subset to offset into the other side of the
                              memlet, represented either as a string or a Subset 
                              object.
@@ -115,6 +122,7 @@ class Memlet(object):
         # Initialize first by string expression
         self.data = None
         self.subset = None
+        self.dist_subset = None
         self.other_subset = None
         if expr is not None:
             self._parse_memlet_from_str(expr)
@@ -122,6 +130,7 @@ class Memlet(object):
         # Set properties
         self.data = self.data or data
         self.subset = self.subset or subset
+        self.dist_subset = self.dist_subset  or dist_subset
         self.other_subset = self.other_subset or other_subset
 
         if volume is not None:
@@ -179,6 +188,7 @@ class Memlet(object):
         node.volume = dcpy(self.volume, memo=memo)
         node._dynamic = self._dynamic
         node.subset = dcpy(self.subset, memo=memo)
+        node.dist_subset = dcpy(self.dist_subset, memo=memo)
         node.other_subset = dcpy(self.other_subset, memo=memo)
         node.data = dcpy(self.data, memo=memo)
         node.wcr = dcpy(self.wcr, memo=memo)
