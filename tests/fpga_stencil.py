@@ -148,12 +148,13 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           memlet=dace.Memlet.simple(input_buffer.data,
                                                     "0",
                                                     num_accesses=1))
-    state.add_memlet_path(input_buffer,
-                          shift_register,
-                          memlet=dace.Memlet.simple(
-                              shift_register.data,
-                              "2*M*{W}:(2*M + 1)*{W}".format(W=veclen),
-                              other_subset_str="0"))
+    state.add_memlet_path(
+        input_buffer,
+        shift_register,
+        memlet=dace.Memlet.simple(
+            input_buffer.data,
+            "0",
+            other_subset_str="2*M:(2*M + {W})".format(W=veclen)))
 
     # Stencils accesses
     state.add_memlet_path(
@@ -205,9 +206,10 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
     # Pack buffer
     state.add_memlet_path(output_buffer,
                           output_buffer_packed,
-                          memlet=dace.Memlet.simple(output_buffer.data,
-                                                    "0:{}".format(veclen),
-                                                    num_accesses=1))
+                          memlet=dace.Memlet.simple(
+                              output_buffer_packed.data,
+                              "0",
+                              other_subset_str="0:{}".format(veclen)))
 
     # Only write if not initializing
     write_tasklet = state.add_tasklet(
