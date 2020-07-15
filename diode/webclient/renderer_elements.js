@@ -68,17 +68,29 @@ class SDFGElement {
 class State extends SDFGElement {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
-
+        let visible_rect = renderer.visible_rect;
+        let clamped = {x: Math.max(topleft.x, visible_rect.x),
+                       y: Math.max(topleft.y, visible_rect.y),
+                       x2: Math.min(topleft.x + this.width, 
+                                    visible_rect.x + visible_rect.w),
+                       y2: Math.min(topleft.y + this.height, 
+                                    visible_rect.y + visible_rect.h)};
+        clamped.w = clamped.x2 - clamped.x;
+        clamped.h = clamped.y2 - clamped.y;
+        
         ctx.fillStyle = "#deebf7";
-        ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
+        ctx.fillRect(clamped.x, clamped.y, clamped.w, clamped.h);
         ctx.fillStyle = "#000000";
 
-        ctx.fillText(this.label(), topleft.x, topleft.y + LINEHEIGHT);
+        if (visible_rect.x <= topleft.x && visible_rect.y <= topleft.y + LINEHEIGHT)
+            ctx.fillText(this.label(), topleft.x, topleft.y + LINEHEIGHT);
 
         // If this state is selected or hovered
-        if (this.stroke_color) {
+        if (this.stroke_color && (clamped.x == topleft.x || clamped.y == topleft.y || 
+                                  clamped.x2 == topleft.x + this.width || 
+                                  clamped.y2 == topleft.y + this.height)) {
             ctx.strokeStyle = this.strokeStyle();
-            ctx.strokeRect(topleft.x, topleft.y, this.width, this.height);
+            ctx.strokeRect(clamped.x, clamped.y, clamped.w, clamped.h);
         }
 
         // If collapsed, draw a "+" sign in the middle
