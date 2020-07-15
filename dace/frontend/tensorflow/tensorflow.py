@@ -502,11 +502,11 @@ class TFSession:
             for aname, array in self.graph.arrays.items():
                 if array is None:
                     continue
-                #if array.storage in [
-                #        dace.StorageType.Default,
-                #        dace.StorageType.CPU_Heap,
-                #]:
-                #    array.storage = dace.StorageType.CPU_Pinned
+                if array.storage in [
+                        dace.StorageType.Default,
+                        dace.StorageType.CPU_Heap,
+                ]:
+                    array.storage = dace.StorageType.CPU_Pinned
 
             # Modify sdfg_args
             # import numba.cuda
