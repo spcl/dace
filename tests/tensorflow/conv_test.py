@@ -76,7 +76,7 @@ if __name__ == '__main__':
                     feed_dict={
                         filter: test_filter,
                         out_backprop: test_grads
-                    },gpu=gpu)
+                    },gpu=gpu, cudnn=True)
 
                 try:
                     assert tf.norm(output_dace -
@@ -123,7 +123,7 @@ if __name__ == '__main__':
                     feed_dict={
                         input_placeholder: test_input,
                         out_backprop: test_grads
-                    },gpu=gpu)
+                    },gpu=gpu, cudnn=True)
 
                 try:
                     assert tf.norm(output_dace -

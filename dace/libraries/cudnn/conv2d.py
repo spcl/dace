@@ -10,8 +10,6 @@ class ExpandConv2dCudnn(ExpandTransformation):
         name = sdfg._find_new_name(node.name)
         [N, H, W, C] = [node._data_format.find(x) for x in ['N', 'H', 'W', 'C']]
         code = '''
-                     int __dace_current_stream_id = 0;
-                     cudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];
                      cudnnSetStream(cudnn_handle_{i}, __dace_current_stream);
                      float alpha = 1.0, beta = 0.0;
                      checkCUDNN(cudnnConvolutionForward(cudnn_handle_{i}, &alpha, xDesc_{i}, x,
