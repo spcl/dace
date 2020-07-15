@@ -349,7 +349,8 @@ class TFSession:
         self.graph.fill_scope_connectors()
         # self.graph.apply_strict_transformations(validate=False)
         if gpu:
-            self.graph.apply_gpu_transformations()
+            from dace.transformation.interstate import GPUTransformSDFG
+            self.graph.apply_transformations([GPUTransformSDFG])
 
         # Compile and call the SDFG
         compiled_sdfg = self.graph.compile(optimizer=False)
@@ -3998,11 +3999,16 @@ class TFSession:
             :return: A 2-tuple (output DaCe access node with padded input,
                                 list of dimension strings of the padded data).
         """
+        H = 1
+        W = 2
+        if node.get_attr("data_format").decode("utf-8") == "NCHW":
+            H = 2
+            W = 3
         state = self.state
         paddingUp = 0
         paddingDown = 0
         label = inpnode.label
-        inputSize = inp.shape[1]
+        inputSize = inp.shape[H]
         # Calculate padding according to paper
         padding = strides * (outputSize - 1) + kernelSize - inputSize
         # If padding is even (padding is on each side the same)
@@ -4017,16 +4023,18 @@ class TFSession:
 
         # Set up the different padding dimensions, accesses and params.
         outputDims = inputDims.copy()
-        outputDims[1] = str(paddingUp) + ":" + str(
-            inp.shape[1]) + "+" + str(paddingUp)
-        outputDims[2] = str(paddingUp) + ":" + str(
-            inp.shape[2]) + "+" + str(paddingUp)
-        padMemlet = Memlet.simple(inpnode,
-                                  ",".join(inputDims),
-                                  other_subset_str=",".join(outputDims))
+        outputDims[H] = str(paddingUp) + ":" + str(
+            inp.shape[H]) + "+" + str(paddingUp)
+        outputDims[W] = str(paddingUp) + ":" + str(
+            inp.shape[W]) + "+" + str(paddingUp)
+        padMemlet = Memlet.simple(
+            inpnode,
+            ",".join(inputDims),
+            other_subset_str=",".join(outputDims))
+
         outputAccesses = list(map(str, list(inp.shape)))
-        outputAccesses[1] += "+" + str(paddingUp) + "+" + str(paddingDown)
-        outputAccesses[2] += "+" + str(paddingUp) + "+" + str(paddingDown)
+        outputAccesses[H] += "+" + str(paddingUp) + "+" + str(paddingDown)
+        outputAccesses[W] += "+" + str(paddingUp) + "+" + str(paddingDown)
         outputDims = []
         inputParams = []
         for i, dim in enumerate(outputAccesses):
@@ -4034,29 +4042,30 @@ class TFSession:
             outputDims.append("0:" + dim)
 
         outputParams = inputParams.copy()
-        outputParams[1] += "+" + str(paddingUp)
-        outputParams[2] += "+" + str(paddingUp)
+        outputParams[H] += "+" + str(paddingUp)
+        outputParams[W] += "+" + str(paddingUp)
 
         # Add the padded input to the graph, set it to zero, and add the map.
         shape = dace.properties.ShapeProperty.from_string(
             ",".join(outputAccesses))
         output = state.add_transient(label + "_padded",
                                      shape=shape,
-                                     dtype=inp.dtype,
-                                     lifetime=dtypes.AllocationLifetime.SDFG)
+                                     dtype=inp.dtype)
         output.setzero = True
 
-        # mapParams = inputParams
-        # mapRange = inputDims
-        # mapLabel = string_builder(node.type)
-        # mapEntry, mapExit = state.add_map(mapLabel,
-        #                                 dict(zip(mapParams, mapRange)))
-        # tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
-        self.state.add_edge(inpnode, None, output, None, padMemlet)
-        # self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
-        #                   [inputParams])
-        # self.add_out_memlets([output], mapExit, tasklet, [outputDims],
-        #                    [outputParams])
+        if self.cudnn:
+            mapParams = inputParams
+            mapRange = inputDims
+            mapLabel = string_builder(node.type) + "_padding_tasklet"
+            mapEntry, mapExit = state.add_map(mapLabel,
+                                              dict(zip(mapParams, mapRange)))
+            tasklet = state.add_tasklet(mapLabel, {"j0"}, {"out"}, "out = j0")
+            self.add_in_memlets([inpnode], mapEntry, tasklet, [inputDims],
+                                [inputParams])
+            self.add_out_memlets([output], mapExit, tasklet, [outputDims],
+                                 [outputParams])
+        else:
+            self.state.add_edge(inpnode, None, output, None, padMemlet)
         return output, outputDims
 
     def get_default_params(self, tensor, start=0, identifier="i"):

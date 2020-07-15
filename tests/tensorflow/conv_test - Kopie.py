@@ -31,7 +31,7 @@ if __name__ == '__main__':
         outp, feed_dict={
             inp: test_in,
             filter: test_filter
-        },gpu=gpu, cudnn=True)
+        },gpu=gpu)
     output_tf = sess_tf.run(
         outp, feed_dict={
             inp: test_in,
