@@ -3054,147 +3054,211 @@ class TFSession:
             state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_Conv2DBackpropFilter(self, node):
-        # convolve loss over input.
-        # may need to dilate loss and may need to pad input (no correlation)
+        if self.cudnn:
+            local_count = str(next(_atomic_count))
+            state = self.state
+            data_format = node.get_attr("data_format").decode("utf-8")
+            dilations = node.get_attr("dilations")
+            explicit_paddings = node.get_attr("explicit_paddings")
+            padding = node.get_attr("padding").decode("utf-8")
+            strides = node.get_attr("strides")
+            image, image_params, image_dims = self.create_and_add_input_node(node.inputs[0])
+            gradient, grad_params, grad_dims = self.create_and_add_input_node(node.inputs[2])
+            output = self.create_and_add_output_node(node)[0]
+            image_dims_list = image.desc(self.graph).shape
+            output_dims_list = output.desc(self.graph).shape
+            [N, H, W, C] = [data_format.find(x) for x in ['N', 'H', 'W', 'C']]
 
-        state = self.state
-        inputList = []
-        inputNodes = []
-        outputList = []
-        outputParams = []
-        outputDims = []
-        inputParams = []
-        inputDims = []
-        strides = int(node.get_attr("strides")[1])
-        # Input, filtersizes, out_backprop
-        ksize = int(node.outputs[0].shape[0])
-        if str(node.get_attr("padding"))[2:-1] == "SAME":
-            padding = int(strides * (int(node.inputs[2].shape[1]) - 1) + ksize -
-                          int(node.inputs[0].shape[1]))
+            # add a padding map for same padding(zero padding so that input and
+            # output of convolution have the same size)
+            pad = strides[H] * (gradient.desc(self.graph).shape[H] - 1) + \
+                  output.desc(self.graph).shape[0] - image.desc(self.graph).shape[H]
+            if padding == "SAME" and pad > 0:
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    image,
+                    image.desc(self.graph),
+                    gradient.desc(self.graph).shape[H],
+                    output.desc(self.graph).shape[0],
+                    strides[H],
+                    image_dims,
+                )
+                paddedImage = paddedInput
+                image_dims_list = paddedImage.desc(self.graph).shape
+
+            # explicit padding format is: [[0, 0], [pad_top, pad_bottom], [pad_left, pad_right], [0, 0]] for NHWC
+            # assuming pad_top = pad_bottom, pad_left = pad_right
+            padh = 0
+            padw = 0
+            if padding == "EXPLICIT":
+                padh = explicit_paddings[H * 2]
+                padw = explicit_paddings[W * 2]
+
+
+            import dace.libraries.cudnn as cudnn
+            tasklet = cudnn.conv2dbackpropfilter.Conv2DBackpropFilter('conv2dbackpropfltr', image_dims_list,
+                          output_dims_list, padh, padw, strides, dilations, data_format)
+            tasklet.implementation = "cudnn"
+
+            # change filter format from KRSC/KCRS to RSCK for tensorflow
+            idx = [3, 0, 1, 2]  # KRSC
+            if data_format == 'NCHW':
+                idx = [3, 2, 0, 1]  # KCRS
+            mapInput = self.map_output_filter(node, idx, output)
+
+            if padding == "SAME" and pad > 0:
+                state.add_edge(paddedImage, None, tasklet, 'x',
+                               Memlet.from_array(paddedImage.label, paddedImage.desc(self.graph)))
+            else:
+                state.add_edge(image, None, tasklet, 'x',
+                               Memlet.from_array(image.label, image.desc(self.graph)))
+            state.add_edge(gradient, None, tasklet, 'dy',
+                           Memlet.from_array(gradient.label, gradient.desc(self.graph)))
+            state.add_edge(tasklet, 'dw', mapInput, None,
+                           Memlet.from_array(mapInput.label, mapInput.desc(self.graph)))
+
         else:
-            padding = 0
+            # convolve loss over input.
+            # may need to dilate loss and may need to pad input (no correlation)
 
-        for count, inp in enumerate(node.inputs):
-            if count != 1:
-                inputNode, _, dims = self.create_and_add_input_node(inp)
-                inputList.append(inputNode.desc(self.graph))
-                inputNodes.append(inputNode)
-                inputDims.append(dims)
-        inputParams.append(["i0", "i1+i5", "i2+i6", "i3"])
-        inputParams.append(["i0", "i1", "i2", "i4"])
+            state = self.state
+            inputList = []
+            inputNodes = []
+            outputList = []
+            outputParams = []
+            outputDims = []
+            inputParams = []
+            inputDims = []
+            strides = int(node.get_attr("strides")[1])
+            # Input, filtersizes, out_backprop
+            ksize = int(node.outputs[0].shape[0])
+            if str(node.get_attr("padding"))[2:-1] == "SAME":
+                padding = int(strides * (int(node.inputs[2].shape[1]) - 1) + ksize -
+                              int(node.inputs[0].shape[1]))
+            else:
+                padding = 0
 
-        # inputNodes looks like [input, out_backprop]
+            for count, inp in enumerate(node.inputs):
+                if count != 1:
+                    inputNode, _, dims = self.create_and_add_input_node(inp)
+                    inputList.append(inputNode.desc(self.graph))
+                    inputNodes.append(inputNode)
+                    inputDims.append(dims)
+            inputParams.append(["i0", "i1+i5", "i2+i6", "i3"])
+            inputParams.append(["i0", "i1", "i2", "i4"])
 
-        if padding > 0:
-            paddedInput, paddedDims = self.inputPadding(
-                node,
-                inputNodes[0],
-                inputList[0],
-                int(node.inputs[2].shape[1]),
-                ksize,
-                strides,
-                inputDims[0],
-            )
-            inputNodes[0] = paddedInput
-            inputDims[0] = paddedDims
+            # inputNodes looks like [input, out_backprop]
 
-        if strides > 1:
-            # Dilate and the incoming gradients
-            newShape = [
-                node.inputs[2].shape[0],
-                node.inputs[2].shape[1] + (node.inputs[2].shape[1] - 1) *
-                (strides - 1),
-                node.inputs[2].shape[2] + (node.inputs[2].shape[2] - 1) *
-                (strides - 1),
-                node.inputs[2].shape[3],
-            ]
-            expandedGrads = state.add_transient(
-                string_builder(node.inputs[2].name) + "_bigger",
-                newShape,
-                _tensortype(node.inputs[2]),
-            )
-            expandedGrads.setzero = True
-            mapParams = self.get_default_params(node.inputs[2])
-            mapRange = self.get_default_dims(node.inputs[2])
-            mapLabel = string_builder(node.type) + "_grad_expansion"
-            mapEntry, mapExit = state.add_map(mapLabel,
+            if padding > 0:
+                paddedInput, paddedDims = self.inputPadding(
+                    node,
+                    inputNodes[0],
+                    inputList[0],
+                    int(node.inputs[2].shape[1]),
+                    ksize,
+                    strides,
+                    inputDims[0],
+                )
+                inputNodes[0] = paddedInput
+                inputDims[0] = paddedDims
+
+            if strides > 1:
+                # Dilate and the incoming gradients
+                newShape = [
+                    node.inputs[2].shape[0],
+                    node.inputs[2].shape[1] + (node.inputs[2].shape[1] - 1) *
+                    (strides - 1),
+                    node.inputs[2].shape[2] + (node.inputs[2].shape[2] - 1) *
+                    (strides - 1),
+                    node.inputs[2].shape[3],
+                ]
+                expandedGrads = state.add_transient(
+                    string_builder(node.inputs[2].name) + "_bigger",
+                    newShape,
+                    _tensortype(node.inputs[2]),
+                )
+                expandedGrads.setzero = True
+                mapParams = self.get_default_params(node.inputs[2])
+                mapRange = self.get_default_dims(node.inputs[2])
+                mapLabel = string_builder(node.type) + "_grad_expansion"
+                mapEntry, mapExit = state.add_map(mapLabel,
+                                                  dict(zip(mapParams, mapRange)))
+                tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"},
+                                                 "out = j0")
+                self.add_in_memlets([inputNodes[1]], mapEntry, tasklet, [mapRange],
+                                    [mapParams])
+                expandedGradParams = [
+                    "i0",
+                    "i1*" + str(strides),
+                    "i2*" + str(strides),
+                    "i3",
+                ]
+                expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
+                self.add_out_memlets(
+                    [expandedGrads],
+                    mapExit,
+                    tasklet,
+                    [expandedGradDims],
+                    [expandedGradParams],
+                )
+                inputNodes[1] = expandedGrads
+                inputDims[1] = expandedGradDims
+
+            outputList = self.create_and_add_output_node(node)
+            for count, out in enumerate(node.outputs):
+                params = ["i5", "i6", "i3", "i4"]
+                dims = self.get_default_dims(out)
+                outputParams.append(params)
+                outputDims.append(dims)
+
+            mapParams = outputParams[0]
+            mapParams2 = inputParams[1][:-1]
+            mapRange = outputDims[0]
+            mapRange2 = inputDims[1][:-1]
+            mapLabel = string_builder(node.type)
+            mapEntry, mapExit = state.add_map(mapLabel + "_outer",
                                               dict(zip(mapParams, mapRange)))
-            tasklet = self.state.add_tasklet(mapLabel, {"j0"}, {"out"},
-                                             "out = j0")
-            self.add_in_memlets([inputNodes[1]], mapEntry, tasklet, [mapRange],
-                                [mapParams])
-            expandedGradParams = [
-                "i0",
-                "i1*" + str(strides),
-                "i2*" + str(strides),
-                "i3",
-            ]
-            expandedGradDims = ["0:" + str(_shape) for _shape in newShape]
-            self.add_out_memlets(
-                [expandedGrads],
-                mapExit,
-                tasklet,
-                [expandedGradDims],
-                [expandedGradParams],
+            mapEntry2, mapExit2 = state.add_map(mapLabel + "_inner",
+                                                dict(zip(mapParams2, mapRange2)))
+
+            tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
+                                        "out = j0*j1")
+
+            reduce_node = self.state.add_transient(
+                mapLabel + "_wcr_avoid",
+                [1],
+                outputList[0].desc(self.graph).dtype,
+                storage=dace.StorageType.Register,
             )
-            inputNodes[1] = expandedGrads
-            inputDims[1] = expandedGradDims
+            reduce_node.setzero = True
 
-        outputList = self.create_and_add_output_node(node)
-        for count, out in enumerate(node.outputs):
-            params = ["i5", "i6", "i3", "i4"]
-            dims = self.get_default_dims(out)
-            outputParams.append(params)
-            outputDims.append(dims)
+            self.add_out_memlets(
+                outputList,
+                mapExit,
+                reduce_node,
+                #mapExit2,
+                outputDims,
+                outputParams,
+                #"lambda a,b: a+b",
+                #0,
+            )
+            self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
+                                inputParams)
 
-        mapParams = outputParams[0]
-        mapParams2 = inputParams[1][:-1]
-        mapRange = outputDims[0]
-        mapRange2 = inputDims[1][:-1]
-        mapLabel = string_builder(node.type)
-        mapEntry, mapExit = state.add_map(mapLabel + "_outer",
-                                          dict(zip(mapParams, mapRange)))
-        mapEntry2, mapExit2 = state.add_map(mapLabel + "_inner",
-                                            dict(zip(mapParams2, mapRange2)))
+            for i, inp in enumerate(inputNodes):
+                name = "j" + str(i)
+                memlet = Memlet.simple(inp, ",".join(inputParams[i]))
+                state.add_edge(mapEntry2, None, tasklet, name, memlet)
 
-        tasklet = state.add_tasklet(mapLabel, {"j0", "j1"}, {"out"},
-                                    "out = j0*j1")
-
-        reduce_node = self.state.add_transient(
-            mapLabel + "_wcr_avoid",
-            [1],
-            outputList[0].desc(self.graph).dtype,
-            storage=dace.StorageType.Register,
-        )
-        reduce_node.setzero = True
-
-        self.add_out_memlets(
-            outputList,
-            mapExit,
-            reduce_node,
-            #mapExit2,
-            outputDims,
-            outputParams,
-            #"lambda a,b: a+b",
-            #0,
-        )
-        self.add_in_memlets(inputNodes, mapEntry, mapEntry2, inputDims,
-                            inputParams)
-
-        for i, inp in enumerate(inputNodes):
-            name = "j" + str(i)
-            memlet = Memlet.simple(inp, ",".join(inputParams[i]))
-            state.add_edge(mapEntry2, None, tasklet, name, memlet)
-
-        #for i, out in enumerate(outputList):
-        memlet = Memlet.simple(
-            reduce_node,
-            #out,
-            "0",
-            wcr_str="lambda a,b: a+b",
-        )
-        state.add_edge(tasklet, "out", mapExit2, None, memlet)
-        state.add_edge(mapExit2, None, reduce_node, None, memlet)
+            #for i, out in enumerate(outputList):
+            memlet = Memlet.simple(
+                reduce_node,
+                #out,
+                "0",
+                wcr_str="lambda a,b: a+b",
+            )
+            state.add_edge(tasklet, "out", mapExit2, None, memlet)
+            state.add_edge(mapExit2, None, reduce_node, None, memlet)
 
     def visit_SparseSoftmaxCrossEntropyWithLogits(self, node):
 
