@@ -681,9 +681,15 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({ multigraph: true });
 
-    // Set an object for the graph label
-    g.setGraph({ ranksep: 30 });
+    // Set layout options and a simpler algorithm for large graphs
+    let layout_options = {ranksep: 30};
+    if (sdfg_state.nodes.length >= 1000)
+        layout_options.ranker = 'longest-path';
+        
+    g.setGraph(layout_options);
 
+
+    // Set an object for the graph label
     g.setDefaultEdgeLabel(function (u, v) { return {}; });
 
     // Add nodes to the graph. The first argument is the node id. The

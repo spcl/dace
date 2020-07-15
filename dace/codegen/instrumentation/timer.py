@@ -1,4 +1,5 @@
 from dace import dtypes, registry
+from dace.sdfg.nodes import CodeNode
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 
@@ -13,22 +14,7 @@ class TimerProvider(InstrumentationProvider):
         # For other file headers
         sdfg.append_global_code('\n#include <chrono>', None)
 
-    def _idstr(self, sdfg, state, node):
-        if state is not None:
-            if node is not None:
-                node = state.node_id(node)
-            else:
-                node = ''
-            state = sdfg.node_id(state)
-        else:
-            state = ''
-        return str(state) + '_' + str(node)
-
-    def on_tbegin(self,
-                  stream: CodeIOStream,
-                  sdfg=None,
-                  state=None,
-                  node=None):
+    def on_tbegin(self, stream: CodeIOStream, sdfg=None, state=None, node=None):
         idstr = self._idstr(sdfg, state, node)
 
         stream.write(
@@ -78,3 +64,19 @@ dace::perf::report.add("timer_{timer_name}", __dace_tdiff_{id}.count());'''.
         if s.instrument == dtypes.InstrumentationType.Timer:
             self.on_tend('%s %s' % (type(s).__name__, s.label), outer_stream,
                          sdfg, state, entry_node)
+
+    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
+                      global_stream):
+        if not isinstance(node, CodeNode):
+            return
+        if node.instrument == dtypes.InstrumentationType.Timer:
+            self.on_tbegin(outer_stream, sdfg, state, node)
+
+    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
+                    global_stream):
+        if not isinstance(node, CodeNode):
+            return
+        if node.instrument == dtypes.InstrumentationType.Timer:
+            idstr = self._idstr(sdfg, state, node)
+            self.on_tend('%s %s' % (type(node).__name__, idstr), outer_stream,
+                         sdfg, state, node)
