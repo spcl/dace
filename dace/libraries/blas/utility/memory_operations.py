@@ -263,34 +263,3 @@ def fpga_copy_global_to_local_tile(state, src, dest, rowSize, rowStart, colSize,
         src_conn='outCon',
         memlet=Memlet.simple(x_buf.data, "(k_row - {0}) * {1} + (k_col - {2})".format(rowStart, colSize, colStart))
     )
-
-
-def fpga_stream_to_local(state, srcData, dest, size):
-
-    data_out = state.add_write(dest)
-
-    copyMap_entry, copyMap_exit = state.add_map(
-        'streamToLocal_map',
-        dict(k_stream = '0:{0}'.format(size)),
-        schedule=dtypes.ScheduleType.FPGA_Device,
-        unroll=True
-    )
-
-    copyX_task = state.add_tasklet(
-        'streamToLocal_map',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
-    )
-
-    state.add_memlet_path(
-        srcData, copyMap_entry, copyX_task,
-        dst_conn='inCon',
-        memlet=Memlet.simple(srcData.data, "0")
-    )
-
-    state.add_memlet_path(
-        copyX_task, copyMap_exit, data_out,
-        src_conn='outCon',
-        memlet=Memlet.simple(data_out.data, "k_stream")
-    )
