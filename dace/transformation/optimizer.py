@@ -13,7 +13,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
 
 # This import is necessary since it registers all the patterns
-from dace.transformation import dataflow, interstate
+from dace.transformation import dataflow, interstate, subgraph
 
 
 class Optimizer(object):
