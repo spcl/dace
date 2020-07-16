@@ -1125,45 +1125,31 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         memlet, nc, wcr, dtype = self.memlets[target]
         is_scalar = not isinstance(dtype, dtypes.pointer)
-        dtype = dtype if is_scalar else dtype._typeclass
 
         value = cppunparse.cppunparse(self.visit(node.value),
                                       expr_semicolon=False)
 
-        # The vector length tells us HOW MANY ELEMENTS ARE ASSIGNED, whereas
-        # the memory width length tells us if it's a VECTOR TYPE being assigned.
-        if isinstance(dtype, dtypes.vector):
-            veclen_lhs = dtype.veclen
-            dtype = dtype.vtype
-        else:
-            veclen_lhs = 1
-
-        memwidth_lhs = self.sdfg.data(memlet.data).veclen
-
+        veclen_lhs = self.sdfg.data(memlet.data).veclen
         try:
             # Detect vector width conversions in simple cases.
             # TODO: use type inference to detect this for arbitrary expressions
-            veclen_rhs = self.memlets[node.value.id][0].veclen
-        except (AttributeError, KeyError):
-            veclen_rhs = veclen_lhs  # Is not a data container
-        if veclen_lhs != veclen_rhs:
-            raise ValueError(
-                "Vectorization mismatch: {} ({}) and {} ({})".format(
-                    target, veclen_lhs, value, veclen_rhs))
-        veclen = veclen_lhs
-        try:
-            memwidth_rhs = self.sdfg.data(
+            veclen_rhs = self.sdfg.data(
                 self.memlets[node.value.id][0].data).veclen
         except (AttributeError, KeyError):
-            memwidth_rhs = veclen_rhs
-        if ((memwidth_lhs > memwidth_rhs and memwidth_rhs != 1)
-                or (memwidth_lhs < memwidth_rhs and memwidth_lhs != 1)):
+            veclen_rhs = veclen_lhs  # Is not a data container
+
+        if ((veclen_lhs > veclen_rhs and veclen_rhs != 1)
+                or (veclen_lhs < veclen_rhs and veclen_lhs != 1)):
             raise ValueError("Conflicting memory widths: {} and {}".format(
-                memwidth_lhs, memwidth_rhs))
-        if memwidth_rhs > memwidth_lhs:
+                veclen_lhs, veclen_rhs))
+
+        if veclen_rhs > veclen_lhs:
+            veclen = veclen_rhs
             self.width_converters.add((True, dtype, veclen))
             unpack_str = "unpack_{}{}".format(dtype.base_type.ctype, veclen)
-        if memwidth_lhs > memwidth_rhs:
+
+        if veclen_lhs > veclen_rhs:
+            veclen = veclen_lhs
             self.width_converters.add((False, dtype, veclen))
             pack_str = "pack_{}{}".format(dtype.base_type.ctype, veclen)
             # TODO: Horrible hack to not dereference pointers if we have to
@@ -1178,7 +1164,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
             if isinstance(node.targets[0], ast.Subscript):
-                if memwidth_rhs > memwidth_lhs:
+                if veclen_rhs > veclen_lhs:
                     code_str = unpack_str + "({src}, &{dst}[{idx}]);"
                 else:
                     code_str = "{dst}[{idx}] = {src};"
@@ -1199,7 +1185,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                                idx=subscript,
                                                src=value)
             else:  # Target has no subscript
-                if memwidth_rhs > memwidth_lhs:
+                if veclen_rhs > veclen_lhs:
                     code_str = unpack_str + "({}, {});".format(value, target)
                 else:
                     if self.defined_vars.get(target) == DefinedType.Pointer:
@@ -1229,7 +1215,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
                                "memory size {}, {} accesses".format(
                                    target, defined_type, veclen_lhs,
-                                   memwidth_lhs, memlet.num_accesses))
+                                   veclen_lhs, memlet.num_accesses))
 
         return ast.copy_location(updated, node)
 

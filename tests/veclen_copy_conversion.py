@@ -23,8 +23,8 @@ def make_sdfg(tasklet_code=None,
     sdfg.add_edge(pre_state, state, dace.InterstateEdge())
     sdfg.add_edge(state, post_state, dace.InterstateEdge())
 
-    _, desc_input_host = sdfg.add_array("a", (n, ), vtype)
-    _, desc_output_host = sdfg.add_array("b", (n, ), vtype)
+    _, desc_input_host = sdfg.add_array("a", (n // veclen, ), vtype)
+    _, desc_output_host = sdfg.add_array("b", (n // veclen, ), vtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
     desc_input_device.location["bank"] = 0
@@ -41,16 +41,16 @@ def make_sdfg(tasklet_code=None,
     pre_write = pre_state.add_write("a_device")
     pre_state.add_memlet_path(pre_read,
                               pre_write,
-                              memlet=dace.Memlet.simple(
-                                  pre_write, "0:N//{}".format(veclen)))
+                              memlet=dace.Memlet(
+                                  pre_write.data, None))
 
     # Device to host
     post_read = post_state.add_read("b_device")
     post_write = post_state.add_write("b")
     post_state.add_memlet_path(post_read,
                                post_write,
-                               memlet=dace.Memlet.simple(
-                                   post_write, "0:N//{}".format(veclen)))
+                               memlet=dace.Memlet(
+                                   post_write.data, None))
 
     # Compute state
     read_memory = state.add_read("a_device")
@@ -87,16 +87,10 @@ def make_sdfg(tasklet_code=None,
     # Container-to-container copies between arrays and streams
     state.add_memlet_path(read_memory,
                           produce_input_stream,
-                          memlet=dace.Memlet.simple(read_memory.data,
-                                                    "0:N//{}".format(veclen),
-                                                    other_subset_str="0",
-                                                    num_accesses=n / veclen))
+                          memlet=dace.Memlet(read_memory.data))
     state.add_memlet_path(consume_output_stream,
                           write_memory,
-                          memlet=dace.Memlet.simple(write_memory.data,
-                                                    "0:N//{}".format(veclen),
-                                                    other_subset_str="0",
-                                                    num_accesses=n / veclen))
+                          memlet=dace.Memlet(write_memory.data))
 
     # Container-to-container copy from vectorized stream to non-vectorized
     # buffer

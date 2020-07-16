@@ -79,6 +79,8 @@ run_all() {
 
     run_sample intel_fpga/veclen_conversion "\n"
 
+    run_sample veclen_copy_conversion "\n"
+
     # #### WCR ####
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
