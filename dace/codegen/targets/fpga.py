@@ -707,8 +707,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                                       sdfg, state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
-                        "++__dace_copy{}) {{".format(i, i, copy_dim, i), sdfg,
-                        state_id, dst_node)
+                        "++__dace_copy{}) {{".format(i, i, sym2cpp(copy_dim),
+                                                     i), sdfg, state_id,
+                        dst_node)
                     if register_to_register:
                         # Language-specific
                         self.generate_unroll_loop_post(callsite_stream, None,
