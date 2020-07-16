@@ -878,21 +878,6 @@ class LambdaProperty(Property):
         super(LambdaProperty, self).__set__(obj, val)
 
 
-class SubgraphProperty(Property):
-    """ Property class that provides read-only (loading from json value is disabled)
-        access to a dict value. Intended for Transformation.subgraph.
-    """
-    def __set__(self, obj, val):
-        if val is not None:
-            super(SubgraphProperty, self).__set__(obj, val)
-
-    def to_json(self, obj):
-        return str(obj)
-
-    def from_json(self, s, sdfg=None):
-        return None
-
-
 class CodeBlock(object):
     """ Helper class that represents code blocks with language. 
         Used in `CodeProperty`, implemented as a list of AST statements if 
