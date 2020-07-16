@@ -1,4 +1,5 @@
 import ast
+import astunparse
 import functools
 import copy
 import itertools
@@ -16,6 +17,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
 from dace.codegen.targets import cpp, fpga
 from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.tools.type_inference import infer_expr_type
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -1091,6 +1093,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         self.used_streams = [
         ]  # keep track of the different streams used in a tasklet
         self.width_converters = set()  # Pack and unpack vectors
+        self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
         super().__init__(sdfg, memlets, constants=sdfg.constants)
 
     def visit_Subscript(self, node):
@@ -1130,13 +1133,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                       expr_semicolon=False)
 
         veclen_lhs = self.sdfg.data(memlet.data).veclen
-        try:
-            # Detect vector width conversions in simple cases.
-            # TODO: use type inference to detect this for arbitrary expressions
-            veclen_rhs = self.sdfg.data(
-                self.memlets[node.value.id][0].data).veclen
-        except (AttributeError, KeyError):
-            veclen_rhs = veclen_lhs  # Is not a data container
+        dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+        veclen_rhs = dtype_rhs.veclen
 
         if ((veclen_lhs > veclen_rhs and veclen_rhs != 1)
                 or (veclen_lhs < veclen_rhs and veclen_lhs != 1)):
