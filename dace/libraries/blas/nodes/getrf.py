@@ -1,13 +1,26 @@
 import copy
+from typing import Any, Dict
 from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
 import dace.sdfg.nodes
 from dace.transformation.pattern_matching import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.blas.blas_helpers import to_blastype, get_leading_dimension
 from .. import environments
 import numpy as np
+
+
+def _get_getrf_opts(inout_dict: Dict[str, Any]) -> Dict[str, Any]:
+    
+    opt = dict()
+    opt['M'] = inout_dict['_a_out'][0]
+    opt['N'] = inout_dict['_a_out'][1]
+    opt['a'] = '_a_out'
+    opt['lda'] = get_leading_dimension(inout_dict['_a_out'], row_major=True)
+    opt['ipiv'] = '_ipiv'
+    opt['info'] = '_info'
+
+    return opt
 
 
 @dace.library.expansion
@@ -35,23 +48,14 @@ class ExpandGetrfMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
+        inout_dict = node.validate(sdfg, state)
         dtype = node.dtype
         func = to_blastype(dtype.type).lower() + 'getrf'
-        (_, adesc, ashape,
-         astrides), (_, bdesc, bshape,
-                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
-        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
-                                     alpha, beta, cdesc.dtype.ctype, func)
+        opt = _get_getrf_opts(inout_dict)
+        opt['func'] = func
 
-        # Adaptations for MKL/BLAS API
-        opt['layout'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
-        opt['tb'] = 'CblasNoTrans' if opt['tb'] == 'N' else 'CblasTrans'
-
-        code = ("LAPACKE_{func}(CblasColMajor, {ta}, {tb}, "
-                "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
-                "_c, {ldc});").format_map(opt)
+        code = ("{info} = LAPACKE_{func}(LAPACK_ROW_MAJOR, {M}, {N}, {a}, "
+                "{lda}, {ipiv});").format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -62,13 +66,13 @@ class ExpandGetrfMKL(ExpandTransformation):
 
 
 @dace.library.node
-class Gemv(dace.sdfg.nodes.LibraryNode):
+class Getrf(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
         "pure": ExpandGetrfPure,
         "MKL": ExpandGetrfMKL,
-        "cuBLAS": ExpandGetrfCuBLAS
+        # "cuBLAS": ExpandGetrfCuBLAS
     }
     default_implementation = None
 
@@ -81,49 +85,65 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                  location=None):
         super().__init__(name,
                          location=location,
-                         inputs={"_a_in", "_ipiv"},
-                         outputs={"_a_out", "_info"})
+                         inputs={"_a_in"},
+                         outputs={"_a_out", "_ipiv", "_info"})
         self.dtype = dtype
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
-        if len(in_edges) != 2:
-            raise ValueError("Expected 2 inputs to GETRF")
+        if len(in_edges) != 1:
+            raise ValueError("Expected 1 input to GETRF")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == "_a_in":
+                srcname = memlet.data
+                srcsubset = memlet.subset
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
                 size_a_in = subset.size()
-            if dst_conn == "_ipiv":
+
+        if len(size_a_in) != 2:
+            raise ValueError("GETRF supported only on a matrix input A")
+
+        out_edges = state.out_edges(self)
+        if len(out_edges) != 3:
+            raise ValueError(
+                "Expected 3 outputs from GETRF")
+        dstname = None
+        for _, src_conn, _get_getrf_opts, _, memlet in state.out_edges(self):
+            if src_conn == "_a_out":
+                dstname = memlet.data
+                dstsubset = memlet.subset
+                subset = copy.deepcopy(memlet.subset)
+                subset.squeeze()
+                size_a_out = subset.size()
+            if src_conn == "_ipiv":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
                 size_ipiv = subset.size()
+            if src_conn == "_info":
+                subset = copy.deepcopy(memlet.subset)
+                subset.squeeze()
+                size_info = subset.size()
 
-        if len(size_a_in) != 2 or len(size_ipiv) != 1:
-            raise ValueError(
-                "GETRF supported only on a matrix input A "
-                "and an 1D array for pivot indices")
+        if srcname != dstname:
+            raise ValueError("GETRF input and output must be the same matrix A")
+
+        if len(size_a_out) != 2:
+            raise ValueError("GETRF output must be a matrix")
+
+        if srcsubset != dstsubset:
+            raise ValueError("GETRF input and output subsets do not match")
 
         expected_size_ipiv = min(size_a_in)
         if size_ipiv[0] < expected_size_ipiv:
             raise ValueError("1D array for pivot indices must have length at "
                              "least min(M, N)")
 
-        out_edges = state.out_edges(self)
-        if len(out_edges) != 2:
-            raise ValueError(
-                "Expected exactly two outputs from GETRF")
-        for _, src_conn, _, _, memlet in state.out_edges(self):
-            if src_conn == "_a_out":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_a_out = subset.size()
-            if src_conn == "_info":
-                subset = copy.deepcopy(memlet.subset)
-                subset.squeeze()
-                size_info = subset.size()
+        ret = {
+            "_a_in": size_a_in,
+            "_a_out": size_a_out,
+            "_ipiv": size_ipiv,
+            "_info": size_info
+        }
 
-        # TODO: Need to validate that input and output are the same matrix
-
-        if len(size_a_out) != 2:
-            raise ValueError("GETRF output must be a matrix")
+        return ret

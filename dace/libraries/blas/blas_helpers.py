@@ -22,6 +22,26 @@ def to_blastype(dtype):
                         dtype.__name__)
 
 
+def get_leading_dimension(shape, row_major=True):
+    """
+    Returns the leading dimension of the matrix.
+    :param shape: The shape of the matrix.
+    :param row_major: True, if matrix is stores in row-major format,
+                      otherwise false.
+    :return: The leading dimension of the matrix.
+    """
+
+    if len(shape) == 1:
+        return shape[0]
+    elif len(shape) == 2:
+        if row_major:
+            return shape[1]
+        else:
+            return shape[0]
+    else:
+        raise ValueError("Arrays of more than 2 dimensions are not supported.")
+
+
 def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     """
     Returns GEMM argument order, transposition, and leading dimensions
