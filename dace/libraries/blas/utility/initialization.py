@@ -7,32 +7,6 @@ from dace import dtypes
 
 
 
-def init_array(state, array, length, value):
-    """Initialize memory array in given state from 0 to length (excl.)
-        with the given value
-    """
-    buf_write_init = state.add_write(array)
-
-    init_tasklet, init_entry, init_exit = state.add_mapped_tasklet(
-        'init_{}'.format(array),
-        dict(j='0:{}'.format(length)),
-        dict(),
-        '''
-out = {}
-        '''.format(value),
-        dict(out=Memlet.simple(buf_write_init.data, 'j')),
-
-
-    )
-
-    state.add_edge(
-        init_exit, None,
-        buf_write_init, None,
-        memlet=Memlet.simple(buf_write_init.data, 'j')
-    )
-
-
-
 def fpga_init_array(state, array, length, value, unroll=False):
     """Initialize memory array in given state from 0 to length (excl.)
         with the given value on the FPGA; optional unrolling.
