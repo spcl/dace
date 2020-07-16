@@ -200,7 +200,7 @@ class Transformation(object):
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {expr.node(int(k)): v for k, v in json_obj['_subgraph'].items()}
+        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
         ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
