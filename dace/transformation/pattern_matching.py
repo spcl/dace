@@ -265,9 +265,10 @@ class ExpandTransformation(Transformation):
                                               sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
-                                              name=node.name)
+                                              name=node.name,
+                                              debuginfo=node.debuginfo)
         elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
-            pass
+            expansion.debuginfo = node.debuginfo
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(

@@ -610,6 +610,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self.is_collapsed = False
         self.nosync = False
         self.location = location if location is not None else {}
+        self._default_lineinfo = None
 
     @property
     def parent(self):
@@ -639,6 +640,13 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
     def validate(self) -> None:
         validate_state(self)
+
+    def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
+        """
+        Sets the default source line information to be lineinfo, or None to
+        revert to default mode. 
+        """
+        self._default_lineinfo = lineinfo
 
     def nodes(self) -> List[nd.Node]:  # Added for type hints
         return super().nodes()
@@ -847,7 +855,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :param array_or_stream_name: The name of the array/stream.
             :return: An array access node.
         """
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         node = nd.AccessNode(array_or_stream_name,
                              dtypes.AccessType.ReadOnly,
                              debuginfo=debuginfo)
@@ -861,7 +869,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :param array_or_stream_name: The name of the array/stream.
             :return: An array access node.
         """
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         node = nd.AccessNode(array_or_stream_name,
                              dtypes.AccessType.WriteOnly,
                              debuginfo=debuginfo)
@@ -875,7 +883,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :param array_or_stream_name: The name of the array/stream.
             :return: An array access node.
         """
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         node = nd.AccessNode(array_or_stream_name,
                              dtypes.AccessType.ReadWrite,
                              debuginfo=debuginfo)
@@ -893,7 +901,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         debuginfo=None,
     ):
         """ Adds a tasklet to the SDFG state. """
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -928,7 +936,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         """ Adds a nested SDFG to the SDFG state. """
         if name is None:
             name = sdfg.label
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         sdfg.parent = self
         sdfg.parent_sdfg = self.parent
@@ -1008,7 +1016,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
             :return: (map_entry, map_exit) node 2-tuple
         """
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         map = nd.Map(name,
                      *self._make_iterators(ndrange),
                      schedule=schedule,
@@ -1049,7 +1057,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                             "(PE_index, num_PEs)")
         pe_tuple = (elements[0], SymbolicProperty.from_string(elements[1]))
 
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         consume = nd.Consume(name,
                              pe_tuple,
                              CodeBlock(condition, language),
@@ -1109,7 +1117,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :return: tuple of (tasklet, map_entry, map_exit)
         """
         map_name = name + "_map"
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         # Create appropriate dictionaries from inputs
         tinputs = {
@@ -1245,7 +1253,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :return: A Reduce node
         """
         import dace.libraries.standard as stdlib  # Avoid import loop
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         result = stdlib.Reduce(wcr,
                                axes,
                                identity,
@@ -1283,7 +1291,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                                   the "main" streaming phase of the loop.
             :return: (map_entry, map_exit) node 2-tuple
         """
-        debuginfo = _getdebuginfo(debuginfo)
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
         pipeline = nd.Pipeline(name,
                                *self._make_iterators(ndrange),
                                init_size=init_size,

@@ -857,8 +857,8 @@ class CPPUnparser:
             self.write(")")
         # Special case for integer power
         elif t.op.__class__.__name__ == 'Pow':
-            if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
-                    and t.right.n >= 0):
+            if (isinstance(t.right, (ast.Num, ast.Constant))
+                    and int(t.right.n) == t.right.n and t.right.n >= 0):
                 self.write("(")
                 if t.right.n == 0:
                     self.write("1")
@@ -920,7 +920,8 @@ class CPPUnparser:
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
-        if isinstance(t.value, ast.Num) and isinstance(t.value.n, int):
+        if (isinstance(t.value, (ast.Num, ast.Constant))
+                and isinstance(t.value.n, int)):
             self.write(" ")
         self.write(".")
         self.write(t.attr)

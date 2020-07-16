@@ -34,7 +34,8 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
     """
     symrepl = {
         symbolic.symbol(name):
-        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(new_name)
+        if isinstance(new_name, str) else new_name
     }
 
     # Replace in node properties
@@ -55,7 +56,8 @@ def replace_properties(node: Any, name: str, new_name: str):
         return
     symrepl = {
         symbolic.symbol(name):
-        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(new_name)
+        if isinstance(new_name, str) else new_name
     }
 
     for propclass, propval in node.properties():
