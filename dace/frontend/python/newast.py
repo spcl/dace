@@ -2384,8 +2384,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_array = defined_arrays[true_name]
 
             if (isinstance(target, ast.Name) and true_name and not op
-                    and not isinstance(true_array, data.Scalar)
-                    and not (true_array.shape == (1, ))):
+                    and not isinstance(true_array, data.Scalar)):
                 raise DaceSyntaxError(
                     self, target,
                     'Cannot reassign value to variable "{}"'.format(name))
