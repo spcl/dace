@@ -18,7 +18,7 @@ public:
         m_offset = 0;
 
         if (IS_GPU) {
-            cudaError_t error = cudaMalloc(&m_mem, membytes);
+            cudaMalloc(&m_mem, membytes);
         } else {
             m_mem = malloc(membytes);
             if (m_mem == NULL){
@@ -29,8 +29,8 @@ public:
         m_size = membytes;
         m_offset = 0;
     }
+
     ~MemoryPool(){
-       free(m_mem);
     }
 
     void* Alloc(size_t size)
