@@ -109,6 +109,7 @@ namespace dace
         Bitwise_Xor = 10,
         Min_Location = 11,
         Max_Location = 12,
+        Exchange = 13
     };
 }
 

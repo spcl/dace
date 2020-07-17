@@ -448,6 +448,26 @@ namespace dace {
         DACE_HDFI T operator()(const T &a, const T &b) const { return a ^ b; }
     };
 
+    template <typename T>
+    struct _wcr_fixed<ReductionType::Exchange, T> {
+
+        static DACE_HDFI T reduce_atomic(T *ptr, const T& value) { 
+            #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 300
+                return atomicExch(ptr, value);
+            #else
+                T old;
+                #pragma omp critical
+                {
+                    old = *ptr;
+                    *ptr = value;
+                }
+                return old;
+            #endif
+        }
+
+        DACE_HDFI T operator()(const T &a, const T &b) const { return b; }
+    };
+
     //////////////////////////////////////////////////////////////////////////
 
     // Specialization that regresses to critical section / locked update for

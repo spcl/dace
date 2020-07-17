@@ -72,6 +72,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+    Exchange = ()  # Set new value, return old value
 
     # Only supported in OpenMP
     Sub = ()  # Subtraction
@@ -955,7 +956,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
         ]
