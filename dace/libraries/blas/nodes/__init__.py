@@ -6,3 +6,4 @@ from .batched_matmul import BatchedMatMul
 from .transpose import Transpose
 from .getrf import Getrf
 from .getri import Getri
+from .matinv import MatInv
