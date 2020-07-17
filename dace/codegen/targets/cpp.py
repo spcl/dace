@@ -654,15 +654,24 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         raise SyntaxError("Augmented assignments (e.g. +=) not allowed on " +
                           "array memlets")
 
+    def _replace_assignment(self, newnode: ast.AST,
+                            node: ast.Assign) -> ast.AST:
+        locfix = ast.copy_location(newnode, node.value)
+        if len(node.targets) == 1:
+            return locfix
+        # More than one target, i.e., x = y = z
+        return ast.copy_location(
+            ast.Assign(targets=node.targets[:-1], value=locfix), node)
+
     def visit_Assign(self, node):
-        target = rname(node.targets[0])
+        target = rname(node.targets[-1])
         if target not in self.memlets:
             return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(node.value)
 
-        if not isinstance(node.targets[0], ast.Subscript):
+        if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses -> every access counts
             try:
                 if memlet is not None and memlet.dynamic:
@@ -678,13 +687,13 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
 
-                    return ast.copy_location(newnode, node)
+                    return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
                 pass
 
             return self.generic_visit(node)
 
-        slice = self.visit(node.targets[0].slice)
+        slice = self.visit(node.targets[-1].slice)
         if not isinstance(slice, ast.Index):
             raise NotImplementedError("Range subscripting not implemented")
 
@@ -709,7 +718,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 subscript,
             ))
 
-        return ast.copy_location(newnode, node)
+        return self._replace_assignment(newnode, node)
 
     # TODO: Remove!
     @staticmethod
