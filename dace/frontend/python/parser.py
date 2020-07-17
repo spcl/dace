@@ -314,6 +314,8 @@ class DaceProgram:
             v.name: v
             for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
+        for argtype in argtypes.values():
+            global_vars.update({v.name: v for v in argtype.free_symbols})
 
         # Allow SDFGs and DaceProgram objects
         # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
