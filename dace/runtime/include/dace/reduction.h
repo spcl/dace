@@ -23,12 +23,6 @@ namespace dace {
     template <ReductionType REDTYPE, typename T>
     struct _wcr_fixed
     {
-        static DACE_HDFI T reduce(T *ptr, const T& value) {
-            T old = *ptr;
-            *ptr = _wcr_fixed<REDTYPE, T>()(old, value);
-            return old;
-        }
-
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value);
 
         DACE_HDFI T operator()(const T &a, const T &b) const;
@@ -466,9 +460,11 @@ namespace dace {
     template <ReductionType REDTYPE, typename T, typename SFINAE = void>
     struct wcr_fixed
     {
-        static DACE_HDFI T reduce(T *ptr, const T& value) 
+        static DACE_HDFI T reduce(T *ptr, const T& value)
         {
-            return _wcr_fixed<REDTYPE, T>::reduce(ptr, value);
+            T old = *ptr;
+            *ptr = _wcr_fixed<REDTYPE, T>()(old, value);
+            return old;
         }
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value) 
@@ -484,7 +480,9 @@ namespace dace {
     {
         static DACE_HDFI T reduce(T *ptr, const T& value)
         {
-            return _wcr_fixed<REDTYPE, T>::reduce(ptr, value);
+            T old = *ptr;
+            *ptr = _wcr_fixed<REDTYPE, T>()(old, value);
+            return old;
         }
 
         static DACE_HDFI T reduce_atomic(T *ptr, const T& value)
