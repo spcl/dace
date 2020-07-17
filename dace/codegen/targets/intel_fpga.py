@@ -1134,7 +1134,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         veclen_lhs = self.sdfg.data(memlet.data).veclen
         dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
-        veclen_rhs = dtype_rhs.veclen
+        if dtype_rhs is None:
+            # If we don't understand the vector length of the RHS, assume no
+            # conversion is needed
+            veclen_rhs = veclen_lhs
+        else:
+            veclen_rhs = dtype_rhs.veclen
 
         if ((veclen_lhs > veclen_rhs and veclen_rhs != 1)
                 or (veclen_lhs < veclen_rhs and veclen_lhs != 1)):
