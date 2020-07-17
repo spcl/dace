@@ -25,7 +25,7 @@ namespace dace {
     {
         static DACE_HDFI T reduce(T *ptr, const T& value) {
             T old = *ptr;
-            *ptr = operator()(old, value);
+            *ptr = _wcr_fixed<REDTYPE, T>()(old, value);
             return old;
         }
 
