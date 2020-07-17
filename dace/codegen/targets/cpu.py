@@ -638,8 +638,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                      dst_nodedesc.dtype, True)
                     stream.write(
                         write_and_resolve_expr(sdfg, memlet, nc, dst_expr,
-                                               '*(' + src_expr + ')'), sdfg,
-                        state_id, [src_node, dst_node])
+                                               '*(' + src_expr + ')') + ';',
+                        sdfg, state_id, [src_node, dst_node])
                 else:
                     raise NotImplementedError("Accumulation of arrays "
                                               "with WCR not yet implemented")
@@ -745,10 +745,9 @@ class CPUCodeGen(TargetCodeGenerator):
                         nc = not is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         result.write(
-                            write_and_resolve_expr(sdfg, memlet, nc,
-                                                   out_local_name,
-                                                   in_local_name), sdfg,
-                            state_id, node)
+                            write_and_resolve_expr(
+                                sdfg, memlet, nc, out_local_name, in_local_name)
+                            + ';', sdfg, state_id, node)
                     else:
                         result.write(
                             "%s.write(%s);\n" % (out_local_name, in_local_name),
@@ -927,8 +926,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 if output:
                     # Variable number of writes: get reference to the target of
                     # the view to reflect writes at the data
-                    result += "auto &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen)
+                    if not memlet.dynamic or memlet.wcr is None:
+                        result += "auto &{} = __{}.ref<{}>();".format(
+                            local_name, local_name, memlet.veclen)
+                    else:
+                        # Dynamic WCR memlets start uninitialized
+                        result += "{} {};".format(memlet_type, local_name)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
@@ -952,9 +955,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     allow_shadowing=allow_shadowing)
             else:
                 if memlet.subset.data_dims() == 0 and could_be_scalar:
-                    # Forward ArrayView
-                    result += "auto &{} = __{}.ref<{}>();".format(
-                        local_name, local_name, memlet.veclen)
+                    if not memlet.dynamic or memlet.wcr is None:
+                        # Forward ArrayView
+                        result += "auto &{} = __{}.ref<{}>();".format(
+                            local_name, local_name, memlet.veclen)
+                    else:
+                        # Dynamic WCR memlets start uninitialized
+                        result += "{} {};".format(memlet_type, local_name)
                     self._dispatcher.defined_vars.add(
                         local_name,
                         DefinedType.Scalar,

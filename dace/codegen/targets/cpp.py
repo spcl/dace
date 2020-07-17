@@ -441,7 +441,7 @@ def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
     else:
         custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr)
 
-    return "{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind});".format(
+    return "{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind})".format(
         oname=outname,
         nc=nc,
         tmpl=reduction_tmpl,
@@ -670,6 +670,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         newnode = ast.Name(id=write_and_resolve_expr(
                             self.sdfg, memlet, nc, '__' + target,
                             cppunparse.cppunparse(value, expr_semicolon=False)))
+                        node.value = ast.copy_location(newnode, node.value)
+                        return node
                     else:
                         newnode = ast.Name(id="__%s.write(%s);" % (
                             target,
@@ -700,6 +702,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 cppunparse.cppunparse(value, expr_semicolon=False),
                 indices=subscript,
             ))
+            node.value = ast.copy_location(newnode, node.value)
+            return node
         else:
             newnode = ast.Name(id="__%s.write(%s, %s);" % (
                 target,
