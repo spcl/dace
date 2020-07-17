@@ -72,6 +72,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+    Exchange = ()  # Set new value, return old value
 
     # Only supported in OpenMP
     Sub = ()  # Subtraction

@@ -450,8 +450,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(
-                        vconn) == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(vconn)
+                    == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -474,9 +474,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else
-                                    memlet.other_subset)
+                    array_subset = (memlet.subset if memlet.data
+                                    == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -639,8 +638,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                nc,
                                                dst_expr,
                                                '*(' + src_expr + ')',
-                                               dtype=dst_nodedesc.dtype), sdfg,
-                        state_id, [src_node, dst_node])
+                                               dtype=dst_nodedesc.dtype) + ';',
+                        sdfg, state_id, [src_node, dst_node])
                 else:
                     raise NotImplementedError("Accumulation of arrays "
                                               "with WCR not yet implemented")
@@ -751,7 +750,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 nc,
                                 out_local_name,
                                 in_local_name,
-                                dtype=node.out_connectors[uconn]), sdfg,
+                                dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
                         result.write(
@@ -930,8 +929,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 if output:
                     # Variable number of writes: get reference to the target of
                     # the view to reflect writes at the data
-                    result += "auto &{} = __{}.ref<1>();".format(
-                        local_name, local_name)
+                    if not memlet.dynamic or memlet.wcr is None:
+                        result += "auto &{} = __{}.ref<1>();".format(
+                            local_name, local_name)
+                    else:
+                        # Dynamic WCR memlets start uninitialized
+                        result += "{} {};".format(memlet_type, local_name)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
@@ -953,10 +956,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
             else:
-                if is_scalar:
-                    # Forward ArrayView
-                    result += "auto &{} = __{}.ref<1>();".format(
-                        local_name, local_name)
+                if memlet.subset.data_dims() == 0 and could_be_scalar:
+                    if not memlet.dynamic or memlet.wcr is None:
+                        # Forward ArrayView
+                        result += "auto &{} = __{}.ref<1>();".format(
+                            local_name, local_name)
+                    else:
+                        # Dynamic WCR memlets start uninitialized
+                        result += "{} {};".format(memlet_type, local_name)
                     self._dispatcher.defined_vars.add(
                         local_name,
                         DefinedType.Scalar,
