@@ -214,7 +214,7 @@ namespace dace {
         }
 
         template <typename CONFLICT_RESOLUTION, typename... Dim>
-        DACE_HDFI void write_and_resolve(const vec_t& value, CONFLICT_RESOLUTION wcr,
+        DACE_HDFI vec_t write_and_resolve(const vec_t& value, CONFLICT_RESOLUTION wcr,
                                          const Dim&... indices) {
             static_assert(sizeof...(indices) == DIMS, "Dimension mismatch");
             OffsetT index_array[] = { static_cast<OffsetT>(indices)... };
@@ -223,7 +223,7 @@ namespace dace {
         }
 
         template <typename CONFLICT_RESOLUTION, typename... Dim>
-        DACE_HDFI void write_and_resolve_nc(const vec_t& value,
+        DACE_HDFI vec_t write_and_resolve_nc(const vec_t& value,
                                             CONFLICT_RESOLUTION wcr,
                                             const Dim&... indices) {
             static_assert(sizeof...(indices) == DIMS, "Dimension mismatch");
@@ -233,7 +233,7 @@ namespace dace {
         }
 
         template <ReductionType REDT, typename... Dim>
-        DACE_HDFI void write_and_resolve(const vec_t& value,
+        DACE_HDFI vec_t write_and_resolve(const vec_t& value,
                                          const Dim&... indices) {
             static_assert(sizeof...(indices) == DIMS, "Dimension mismatch");
             OffsetT index_array[] = { static_cast<OffsetT>(indices)... };
@@ -242,7 +242,7 @@ namespace dace {
         }
 
         template <ReductionType REDT, typename... Dim>
-        DACE_HDFI void write_and_resolve_nc(const vec_t& value,
+        DACE_HDFI vec_t write_and_resolve_nc(const vec_t& value,
                                             const Dim&... indices) {
             static_assert(sizeof...(indices) == DIMS, "Dimension mismatch");
             OffsetT index_array[] = { static_cast<OffsetT>(indices)... };
@@ -273,41 +273,41 @@ namespace dace {
         }
 
         template <ReductionType REDT>
-        DACE_HDFI void set_element_wcr(const vec_t& value,
+        DACE_HDFI vec_t set_element_wcr(const vec_t& value,
                                        OffsetT(&index_array)[DIMS]) {
             OffsetT offset;
             get_offset(index_array, offset);
 
-            wcr_fixed<REDT, vec_t>::reduce_atomic(ptr<VECTOR_LEN>(m_ptr + offset),
-                                           value);
+            return wcr_fixed<REDT, vec_t>::reduce_atomic(ptr<VECTOR_LEN>(
+                m_ptr + offset), value);
         }
 
         template <ReductionType REDT>
-        DACE_HDFI void set_element_wcr_nc(const vec_t& value,
+        DACE_HDFI vec_t set_element_wcr_nc(const vec_t& value,
                                           OffsetT(&index_array)[DIMS]) {
             OffsetT offset;
             get_offset(index_array, offset);
 
-            wcr_fixed<REDT, vec_t>::reduce(ptr(m_ptr + offset), value);
+            return wcr_fixed<REDT, vec_t>::reduce(ptr(m_ptr + offset), value);
         }
 
         template <typename WCR_T>
-        DACE_HDFI void set_element_wcr(const vec_t& value,
+        DACE_HDFI vec_t set_element_wcr(const vec_t& value,
                                        OffsetT(&index_array)[DIMS], WCR_T wcr) {
             OffsetT offset;
             get_offset(index_array, offset);
 
-            wcr_custom<vec_t>::template reduce_atomic(
+            return wcr_custom<vec_t>::template reduce_atomic(
                 wcr, ptr(m_ptr + offset), value);
         }
 
         template <typename WCR_T>
-        DACE_HDFI void set_element_wcr_nc(const vec_t& value,
+        DACE_HDFI vec_t set_element_wcr_nc(const vec_t& value,
                                           OffsetT(&index_array)[DIMS], WCR_T wcr) {
             OffsetT offset;
             get_offset(index_array, offset);
 
-            wcr_custom<vec_t>::template reduce(
+            return wcr_custom<vec_t>::template reduce(
                 wcr, ptr(m_ptr + offset), value);
         }
     };
@@ -414,57 +414,57 @@ namespace dace {
             }
 
             template <typename CONFLICT_RESOLUTION>
-            DACE_HDFI void write_and_resolve(const vec_t& value,
+            DACE_HDFI vec_t write_and_resolve(const vec_t& value,
                                              CONFLICT_RESOLUTION wcr) {
-                wcr_custom<vec_t>::reduce_atomic(
+                return wcr_custom<vec_t>::reduce_atomic(
                     wcr, ptr<VECTOR_LEN>(), value);
             }
 
             template <typename CONFLICT_RESOLUTION>
-            DACE_HDFI void write_and_resolve_nc(const vec_t& value,
+            DACE_HDFI vec_t write_and_resolve_nc(const vec_t& value,
                                              CONFLICT_RESOLUTION wcr) {
-                wcr_custom<vec_t>::template reduce(
+                return wcr_custom<vec_t>::template reduce(
                     wcr, ptr<VECTOR_LEN>(), value);
             }
 
             template <ReductionType REDT>
-            DACE_HDFI void write_and_resolve(const vec_t& value) {
-                wcr_fixed<REDT, vec_t>::reduce_atomic(
+            DACE_HDFI vec_t write_and_resolve(const vec_t& value) {
+                return wcr_fixed<REDT, vec_t>::reduce_atomic(
                     ptr<VECTOR_LEN>(), value);
             }
 
             template <ReductionType REDT>
-            DACE_HDFI void write_and_resolve_nc(const vec_t& value) {
-                wcr_fixed<REDT, vec_t>::reduce(ptr<VECTOR_LEN>(), value);
+            DACE_HDFI vec_t write_and_resolve_nc(const vec_t& value) {
+                return wcr_fixed<REDT, vec_t>::reduce(ptr<VECTOR_LEN>(), value);
             }
 
             // Special case for vector conditionals
 #define VECTOR_CONDITIONAL_WRITE_AND_RESOLVE(N)                             \
             template <typename CONFLICT_RESOLUTION>                         \
-            DACE_HDFI void write_and_resolve(const vec<int, N>& value,      \
+            DACE_HDFI vec<int, N> write_and_resolve(const vec<int, N>& value,      \
                                              CONFLICT_RESOLUTION wcr) {     \
                 int ppcnt = 0;                                              \
                 for (int v = 0; v < N; ++v) ppcnt += value[v] ? 1 : 0;      \
-                write_and_resolve(ppcnt);                                   \
+                return write_and_resolve(ppcnt)                             \
             }                                                               \
             template <ReductionType REDT>                                 \
-            DACE_HDFI void write_and_resolve(const vec<int, N>& value) {    \
+            DACE_HDFI vec<int, N> write_and_resolve(const vec<int, N>& value) {    \
                 int ppcnt = 0;                                              \
                 for (int v = 0; v < N; ++v) ppcnt += value[v] ? 1 : 0;      \
-                write_and_resolve<REDT>(ppcnt);                             \
+                return write_and_resolve<REDT>(ppcnt)                       \
             }                                                               \
             template <typename CONFLICT_RESOLUTION>                         \
-            DACE_HDFI void write_and_resolve_nc(const vec<int, N>& value,   \
+            DACE_HDFI vec<int, N> write_and_resolve_nc(const vec<int, N>& value,   \
                                                 CONFLICT_RESOLUTION wcr) {  \
                 int ppcnt = 0;                                              \
                 for (int v = 0; v < N; ++v) ppcnt += value[v] ? 1 : 0;      \
-                write_and_resolve_nc(ppcnt);                                \
+                return write_and_resolve_nc(ppcnt)                          \
             }                                                               \
             template <ReductionType REDT>                                 \
-            DACE_HDFI void write_and_resolve_nc(const vec<int, N>& value) { \
+            DACE_HDFI vec<int, N> write_and_resolve_nc(const vec<int, N>& value) { \
                 int ppcnt = 0;                                              \
                 for (int v = 0; v < N; ++v) ppcnt += value[v] ? 1 : 0;      \
-                write_and_resolve_nc<REDT>(ppcnt);                          \
+                return write_and_resolve_nc<REDT>(ppcnt)                    \
             }
 
             //VECTOR_CONDITIONAL_WRITE_AND_RESOLVE(2)
