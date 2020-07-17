@@ -701,9 +701,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 "__" + target,
                 cppunparse.cppunparse(value, expr_semicolon=False),
                 indices=subscript,
-            ))
-            node.value = ast.copy_location(newnode, node.value)
-            return node
+            ) + ';')
         else:
             newnode = ast.Name(id="__%s.write(%s, %s);" % (
                 target,
