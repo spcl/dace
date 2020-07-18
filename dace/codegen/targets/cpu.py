@@ -885,7 +885,9 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False):
-        assert conntype is not None
+        if conntype is None:
+            raise ValueError('Cannot define memlet for "%s" without '
+                             'connector type' % local_name)
         # Convert from typeclass to Data
         if isinstance(conntype, dtypes.typeclass):
             if isinstance(conntype, dtypes.pointer):
