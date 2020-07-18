@@ -368,6 +368,7 @@ class TFSession:
     def compile(self,
                 nodes,
                 gpu,
+                cudnn,
                 name=None,
                 patterns=[],
                 validate=False,
@@ -385,7 +386,8 @@ class TFSession:
                      and returns a tuple of values in the same order as nodes.
         """
         from dace.config import Config
-
+        self.cudnn = gpu and cudnn
+        self.winograd = False
         # Create a unique name for this session
         if name is None:
             global _LASTSESSION
@@ -592,6 +594,7 @@ class TFSession:
         callfunc = self.compile(
             nodes,
             gpu,
+            cudnn,
             name=name,
             validate=validate,
             strict=strict,
