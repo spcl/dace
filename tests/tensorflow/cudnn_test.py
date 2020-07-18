@@ -135,31 +135,31 @@ if __name__ == '__main__':
 
         sess_run = sess_dace.compile(output, gpu=True, cudnn=True)
         start = time.time()
-        times = [0.0] * 10
-        for i in range(10):
+        times = [0.0] * 1000
+        for i in range(1000):
             if i == 0:
                 sess_run(feed_dict={input: test_input, filter: test_filter})
             else:
                 times[i] = time.time()
                 sess_run(feed_dict={input: test_input, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"values": times[i], "version": "cudnn", "sample": num}
+                dict1 = {"time": times[i], "version": "cudnn", "sample": num}
                 rows_list.append(dict1)
 
         start = time.time()
-        times = [0.0] * 10
-        for i in range(10):
+        times = [0.0] * 1000
+        for i in range(1000):
             if i == 0:
                 sess_tf.run(output, feed_dict={input: test_input, filter: test_filter})
             else:
                 times[i] = time.time()
                 sess_tf.run(output, feed_dict={input: test_input, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"values": times[i], "version": "tf", "sample": num}
+                dict1 = {"time": times[i], "version": "tf", "sample": num}
                 rows_list.append(dict1)
 
     panda_set_1 = pd.DataFrame(rows_list)
-    ax = sns.barplot(x="sample", y="values", hue='version', data=panda_set_1)
+    ax = sns.barplot(x="sample", y="time", hue='version', data=panda_set_1, ci=95, estimator=np.median)
     plt.show()
     ax.figure.savefig("convolution.png")
 
@@ -188,31 +188,31 @@ if __name__ == '__main__':
 
         sess_run = sess_dace.compile(input_gradients, gpu=True, cudnn=True)
         start = time.time()
-        times = [0.0] * 10
-        for i in range(10):
+        times = [0.0] * 1000
+        for i in range(1000):
             if i == 0:
                 sess_run(feed_dict={output_backprop: test_grads, filter: test_filter})
             else:
                 times[i] = time.time()
                 sess_run(feed_dict={output_backprop: test_grads, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"values": times[i], "version": "cudnn", "sample": num}
+                dict1 = {"time": times[i], "version": "cudnn", "sample": num}
                 rows_list.append(dict1)
 
         start = time.time()
-        times = [0.0] * 10
-        for i in range(10):
+        times = [0.0] * 1000
+        for i in range(1000):
             if i == 0:
                 sess_tf.run(input_gradients, feed_dict={output_backprop: test_grads, filter: test_filter})
             else:
                 times[i] = time.time()
                 sess_tf.run(input_gradients, feed_dict={output_backprop: test_grads, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"values": times[i], "version": "tf", "sample": num}
+                dict1 = {"time": times[i], "version": "tf", "sample": num}
                 rows_list.append(dict1)
 
     panda_set_1 = pd.DataFrame(rows_list)
-    ax = sns.barplot(x="sample", y="values", hue='version', data=panda_set_1)
+    ax = sns.barplot(x="sample", y="time", hue='version', data=panda_set_1, ci=95, estimator=np.median)
     plt.show()
     ax.figure.savefig("backpropimg.png")
 
@@ -241,31 +241,31 @@ if __name__ == '__main__':
 
         sess_run = sess_dace.compile(filter_gradients, gpu=True, cudnn=True)
         start = time.time()
-        times = [0.0] * 10
-        for i in range(10):
+        times = [0.0] * 1000
+        for i in range(1000):
             if i == 0:
                 sess_run(feed_dict={input: test_input, output_backprop: test_grads})
             else:
                 times[i] = time.time()
                 sess_run(feed_dict={input: test_input, output_backprop: test_grads})
                 times[i] = time.time() - times[i]
-                dict1 = {"values": times[i], "version": "cudnn", "sample": num}
+                dict1 = {"time": times[i], "version": "cudnn", "sample": num}
                 rows_list.append(dict1)
 
 
         start = time.time()
-        times = [0.0] * 10
-        for i in range(10):
+        times = [0.0] * 1000
+        for i in range(1000):
             if i == 0:
                 sess_tf.run(filter_gradients, feed_dict={input: test_input, output_backprop: test_grads})
             else:
                 times[i] = time.time()
                 sess_tf.run(filter_gradients, feed_dict={input: test_input, output_backprop: test_grads})
                 times[i] = time.time() - times[i]
-                dict1 = {"values": times[i], "version": "tf", "sample": num}
+                dict1 = {"time": times[i], "version": "tf", "sample": num}
                 rows_list.append(dict1)
 
     panda_set_1 = pd.DataFrame(rows_list)
-    ax = sns.barplot(x="sample", y="values", hue='version', data=panda_set_1)
+    ax = sns.barplot(x="sample", y="time", hue='version', data=panda_set_1, ci=95, estimator=np.median)
     plt.show()
     ax.figure.savefig("backpropfltr.png")
