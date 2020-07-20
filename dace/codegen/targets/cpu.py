@@ -450,8 +450,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(vconn)
-                    == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(
+                        vconn) == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -474,8 +474,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset if memlet.data
-                                    == dst_node.data else memlet.other_subset)
+                    array_subset = (memlet.subset
+                                    if memlet.data == dst_node.data else
+                                    memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -884,7 +885,9 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False):
-        assert conntype is not None
+        if conntype is None:
+            raise ValueError('Cannot define memlet for "%s" without '
+                             'connector type' % local_name)
         # Convert from typeclass to Data
         if isinstance(conntype, dtypes.typeclass):
             if isinstance(conntype, dtypes.pointer):
@@ -956,7 +959,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     DefinedType.Scalar,
                     allow_shadowing=allow_shadowing)
             else:
-                if memlet.subset.data_dims() == 0 and could_be_scalar:
+                if is_scalar:
                     if not memlet.dynamic or memlet.wcr is None:
                         # Forward ArrayView
                         result += "auto &{} = __{}.ref<1>();".format(

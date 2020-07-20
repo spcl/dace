@@ -782,7 +782,10 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     sdfg_state.edges.forEach((edge, id) => {
         edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
         if (!edge) return;
-        g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
+        let e = new Edge(edge.attributes.data, id, sdfg, sdfg_state.id);
+        e.src_connector = edge.src_connector;
+        e.dst_connector = edge.dst_connector;
+        g.setEdge(edge.src, edge.dst, e, id);
     });
 
     dagre.layout(g);
@@ -1388,7 +1391,7 @@ class SDFGRenderer {
                 if (!state) return;
 
                 // States
-                func('states', { sdfg: sdfg_name, id: state_id }, state, state.intersect(x, y, w, h));
+                func('states', { sdfg: sdfg_name, id: state_id, graph: g }, state, state.intersect(x, y, w, h));
 
                 if (state.data.state.attributes.is_collapsed)
                     return;
@@ -1399,7 +1402,7 @@ class SDFGRenderer {
                 ng.nodes().forEach(node_id => {
                     let node = ng.node(node_id);
                     // Selected nodes
-                    func('nodes', { sdfg: sdfg_name, state: state_id, id: node_id }, node, node.intersect(x, y, w, h));
+                    func('nodes', { sdfg: sdfg_name, state: state_id, id: node_id, graph: ng }, node, node.intersect(x, y, w, h));
 
                     // If nested SDFG, traverse recursively
                     if (node.data.node.type === "NestedSDFG")
@@ -1409,13 +1412,13 @@ class SDFGRenderer {
                     node.in_connectors.forEach((c, i) => {
                         func('connectors', {
                             sdfg: sdfg_name, state: state_id, node: node_id,
-                            connector: i, conntype: "in"
+                            connector: i, conntype: "in", graph: ng
                         }, c, c.intersect(x, y, w, h));
                     });
                     node.out_connectors.forEach((c, i) => {
                         func('connectors', {
                             sdfg: sdfg_name, state: state_id, node: node_id,
-                            connector: i, conntype: "out"
+                            connector: i, conntype: "out", graph: ng
                         }, c, c.intersect(x, y, w, h));
                     });
                 });
@@ -1423,14 +1426,14 @@ class SDFGRenderer {
                 // Selected edges
                 ng.edges().forEach(edge_id => {
                     let edge = ng.edge(edge_id);
-                    func('edges', { sdfg: sdfg_name, state: state_id, id: edge.id }, edge, edge.intersect(x, y, w, h));
+                    func('edges', { sdfg: sdfg_name, state: state_id, id: edge.id, graph: ng }, edge, edge.intersect(x, y, w, h));
                 });
             });
 
             // Selected inter-state edges
             g.edges().forEach(isedge_id => {
                 let isedge = g.edge(isedge_id);
-                func('isedges', { sdfg: sdfg_name, id: isedge.id }, isedge, isedge.intersect(x, y, w, h));
+                func('isedges', { sdfg: sdfg_name, id: isedge.id, graph: g }, isedge, isedge.intersect(x, y, w, h));
             });
         }
 
@@ -1614,10 +1617,25 @@ class SDFGRenderer {
         this.last_hovered_elements = elements;
 
         // Hovered elements get colored green (if they are not already colored)
+        let highlighted = [];
         this.for_all_elements(this.mousepos.x, this.mousepos.y, 0, 0, (type, e, obj, intersected) => {
-            if (intersected && obj.stroke_color === null)
+            if (intersected && obj instanceof Edge && obj.parent_id != null) {
+                let tree = memlet_tree(e.graph, obj);
+                tree.forEach(te => {
+                    if (te != obj) {
+                        te.stroke_color = 'orange';
+                        highlighted.push(te);
+                    }
+                });
+            }
+
+            if (intersected) {
                 obj.stroke_color = 'green';
-            else if (!intersected && obj.stroke_color === 'green')
+                highlighted.push(obj);
+            }
+        });
+        this.for_all_elements(this.mousepos.x, this.mousepos.y, 0, 0, (type, e, obj, intersected) => {
+            if (highlighted.indexOf(obj) == -1 && (obj.stroke_color === 'green' || obj.stroke_color === 'orange'))
                 obj.stroke_color = null;
         });
 
