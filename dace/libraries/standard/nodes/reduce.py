@@ -298,6 +298,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         cuda_exitcode = CodeIOStream()
         host_globalcode = CodeIOStream()
         host_localcode = CodeIOStream()
+        output_memlet = output_edge.data
 
         # Try to autodetect reduction type
         redtype = detect_reduction_type(node.wcr)
@@ -308,9 +309,12 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                                                state=state_id,
                                                node=node_id)
 
-        output_memlet = output_edge.data
-        output_type = 'dace::vec<%s, %s>' % (
-            sdfg.arrays[output_memlet.data].dtype.ctype, output_memlet.veclen)
+        if node.out_connectors:
+            dtype = next(node.out_connectors.values())
+        else:
+            dtype = sdfg.arrays[output_memlet.data].dtype
+
+        output_type = dtype.ctype
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '
@@ -525,8 +529,12 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         # Obtain some SDFG-related information
         input_memlet = input_edge.data
         output_memlet = output_edge.data
-        output_type = 'dace::vec<%s, %s>' % (
-            sdfg.arrays[output_memlet.data].dtype.ctype, output_memlet.veclen)
+
+        if node.out_connectors:
+            dtype = next(node.out_connectors.values())
+        else:
+            dtype = sdfg.arrays[output_memlet.data].dtype
+        output_type = dtype.ctype
 
         if node.identity is None:
             raise ValueError('For device reduce nodes, initial value must be '

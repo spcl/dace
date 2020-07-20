@@ -131,8 +131,7 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                   self.memlet_view_ctor(sdfg, memlet, direction) + ';\n')
 
         # Allocate variable type
-        memlet_type = '    dace::vec<%s, %s>' % (dtype.ctype,
-                                                 sym2cpp(memlet.veclen))
+        memlet_type = dtype.ctype
         if memlet.subset.data_dims() == 0 and not memlet.dynamic:
             result += memlet_type + ' ' + local_name
             if direction == "in":
@@ -232,15 +231,14 @@ class ImmaterialCodeGen(TargetCodeGenerator):
                                memlet.subset)
 
         if dims == 0:
-            return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t> ("%s", %s)' % (
+            return 'dace::ArrayViewImmaterial%s%s<%s, 1, int32_t> ("%s", %s)' % (
                 'In' if direction == "in" else "Out", 'Skip' if useskip else '',
                 sdfg.arrays[memlet.data].dtype.ctype,
-                symbolic.symstr(
-                    memlet.veclen), memlet.data, ', '.join(memlet_params))
+                memlet.data, ', '.join(memlet_params))
         else:
-            return 'dace::ArrayViewImmaterial%s%s<%s, %s, int32_t, %s> ("%s", %s)' % (
+            return 'dace::ArrayViewImmaterial%s%s<%s, 1, int32_t, %s> ("%s", %s)' % (
                 'In' if direction == "in" else "Out", 'Skip' if useskip else '',
                 sdfg.arrays[memlet.data].dtype.ctype,
-                symbolic.symstr(memlet.veclen), ', '.join([
+                ', '.join([
                     str(s) for s in memlet.subset.bounding_box_size()
                 ]), memlet.data, ', '.join(memlet_params))

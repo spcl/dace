@@ -7,7 +7,7 @@
 namespace dace {
 
 template <typename T, unsigned vector_length>
-vec<T, vector_length> Read(ArrayInterface<T, vector_length> const &interface) {
+vec<T, vector_length> Read(ArrayInterface<vec<T, vector_length>> const &interface) {
   #pragma HLS INLINE
   return *interface.ptr_in();
 }
@@ -32,14 +32,14 @@ vec<T, vector_length> Read(
 }
 
 template <typename T, unsigned vector_length>
-void Write(ArrayInterface<T, vector_length> &interface,
+void Write(ArrayInterface<vec<T, vector_length>> &interface,
            vec<T, vector_length> const &value) {
   #pragma HLS INLINE
   *interface.ptr_out() = value;
 }
 
 template <typename T, unsigned vector_length>
-void Write(ArrayInterface<T, vector_length> interface,
+void Write(ArrayInterface<vec<T, vector_length>> interface,
            vec<T, vector_length> const &value) {
   #pragma HLS INLINE
   *interface.ptr_out() = value;

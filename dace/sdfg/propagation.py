@@ -133,15 +133,6 @@ class AffineSMemlet(SeparableMemletPattern):
         self.constant_min = None
         self.constant_max = None
 
-        # Obtain vector length
-        self.veclen = None
-        if dim_index == total_dims - 1:
-            for e in orig_edges:
-                self.veclen = e.veclen
-        if self.veclen is None:
-            self.veclen = 1
-        ######################
-
         # Special case: Get the total internal access range
         # If this range matches (0, rs), we say that the propagated skip is 1
         self.internal_range = set()
@@ -255,7 +246,7 @@ class AffineSMemlet(SeparableMemletPattern):
         # This should be using sympy.floor
         memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
         memlet_rlen = memlet_start_pts.expand() * rt
-        interval_len = (result_end - result_begin + 1) * self.veclen
+        interval_len = (result_end - result_begin + 1)
         num_elements = node_rlen * memlet_rlen
 
         if (interval_len == num_elements
