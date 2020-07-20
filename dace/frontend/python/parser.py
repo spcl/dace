@@ -34,9 +34,9 @@ def _get_type_annotations(f, f_argnames, decorator_args):
     if has_args:
         # Make sure all arguments are annotated
         if len(decorator_args) != len(f_argnames):
-            raise SyntaxError(
-                'Decorator arguments must match number of DaCe ' +
-                'program parameters (expecting ' + str(len(f_argnames)) + ')')
+            raise SyntaxError('Decorator arguments must match number of DaCe ' +
+                              'program parameters (expecting ' +
+                              str(len(f_argnames)) + ')')
         # Return arguments and their matched decorator annotation
         return {
             k: create_datadescriptor(v)
@@ -84,8 +84,7 @@ def parse_from_file(filename, *compilation_args):
     mod = _compile_module(code, filename)
 
     programs = [
-        program for program in mod.values()
-        if isinstance(program, DaceProgram)
+        program for program in mod.values() if isinstance(program, DaceProgram)
     ]
 
     return [parse_function(p, *compilation_args) for p in programs]
@@ -109,8 +108,9 @@ def parse_from_function(function, *compilation_args, strict=None):
     sdfg = function.generate_pdp(*compilation_args)
 
     # Apply strict transformations automatically
-    if (strict == True or (strict is None and Config.get_bool(
-            'optimizer', 'automatic_strict_transformations'))):
+    if (strict == True or
+        (strict is None
+         and Config.get_bool('optimizer', 'automatic_strict_transformations'))):
         sdfg.apply_strict_transformations()
 
     # Save the SDFG (again)
@@ -245,12 +245,18 @@ class DaceProgram:
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
-        binaryobj = self.compile(*args)
+        # Parse SDFG
+        sdfg = parse_from_function(self, *args)
+
         # Add named arguments to the call
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
 
         # Update arguments with symbols in data shapes
-        kwargs.update(infer_symbols_from_shapes(binaryobj.sdfg, kwargs))
+        kwargs.update(infer_symbols_from_shapes(sdfg, kwargs))
+
+        # Compile SDFG (note: this is done after symbol inference due to shape
+        # altering transformations such as Vectorization)
+        binaryobj = sdfg.compile()
 
         return binaryobj(**kwargs)
 
@@ -308,6 +314,8 @@ class DaceProgram:
             v.name: v
             for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
         })
+        for argtype in argtypes.values():
+            global_vars.update({v.name: v for v in argtype.free_symbols})
 
         # Allow SDFGs and DaceProgram objects
         # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION

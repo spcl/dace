@@ -703,6 +703,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     self._cpu_codegen._packed_types))
             dims = len(copy_shape)
 
+            dtype = dst_node.desc(sdfg).dtype
+
             # Handle unsupported copy types
             if dims == 2 and (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 raise NotImplementedError('2D copy only supported with one '
@@ -720,7 +722,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     for s in copy_shape
                 ])
                 array_length = copysize
-                copysize += ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype
+                copysize += ' * sizeof(%s)' % dtype.ctype
 
                 callsite_stream.write(
                     'cudaMemcpyAsync(%s, %s, %s, cudaMemcpy%sTo%s, %s);\n' %
@@ -729,8 +731,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 node_dtype = dst_node.desc(sdfg).dtype
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write(
-                        'for (auto __idx = 0; __idx < {arrlen}; ++__idx) '
-                        '{{'.format(arrlen=str(array_length)))
+                        'for (size_t __idx = 0; __idx < {arrlen}; ++__idx) '
+                        '{{'.format(arrlen=array_length))
                     for field_name, field_type in node_dtype._data.items():
                         if isinstance(field_type, dtypes.pointer):
                             tclass = field_type.type
@@ -825,43 +827,41 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                     str(redtype)[str(redtype).find('.') + 1:])
                         reduction_tmpl = '<%s>' % credtype
                     else:
-                        custom_reduction = [unparse_cr(sdfg, memlet.wcr)]
+                        custom_reduction = [unparse_cr(sdfg, memlet.wcr, dtype)]
                     accum = '::template Accum%s' % reduction_tmpl
 
                 if any(
                         symbolic.issymbolic(s, sdfg.constants)
                         for s in copy_shape):
-                    callsite_stream.write((
-                        '    {func}Dynamic<dace::vec<{type}, {veclen}>, {bdims}, '
-                        + '{dststrides}, {is_async}>{accum}({args});').format(
-                            func=funcname,
-                            type=dst_node.desc(sdfg).dtype.ctype,
-                            veclen=memlet.veclen,
-                            bdims=', '.join(_topy(self._block_dims)),
-                            dststrides=', '.join(_topy(dst_strides)),
-                            is_async='false'
-                            if state_dfg.out_degree(dst_node) > 0 else 'true',
-                            accum=accum,
-                            args=', '.join([src_expr] + _topy(src_strides) +
-                                           [dst_expr] + custom_reduction +
-                                           _topy(copy_shape))), sdfg, state_id,
-                                          [src_node, dst_node])
+                    callsite_stream.write(
+                        ('    {func}Dynamic<{type}, {bdims}, ' +
+                         '{dststrides}, {is_async}>{accum}({args});').format(
+                             func=funcname,
+                             type=dst_node.desc(sdfg).dtype.ctype,
+                             bdims=', '.join(_topy(self._block_dims)),
+                             dststrides=', '.join(_topy(dst_strides)),
+                             is_async='false'
+                             if state_dfg.out_degree(dst_node) > 0 else 'true',
+                             accum=accum,
+                             args=', '.join([src_expr] + _topy(src_strides) +
+                                            [dst_expr] + custom_reduction +
+                                            _topy(copy_shape))), sdfg, state_id,
+                        [src_node, dst_node])
                 else:
-                    callsite_stream.write((
-                        '    {func}<dace::vec<{type}, {veclen}>, {bdims}, {copysize}, '
-                        + '{dststrides}, {is_async}>{accum}({args});').format(
-                            func=funcname,
-                            type=dst_node.desc(sdfg).dtype.ctype,
-                            veclen=memlet.veclen,
-                            bdims=', '.join(_topy(self._block_dims)),
-                            copysize=', '.join(_topy(copy_shape)),
-                            dststrides=', '.join(_topy(dst_strides)),
-                            is_async='false'
-                            if state_dfg.out_degree(dst_node) > 0 else 'true',
-                            accum=accum,
-                            args=', '.join([src_expr] + _topy(src_strides) +
-                                           [dst_expr] + custom_reduction)),
-                                          sdfg, state_id, [src_node, dst_node])
+                    callsite_stream.write(
+                        ('    {func}<{type}, {bdims}, {copysize}, ' +
+                         '{dststrides}, {is_async}>{accum}({args});').format(
+                             func=funcname,
+                             type=dst_node.desc(sdfg).dtype.ctype,
+                             bdims=', '.join(_topy(self._block_dims)),
+                             copysize=', '.join(_topy(copy_shape)),
+                             dststrides=', '.join(_topy(dst_strides)),
+                             is_async='false'
+                             if state_dfg.out_degree(dst_node) > 0 else 'true',
+                             accum=accum,
+                             args=', '.join([src_expr] + _topy(src_strides) +
+                                            [dst_expr] + custom_reduction)),
+                        sdfg, state_id, [src_node, dst_node])
             # Per-thread load (same as CPU copies)
             else:
                 self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
@@ -928,26 +928,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             gpu_persistent_subgraphs = [
                 state.scope_subgraph(node) for node in state.nodes()
                 if isinstance(node, dace.nodes.MapEntry)
-                   and node.map.schedule == dace.ScheduleType.GPU_Persistent]
+                and node.map.schedule == dace.ScheduleType.GPU_Persistent
+            ]
             nested_deallocated = set()
             for sub_graph in gpu_persistent_subgraphs:
-                for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
-                                    if isinstance(n, nodes.NestedSDFG)]:
+                for nested_sdfg in [
+                        n.sdfg for n in sub_graph.nodes()
+                        if isinstance(n, nodes.NestedSDFG)
+                ]:
                     for nested_state in nested_sdfg:
                         nested_sid = nested_sdfg.node_id(nested_state)
                         nested_to_allocate = (
-                                set(nested_state.top_level_transients())
-                                - set(nested_sdfg.shared_transients()))
+                            set(nested_state.top_level_transients()) -
+                            set(nested_sdfg.shared_transients()))
                         nodes_to_deallocate = [
                             n for n in nested_state.data_nodes()
                             if n.data in nested_to_allocate
-                               and n.data not in nested_deallocated]
+                            and n.data not in nested_deallocated
+                        ]
                         for nested_node in nodes_to_deallocate:
                             nested_deallocated.add(nested_node.data)
                             self._dispatcher.dispatch_deallocate(
                                 nested_sdfg, nested_state, nested_sid,
-                                nested_node, function_stream, callsite_stream
-                            )
+                                nested_node, function_stream, callsite_stream)
 
             callsite_stream.write('\n')
 
@@ -1000,22 +1003,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
-                callsite_stream.write("{}.reset();".format(stream.data),
-                                      sdfg, state.node_id)
+                callsite_stream.write("{}.reset();".format(stream.data), sdfg,
+                                      state.node_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
 
-                has_map = any(isinstance(node, dace.nodes.MapEntry)
-                              for node in c.nodes())
+                has_map = any(
+                    isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
                 if not has_map:
-                    callsite_stream.write("if (blockIdx.x == 0 "
-                                          "&& threadIdx.x == 0) "
-                                          "{  // sub-graph begin",
-                                          sdfg, state.node_id)
+                    callsite_stream.write(
+                        "if (blockIdx.x == 0 "
+                        "&& threadIdx.x == 0) "
+                        "{  // sub-graph begin", sdfg, state.node_id)
                 else:
-                    callsite_stream.write("{  // subgraph begin",
-                                          sdfg, state.node_id)
+                    callsite_stream.write("{  // subgraph begin", sdfg,
+                                          state.node_id)
 
                 # Need to skip certain entry nodes to make sure that they are
                 # not processed twice
@@ -1023,9 +1026,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 #  (or wait for new codegen)
                 entry_nodes = list(v for v in c.nodes()
                                    if len(list(c.predecessors(v))) == 0)
-                comp_same_entry = [comp for comp in components
-                                   if comp != c
-                                   and entry_nodes[0] in comp.nodes()]
+                comp_same_entry = [
+                    comp for comp in components
+                    if comp != c and entry_nodes[0] in comp.nodes()
+                ]
                 skip_entry = len(comp_same_entry) > 0 and has_map
 
                 self._dispatcher.dispatch_subgraph(sdfg,
@@ -1096,8 +1100,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap =\
             self.get_kernel_dimensions(dfg_scope)
-        is_persistent = (dfg_scope.source_nodes()[0].map.schedule
-                         == dtypes.ScheduleType.GPU_Persistent)
+        is_persistent = (dfg_scope.source_nodes()[0].map.schedule ==
+                         dtypes.ScheduleType.GPU_Persistent)
 
         # Get parameters of subgraph
         kernel_args = dfg_scope.arglist()
@@ -1109,17 +1113,20 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Add data from nested SDFGs to kernel arguments
         nested_allocated = set()
         if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
-            for nested_sdfg in [node.sdfg for node in dfg_scope.nodes()
-                                if isinstance(node, nodes.NestedSDFG)]:
+            for nested_sdfg in [
+                    node.sdfg for node in dfg_scope.nodes()
+                    if isinstance(node, nodes.NestedSDFG)
+            ]:
                 nested_shared_transients = set(nested_sdfg.shared_transients())
                 for nested_state in nested_sdfg:
                     nested_to_allocate = (
-                        set(nested_state.top_level_transients())
-                        - nested_shared_transients
-                    )
-                    nodes_to_allocate = [n for n in nested_state.data_nodes()
-                                         if n.data in nested_to_allocate
-                                         and n.data not in nested_allocated]
+                        set(nested_state.top_level_transients()) -
+                        nested_shared_transients)
+                    nodes_to_allocate = [
+                        n for n in nested_state.data_nodes()
+                        if n.data in nested_to_allocate
+                        and n.data not in nested_allocated
+                    ]
                     for nested_node in nodes_to_allocate:
                         kernel_args[nested_node.data] = nested_node.desc(
                             nested_sdfg)
@@ -1127,8 +1134,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
         # TODO move this into _get_const_params(dfg_scope)
-        const_params |= set((str(e.src)) for e
-                            in dace.sdfg.dynamic_map_inputs(state, scope_entry))
+        const_params |= set(
+            (str(e.src))
+            for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
 
         kernel_args_typed = [
             ('const ' if k in const_params else '') + v.signature(name=k)
@@ -1194,18 +1202,16 @@ void __dace_runkernel_{fname}({fargs})
             state_id, node)
 
         if is_persistent:
-            self._localcode.write(
-                '''
+            self._localcode.write('''
 int dace_number_SMs;
 cudaDeviceGetAttribute(&dace_number_SMs, cudaDevAttrMultiProcessorCount, 0);
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
                 '''.format(
-                    fraction=Config.get(
-                        'compiler', 'cuda', 'persistent_map_SM_fraction'),
-                    occupancy=Config.get(
-                        'compiler', 'cuda', 'persistent_map_occupancy'),
-                )
-            )
+                fraction=Config.get('compiler', 'cuda',
+                                    'persistent_map_SM_fraction'),
+                occupancy=Config.get('compiler', 'cuda',
+                                     'persistent_map_occupancy'),
+            ))
 
         extra_kernel_args = []
         if create_grid_barrier:
@@ -1214,11 +1220,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                   sdfg, state_id, node)
             self._localcode.write(
                 '{}.Setup({});'.format(
-                    gbar,
-                    ' * '.join(_topy(grid_dims)) if not is_persistent
-                    else 'dace_number_blocks'
-                ),
-                sdfg, state_id, node)
+                    gbar, ' * '.join(_topy(grid_dims)) if not is_persistent else
+                    'dace_number_blocks'), sdfg, state_id, node)
             extra_kernel_args.append('(void *)((cub::GridBarrier *)&%s)' % gbar)
 
         # Compute dynamic shared memory
@@ -1264,8 +1267,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             .format(kname=kernel_name,
                     kargs=', '.join(['(void *)&' + arg for arg in kernel_args] +
                                     extra_kernel_args),
-                    gdims='dace_number_blocks, 1, 1' if is_persistent
-                          else ', '.join(_topy(grid_dims)),
+                    gdims='dace_number_blocks, 1, 1'
+                    if is_persistent else ', '.join(_topy(grid_dims)),
                     bdims=', '.join(_topy(block_dims)),
                     dynsmem=_topy(dynsmem_size),
                     stream=cudastream), sdfg, state_id, scope_entry)
@@ -1329,8 +1332,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
         kernelmap_entry = dfg_scope.source_nodes()[0]
         grid_size = kernelmap_entry.map.range.size(True)[::-1]
         block_size = None
-        is_persistent = (kernelmap_entry.map.schedule
-                         == dtypes.ScheduleType.GPU_Persistent)
+        is_persistent = (
+            kernelmap_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent)
 
         # Linearize (flatten) rest of dimensions to third
         if len(grid_size) > 3:
@@ -1450,23 +1453,18 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # allocating shared memory for dynamic threadblock maps
         if has_dtbmap:
-            kernel_stream.write('__shared__ dace::'
-                                'DynamicMap<{fine_grained}, {block_size}>'
-                                '::shared_type dace_dyn_map_shared;'.format(
-                fine_grained=('true'
-                              if Config.get_bool('compiler',
-                                                 'cuda',
-                                                 'dynamic_map_fine_grained')
-                              else
-                              'false'),
-                block_size=functools.reduce(
-                    (lambda x, y: x * y),
-                    [int(x) for x in Config.get('compiler',
-                                                'cuda',
-                                                'dynamic_map_block_size'
-                                                ).split(',')])
-                ),
-                sdfg, state_id, node)
+            kernel_stream.write(
+                '__shared__ dace::'
+                'DynamicMap<{fine_grained}, {block_size}>'
+                '::shared_type dace_dyn_map_shared;'.format(
+                    fine_grained=('true' if Config.get_bool(
+                        'compiler', 'cuda', 'dynamic_map_fine_grained') else
+                                  'false'),
+                    block_size=functools.reduce((lambda x, y: x * y), [
+                        int(x)
+                        for x in Config.get('compiler', 'cuda',
+                                            'dynamic_map_block_size').split(',')
+                    ])), sdfg, state_id, node)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
@@ -1523,14 +1521,16 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     varname = kernel_map.params[-i - 1]
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
                     block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
-                        _topy(functools.reduce(sympy.mul.Mul, kdims[i + 1:], 1)),
+                        _topy(functools.reduce(sympy.mul.Mul, kdims[i + 1:],
+                                               1)),
                         _topy(kdims[i]),
                     )
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
                     kernel_stream.write('int %s = %s;' % (varname, expr), sdfg,
                                         state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar)
+                    self._dispatcher.defined_vars.add(varname,
+                                                      DefinedType.Scalar)
 
         # Dispatch internal code
         assert self._in_device_code is False
@@ -1666,10 +1666,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
             callsite_stream.write(
                 'if ({} < {}) {{'.format(
                     outer_scope.map.params[0],
-                    _topy(subsets
-                          .Range(outer_scope.map.range[::-1])
-                          .max_element()[0] + 1)
-                ), sdfg, state_id, scope_entry)
+                    _topy(
+                        subsets.Range(
+                            outer_scope.map.range[::-1]).max_element()[0] + 1)),
+                sdfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
@@ -1710,12 +1710,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 raise ValueError(
                     'Only one-dimensional device maps are currently supported '
                     'for persistent kernel maps (got %d)'.format(
-                        len(scope_map.params)
-                    )
-                )
+                        len(scope_map.params)))
 
-            is_persistent = (self._kernel_map.schedule
-                             == dtypes.ScheduleType.GPU_Persistent)
+            is_persistent = (
+                self._kernel_map.schedule == dtypes.ScheduleType.GPU_Persistent)
             block_dims = self._block_dims
             node = dfg_scope.source_nodes()[0]
 
@@ -1818,15 +1816,13 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     varname, expr = declarations.pop(0)
                     callsite_stream.write(
                         'for (int {varname} = {expr}; {cond}; {varname} += '
-                        '{stride}) {{'
-                        .format(
+                        '{stride}) {{'.format(
                             varname=varname,
                             expr=expr,
                             cond=condition,
                             stride=stride,
                             pers=is_persistent,
-                        ), sdfg,
-                        state_id, node)
+                        ), sdfg, state_id, node)
                 else:
                     # will only be entered once
                     varname, expr = declarations.pop(0)
@@ -1921,10 +1917,10 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
         # need to handle subgraphs appropriately if they contain
         # dynamic thread block maps
-        if any((isinstance(node, dace.nodes.MapEntry)
-                and node != scope_entry
-                and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
-               for node in dfg_scope.nodes()):
+        if any(
+            (isinstance(node, dace.nodes.MapEntry) and node != scope_entry and
+             node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
+                for node in dfg_scope.nodes()):
 
             subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
             for dfg in subgraphs:
@@ -1936,12 +1932,13 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
                 for c in components:
                     if not isinstance(c, dace.sdfg.scope.ScopeSubgraphView):
-                        callsite_stream.write('if ({} < {}) {{'.format(
-                            scope_map.params[0],
-                            _topy(subsets
-                                  .Range(scope_map.range[::-1])
-                                  .max_element()[0] + 1)
-                        ), sdfg, state_id, scope_entry)
+                        callsite_stream.write(
+                            'if ({} < {}) {{'.format(
+                                scope_map.params[0],
+                                _topy(
+                                    subsets.Range(scope_map.range[::-1]).
+                                    max_element()[0] + 1)), sdfg, state_id,
+                            scope_entry)
 
                     self._dispatcher.dispatch_subgraph(sdfg,
                                                        c,
@@ -1955,11 +1952,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
             # exit node gets lost in the process, thus needs to be
             # dispatched manually
-            self._dispatcher.dispatch_node(sdfg,
-                                           dfg_scope,
-                                           state_id,
-                                           scope_exit,
-                                           function_stream,
+            self._dispatcher.dispatch_node(sdfg, dfg_scope, state_id,
+                                           scope_exit, function_stream,
                                            callsite_stream)
 
         else:

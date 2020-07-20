@@ -72,6 +72,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+    Exchange = ()  # Set new value, return old value
 
     # Only supported in OpenMP
     Sub = ()  # Subtraction
@@ -309,6 +310,14 @@ class typeclass(object):
     def __repr__(self):
         return self.ctype
 
+    @property
+    def base_type(self):
+        return self
+
+    @property
+    def veclen(self):
+        return 1
+
 
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
@@ -337,8 +346,8 @@ def min_value(dtype: typeclass):
 
 
 def result_type_of(lhs, *rhs):
-    """ 
-    Returns the largest between two or more types (dace.types.typeclass) 
+    """
+    Returns the largest between two or more types (dace.types.typeclass)
     according to C semantics.
     """
     if len(rhs) == 0:
@@ -361,6 +370,16 @@ def result_type_of(lhs, *rhs):
         return rhs  # Use RHS even if it's None
     if rhs is None or rhs.type is None:
         return lhs  # Use LHS
+
+    # Vector types take precedence, largest vector size first
+    if isinstance(lhs, vector) and not isinstance(rhs, vector):
+        return lhs
+    elif not isinstance(lhs, vector) and isinstance(rhs, vector):
+        return rhs
+    elif isinstance(lhs, vector) and isinstance(rhs, vector):
+        if lhs.veclen == rhs.veclen:
+            return vector(result_type_of(lhs.vtype, rhs.vtype), lhs.veclen)
+        return lhs if lhs.veclen > rhs.veclen else rhs
 
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
@@ -425,6 +444,65 @@ class pointer(typeclass):
 
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
+
+    @property
+    def base_type(self):
+        return self._typeclass
+
+
+class vector(typeclass):
+    """
+    A data type for a vector-type of an existing typeclass.
+
+    Example use: `dace.vector(dace.float32, 4)` becomes float4.
+    """
+    def __init__(self, dtype: typeclass, vector_length: int):
+        self.vtype = dtype
+        self.type = dtype.type
+        self._veclen = vector_length
+        self.bytes = dtype.bytes * vector_length
+        self.dtype = self
+        self.materialize_func = None
+
+    def to_json(self):
+        return {
+            'type': 'vector',
+            'dtype': self.vtype.to_json(),
+            'elements': str(self.veclen)
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic
+        return vector(json_to_typeclass(json_obj['dtype'], context),
+                      pystr_to_symbolic(json_obj['elements']))
+
+    @property
+    def ctype(self):
+        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type] * self.veclen
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
+    @property
+    def base_type(self):
+        return self.vtype
+
+    @property
+    def veclen(self):
+        return self._veclen
+
+    @veclen.setter
+    def veclen(self, val):
+        self._veclen = val
 
 
 def immaterial(dace_data, materialize_func):
@@ -926,10 +1004,10 @@ def validate_name(name):
 
 
 def can_allocate(storage: StorageType, schedule: ScheduleType):
-    """ 
+    """
     Identifies whether a container of a storage type can be allocated in a
-    specific schedule. Used to determine arguments to subgraphs by the 
-    innermost scope that a container can be allocated in. For example, 
+    specific schedule. Used to determine arguments to subgraphs by the
+    innermost scope that a container can be allocated in. For example,
     FPGA_Global memory cannot be allocated from within the FPGA scope, or
     GPU shared memory cannot be allocated outside of device-level code.
 
@@ -955,7 +1033,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
         ]

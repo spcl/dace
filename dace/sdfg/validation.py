@@ -498,8 +498,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)
              and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            if (e.data.subset.num_elements() !=
-                    e.data.other_subset.num_elements()):
+            if (e.data.src_subset.num_elements() *
+                    sdfg.arrays[src_node.data].veclen !=
+                    e.data.dst_subset.num_elements() *
+                    sdfg.arrays[dst_node.data].veclen):
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)

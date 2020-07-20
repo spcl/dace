@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 
@@ -274,3 +275,49 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         raise NotImplementedError
 
     return result
+
+
+def replicate_scope(sdfg: SDFG, state: SDFGState,
+                    scope: ScopeSubgraphView) -> ScopeSubgraphView:
+    """
+    Replicates a scope subgraph view within a state, reconnecting all external
+    edges to the same nodes.
+    :param sdfg: The SDFG in which the subgraph scope resides.
+    :param state: The SDFG state in which the subgraph scope resides.
+    :param scope: The scope subgraph to replicate.
+    :return: A reconnected replica of the scope.
+    """
+    exit_node = state.exit_node(scope.entry)
+
+    # Replicate internal graph
+    new_nodes = []
+    new_entry = None
+    new_exit = None
+    for node in scope.nodes():
+        node_copy = copy.deepcopy(node)
+        if node == scope.entry:
+            new_entry = node_copy
+        elif node == exit_node:
+            new_exit = node_copy
+
+        state.add_node(node_copy)
+        new_nodes.append(node_copy)
+
+    for edge in scope.edges():
+        src = scope.nodes().index(edge.src)
+        dst = scope.nodes().index(edge.dst)
+        state.add_edge(new_nodes[src], edge.src_conn, new_nodes[dst],
+                       edge.dst_conn, copy.deepcopy(edge.data))
+
+    # Reconnect external scope nodes
+    for edge in state.in_edges(scope.entry):
+        state.add_edge(edge.src, edge.src_conn, new_entry, edge.dst_conn,
+                       copy.deepcopy(edge.data))
+    for edge in state.out_edges(exit_node):
+        state.add_edge(new_exit, edge.src_conn, edge.dst, edge.dst_conn,
+                       copy.deepcopy(edge.data))
+
+    # Set the exit node's map to match the entry node
+    new_exit.map = new_entry.map
+
+    return ScopeSubgraphView(state, new_nodes, new_entry)

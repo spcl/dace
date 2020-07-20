@@ -41,18 +41,10 @@ def copy_expr(
             s = offset
         o = None
     if s is not None:
-        offset_cppstr = cpp_offset_expr(datadesc, s, o,
-                                        memlet.veclen if packed_types else 1)
+        offset_cppstr = cpp_offset_expr(datadesc, s, o)
     else:
         offset_cppstr = "0"
     dt = ""
-
-    if memlet.veclen != 1 and not packed_types:
-        offset_cppstr = "(%s) / %s" % (offset_cppstr, sym2cpp(memlet.veclen))
-        dt = "(dace::vec<%s, %s> *)" % (
-            datadesc.dtype.ctype,
-            sym2cpp(memlet.veclen),
-        )
 
     expr = dataname
 
@@ -206,17 +198,6 @@ def memlet_copy_to_absolute_strides(dispatcher,
         elif memlet.data == dst_node.data:
             copy_shape, src_strides = reshape_strides(dst_subset, dst_strides,
                                                       src_strides, copy_shape)
-
-    if memlet.veclen != 1:
-        int_floor = sp.Function("int_floor")
-        src_strides[:-1] = [
-            int_floor(s, memlet.veclen) for s in src_strides[:-1]
-        ]
-        dst_strides[:-1] = [
-            int_floor(s, memlet.veclen) for s in dst_strides[:-1]
-        ]
-        if not packed_types:
-            copy_shape[-1] = int_floor(copy_shape[-1], memlet.veclen)
 
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
@@ -422,7 +403,13 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
+def write_and_resolve_expr(sdfg,
+                           memlet,
+                           nc,
+                           outname,
+                           inname,
+                           indices=None,
+                           dtype=None):
     """ Helper function that emits a write_and_resolve call from a memlet. """
 
     redtype = operations.detect_reduction_type(memlet.wcr)
@@ -439,9 +426,9 @@ def write_and_resolve_expr(sdfg, memlet, nc, outname, inname, indices=None):
             redtype)[str(redtype).find(".") + 1:]
         reduction_tmpl = "<%s>" % credtype
     else:
-        custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr)
+        custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr, dtype)
 
-    return "{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind});".format(
+    return "{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind})".format(
         oname=outname,
         nc=nc,
         tmpl=reduction_tmpl,
@@ -527,12 +514,14 @@ def unparse_cr_split(sdfg, wcr_ast):
                                   type(wcr_ast).__name__)
 
 
-def unparse_cr(sdfg, wcr_ast):
+def unparse_cr(sdfg, wcr_ast, dtype):
     """ Outputs a C++ version of a conflict resolution lambda. """
     body_cpp, args = unparse_cr_split(sdfg, wcr_ast)
 
+    ctype = 'auto' if dtype is None else dtype.ctype
+
     # Construct a C++ lambda function out of a function
-    return '[] (%s) { %s }' % (', '.join('const auto& %s' % a
+    return '[] (%s) { %s }' % (', '.join('const %s& %s' % (ctype, a)
                                          for a in args), body_cpp)
 
 
@@ -654,35 +643,50 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         raise SyntaxError("Augmented assignments (e.g. +=) not allowed on " +
                           "array memlets")
 
+    def _replace_assignment(self, newnode: ast.AST,
+                            node: ast.Assign) -> ast.AST:
+        locfix = ast.copy_location(newnode, node.value)
+        if len(node.targets) == 1:
+            return locfix
+        # More than one target, i.e., x = y = z
+        return ast.copy_location(
+            ast.Assign(targets=node.targets[:-1], value=locfix), node)
+
     def visit_Assign(self, node):
-        target = rname(node.targets[0])
+        target = rname(node.targets[-1])
         if target not in self.memlets:
             return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(node.value)
 
-        if not isinstance(node.targets[0], ast.Subscript):
+        if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses -> every access counts
             try:
                 if memlet is not None and memlet.dynamic:
                     if wcr is not None:
                         newnode = ast.Name(id=write_and_resolve_expr(
-                            self.sdfg, memlet, nc, '__' + target,
-                            cppunparse.cppunparse(value, expr_semicolon=False)))
+                            self.sdfg,
+                            memlet,
+                            nc,
+                            '__' + target,
+                            cppunparse.cppunparse(value, expr_semicolon=False),
+                            dtype=dtype))
+                        node.value = ast.copy_location(newnode, node.value)
+                        return node
                     else:
                         newnode = ast.Name(id="__%s.write(%s);" % (
                             target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
 
-                    return ast.copy_location(newnode, node)
+                    return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
                 pass
 
             return self.generic_visit(node)
 
-        slice = self.visit(node.targets[0].slice)
+        slice = self.visit(node.targets[-1].slice)
         if not isinstance(slice, ast.Index):
             raise NotImplementedError("Range subscripting not implemented")
 
@@ -699,7 +703,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 "__" + target,
                 cppunparse.cppunparse(value, expr_semicolon=False),
                 indices=subscript,
-            ))
+                dtype=dtype) + ';')
         else:
             newnode = ast.Name(id="__%s.write(%s, %s);" % (
                 target,
@@ -707,7 +711,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 subscript,
             ))
 
-        return ast.copy_location(newnode, node)
+        return self._replace_assignment(newnode, node)
 
     # TODO: Remove!
     @staticmethod

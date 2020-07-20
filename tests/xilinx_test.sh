@@ -56,8 +56,9 @@ run_sample() {
 run_all() {
     # Args:
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
-    # run_sample remove_degenerate_loop remove_degenerate_loop_test
+    run_sample remove_degenerate_loop remove_degenerate_loop_test 0
     run_sample pipeline_scope pipeline_test 1
+    run_sample veclen_copy_conversion veclen_copy_conversion 1
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 0 24
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream 0 64 64 640
     run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 
@@ -88,6 +89,7 @@ fi
 echo "====== Target: Xilinx ======"
 
 DACE_compiler_use_cache=0
+DACE_testing_single_cache=0
 DACE_compiler_fpga_vendor="xilinx"
 DACE_compiler_xilinx_mode="simulation"
 

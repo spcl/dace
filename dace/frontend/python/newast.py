@@ -478,7 +478,6 @@ def add_indirection_subgraph(sdfg: SDFG,
     fullRange = subsets.Range([(0, s - 1, 1) for s in array.shape])
     fullMemlet = Memlet.simple(memlet.data,
                                fullRange,
-                               veclen=memlet.veclen,
                                num_accesses=memlet.num_accesses)
     fullMemlet.dynamic = memlet.dynamic
 
@@ -510,14 +509,12 @@ def add_indirection_subgraph(sdfg: SDFG,
     # Memlet to store the final value into the transient, and to load it into
     # the tasklet that needs it
     # indirectMemlet = Memlet.simple('__' + local_name + '_value',
-    #                         indirectRange, num_accesses=memlet.num_accesses,
-    #                         veclen=memlet.veclen)
+    #                         indirectRange, num_accesses=memlet.num_accesses)
     # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
     valueMemlet = Memlet.simple(tmp_name,
                                 indirectRange,
-                                num_accesses=1,
-                                veclen=memlet.veclen)
+                                num_accesses=1)
     if output:
         path = [src] + inp_base_path
         if isinstance(src, nodes.AccessNode):
@@ -885,7 +882,6 @@ class TaskletTransformer(ExtNodeTransformer):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
                         out_memlet = self.sdfg_outputs[name][0]
-                        out_memlet.veclen = memlet.veclen
                         out_memlet.volume = memlet.volume
                         out_memlet.dynamic = memlet.dynamic
                         out_memlet.wcr = memlet.wcr
@@ -1808,7 +1804,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         inner_memlet = Memlet.simple(vname, str(irng))
                         inner_memlet.num_accesses = memlet.num_accesses
                         inner_memlet.dynamic = memlet.dynamic
-                        inner_memlet.veclen = memlet.veclen
                     else:
                         name = memlet.data
                         vname = "{c}_out_of_{s}{n}".format(
@@ -2384,7 +2379,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 true_array = defined_arrays[true_name]
 
             if (isinstance(target, ast.Name) and true_name and not op
-                    and not isinstance(true_array, data.Scalar)):
+                    and not isinstance(true_array, data.Scalar)
+                    and not (true_array.shape == (1, ))):
                 raise DaceSyntaxError(
                     self, target,
                     'Cannot reassign value to variable "{}"'.format(name))
