@@ -41,16 +41,14 @@ def make_sdfg(tasklet_code=None,
     pre_write = pre_state.add_write("a_device")
     pre_state.add_memlet_path(pre_read,
                               pre_write,
-                              memlet=dace.Memlet(
-                                  pre_write.data, None))
+                              memlet=dace.Memlet(pre_write.data, None))
 
     # Device to host
     post_read = post_state.add_read("b_device")
     post_write = post_state.add_write("b")
     post_state.add_memlet_path(post_read,
                                post_write,
-                               memlet=dace.Memlet(
-                                   post_write.data, None))
+                               memlet=dace.Memlet(post_write.data, None))
 
     # Compute state
     read_memory = state.add_read("a_device")
