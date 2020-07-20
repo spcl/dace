@@ -229,9 +229,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream)
 
-        # TODO: immaterial arrays should not allocate memory
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or nodedesc.storage == dtypes.StorageType.Immaterial
               or (nodedesc.storage == dtypes.StorageType.Register
                   and symbolic.issymbolic(arrsize, sdfg.constants))):
 

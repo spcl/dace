@@ -39,8 +39,13 @@ DACE_EXPORTED int __dace_init_mpi({params});
 DACE_EXPORTED void __dace_exit_mpi({params});
 
 int __dace_init_mpi({params}) {{
-    if (MPI_Init(NULL, NULL) != MPI_SUCCESS)
+    int isinit = 0;
+    if (MPI_Initialized(&isinit) != MPI_SUCCESS)
         return 1;
+    if (!isinit) {{
+        if (MPI_Init(NULL, NULL) != MPI_SUCCESS)
+            return 1;
+    }}
 
     MPI_Comm_dup(MPI_COMM_WORLD, &__dace_mpi_comm);
     MPI_Comm_rank(__dace_mpi_comm, &__dace_comm_rank);
