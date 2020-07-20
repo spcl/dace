@@ -189,3 +189,111 @@ function traverse_sdfg_scopes(sdfg, func, post_subscope_func=null) {
     }
     scopes_recursive(sdfg, sdfg.nodes());
 }
+
+/**
+ * Returns a partial memlet tree from a given edge, from the root node 
+ * through all children (without siblings). Calling this function with
+ * the root edge returns the entire memlet tree.
+ **/
+function memlet_tree(graph, edge, root_only = false) {
+    let result = [];
+    let graph_edges = graph.edges();
+
+    function src(e) {
+        let ge = graph_edges[e.id];
+        return graph.node(ge.v);
+    }
+    function dst(e) {
+        let ge = graph_edges[e.id];
+        return graph.node(ge.w);
+    }
+
+    // Determine direction
+    let propagate_forward = false, propagate_backward = false;
+    if ((edge.src_connector && src(edge) instanceof EntryNode) ||
+        (edge.dst_connector && dst(edge) instanceof EntryNode && 
+         edge.dst_connector.startsWith('IN_')))
+        propagate_forward = true;
+    if ((edge.src_connector && src(edge) instanceof ExitNode) || 
+        (edge.dst_connector && dst(edge) instanceof ExitNode))
+        propagate_backward = true;
+
+    result.push(edge);
+
+    // If either both are false (no scopes involved) or both are true
+    // (invalid SDFG), we return only the current edge as a degenerate tree
+    if (propagate_forward == propagate_backward)
+        return result;
+
+    // Ascend (find tree root) while prepending
+    let curedge = edge;
+    if (propagate_forward) {
+        let source = src(curedge);
+        while(source instanceof EntryNode && curedge.src_connector) {
+            let cname = curedge.src_connector.substring(4);  // Remove OUT_
+            curedge = null;
+            graph.inEdges(source.id).forEach(e => {
+                let ge = graph.edge(e);
+                if (ge.dst_connector == 'IN_' + cname)
+                    curedge = ge;
+            });
+            if (curedge)
+                result.unshift(curedge);
+        }
+    } else if (propagate_backward) {
+        let dest = dst(curedge);
+        while(dest instanceof ExitNode && curedge.dst_connector) {
+            let cname = curedge.dst_connector.substring(3);  // Remove IN_
+            curedge = null;
+            graph.outEdges(dest.id).forEach(e => {
+                let ge = graph.edge(e);
+                if (ge.src_connector == 'OUT_' + cname)
+                    curedge = ge;
+            });
+            if (curedge)
+                result.unshift(curedge);
+        }
+    }
+
+    if (root_only)
+        return [result[0]];
+
+    // Descend recursively
+    function add_children(edge) {
+        let children = [];
+        if (propagate_forward) {
+            let next_node = dst(edge);
+            if (!(next_node instanceof EntryNode) &&
+                    edge.dst_connector && edge.dst_connector.startsWith('IN_'))
+                return;
+            let conn = edge.dst_connector.substring(3);
+            graph.outEdges(next_node.id).forEach(e => {
+                let ge = graph.edge(e);
+                if (ge.src_connector == 'OUT_' + conn) {
+                    children.push(ge);
+                    result.push(ge);
+                }
+            });
+        } else if (propagate_backward) {
+            let next_node = src(edge);
+            if (!(next_node instanceof ExitNode) || !edge.src_connector)
+                return;
+            let conn = edge.src_connector.substring(4);
+            graph.inEdges(next_node.id).forEach(e => {
+                let ge = graph.edge(e);
+                if (ge.dst_connector == 'IN_' + conn) {
+                    children.push(ge);
+                    result.push(ge);
+                }
+            });
+        }
+
+        for (let child of children)
+            add_children(child);
+    }
+
+    // Start from current edge
+    add_children(edge);
+
+    return result;
+}
