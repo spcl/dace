@@ -44,3 +44,16 @@ The DaCe Python-Frontend supports in general the same literals as Python.
 However, there is currently limited support for strings and char/byte arrays.
 For example, it is not possible to instantiate an (u)int8 array with a string
 or byte literal.
+
+### 2.5 Operators
+The DaCe Python-Frontend supports all Python operators.
+The operators are only supported in the context of arithmetic/logical operations among
+scalar values and DaCe (Numpy-compatible) arrays. For example, it is not possible
+to concatenate 2 strings with the `+` operator.
+The `:=` operator (Named Expression) is parsed as an assignment statement.
+
+### 2.6 Delimiters
+The DaCe Python-Frontend supports all Python delimiters. However, not all uses of
+those delimiters are supported. For example, we do not support lists, sets, and
+dictionaries. Therefore, the delimiters `[, ], {, }` cannot be used to define
+those datatypes.
