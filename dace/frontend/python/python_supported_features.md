@@ -38,3 +38,9 @@ The following keywords are NOT accepted:
 #### 2.3.2 Reserved classes of identifiers
 Reserved class of Python identifiers are not supported. Furthermore, identifiers
 starting with double underscore (`__`) are reserved by the SDFG language.
+
+### 2.4 Literals
+The DaCe Python-Frontend supports in general the same literals as Python.
+However, there is currently limited support for strings and char/byte arrays.
+For example, it is not possible to instantiate an (u)int8 array with a string
+or byte literal.
