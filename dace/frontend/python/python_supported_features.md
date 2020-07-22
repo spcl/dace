@@ -24,7 +24,7 @@ The following keywords are recognized (for at least a subset of their Python fun
 
 The following keywords are NOT accepted:
 - global, nonlocal
-- class
+- class, lambda
 - try, except, finally
 - raise, yield, pass
 - import, from, as, with
