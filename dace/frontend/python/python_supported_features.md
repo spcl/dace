@@ -13,8 +13,13 @@ However, we explicitly tests for the following subsections (`tests/python_fronte
 - 2.1.6 Implicit Line Joining
 - 2.1.7 Blank Lines
 
-### 2.2 Identifiers and Keywords
+### 2.3 Identifiers and Keywords
 The DaCe Python-Frontend uses exactly the same rules for identifiers as normal Python.
+However, for a generated SDFG to compile to a target architecture, the identifiers used
+must be valid in the output language (e.g., C/C++). We currently provide no automatic
+transformation of identifiers used as variable names. Therefore, it is the responsibility
+of the user to ensure that the variable names are compatible.
+#### 2.3.1 Keywords
 The following keywords are recognized (for at least a subset of their Python functionality):
 - True, False, None
 - or, and, not
@@ -29,3 +34,7 @@ The following keywords are NOT accepted:
 - raise, yield, pass
 - import, from, as, with
 - assert, async, await, del
+
+#### 2.3.2 Reserved classes of identifiers
+Reserved class of Python identifiers are not supported. Furthermore, identifiers
+starting with double underscore (`__`) are reserved by the SDFG language.
