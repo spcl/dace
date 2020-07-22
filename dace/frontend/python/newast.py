@@ -244,7 +244,7 @@ _DISALLOWED_STMTS = [
     'Print', 'Nonlocal', 'Yield', 'YieldFrom', 'Raise', 'Try', 'TryExcept',
     'TryFinally', 'ExceptHandler', 'Starred', 'Ellipsis', 'ClassDef',
     'AsyncFor', 'Await', 'Bytes', 'Set', 'Dict', 'ListComp', 'GeneratorExp',
-    'SetComp', 'DictComp', 'comprehension'
+    'SetComp', 'DictComp', 'comprehension', 'Lambda'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
