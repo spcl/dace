@@ -57,10 +57,10 @@ def infer_expr_type(code, symbols=None):
         parsed_ast = ast.parse(symstr(code))
 
     # The parsed AST must only contain one expression
-    if isinstance(parsed_ast.body[0], ast.Expr):
+    if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
         return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
     else:
-        raise TypeError("Expected an expression")
+        raise TypeError("Expected expression, got: {}".format(type(code)))
 
 
 def _dispatch(tree, symbols, inferred_symbols):
@@ -163,10 +163,6 @@ def _AnnAssign(t, symbols, inferred_symbols):
 def _Return(t, symbols, inferred_symbols):
     if t.value:
         _dispatch(t.value, symbols, inferred_symbols)
-
-
-def _Constant(t, symbols, inferred_symbols):
-    pass
 
 
 def _generic_FunctionDef(t, symbols, inferred_symbols):
@@ -286,6 +282,17 @@ def _NameConstant(t, symbols, inferred_symbols):
         dtypes.typeclass(np.min_scalar_type(t.value).name))
 
 
+def _Constant(t, symbols, inferred_symbols):
+    # String value
+    if isinstance(t.value, (str, bytes)):
+        return dtypes.pointer(dtypes.int8)
+
+    # Numeric value
+    return dtypes.result_type_of(
+        dtypes.typeclass(type(t.value)),
+        dtypes.typeclass(np.min_scalar_type(t.value).name))
+
+
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
@@ -323,7 +330,7 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
+        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n
                 and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)

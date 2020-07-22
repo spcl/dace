@@ -25,10 +25,10 @@ if __name__ == '__main__':
     # tasklet_gen = state.add_tasklet('mytasklet', {}, {'b'}, 'b = 5')
     # map_entry, map_exit = state.add_map('mymap', dict(k='0:N'))
     #
-    # map_entry._in_connectors.add('IN_1')
-    # map_entry._out_connectors.add('OUT_1')
-    # map_exit._in_connectors.add('IN_1')
-    # map_exit._out_connectors.add('OUT_1')
+    # map_entry.add_in_connector('IN_1')
+    # map_entry.add_out_connector('OUT_1')
+    # map_exit.add_in_connector('IN_1')
+    # map_exit.add_out_connector('OUT_1')
     #
     # state.add_edge(tasklet_gen, 'b', map_entry, 'IN_1', Memlet.simple(T, '0'))
     # state.add_edge(map_entry, 'OUT_1', T, None, Memlet.simple(T, '0'))
@@ -53,10 +53,10 @@ if __name__ == '__main__':
     tasklet_gen = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = 5*a')
     map_entry, map_exit = state.add_map('mymap', dict(k='0:N'))
 
-    map_entry._in_connectors.add('IN_1')
-    map_entry._out_connectors.add('OUT_1')
-    map_exit._in_connectors.add('IN_1')
-    map_exit._out_connectors.add('OUT_1')
+    map_entry.add_in_connector('IN_1')
+    map_entry.add_out_connector('OUT_1')
+    map_exit.add_in_connector('IN_1')
+    map_exit.add_out_connector('OUT_1')
 
     state.add_edge(B, None, map_entry, 'IN_1', Memlet.simple(B, '0'))
     state.add_edge(map_entry, 'OUT_1', T, None, Memlet.simple(T, '0'))
@@ -82,18 +82,17 @@ if __name__ == '__main__':
     map1_entry, map1_exit = state.add_map('mymap1', dict(k='0:N'))
     map2_entry, map2_exit = state.add_map('mymap2', dict(k='0:N'))
 
-    map1_entry._in_connectors.add('IN_1')
-    map1_entry._out_connectors.add('OUT_1')
-    map1_exit._in_connectors.add('IN_1')
-    map1_exit._out_connectors.add('OUT_1')
-    map2_entry._in_connectors.add('IN_1')
-    map2_entry._out_connectors.add('OUT_1')
-    map2_exit._in_connectors.add('IN_1')
-    map2_exit._out_connectors.add('OUT_1')
+    map1_entry.add_in_connector('IN_1')
+    map1_entry.add_out_connector('OUT_1')
+    map1_exit.add_in_connector('IN_1')
+    map1_exit.add_out_connector('OUT_1')
+    map2_entry.add_in_connector('IN_1')
+    map2_entry.add_out_connector('OUT_1')
+    map2_exit.add_in_connector('IN_1')
+    map2_exit.add_out_connector('OUT_1')
 
     state.add_edge(A, None, map1_entry, 'IN_1', Memlet.simple(A, '0:N'))
-    state.add_edge(map1_entry, 'OUT_1', tasklet_gen, 'a',
-                   Memlet.simple(A, 'i'))
+    state.add_edge(map1_entry, 'OUT_1', tasklet_gen, 'a', Memlet.simple(A, 'i'))
     state.add_edge(tasklet_gen, 'b', map1_exit, 'IN_1', Memlet.simple(T, 'i'))
     state.add_edge(map1_exit, 'OUT_1', map2_entry, 'IN_1',
                    Memlet.simple(T, '0:N'))

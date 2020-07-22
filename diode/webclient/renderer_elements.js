@@ -17,7 +17,7 @@ class SDFGElement {
         this.height = this.data.layout.height;
     }
 
-    draw(renderer, ctx, mousepos) {}
+    draw(renderer, ctx, mousepos) { }
 
     attributes() {
         return this.data.attributes;
@@ -40,7 +40,7 @@ class SDFGElement {
     }
 
     topleft() {
-        return {x: this.x - this.width / 2, y: this.y - this.height / 2};
+        return { x: this.x - this.width / 2, y: this.y - this.height / 2 };
     }
 
     strokeStyle() {
@@ -53,14 +53,14 @@ class SDFGElement {
     intersect(x, y, w = 0, h = 0) {
         if (w == 0 || h == 0) {  // Point-element intersection
             return (x >= this.x - this.width / 2.0) &&
-                   (x <= this.x + this.width / 2.0) &&
-                   (y >= this.y - this.height / 2.0) &&
-                   (y <= this.y + this.height / 2.0);
+                (x <= this.x + this.width / 2.0) &&
+                (y >= this.y - this.height / 2.0) &&
+                (y <= this.y + this.height / 2.0);
         } else {                 // Box-element intersection
             return (x <= this.x + this.width / 2.0) &&
-                    (x + w >= this.x - this.width / 2.0) &&
-                    (y <= this.y + this.height / 2.0) &&
-                    (y + h >= this.y - this.height / 2.0);
+                (x + w >= this.x - this.width / 2.0) &&
+                (y <= this.y + this.height / 2.0) &&
+                (y + h >= this.y - this.height / 2.0);
         }
     }
 }
@@ -68,17 +68,29 @@ class SDFGElement {
 class State extends SDFGElement {
     draw(renderer, ctx, mousepos) {
         let topleft = this.topleft();
-
+        let visible_rect = renderer.visible_rect;
+        let clamped = {x: Math.max(topleft.x, visible_rect.x),
+                       y: Math.max(topleft.y, visible_rect.y),
+                       x2: Math.min(topleft.x + this.width, 
+                                    visible_rect.x + visible_rect.w),
+                       y2: Math.min(topleft.y + this.height, 
+                                    visible_rect.y + visible_rect.h)};
+        clamped.w = clamped.x2 - clamped.x;
+        clamped.h = clamped.y2 - clamped.y;
+        
         ctx.fillStyle = "#deebf7";
-        ctx.fillRect(topleft.x, topleft.y, this.width, this.height);
+        ctx.fillRect(clamped.x, clamped.y, clamped.w, clamped.h);
         ctx.fillStyle = "#000000";
 
-        ctx.fillText(this.label(), topleft.x, topleft.y + LINEHEIGHT);
+        if (visible_rect.x <= topleft.x && visible_rect.y <= topleft.y + LINEHEIGHT)
+            ctx.fillText(this.label(), topleft.x, topleft.y + LINEHEIGHT);
 
         // If this state is selected or hovered
-        if (this.stroke_color) {
+        if (this.stroke_color && (clamped.x == topleft.x || clamped.y == topleft.y || 
+                                  clamped.x2 == topleft.x + this.width || 
+                                  clamped.y2 == topleft.y + this.height)) {
             ctx.strokeStyle = this.strokeStyle();
-            ctx.strokeRect(topleft.x, topleft.y, this.width, this.height);
+            ctx.strokeRect(clamped.x, clamped.y, clamped.w, clamped.h);
         }
 
         // If collapsed, draw a "+" sign in the middle
@@ -147,7 +159,7 @@ class Node extends SDFGElement {
         ctx.strokeRect(topleft.x, topleft.y, this.width, this.height);
         ctx.fillStyle = "black";
         let textw = ctx.measureText(this.label()).width;
-        ctx.fillText(this.label(), this.x - textw/2, this.y + LINEHEIGHT/4);
+        ctx.fillText(this.label(), this.x - textw / 2, this.y + LINEHEIGHT / 4);
     }
 
     simple_draw(renderer, ctx, mousepos) {
@@ -194,14 +206,14 @@ class Edge extends SDFGElement {
                 ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y, xm, ym);
             }
             ctx.quadraticCurveTo(edge.points[i].x, edge.points[i].y,
-                                 edge.points[i+1].x, edge.points[i+1].y);
+                edge.points[i + 1].x, edge.points[i + 1].y);
         }
 
         let style = this.strokeStyle();
         if (style !== 'black')
             renderer.tooltip = (c) => this.tooltip(c, renderer);
         if (this.parent_id == null && style === 'black') {  // Interstate edge
-            style = 'blue';
+            style = '#86add9';
         }
         ctx.fillStyle = ctx.strokeStyle = style;
 
@@ -210,7 +222,7 @@ class Edge extends SDFGElement {
             ctx.setLineDash([2, 2]);
         else
             ctx.setLineDash([1, 0]);
-        
+
 
         ctx.stroke();
 
@@ -235,16 +247,27 @@ class Edge extends SDFGElement {
             }
             let contents = attr.data;
             contents += sdfg_property_to_string(attr.subset, dsettings);
-            
+
             if (attr.other_subset)
                 contents += ' -> ' + sdfg_property_to_string(attr.other_subset, dsettings);
 
             if (attr.wcr)
-                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr, dsettings) +'</b>';
+                contents += '<br /><b>CR: ' + sdfg_property_to_string(attr.wcr, dsettings) + '</b>';
 
-            let num_accesses = sdfg_property_to_string(attr.num_accesses, dsettings);
-            if (num_accesses == -1)
-                num_accesses = "<b>Dynamic</b>";
+            let num_accesses = null;
+            if (attr.volume)
+                num_accesses = sdfg_property_to_string(attr.volume, dsettings);
+            else
+                num_accesses = sdfg_property_to_string(attr.num_accesses, dsettings);
+
+            if (attr.dynamic) {
+                if (num_accesses == 0 || num_accesses == -1)
+                    num_accesses = "<b>Dynamic (unbounded)</b>";
+                else
+                    num_accesses = "<b>Dynamic</b> (up to " + num_accesses + ")";
+            } else if (num_accesses == -1) {
+                num_accesses = "<b>Dynamic (unbounded)</b>";
+            }
 
             contents += '<br /><font style="font-size: 14px">Volume: ' + num_accesses + '</font>';
             container.innerHTML = contents;
@@ -262,13 +285,13 @@ class Edge extends SDFGElement {
 
     intersect(x, y, w = 0, h = 0) {
         // First, check bounding box
-        if(!super.intersect(x, y, w, h))
+        if (!super.intersect(x, y, w, h))
             return false;
 
         // Then (if point), check distance from line
         if (w == 0 || h == 0) {
             for (let i = 0; i < this.points.length - 1; i++) {
-                let dist = ptLineDistance({x: x, y: y}, this.points[i], this.points[i + 1]);
+                let dist = ptLineDistance({ x: x, y: y }, this.points[i], this.points[i + 1]);
                 if (dist <= 5.0)
                     return true;
             }
@@ -381,9 +404,9 @@ class ScopeNode extends Node {
 
         let far_label = this.far_label();
         drawAdaptiveText(ctx, renderer, far_label,
-                         this.close_label(renderer), this.x, this.y, 
-                         this.width, this.height, 
-                         SCOPE_LOD);
+            this.close_label(renderer), this.x, this.y,
+            this.width, this.height,
+            SCOPE_LOD);
     }
 
     far_label() {
@@ -424,7 +447,7 @@ class ScopeNode extends Node {
                 result += attrs.params[i] + '=';
                 result += sdfg_range_elem_to_string(attrs.range.ranges[i], renderer.view_settings()) + ', ';
             }
-            result = result.substring(0, result.length-2); // Remove trailing comma
+            result = result.substring(0, result.length - 2); // Remove trailing comma
         }
         return result + ']';
     }
@@ -439,11 +462,11 @@ class ExitNode extends ScopeNode {
 }
 
 class MapEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } }
-class MapExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([1, 0]); } }
-class ConsumeEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
-class ConsumeExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([5, 3]); } }
-class PipelineEntry extends EntryNode {  stroketype(ctx) { ctx.setLineDash([10, 3]); } }
-class PipelineExit extends ExitNode {  stroketype(ctx) { ctx.setLineDash([10, 3]); } }
+class MapExit extends ExitNode { stroketype(ctx) { ctx.setLineDash([1, 0]); } }
+class ConsumeEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([5, 3]); } }
+class ConsumeExit extends ExitNode { stroketype(ctx) { ctx.setLineDash([5, 3]); } }
+class PipelineEntry extends EntryNode { stroketype(ctx) { ctx.setLineDash([10, 3]); } }
+class PipelineExit extends ExitNode { stroketype(ctx) { ctx.setLineDash([10, 3]); } }
 
 class EmptyTasklet extends Node {
     draw(renderer, ctx, mousepos) {
@@ -480,20 +503,20 @@ class Tasklet extends Node {
             let textmetrics = ctx.measureText(lines[maxline]);
 
             // Fit font size to 80% height and width of tasklet
-            let height = lines.length * LINEHEIGHT*1.05;
+            let height = lines.length * LINEHEIGHT * 1.05;
             let width = textmetrics.width;
             let TASKLET_WRATIO = 0.9, TASKLET_HRATIO = 0.5;
             let hr = height / (this.height * TASKLET_HRATIO);
             let wr = width / (this.width * TASKLET_WRATIO);
             let FONTSIZE = Math.min(10 / hr, 10 / wr);
-            let text_yoffset = FONTSIZE/4;
+            let text_yoffset = FONTSIZE / 4;
 
             ctx.font = FONTSIZE + "px courier new";
             // Set the start offset such that the middle row of the text is in this.y
-            let y = this.y + text_yoffset - ((lines.length-1)/2) * FONTSIZE*1.05;
+            let y = this.y + text_yoffset - ((lines.length - 1) / 2) * FONTSIZE * 1.05;
             for (let i = 0; i < lines.length; i++)
-                ctx.fillText(lines[i], this.x - (this.width*TASKLET_WRATIO) / 2.0,
-                             y + i*FONTSIZE*1.05);
+                ctx.fillText(lines[i], this.x - (this.width * TASKLET_WRATIO) / 2.0,
+                    y + i * FONTSIZE * 1.05);
 
             ctx.font = oldfont;
             return;
@@ -526,9 +549,9 @@ class Reduce extends Node {
 
         let far_label = this.label().substring(4, this.label().indexOf(','));
         drawAdaptiveText(ctx, renderer, far_label,
-                         this.label(), this.x, this.y - this.height*0.2,
-                         this.width, this.height,
-                         SCOPE_LOD);
+            this.label(), this.x, this.y - this.height * 0.2,
+            this.width, this.height,
+            SCOPE_LOD);
     }
 }
 
@@ -539,12 +562,12 @@ class NestedSDFG extends Node {
             drawOctagon(ctx, topleft, this.width, this.height);
             ctx.strokeStyle = this.strokeStyle();
             ctx.stroke();
-            drawOctagon(ctx, {x: topleft.x + 2.5, y: topleft.y + 2.5}, this.width - 5, this.height - 5);
+            drawOctagon(ctx, { x: topleft.x + 2.5, y: topleft.y + 2.5 }, this.width - 5, this.height - 5);
             ctx.strokeStyle = this.strokeStyle();
             ctx.stroke();
             ctx.fillStyle = 'white';
             if (ctx.pdf) // PDFs do not support stroke and fill on the same object
-                drawOctagon(ctx, {x: topleft.x + 2.5, y: topleft.y + 2.5}, this.width - 5, this.height - 5);
+                drawOctagon(ctx, { x: topleft.x + 2.5, y: topleft.y + 2.5 }, this.width - 5, this.height - 5);
             ctx.fill();
             ctx.fillStyle = 'black';
             let label = this.data.node.attributes.label;
@@ -560,14 +583,14 @@ class NestedSDFG extends Node {
         draw_sdfg(renderer, ctx, this.data.graph, mousepos);
     }
 
-    set_layout() { 
+    set_layout() {
         if (this.data.node.attributes.is_collapsed) {
             let labelsize = this.data.node.attributes.label.length * LINEHEIGHT * 0.8;
-            let inconnsize = 2 * LINEHEIGHT * this.data.node.attributes.in_connectors.length - LINEHEIGHT;
-            let outconnsize = 2 * LINEHEIGHT * this.data.node.attributes.out_connectors.length - LINEHEIGHT;
+            let inconnsize = 2 * LINEHEIGHT * Object.keys(this.data.node.attributes.in_connectors).length - LINEHEIGHT;
+            let outconnsize = 2 * LINEHEIGHT * Object.keys(this.data.node.attributes.out_connectors).length - LINEHEIGHT;
             let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
-            let maxheight = 2*LINEHEIGHT;
-            maxheight += 4*LINEHEIGHT;
+            let maxheight = 2 * LINEHEIGHT;
+            maxheight += 4 * LINEHEIGHT;
 
             let size = { width: maxwidth, height: maxheight };
             size.width += 2.0 * (size.height / 3.0);
@@ -618,7 +641,7 @@ class LibraryNode extends Node {
         ctx.stroke();
         ctx.fillStyle = "black";
         let textw = ctx.measureText(this.label()).width;
-        ctx.fillText(this.label(), this.x - textw/2, this.y + LINEHEIGHT/4);
+        ctx.fillText(this.label(), this.x - textw / 2, this.y + LINEHEIGHT / 4);
     }
 }
 
@@ -631,13 +654,13 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
     // Render state machine
     let g = sdfg_dagre;
     if (!ctx.lod || ppp < EDGE_LOD)
-        g.edges().forEach( e => { g.edge(e).draw(renderer, ctx, mousepos); });
+        g.edges().forEach(e => { g.edge(e).draw(renderer, ctx, mousepos); });
 
 
     visible_rect = renderer.visible_rect;
 
     // Render each visible state's contents
-    g.nodes().forEach( v => {
+    g.nodes().forEach(v => {
         let node = g.node(v);
 
         if (ctx.lod && (ppp >= STATE_LOD || node.width / ppp < STATE_LOD)) {
@@ -652,8 +675,7 @@ function draw_sdfg(renderer, ctx, sdfg_dagre, mousepos) {
 
         let ng = node.data.graph;
 
-        if (!node.data.state.attributes.is_collapsed && ng)
-        {
+        if (!node.data.state.attributes.is_collapsed && ng) {
             ng.nodes().forEach(v => {
                 let n = ng.node(v);
 
@@ -703,7 +725,7 @@ function offset_sdfg(sdfg, sdfg_graph, offset) {
 // Translate nodes, edges, and connectors in a given SDFG state by an offset
 function offset_state(state, state_graph, offset) {
     let drawn_nodes = new Set();
-    
+
     state.nodes.forEach((n, nid) => {
         let node = state_graph.data.graph.node(nid);
         if (!node) return;
@@ -741,8 +763,8 @@ function offset_state(state, state_graph, offset) {
 ///////////////////////////////////////////////////////
 
 function drawAdaptiveText(ctx, renderer, far_text, close_text,
-                          x, y, w, h, ppp_thres, max_font_size=50,
-                          font_multiplier=16) {
+    x, y, w, h, ppp_thres, max_font_size = 50,
+    font_multiplier = 16) {
     let ppp = renderer.canvas_manager.points_per_pixel();
     let label = close_text;
     let FONTSIZE = Math.min(ppp * font_multiplier, max_font_size);
@@ -770,7 +792,7 @@ function drawAdaptiveText(ctx, renderer, far_text, close_text,
 }
 
 function drawHexagon(ctx, x, y, w, h, offset) {
-    let topleft = {x: x - w / 2.0, y: y - h / 2.0};
+    let topleft = { x: x - w / 2.0, y: y - h / 2.0 };
     let hexseg = h / 3.0;
     ctx.beginPath();
     ctx.moveTo(topleft.x, y);
@@ -801,12 +823,12 @@ function drawOctagon(ctx, topleft, width, height) {
 // Adapted from https://stackoverflow.com/a/2173084/6489142
 function drawEllipse(ctx, x, y, w, h) {
     var kappa = .5522848,
-    ox = (w / 2) * kappa, // control point offset horizontal
-    oy = (h / 2) * kappa, // control point offset vertical
-    xe = x + w,           // x-end
-    ye = y + h,           // y-end
-    xm = x + w / 2,       // x-middle
-    ym = y + h / 2;       // y-middle
+        ox = (w / 2) * kappa, // control point offset horizontal
+        oy = (h / 2) * kappa, // control point offset vertical
+        xe = x + w,           // x-end
+        ye = y + h,           // y-end
+        xm = x + w / 2,       // x-middle
+        ym = y + h / 2;       // y-middle
 
     ctx.moveTo(x, ym);
     ctx.bezierCurveTo(x, ym - oy, xm - ox, y, xm, y);
@@ -833,7 +855,7 @@ function drawArrow(ctx, p1, p2, size, offset) {
     ctx.restore();
 }
 
-function drawTrapezoid(ctx, topleft, node, inverted=false) {
+function drawTrapezoid(ctx, topleft, node, inverted = false) {
     ctx.beginPath();
     if (inverted) {
         ctx.moveTo(topleft.x, topleft.y);
@@ -857,15 +879,17 @@ function ptLineDistance(p, line1, line2) {
     let dy = (line2.y - line1.y);
     let res = dy * p.x - dx * p.y + line2.x * line1.y - line2.y * line1.x;
 
-    return Math.abs(res) / Math.sqrt(dy*dy + dx*dx);
+    return Math.abs(res) / Math.sqrt(dy * dy + dx * dx);
 }
 
-var SDFGElements = {SDFGElement: SDFGElement, State: State, Node: Node,Edge: Edge, Connector: Connector, AccessNode: AccessNode,
-                    ScopeNode: ScopeNode, EntryNode: EntryNode, ExitNode: ExitNode, MapEntry: MapEntry, MapExit: MapExit,
-                    ConsumeEntry: ConsumeEntry, ConsumeExit: ConsumeExit, EmptyTasklet: EmptyTasklet, Tasklet: Tasklet, Reduce: Reduce,
-                    PipelineEntry: PipelineEntry, PipelineExit: PipelineExit, NestedSDFG: NestedSDFG, LibraryNode: LibraryNode};
-                    
+var SDFGElements = {
+    SDFGElement: SDFGElement, State: State, Node: Node, Edge: Edge, Connector: Connector, AccessNode: AccessNode,
+    ScopeNode: ScopeNode, EntryNode: EntryNode, ExitNode: ExitNode, MapEntry: MapEntry, MapExit: MapExit,
+    ConsumeEntry: ConsumeEntry, ConsumeExit: ConsumeExit, EmptyTasklet: EmptyTasklet, Tasklet: Tasklet, Reduce: Reduce,
+    PipelineEntry: PipelineEntry, PipelineExit: PipelineExit, NestedSDFG: NestedSDFG, LibraryNode: LibraryNode
+};
+
 // Save as globals
-Object.keys(SDFGElements).forEach(function(elem) {
+Object.keys(SDFGElements).forEach(function (elem) {
     window[elem] = SDFGElements[elem];
 });

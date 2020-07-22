@@ -18,8 +18,7 @@ namespace {
 template <unsigned vector_length>
 struct WriteImpl {
   template <typename T>
-  static void Write(T *ptr,
-                    vec<T, vector_length> const &value) {
+  static void Write(T *ptr, vec<T, vector_length> const &value) {
     #pragma HLS INLINE
     value.Unpack(ptr);
   }
@@ -30,14 +29,14 @@ struct WriteImpl {
     *ptr = value;
   }
   template <typename T, typename TOffset>
-  static void Write(vec<T, vector_length> *ptr,
-                    TOffset offset, vec<T, vector_length> const &value) {
+  static void Write(vec<T, vector_length> *ptr, TOffset offset,
+                    vec<T, vector_length> const &value) {
     #pragma HLS INLINE
     ptr[offset] = value;
   }
   template <typename T, typename TOffset>
-  static void Write(T *ptr,
-                    TOffset offset, vec<T, vector_length> const &value) {
+  static void Write(T *ptr, TOffset offset,
+                    vec<T, vector_length> const &value) {
     #pragma HLS INLINE
     value.Unpack(&ptr[offset]);
   }
@@ -56,8 +55,7 @@ struct WriteImpl<1> {
     *ptr = value;
   }
   template <typename T, typename TOffset>
-  static void Write(vec<T, 1> *ptr, TOffset offset,
-                    vec<T, 1> const &value) {
+  static void Write(vec<T, 1> *ptr, TOffset offset, vec<T, 1> const &value) {
     #pragma HLS INLINE
     ptr[offset] = value;
   }
@@ -71,9 +69,7 @@ struct WriteImpl<1> {
 template <typename T, unsigned dims, unsigned vector_length, int num_accesses,
           typename TIndex>
 class ArrayViewImpl {
-
  public:
-
   template <typename... Is>
   ArrayViewImpl(Is const &... strides)
       : strides_{static_cast<TIndex>(strides)...} {}
@@ -101,23 +97,22 @@ class ArrayViewImpl {
     // length to apply this to all dimensions
     return offset / vector_length;
   }
-private:
+
+ private:
   TIndex strides_[dims];
 };
 
 }  // End anonymous namespace
 
-template <typename T, unsigned dims, unsigned vector_length,
-          int num_accesses>
+template <typename T, unsigned dims, unsigned vector_length, int num_accesses>
 class ArrayViewIn {
  private:
   using Index_t = unsigned;
   using Vec_t = vec<T, vector_length>;
 
  public:
-
   template <typename... Is>
-  ArrayViewIn(ArrayInterface<T, vector_length> ptr, Is const &... strides)
+  ArrayViewIn(ArrayInterface<Vec_t> ptr, Is const &... strides)
       : ptr_(ptr.ptr_in()), impl_{strides...} {
     static_assert(sizeof...(strides) == static_cast<int>(dims),
                   "Dimension mismatch");
@@ -170,22 +165,18 @@ class ArrayViewIn {
 
  private:
   Vec_t const *ptr_;
-  ArrayViewImpl<T, dims, vector_length, num_accesses, Index_t> impl_; 
+  ArrayViewImpl<T, dims, vector_length, num_accesses, Index_t> impl_;
 };
 
-template <typename T, unsigned dims, unsigned vector_length,
-          int num_accesses>
+template <typename T, unsigned dims, unsigned vector_length, int num_accesses>
 class ArrayViewOut {
-
  private:
-
   using Index_t = unsigned;
   using Vec_t = vec<T, vector_length>;
 
  public:
-
   template <typename... Is>
-  ArrayViewOut(ArrayInterface<T, vector_length> ptr, Is const &... strides)
+  ArrayViewOut(ArrayInterface<Vec_t> ptr, Is const &... strides)
       : ptr_(ptr.ptr_out()), impl_{strides...} {
     #pragma HLS INLINE
     static_assert(sizeof...(strides) == static_cast<int>(dims),
@@ -217,7 +208,7 @@ class ArrayViewOut {
     return *ptr();
   }
 
-  operator Vec_t*() {
+  operator Vec_t *() {
     #pragma HLS INLINE
     return ptr();
   }
@@ -230,7 +221,7 @@ class ArrayViewOut {
   }
 
   void operator=(Vec_t const &value) {
-    #pragma HLS INLINE 
+    #pragma HLS INLINE
     write(value);
   }
 
@@ -254,7 +245,6 @@ class ArrayViewOut {
   }
 
  private:
-
   template <typename... Is>
   void set(vec<T, vector_length> const &value, Is const &... indices) const {
     #pragma HLS INLINE
@@ -276,17 +266,16 @@ class ArrayViewIn<T, 0, vector_length, num_accesses> {
   using Vec_t = vec<T, vector_length>;
 
  public:
-  ArrayViewIn(ArrayInterface<T, vector_length> interface)
-      : ptr_(interface.ptr_in()) {
-    #pragma HLS INLINE 
+  ArrayViewIn(ArrayInterface<Vec_t> interface) : ptr_(interface.ptr_in()) {
+    #pragma HLS INLINE
   }
 
   explicit ArrayViewIn(Vec_t const *ptr) : ptr_(ptr) {
-    #pragma HLS INLINE 
+    #pragma HLS INLINE
   }
 
   explicit ArrayViewIn(Vec_t const &ref) : ptr_(&ref) {
-    #pragma HLS INLINE 
+    #pragma HLS INLINE
   }
 
   template <unsigned vector_length_other = vector_length>
@@ -324,7 +313,7 @@ class ArrayViewIn<T, 0, vector_length, num_accesses> {
     if (i < 0 || i >= vector_length) {
       throw std::runtime_error("Vector index out of bounds: " +
                                std::to_string(i));
-    }    
+    }
 #endif
     return val()[i];
   }
@@ -341,9 +330,8 @@ class ArrayViewOut<T, 0, vector_length, num_accesses> {
   using Vec_t = vec<T, vector_length>;
 
  public:
-  ArrayViewOut(ArrayInterface<T, vector_length> interface)
-      : ptr_(interface.ptr_out()) {
-    #pragma HLS INLINE 
+  ArrayViewOut(ArrayInterface<Vec_t> interface) : ptr_(interface.ptr_out()) {
+    #pragma HLS INLINE
   }
 
   explicit ArrayViewOut(Vec_t *ptr) : ptr_(ptr) {
@@ -375,12 +363,12 @@ class ArrayViewOut<T, 0, vector_length, num_accesses> {
     return *ptr();
   }
 
-  operator Vec_t*() {
+  operator Vec_t *() {
     #pragma HLS INLINE
     return ptr();
   }
 
-  operator Vec_t&() {
+  operator Vec_t &() {
     #pragma HLS INLINE
     return ref();
   }
@@ -392,7 +380,7 @@ class ArrayViewOut<T, 0, vector_length, num_accesses> {
     if (i < 0 || i >= vector_length) {
       throw std::runtime_error("Vector index out of bounds: " +
                                std::to_string(i));
-    }    
+    }
 #endif
     return ref()[i];
   }
@@ -403,7 +391,7 @@ class ArrayViewOut<T, 0, vector_length, num_accesses> {
   }
 
   void operator=(Vec_t const &value) {
-    #pragma HLS INLINE 
+    #pragma HLS INLINE
     return write(value);
   }
 

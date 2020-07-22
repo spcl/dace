@@ -75,8 +75,7 @@ def calc_set_image(map_idx, map_set, array_set):
 
 
 def calc_set_union(set_a, set_b):
-    if isinstance(set_a, subsets.Indices) or isinstance(
-            set_b, subsets.Indices):
+    if isinstance(set_a, subsets.Indices) or isinstance(set_b, subsets.Indices):
         raise NotImplementedError('Set union with indices is not implemented.')
     if not (isinstance(set_a, subsets.Range)
             and isinstance(set_b, subsets.Range)):
@@ -205,8 +204,8 @@ class StripMining(pattern_matching.Transformation):
     def modifies_graph(self):
         return True
 
-    def _find_new_dim(self, sdfg: SDFG, state: SDFGState,
-                      entry: nodes.MapEntry, prefix: str, target_dim: str):
+    def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry,
+                      prefix: str, target_dim: str):
         """ Finds a variable that is not already defined in scope. """
         stree = state.scope_tree()
         if len(prefix) == 0:
@@ -248,8 +247,7 @@ class StripMining(pattern_matching.Transformation):
         else:
             nd_to = symbolic.pystr_to_symbolic(
                 'int_ceil(%s + 1 - %s, %s) - 1' %
-                (symbolic.symstr(td_to), symbolic.symstr(td_from),
-                 tile_stride))
+                (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
         new_map = nodes.Map(new_dim + '_' + map_entry.map.label, [new_dim],
@@ -278,8 +276,7 @@ class StripMining(pattern_matching.Transformation):
         if divides_evenly or strided:
             td_to_new = td_to_new_approx
         else:
-            td_to_new = dace.symbolic.SymExpr(td_to_new_exact,
-                                              td_to_new_approx)
+            td_to_new = dace.symbolic.SymExpr(td_to_new_exact, td_to_new_approx)
         # Special case: If range is 1 and no prefix was specified, skip range
         if td_from_new == td_to_new_approx and target_dim == new_dim:
             map_entry.map.range = subsets.Range(
@@ -305,12 +302,11 @@ class StripMining(pattern_matching.Transformation):
 
         # Create new entry edges
         new_in_edges = dict()
-        entry_in_conn = set()
-        entry_out_conn = set()
+        entry_in_conn = {}
+        entry_out_conn = {}
         for _src, src_conn, _dst, _, memlet in graph.out_edges(map_entry):
-            if (src_conn is not None
-                    and src_conn[:4] == 'OUT_' and not isinstance(
-                        sdfg.arrays[memlet.data], dace.data.Scalar)):
+            if (src_conn is not None and src_conn[:4] == 'OUT_' and
+                    not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
@@ -323,11 +319,11 @@ class StripMining(pattern_matching.Transformation):
                     new_in_edges[key].subset = calc_set_union(
                         old_subset, new_subset)
                 else:
-                    entry_in_conn.add('IN_' + conn)
-                    entry_out_conn.add('OUT_' + conn)
+                    entry_in_conn['IN_' + conn] = None
+                    entry_out_conn['OUT_' + conn] = None
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
-                    if memlet.num_accesses == -1:
+                    if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
                         new_memlet.num_accesses = new_memlet.num_elements()
@@ -341,9 +337,9 @@ class StripMining(pattern_matching.Transformation):
                     in_conn = src_conn
                     out_conn = src_conn
                 if in_conn:
-                    entry_in_conn.add(in_conn)
+                    entry_in_conn[in_conn] = None
                 if out_conn:
-                    entry_out_conn.add(out_conn)
+                    entry_out_conn[out_conn] = None
                 new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_entry.out_connectors = entry_out_conn
         map_entry.in_connectors = entry_in_conn
@@ -352,12 +348,11 @@ class StripMining(pattern_matching.Transformation):
 
         # Create new exit edges
         new_out_edges = dict()
-        exit_in_conn = set()
-        exit_out_conn = set()
+        exit_in_conn = {}
+        exit_out_conn = {}
         for _src, _, _dst, dst_conn, memlet in graph.in_edges(map_exit):
-            if (dst_conn is not None
-                    and dst_conn[:3] == 'IN_' and not isinstance(
-                        sdfg.arrays[memlet.data], dace.data.Scalar)):
+            if (dst_conn is not None and dst_conn[:3] == 'IN_' and
+                    not isinstance(sdfg.arrays[memlet.data], dace.data.Scalar)):
                 new_subset = calc_set_image(
                     map_entry.map.params,
                     map_entry.map.range,
@@ -370,11 +365,11 @@ class StripMining(pattern_matching.Transformation):
                     new_out_edges[key].subset = calc_set_union(
                         old_subset, new_subset)
                 else:
-                    exit_in_conn.add('IN_' + conn)
-                    exit_out_conn.add('OUT_' + conn)
+                    exit_in_conn['IN_' + conn] = None
+                    exit_out_conn['OUT_' + conn] = None
                     new_memlet = dcpy(memlet)
                     new_memlet.subset = new_subset
-                    if memlet.num_accesses == -1:
+                    if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
                         new_memlet.num_accesses = new_memlet.num_elements()
@@ -388,9 +383,9 @@ class StripMining(pattern_matching.Transformation):
                     in_conn = src_conn
                     out_conn = src_conn
                 if in_conn:
-                    exit_in_conn.add(in_conn)
+                    exit_in_conn[in_conn] = None
                 if out_conn:
-                    exit_out_conn.add(out_conn)
+                    exit_out_conn[out_conn] = None
                 new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_exit.in_connectors = exit_in_conn
         map_exit.out_connectors = exit_out_conn

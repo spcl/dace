@@ -79,7 +79,7 @@ def make_sdfg(specialized):
     m_entry, m_exit = state.add_map(
         "Map_M", {"m": "0:M"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-    state.add_nedge(n_entry, C_buffer_in, dace.memlet.EmptyMemlet())
+    state.add_nedge(n_entry, C_buffer_in, dace.memlet.Memlet())
 
     ###########################################################################
     # Nested SDFG

@@ -222,6 +222,32 @@ required:
                             only on its tasks (potential load imbalance).
                         default: true
 
+                    persistent_map_SM_fraction:
+                        type: float
+                        title: Fraction of SMs to use for persistent GPU map
+                        description: >
+                            Sets the fraction of the number of SMs of the Device
+                            that the GPU_Persistent map can use. Together with
+                            persistent_map_occupancy this specifies the grid
+                            size of the kernel being launched.
+                            0.0 < persistent_map_SM_fraction <= 1.0
+                            The fraction will be rounded up to the next integer
+                            number of SMs. The max value of SMs that can/will
+                            be used is equal to cudaDevAttrMultiProcessorCount.
+                        default: 1.0
+
+                    persistent_map_occupancy:
+                        type: int
+                        title: Number of blocks to launch per SM used
+                        description: >
+                            Sets the number of thread block to be launched per
+                            SM being used. Essentially this is a simple
+                            multiplier to persistent_map_SM_fraction.
+                            It is up to the user to check if the resulting
+                            number of thread blocks can run efficiently on the
+                            GPU.
+                        default: 2
+
                     max_concurrent_streams:
                         type: int
                         title: Concurrent CUDA streams
@@ -547,6 +573,15 @@ required:
         default: false
         title: Profiling
         description: Enable profiling support.
+
+    profiling_status:
+        type: bool
+        default: true
+        title: Status bar for profiling
+        description: >
+            Enable tqdm status bar while profiling. If tqdm is not installed 
+            a warning will appear. To disable this feature (and the warning) set 
+            this option to false.
 
     treps:
         type: int

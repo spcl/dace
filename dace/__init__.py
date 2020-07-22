@@ -1,3 +1,4 @@
+import sys
 from .dtypes import *
 
 # Python frontend
@@ -9,8 +10,18 @@ from .frontend.operations import *
 from .config import Config
 from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
-from .memlet import Memlet, EmptyMemlet
+from .memlet import Memlet
 from .symbolic import symbol
 
 # Run Jupyter notebook code
 from .jupyter import *
+
+
+# Hack that enables using @dace as a decorator
+# See https://stackoverflow.com/a/48100440/6489142
+class DaceModule(sys.modules[__name__].__class__):
+    def __call__(self, *args, **kwargs):
+        return function(*args, **kwargs)
+
+
+sys.modules[__name__].__class__ = DaceModule

@@ -121,6 +121,10 @@ class Data(object):
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
 
+    @property
+    def veclen(self):
+        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+
 
 @make_properties
 class Scalar(Data):
@@ -459,12 +463,9 @@ class Stream(Data):
     # Properties
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
-    veclen = Property(dtype=int,
-                      desc="Vector length. Memlets must adhere to this.")
 
     def __init__(self,
                  dtype,
-                 veclen,
                  buffer_size,
                  shape=None,
                  transient=False,
@@ -477,7 +478,6 @@ class Stream(Data):
         if shape is None:
             shape = (1, )
 
-        self.veclen = veclen
         self.buffer_size = buffer_size
 
         if offset is not None:
@@ -503,7 +503,7 @@ class Stream(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Stream(dtypes.int8, 1, 1)
+        ret = Stream(dtypes.int8, 1)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
@@ -522,7 +522,7 @@ class Stream(Data):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
 
     def clone(self):
-        return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
+        return Stream(self.dtype, self.buffer_size, self.shape,
                       self.transient, self.storage, self.location, self.offset,
                       self.lifetime, self.debuginfo)
 

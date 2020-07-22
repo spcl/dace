@@ -50,9 +50,17 @@ class StateFusion(pattern_matching.Transformation):
         if not out_edges[0].data.is_unconditional():
             return False
         # The interstate edge may have assignments, as long as there are input
-        # edges to the first state, that can absorb them.
-        if out_edges[0].data.assignments and not in_edges:
-            return False
+        # edges to the first state that can absorb them.
+        if out_edges[0].data.assignments:
+            if not in_edges:
+                return False
+            # Fail if symbol is set before the state to fuse
+            # TODO: Also fail if symbol is used in the dataflow of that state
+            new_assignments = set(out_edges[0].data.assignments.keys())
+            if any((new_assignments & set(e.data.assignments.keys()))
+                   for e in in_edges):
+                return False
+
         # There can be no state that have output edges pointing to both the
         # first and the second state. Such a case will produce a multi-graph.
         for src, _, _ in in_edges:
@@ -77,8 +85,8 @@ class StateFusion(pattern_matching.Transformation):
                 for cc_nodes in nx.weakly_connected_components(first_state._nx)
             ]
             second_cc = [
-                cc_nodes for cc_nodes in nx.weakly_connected_components(
-                    second_state._nx)
+                cc_nodes
+                for cc_nodes in nx.weakly_connected_components(second_state._nx)
             ]
 
             # Find source/sink (data) nodes
@@ -105,9 +113,7 @@ class StateFusion(pattern_matching.Transformation):
 
             # Find source/sink (data) nodes by connected component
             first_cc_input = [cc.intersection(first_input) for cc in first_cc]
-            first_cc_output = [
-                cc.intersection(first_output) for cc in first_cc
-            ]
+            first_cc_output = [cc.intersection(first_output) for cc in first_cc]
             second_cc_input = [
                 cc.intersection(second_input) for cc in second_cc
             ]
@@ -130,10 +136,9 @@ class StateFusion(pattern_matching.Transformation):
 
                 # Otherwise, check if any of the second state's connected
                 # components for matching input
-                for node in cc_output:
-                    if (next(
-                        (x for x in second_input if x.label == node.label),
-                            None) is not None):
+                for node in out_nodes:
+                    if (next((x for x in second_input if x.label == node.label),
+                             None) is not None):
                         check_strict -= 1
                         break
 
@@ -159,8 +164,7 @@ class StateFusion(pattern_matching.Transformation):
         first_state = graph.nodes()[candidate[StateFusion._first_state]]
         second_state = graph.nodes()[candidate[StateFusion._second_state]]
 
-        return " -> ".join(state.label
-                           for state in [first_state, second_state])
+        return " -> ".join(state.label for state in [first_state, second_state])
 
     def apply(self, sdfg):
         first_state = sdfg.nodes()[self.subgraph[StateFusion._first_state]]
@@ -222,28 +226,6 @@ class StateFusion(pattern_matching.Transformation):
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
         # Merge common (data) nodes
-        for node in first_input:
-            try:
-                old_node = next(x for x in second_input
-                                if x.label == node.label)
-            except StopIteration:
-                continue
-            sdutil.change_edge_src(first_state, old_node, node)
-            first_state.remove_node(old_node)
-            second_input.remove(old_node)
-            node.access = dtypes.AccessType.ReadWrite
-        for node in first_output:
-            try:
-                new_node = next(x for x in second_input
-                                if x.label == node.label)
-            except StopIteration:
-                continue
-            sdutil.change_edge_dest(first_state, node, new_node)
-            first_state.remove_node(node)
-            second_input.remove(new_node)
-            new_node.access = dtypes.AccessType.ReadWrite
-        # Check if any input nodes of the second state have to be merged with
-        # non-input/output nodes of the first state.
         for node in second_input:
             if first_state.in_degree(node) == 0:
                 n = next((x for x in order if x.label == node.label), None)

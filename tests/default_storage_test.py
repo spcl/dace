@@ -1,5 +1,5 @@
 import dace
-from dace.codegen.targets.framecode import set_default_schedule_and_storage_types
+from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 
 
 def notbmap_test():

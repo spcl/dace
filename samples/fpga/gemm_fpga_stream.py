@@ -117,15 +117,10 @@ def make_read_A_sdfg():
                                 dace.float32,
                                 storage=dace.dtypes.StorageType.FPGA_Local)
 
-    loop_body.add_memlet_path(
-        mem,
-        pipe,
-        memlet=dace.memlet.Memlet(
-            pipe,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("n, k")))
+    loop_body.add_memlet_path(mem,
+                              pipe,
+                              memlet=dace.memlet.Memlet.simple(
+                                  pipe, '0', other_subset_str="n, k"))
 
     return sdfg
 
@@ -202,15 +197,10 @@ def make_read_B_sdfg():
                                 dace.float32,
                                 storage=dace.dtypes.StorageType.FPGA_Local)
 
-    loop_body.add_memlet_path(
-        mem,
-        pipe,
-        memlet=dace.memlet.Memlet(
-            pipe,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("k, m")))
+    loop_body.add_memlet_path(mem,
+                              pipe,
+                              memlet=dace.memlet.Memlet.simple(
+                                  pipe, '0', other_subset_str="k, m"))
 
     return sdfg
 
@@ -269,15 +259,10 @@ def make_write_C_sdfg():
                                 dace.float32,
                                 storage=dace.dtypes.StorageType.FPGA_Local)
 
-    loop_body.add_memlet_path(
-        pipe,
-        mem,
-        memlet=dace.memlet.Memlet(
-            mem,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("n, m"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("0")))
+    loop_body.add_memlet_path(pipe,
+                              mem,
+                              memlet=dace.memlet.Memlet.simple(
+                                  mem, "n, m", other_subset_str="0"))
 
     return sdfg
 
@@ -487,12 +472,10 @@ def make_compute_sdfg():
         "A_val_out",
         dtype=dace.float32,
         storage=dace.dtypes.StorageType.FPGA_Registers)
-    then_state_a.add_memlet_path(
-        A_in,
-        A_val_out,
-        memlet=dace.memlet.Memlet(
-            A_val_out, dace.symbolic.pystr_to_symbolic("-1"),
-            dace.properties.SubsetProperty.from_string("0"), 1))
+    then_state_a.add_memlet_path(A_in,
+                                 A_val_out,
+                                 memlet=dace.memlet.Memlet.simple(
+                                     A_val_out, "0", num_accesses=-1))
 
     # Compute state
     A_val_in = compute_state.add_scalar(
@@ -544,19 +527,17 @@ def make_compute_sdfg():
                                 transient=True,
                                 lifetime=dace.dtypes.AllocationLifetime.SDFG,
                                 storage=dace.dtypes.StorageType.FPGA_Registers)
-    A_reg_out = state.add_scalar(
-        "A_reg",
-        dtype=dace.float32,
-        transient=True,
-        lifetime=dace.dtypes.AllocationLifetime.SDFG,
-        storage=dace.dtypes.StorageType.FPGA_Registers)
+    A_reg_out = state.add_scalar("A_reg",
+                                 dtype=dace.float32,
+                                 transient=True,
+                                 lifetime=dace.dtypes.AllocationLifetime.SDFG,
+                                 storage=dace.dtypes.StorageType.FPGA_Registers)
 
     state.add_memlet_path(A_pipe,
                           tasklet,
-                          memlet=dace.memlet.Memlet(
-                              A_pipe, dace.symbolic.pystr_to_symbolic("-1"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(A_pipe,
+                                                           "0",
+                                                           num_accesses=-1),
                           dst_conn="A_in")
     state.add_memlet_path(B_pipe,
                           tasklet,
@@ -564,11 +545,7 @@ def make_compute_sdfg():
                           dst_conn="B_in")
     state.add_memlet_path(C_buffer_in,
                           tasklet,
-                          memlet=dace.memlet.Memlet(
-                              C_buffer_in,
-                              dace.symbolic.pystr_to_symbolic("1"),
-                              dace.properties.SubsetProperty.from_string("m"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(C_buffer_in, "m"),
                           dst_conn="C_in")
     state.add_memlet_path(tasklet,
                           C_buffer_out,
@@ -576,31 +553,24 @@ def make_compute_sdfg():
                           src_conn="C_out")
     state.add_memlet_path(A_reg_in,
                           tasklet,
-                          memlet=dace.memlet.Memlet(
-                              A_reg_in, dace.symbolic.pystr_to_symbolic("-1"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(A_reg_in,
+                                                           "0",
+                                                           num_accesses=-1),
                           dst_conn="A_val_in")
     state.add_memlet_path(tasklet,
                           A_reg_out,
-                          memlet=dace.memlet.Memlet(
-                              A_reg_out, dace.symbolic.pystr_to_symbolic("-1"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(A_reg_out,
+                                                           "0",
+                                                           num_accesses=-1),
                           src_conn="A_val_out")
 
     ###########################################################################
     # Write back state
 
-    write_c_state.add_memlet_path(
-        C_buffer_write,
-        C_pipe,
-        memlet=dace.memlet.Memlet(
-            C_pipe,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("m")))
+    write_c_state.add_memlet_path(C_buffer_write,
+                                  C_pipe,
+                                  memlet=dace.memlet.Memlet.simple(
+                                      C_pipe, "0", other_subset_str="m"))
 
     return sdfg
 
@@ -664,77 +634,72 @@ def make_fpga_state(sdfg):
                                   transient=True,
                                   storage=dace.dtypes.StorageType.FPGA_Local)
 
+    state.add_memlet_path(A,
+                          read_A_sdfg_node,
+                          dst_conn="mem",
+                          memlet=dace.memlet.Memlet.simple(A, "0:N, 0:K"))
     state.add_memlet_path(
-        A,
         read_A_sdfg_node,
-        dst_conn="mem",
-        memlet=dace.memlet.Memlet(
-            A, dace.symbolic.pystr_to_symbolic("N * K"),
-            dace.properties.SubsetProperty.from_string("0:N, 0:K"), 1))
-    state.add_memlet_path(read_A_sdfg_node,
-                          A_pipe_out,
-                          src_conn="pipe",
-                          memlet=dace.memlet.Memlet(
-                              A_pipe_out,
-                              dace.symbolic.pystr_to_symbolic("N * K"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-    state.add_memlet_path(A_pipe_in,
-                          compute_sdfg_node,
-                          dst_conn="A_stream_in",
-                          memlet=dace.memlet.Memlet(
-                              A_pipe_in,
-                              dace.symbolic.pystr_to_symbolic("N * K"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+        A_pipe_out,
+        src_conn="pipe",
+        memlet=dace.memlet.Memlet.simple(
+            A_pipe_out,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K")))
+    state.add_memlet_path(
+        A_pipe_in,
+        compute_sdfg_node,
+        dst_conn="A_stream_in",
+        memlet=dace.memlet.Memlet.simple(
+            A_pipe_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K")))
 
     state.add_memlet_path(
         B,
         read_B_sdfg_node,
         dst_conn="mem",
-        memlet=dace.memlet.Memlet(
-            B, dace.symbolic.pystr_to_symbolic("N * K * M"),
-            dace.properties.SubsetProperty.from_string("0:K, 0:M"), 1))
-    state.add_memlet_path(read_B_sdfg_node,
-                          B_pipe_out,
-                          src_conn="pipe",
-                          memlet=dace.memlet.Memlet(
-                              B_pipe_out,
-                              dace.symbolic.pystr_to_symbolic("N * K * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-    state.add_memlet_path(B_pipe_in,
-                          compute_sdfg_node,
-                          dst_conn="B_stream_in",
-                          memlet=dace.memlet.Memlet(
-                              B_pipe_in,
-                              dace.symbolic.pystr_to_symbolic("N * K * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-
+        memlet=dace.memlet.Memlet.simple(
+            B,
+            "0:K, 0:M",
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
     state.add_memlet_path(
+        read_B_sdfg_node,
+        B_pipe_out,
+        src_conn="pipe",
+        memlet=dace.memlet.Memlet.simple(
+            B_pipe_out,
+            "0",
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
+    state.add_memlet_path(
+        B_pipe_in,
+        compute_sdfg_node,
+        dst_conn="B_stream_in",
+        memlet=dace.memlet.Memlet.simple(
+            B_pipe_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
+
+    state.add_memlet_path(write_C_sdfg_node,
+                          C,
+                          src_conn="mem",
+                          memlet=dace.memlet.Memlet.simple(C, "0:N, 0:M"))
+    state.add_memlet_path(
+        C_pipe_in,
         write_C_sdfg_node,
-        C,
-        src_conn="mem",
-        memlet=dace.memlet.Memlet(
-            C, dace.symbolic.pystr_to_symbolic("N * M"),
-            dace.properties.SubsetProperty.from_string("0:N, 0:M"), 1))
-    state.add_memlet_path(C_pipe_in,
-                          write_C_sdfg_node,
-                          dst_conn="pipe",
-                          memlet=dace.memlet.Memlet(
-                              C_pipe_in,
-                              dace.symbolic.pystr_to_symbolic("N * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-    state.add_memlet_path(compute_sdfg_node,
-                          C_pipe_out,
-                          src_conn="C_stream_out",
-                          memlet=dace.memlet.Memlet(
-                              C_pipe_out,
-                              dace.symbolic.pystr_to_symbolic("N * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+        dst_conn="pipe",
+        memlet=dace.memlet.Memlet.simple(
+            C_pipe_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * M")))
+    state.add_memlet_path(
+        compute_sdfg_node,
+        C_pipe_out,
+        src_conn="C_stream_out",
+        memlet=dace.memlet.Memlet.simple(
+            C_pipe_out,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * M")))
 
     return state
 

@@ -542,8 +542,8 @@ function calculateEdgeBoundingBox(edge) {
 
 function calculateNodeSize(sdfg_state, node, ctx) {
     let labelsize = ctx.measureText(node.label).width;
-    let inconnsize = 2 * LINEHEIGHT * node.attributes.layout.in_connectors.length - LINEHEIGHT;
-    let outconnsize = 2 * LINEHEIGHT * node.attributes.layout.out_connectors.length - LINEHEIGHT;
+    let inconnsize = 2 * LINEHEIGHT * Object.keys(node.attributes.layout.in_connectors).length - LINEHEIGHT;
+    let outconnsize = 2 * LINEHEIGHT * Object.keys(node.attributes.layout.out_connectors).length - LINEHEIGHT;
     let maxwidth = Math.max(labelsize, inconnsize, outconnsize);
     let maxheight = 2 * LINEHEIGHT;
     maxheight += 4 * LINEHEIGHT;
@@ -681,9 +681,15 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     // layout the state as a dagre graph
     let g = new dagre.graphlib.Graph({ multigraph: true });
 
-    // Set an object for the graph label
-    g.setGraph({ ranksep: 30 });
+    // Set layout options and a simpler algorithm for large graphs
+    let layout_options = {ranksep: 30};
+    if (sdfg_state.nodes.length >= 1000)
+        layout_options.ranker = 'longest-path';
+        
+    g.setGraph(layout_options);
 
+
+    // Set an object for the graph label
     g.setDefaultEdgeLabel(function (u, v) { return {}; });
 
     // Add nodes to the graph. The first argument is the node id. The
@@ -730,7 +736,12 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 
         // Add input connectors
         let i = 0;
-        for (let cname of node.attributes.layout.in_connectors) {
+        let conns;
+        if (Array.isArray(node.attributes.layout.in_connectors))
+            conns = node.attributes.layout.in_connectors;
+        else
+            conns = Object.keys(node.attributes.layout.in_connectors);
+        for (let cname of conns) {
             let conn = new Connector({ name: cname }, i, sdfg, node.id);
             obj.in_connectors.push(conn);
             i += 1;
@@ -738,7 +749,11 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 
         // Add output connectors -- if collapsed, uses exit node connectors
         i = 0;
-        for (let cname of node.attributes.layout.out_connectors) {
+        if (Array.isArray(node.attributes.layout.out_connectors))
+            conns = node.attributes.layout.out_connectors;
+        else
+            conns = Object.keys(node.attributes.layout.out_connectors);
+        for (let cname of conns) {
             let conn = new Connector({ name: cname }, i, sdfg, node.id);
             obj.out_connectors.push(conn);
             i += 1;
@@ -767,7 +782,10 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
     sdfg_state.edges.forEach((edge, id) => {
         edge = check_and_redirect_edge(edge, drawn_nodes, sdfg_state);
         if (!edge) return;
-        g.setEdge(edge.src, edge.dst, new Edge(edge.attributes.data, id, sdfg, sdfg_state.id), id);
+        let e = new Edge(edge.attributes.data, id, sdfg, sdfg_state.id);
+        e.src_connector = edge.src_connector;
+        e.dst_connector = edge.dst_connector;
+        g.setEdge(edge.src, edge.dst, e, id);
     });
 
     dagre.layout(g);
@@ -789,8 +807,8 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
         }
         // Connector management 
         let SPACING = LINEHEIGHT;
-        let iconn_length = (LINEHEIGHT + SPACING) * node.attributes.layout.in_connectors.length - SPACING;
-        let oconn_length = (LINEHEIGHT + SPACING) * node.attributes.layout.out_connectors.length - SPACING;
+        let iconn_length = (LINEHEIGHT + SPACING) * Object.keys(node.attributes.layout.in_connectors).length - SPACING;
+        let oconn_length = (LINEHEIGHT + SPACING) * Object.keys(node.attributes.layout.out_connectors).length - SPACING;
         let iconn_x = gnode.x - iconn_length / 2.0 + LINEHEIGHT / 2.0;
         let oconn_x = gnode.x - oconn_length / 2.0 + LINEHEIGHT / 2.0;
 
@@ -819,7 +837,13 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
         let src_conn = null, dst_conn = null;
         if (edge.src_connector) {
             let src_node = g.node(edge.src);
-            let cindex = src_node.data.node.attributes.layout.out_connectors.indexOf(edge.src_connector);
+            let cindex = -1;
+            for (let i = 0; i < src_node.out_connectors.length; i++) {
+                if (src_node.out_connectors[i].data.name == edge.src_connector) {
+                    cindex = i;
+                    break;
+                }
+            }
             if (cindex >= 0) {
                 gedge.points[0].x = src_node.out_connectors[cindex].x;
                 gedge.points[0].y = src_node.out_connectors[cindex].y;
@@ -828,7 +852,13 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
         }
         if (edge.dst_connector) {
             let dst_node = g.node(edge.dst);
-            let cindex = dst_node.data.node.attributes.layout.in_connectors.indexOf(edge.dst_connector);
+            let cindex = -1;
+            for (let i = 0; i < dst_node.in_connectors.length; i++) {
+                if (dst_node.in_connectors[i].data.name == edge.dst_connector) {
+                    cindex = i;
+                    break;
+                }
+            }
             if (cindex >= 0) {
                 gedge.points[gedge.points.length - 1].x = dst_node.in_connectors[cindex].x;
                 gedge.points[gedge.points.length - 1].y = dst_node.in_connectors[cindex].y;
@@ -865,7 +895,7 @@ function relayout_state(ctx, sdfg_state, sdfg, sdfg_list, state_parent_list) {
 }
 
 class SDFGRenderer {
-    constructor(sdfg, container, on_mouse_event = null) {
+    constructor(sdfg, container, on_mouse_event = null, user_transform = null) {
         // DIODE/SDFV-related fields
         this.sdfg = sdfg;
         this.sdfg_list = {};
@@ -895,7 +925,7 @@ class SDFGRenderer {
         this.drag_second_start = null; // Null if two touch points are not activated
         this.external_mouse_handler = on_mouse_event;
 
-        this.init_elements();
+        this.init_elements(user_transform);
     }
 
     destroy() {
@@ -916,7 +946,7 @@ class SDFGRenderer {
     }
 
     // Initializes the DOM
-    init_elements() {
+    init_elements(user_transform) {
 
         this.canvas = document.createElement('canvas');
         this.canvas.style = 'background-color: inherit';
@@ -931,6 +961,7 @@ class SDFGRenderer {
         try {
             ContextMenu;
             d = document.createElement('button');
+            d.className = 'button';
             d.innerHTML = '<i class="material-icons">menu</i>';
             d.style = 'padding-bottom: 0px; user-select: none';
             let that = this;
@@ -956,6 +987,7 @@ class SDFGRenderer {
 
         // Zoom to fit
         d = document.createElement('button');
+        d.className = 'button';
         d.innerHTML = '<i class="material-icons">filter_center_focus</i>';
         d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.zoom_to_view();
@@ -964,6 +996,7 @@ class SDFGRenderer {
 
         // Collapse all
         d = document.createElement('button');
+        d.className = 'button';
         d.innerHTML = '<i class="material-icons">unfold_less</i>';
         d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.collapse_all();
@@ -972,6 +1005,7 @@ class SDFGRenderer {
 
         // Expand all
         d = document.createElement('button');
+        d.className = 'button';
         d.innerHTML = '<i class="material-icons">unfold_more</i>';
         d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => this.expand_all();
@@ -980,6 +1014,7 @@ class SDFGRenderer {
 
         // Enter object moving mode
         d = document.createElement('button');
+        d.className = 'button';
         d.innerHTML = '<i class="material-icons">open_with</i>';
         d.style = 'padding-bottom: 0px; user-select: none';
         d.onclick = () => {
@@ -1009,6 +1044,8 @@ class SDFGRenderer {
 
         // Translation/scaling management
         this.canvas_manager = new CanvasManager(this.ctx, this, this.canvas);
+        if (user_transform !== null)
+            this.canvas_manager.user_transform = user_transform;
 
         // Resize event for container
         let observer = new MutationObserver((mutations) => { this.onresize(); this.draw_async(); });
@@ -1023,8 +1060,9 @@ class SDFGRenderer {
         // Set mouse event handlers
         this.set_mouse_handlers();
 
-        // Set initial zoom
-        this.zoom_to_view();
+        // Set initial zoom, if not already set
+        if (user_transform === null)
+            this.zoom_to_view();
 
         // Queue first render
         this.draw_async();
@@ -1353,7 +1391,7 @@ class SDFGRenderer {
                 if (!state) return;
 
                 // States
-                func('states', { sdfg: sdfg_name, id: state_id }, state, state.intersect(x, y, w, h));
+                func('states', { sdfg: sdfg_name, id: state_id, graph: g }, state, state.intersect(x, y, w, h));
 
                 if (state.data.state.attributes.is_collapsed)
                     return;
@@ -1364,7 +1402,7 @@ class SDFGRenderer {
                 ng.nodes().forEach(node_id => {
                     let node = ng.node(node_id);
                     // Selected nodes
-                    func('nodes', { sdfg: sdfg_name, state: state_id, id: node_id }, node, node.intersect(x, y, w, h));
+                    func('nodes', { sdfg: sdfg_name, state: state_id, id: node_id, graph: ng }, node, node.intersect(x, y, w, h));
 
                     // If nested SDFG, traverse recursively
                     if (node.data.node.type === "NestedSDFG")
@@ -1374,13 +1412,13 @@ class SDFGRenderer {
                     node.in_connectors.forEach((c, i) => {
                         func('connectors', {
                             sdfg: sdfg_name, state: state_id, node: node_id,
-                            connector: i, conntype: "in"
+                            connector: i, conntype: "in", graph: ng
                         }, c, c.intersect(x, y, w, h));
                     });
                     node.out_connectors.forEach((c, i) => {
                         func('connectors', {
                             sdfg: sdfg_name, state: state_id, node: node_id,
-                            connector: i, conntype: "out"
+                            connector: i, conntype: "out", graph: ng
                         }, c, c.intersect(x, y, w, h));
                     });
                 });
@@ -1388,14 +1426,14 @@ class SDFGRenderer {
                 // Selected edges
                 ng.edges().forEach(edge_id => {
                     let edge = ng.edge(edge_id);
-                    func('edges', { sdfg: sdfg_name, state: state_id, id: edge.id }, edge, edge.intersect(x, y, w, h));
+                    func('edges', { sdfg: sdfg_name, state: state_id, id: edge.id, graph: ng }, edge, edge.intersect(x, y, w, h));
                 });
             });
 
             // Selected inter-state edges
             g.edges().forEach(isedge_id => {
                 let isedge = g.edge(isedge_id);
-                func('isedges', { sdfg: sdfg_name, id: isedge.id }, isedge, isedge.intersect(x, y, w, h));
+                func('isedges', { sdfg: sdfg_name, id: isedge.id, graph: g }, isedge, isedge.intersect(x, y, w, h));
             });
         }
 
@@ -1579,10 +1617,25 @@ class SDFGRenderer {
         this.last_hovered_elements = elements;
 
         // Hovered elements get colored green (if they are not already colored)
+        let highlighted = [];
         this.for_all_elements(this.mousepos.x, this.mousepos.y, 0, 0, (type, e, obj, intersected) => {
-            if (intersected && obj.stroke_color === null)
+            if (intersected && obj instanceof Edge && obj.parent_id != null) {
+                let tree = memlet_tree(e.graph, obj);
+                tree.forEach(te => {
+                    if (te != obj) {
+                        te.stroke_color = 'orange';
+                        highlighted.push(te);
+                    }
+                });
+            }
+
+            if (intersected) {
                 obj.stroke_color = 'green';
-            else if (!intersected && obj.stroke_color === 'green')
+                highlighted.push(obj);
+            }
+        });
+        this.for_all_elements(this.mousepos.x, this.mousepos.y, 0, 0, (type, e, obj, intersected) => {
+            if (highlighted.indexOf(obj) == -1 && (obj.stroke_color === 'green' || obj.stroke_color === 'orange'))
                 obj.stroke_color = null;
         });
 

@@ -206,8 +206,7 @@ def parse_memlet(visitor, src: MemletType, dst: MemletType,
     else:
         expr = dstexpr
 
-    return localvar, Memlet(expr.name,
-                            expr.accesses,
-                            expr.subset,
-                            1,
-                            wcr=expr.wcr)
+    return localvar, Memlet.simple(expr.name,
+                                   expr.subset,
+                                   num_accesses=expr.accesses,
+                                   wcr_str=expr.wcr)
