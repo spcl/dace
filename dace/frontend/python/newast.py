@@ -2335,6 +2335,9 @@ class ProgramVisitor(ExtNodeVisitor):
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
             raise NotImplementedError
+    
+    def visit_NamedExpr(self, node: ast.NamedExpr):
+        self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
 
@@ -2968,6 +2971,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Handles reduction and calling other SDFGs / DaCe programs
             # self._add_state('call_%d' % node.lineno)
             self.visit_Call(node.value)
+            return
+
+        elif isinstance(node.value, ast.NamedExpr):
+            self.visit_NamedExpr(node.value)
             return
 
         self.generic_visit(node)
