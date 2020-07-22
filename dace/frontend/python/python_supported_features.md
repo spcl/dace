@@ -12,3 +12,20 @@ However, we explicitly tests for the following subsections (`tests/python_fronte
 - 2.1.5 Explicit Line Joining
 - 2.1.6 Implicit Line Joining
 - 2.1.7 Blank Lines
+
+### 2.2 Identifiers and Keywords
+The DaCe Python-Frontend uses exactly the same rules for identifiers as normal Python.
+The following keywords are recognized (for at least a subset of their Python functionality):
+- True, False, None
+- or, and, not
+- if, elif, else
+- for, while, break, continue, in
+- def, return
+
+The following keywords are NOT accepted:
+- global, nonlocal
+- class
+- try, except, finally
+- raise, yield, pass
+- import, from, as, with
+- assert, async, await, del
