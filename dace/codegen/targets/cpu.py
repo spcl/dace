@@ -753,15 +753,15 @@ class CPUCodeGen(TargetCodeGenerator):
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
-                        # If there is a type mismatch, cast pointer (used in vector
-                        # packing/unpacking)
-                        expr = cpp_array_expr(sdfg, memlet)
-                        if conntype != sdfg.arrays[memlet.data].dtype:
-                            if is_scalar:
-                                expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
-                            elif conntype.base_type != sdfg.arrays[
-                                    memlet.data].dtype:
-                                expr = '(%s *)(%s)' % (conntype.ctype, expr)
+                        defined_type = self._dispatcher.defined_vars.get(
+                            memlet.data)
+                        if defined_type == DefinedType.Scalar:
+                            expr = memlet.data
+                        else:
+                            expr = cpp_array_expr(sdfg, memlet)
+                            # If there is a type mismatch, cast pointer
+                            expr = make_ptr_vector_cast(sdfg, expr, memlet,
+                                                        conntype, is_scalar)
 
                         result.write(
                             "%s = %s;\n" % (expr, in_local_name),
@@ -912,16 +912,9 @@ class CPUCodeGen(TargetCodeGenerator):
         expr = (cpp_array_expr(sdfg, memlet) if var_type in [
             DefinedType.Pointer, DefinedType.StreamArray
         ] else memlet.data)
-        if not is_scalar:
-            expr = '&' + expr
 
-        # If there is a type mismatch, cast pointer (used in vector
-        # packing/unpacking)
-        if conntype != sdfg.arrays[memlet.data].dtype:
-            if is_scalar:
-                expr = '*(%s *)(&%s)' % (memlet_type, expr)
-            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
-                expr = '(%s *)(%s)' % (memlet_type, expr)
+        # If there is a type mismatch, cast pointer
+        expr = make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar)
 
         defined = None
 
@@ -950,8 +943,8 @@ class CPUCodeGen(TargetCodeGenerator):
         ]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
-                    result += "{} {} = ({}).pop();".format(
-                        memlet_type, local_name, expr)
+                    result += (f'{memlet_type} {local_name}; '
+                               f'({expr}).pop({local_name});')
                     defined = DefinedType.Scalar
             else:
                 # Just forward actions to the underlying object

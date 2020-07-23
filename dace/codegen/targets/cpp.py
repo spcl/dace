@@ -206,28 +206,36 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     typedef = conntype.ctype
     datadef = memlet.data
     offset_expr = '[' + cpp_offset_expr(desc, memlet.subset) + ']'
+    is_scalar = not isinstance(conntype, dtypes.pointer)
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
     defined_type = dispatcher.defined_vars.get(memlet.data)
     if defined_type == DefinedType.Pointer:
-        datadef = '&' + datadef
+        pass
     elif defined_type == DefinedType.Scalar:
         typedef += '&'
         offset_expr = ''
     elif defined_type == DefinedType.Stream:
-        typedef += '&'
+        typedef = 'auto&'
         offset_expr = ''
+        if not is_scalar:
+            conntype = conntype.base_type
+            is_scalar = True
     else:
         typedef += '&'
         defined_type = DefinedType.Pointer
+
+    # Cast as necessary
+    expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
+                                is_scalar)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
                                 defined_type,
                                 allow_shadowing=True)
 
-    return '%s %s = %s%s;' % (typedef, pointer_name, datadef, offset_expr)
+    return '%s %s = %s;' % (typedef, pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
@@ -396,6 +404,22 @@ def cpp_array_expr(sdfg,
         return "%s[%s]" % (memlet.data, offset_cppstr)
     else:
         return offset_cppstr
+
+
+def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar):
+    """ 
+    If there is a type mismatch, cast pointer type. Used mostly in vector types.
+    """
+    if conntype != sdfg.arrays[memlet.data].dtype:
+        if is_scalar:
+            expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
+        elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+            expr = '(%s)(&%s)' % (conntype.ctype, expr)
+        else:
+            expr = '&' + expr
+    elif not is_scalar:
+        expr = '&' + expr
+    return expr
 
 
 def cpp_ptr_expr(sdfg,
@@ -693,7 +717,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             # Get memlet absolute strides, including tile sizes
             strides = memlet.subset.absolute_strides(strides)
             # Filter ("squeeze") strides w.r.t. scalar dimensions
-            indexdims = [i for i, s in enumerate(memlet.subset.size()) if s == 1]
+            indexdims = [
+                i for i, s in enumerate(memlet.subset.size()) if s == 1
+            ]
             strides = [s for i, s in enumerate(strides) if i not in indexdims]
 
         if isinstance(visited_slice.value, ast.Tuple):
