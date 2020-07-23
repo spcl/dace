@@ -56,10 +56,6 @@ def copy_expr(
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
-    elif def_type == DefinedType.ArrayView:
-        return "{}{}.ptr(){}".format(
-            dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
-
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
 
@@ -203,11 +199,11 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
-                          pointer_name: str):
+                          pointer_name: str, conntype: dtypes.typeclass):
     """ Returns a string with a definition of a reference to an existing
         memlet. Used in nested SDFG arguments. """
     desc = sdfg.arrays[memlet.data]
-    typedef = 'auto'  # TODO(later): Use non-auto types (vec, Stream<>...)
+    typedef = conntype.ctype
     datadef = memlet.data
     offset_expr = '[' + cpp_offset_expr(desc, memlet.subset) + ']'
 
@@ -215,7 +211,6 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     # accordingly.
     defined_type = dispatcher.defined_vars.get(memlet.data)
     if defined_type == DefinedType.Pointer:
-        typedef += '*'
         datadef = '&' + datadef
     elif defined_type == DefinedType.Scalar:
         typedef += '&'
@@ -403,6 +398,29 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
+def cpp_ptr_expr(sdfg,
+                 memlet,
+                 offset=None,
+                 relative_offset=True,
+                 use_other_subset=False,
+                 indices=None):
+    """ Converts a memlet to a C++ pointer expression. """
+    subset = memlet.subset if not use_other_subset else memlet.other_subset
+    s = subset if relative_offset else subsets.Indices(offset)
+    o = offset if relative_offset else None
+    if isinstance(indices, str):
+        offset_cppstr = indices
+    else:
+        offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data],
+                                        s,
+                                        o,
+                                        indices=indices)
+    if offset_cppstr == '0':
+        return memlet.data
+    else:
+        return '%s + %s' % (memlet.data, offset_cppstr)
+
+
 def write_and_resolve_expr(sdfg,
                            memlet,
                            nc,
@@ -413,29 +431,23 @@ def write_and_resolve_expr(sdfg,
     """ Helper function that emits a write_and_resolve call from a memlet. """
 
     redtype = operations.detect_reduction_type(memlet.wcr)
+    atomic = "_atomic" if not nc else ""
+    ptr = cpp_ptr_expr(sdfg, memlet, indices=indices)
 
-    nc = "_nc" if nc else ""
-    indstr = (", " + indices) if indices is not None else ""
-
-    reduction_tmpl = ""
-    custom_reduction = ""
+    if isinstance(dtype, dtypes.pointer):
+        dtype = dtype.base_type
 
     # Special call for detected reduction types
     if redtype != dtypes.ReductionType.Custom:
         credtype = "dace::ReductionType::" + str(
             redtype)[str(redtype).find(".") + 1:]
-        reduction_tmpl = "<%s>" % credtype
-    else:
-        custom_reduction = ', %s' % unparse_cr(sdfg, memlet.wcr, dtype)
+        return (f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::reduce{atomic}('
+                f'{ptr}, {inname})')
 
-    return "{oname}.write_and_resolve{nc}{tmpl}({iname}{wcr}{ind})".format(
-        oname=outname,
-        nc=nc,
-        tmpl=reduction_tmpl,
-        iname=inname,
-        wcr=custom_reduction,
-        ind=indstr,
-    )
+    # General reduction
+    custom_reduction = unparse_cr(sdfg, memlet.wcr, dtype)
+    return (f'dace::wcr_custom<{dtype.ctype}>:: template reduce{atomic}('
+            f'{custom_reduction}, {ptr}, {inname})')
 
 
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
@@ -669,13 +681,18 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             self.sdfg,
                             memlet,
                             nc,
-                            '__' + target,
+                            target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
                             dtype=dtype))
                         node.value = ast.copy_location(newnode, node.value)
                         return node
+                    elif isinstance(self.sdfg.arrays[memlet.data], data.Stream):
+                        newnode = ast.Name(id="%s.push(%s);" % (
+                            memlet.data,
+                            cppunparse.cppunparse(value, expr_semicolon=False),
+                        ))
                     else:
-                        newnode = ast.Name(id="__%s.write(%s);" % (
+                        newnode = ast.Name(id="*%s = %s;" % (
                             target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
@@ -686,30 +703,37 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
             return self.generic_visit(node)
 
+        # Collect strides for index expressions
+        strides = [
+            self.sdfg.arrays[memlet.data].strides[i]
+            for i, s in enumerate(memlet.subset.size()) if s != 1
+        ]
         slice = self.visit(node.targets[-1].slice)
         if not isinstance(slice, ast.Index):
             raise NotImplementedError("Range subscripting not implemented")
 
         if isinstance(slice.value, ast.Tuple):
-            subscript = unparse(slice)[1:-1]
+            subscript = sum([
+                symbolic.pystr_to_symbolic(unparse(elt)) * s
+                for elt, s in zip(slice.value.elts, strides)
+            ])
         else:
-            subscript = unparse(slice)
+            subscript = symbolic.pystr_to_symbolic(unparse(slice)) * strides[0]
 
         if wcr is not None:
             newnode = ast.Name(id=write_and_resolve_expr(
                 self.sdfg,
                 memlet,
                 nc,
-                "__" + target,
-                cppunparse.cppunparse(value, expr_semicolon=False),
-                indices=subscript,
-                dtype=dtype) + ';')
-        else:
-            newnode = ast.Name(id="__%s.write(%s, %s);" % (
                 target,
                 cppunparse.cppunparse(value, expr_semicolon=False),
-                subscript,
-            ))
+                indices=sym2cpp(subscript),
+                dtype=dtype) + ';')
+        else:
+            newnode = ast.Name(
+                id="%s[%s] = %s;" %
+                (target, sym2cpp(subscript),
+                 cppunparse.cppunparse(value, expr_semicolon=False)))
 
         return self._replace_assignment(newnode, node)
 
@@ -754,11 +778,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             subscript = unparse(slice)
 
         if target in self.constants:
-            slice_str = DaCeKeywordRemover.ndslice_cpp(
-                subscript.split(", "), self.constants[target].shape)
-            newnode = ast.parse("%s[%s]" % (target, slice_str)).body[0].value
+            strides = self.constants[target].shape
         else:
-            newnode = ast.parse("__%s(%s)" % (target, subscript)).body[0].value
+            strides = self.sdfg.arrays[target].strides
+
+        slice_str = DaCeKeywordRemover.ndslice_cpp(subscript.split(", "),
+                                                   strides)
+        newnode = ast.parse("%s[%s]" % (target, slice_str)).body[0].value
+
         return ast.copy_location(newnode, node)
 
     def visit_Expr(self, node):

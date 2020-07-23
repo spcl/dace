@@ -69,24 +69,6 @@ namespace dace {
     template <typename T, bool ALIGNED = false>
     class Stream;
 
-    template <typename T, int DIMS, bool ALIGNED = false>
-    class StreamArray : public ArrayViewOut<Stream<T, ALIGNED>, DIMS, 1, 0, ALIGNED> {
-        template <typename... Dim>
-        explicit DACE_HDFI StreamArray(const Dim&... strides) {
-            static_assert(sizeof...(strides) == static_cast<int>(DIMS),
-                          "Dimension mismatch");
-            int stridearr[] = { static_cast<int>(strides)... };
-            for (int i = 0; i < DIMS; ++i)
-                this->m_stride[i] = stridearr[i];
-            this->m_ptr = new Stream<T, ALIGNED>[this->m_stride[DIMS - 1]];
-        }
-
-        virtual ~StreamArray() {
-            delete[] this->m_ptr;
-        }
-    };
-
-
     // Performance can be increased by removing qsize, but this is necessary for
     // consume to work for now.
     template <typename T, bool ALIGNED>

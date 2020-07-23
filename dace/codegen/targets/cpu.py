@@ -753,7 +753,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id, node)
                     else:
                         result.write(
-                            "%s.write(%s);\n" % (out_local_name, in_local_name),
+                            "%s = %s;\n" %
+                            (cpp_array_expr(sdfg, memlet), in_local_name),
                             sdfg,
                             state_id,
                             node,
@@ -782,10 +783,10 @@ class CPUCodeGen(TargetCodeGenerator):
             memlet_expr = memlet_name  # Common case
         elif def_type == DefinedType.Scalar:
             memlet_expr = "&" + memlet_name
-        elif def_type == DefinedType.ArrayView:
-            memlet_expr = memlet_name + ".ptr()"
         else:
             raise TypeError("Unsupported connector type {}".format(def_type))
+
+        pointer = ''
 
         if isinstance(memlet.subset, subsets.Indices):
 
@@ -818,9 +819,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if offset == "0":
                     memlet_params.append(memlet_expr)
                 else:
-                    if def_type not in [
-                            DefinedType.Pointer, DefinedType.ArrayView
-                    ]:
+                    if def_type != DefinedType.Pointer:
                         from dace.codegen.codegen import CodegenError
                         raise CodegenError(
                             "Cannot offset address of connector {} of type {}".
@@ -886,119 +885,64 @@ class CPUCodeGen(TargetCodeGenerator):
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without '
                              'connector type' % local_name)
-        # Convert from typeclass to Data
-        if isinstance(conntype, dtypes.typeclass):
-            if isinstance(conntype, dtypes.pointer):
-                conntype = data.Array(conntype._typeclass, [1])
+        # Convert from Data to typeclass
+        if isinstance(conntype, data.Data):
+            if isinstance(conntype, data.Array):
+                conntype = dtypes.pointer(conntype.dtype)
             else:
-                conntype = data.Scalar(conntype)
+                conntype = conntype.dtype
 
-        is_scalar = not isinstance(conntype, data.Array)
-        result = ("auto __%s = " % local_name +
-                  self.memlet_ctor(sdfg, memlet, conntype.dtype, output) +
-                  ";\n")
+        is_scalar = not isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
         memlet_type = conntype.dtype.ctype
 
         var_type = self._dispatcher.defined_vars.get(memlet.data)
+        result = ''
+        expr = (cpp_array_expr(sdfg, memlet) if var_type in [
+            DefinedType.Pointer, DefinedType.StreamArray
+        ] else memlet.data)
+        defined = None
 
-        # ** Concerning aligned vs. non-aligned values:
-        # We prefer aligned values, so in every case where we are assigning to
-        # a local _value_, we explicitly assign to an aligned type
-        # (memlet_type). In all other cases, where we need either a pointer or
-        # a reference, typically due to variable number of accesses, we have to
-        # use the underlying type of the ArrayView, be it aligned or unaligned,
-        # to avoid runtime crashes. We use auto for this, so the ArrayView can
-        # return whatever it supports.
-
-        if var_type == DefinedType.Scalar:
-            if not memlet.dynamic:
-                if not output:
-                    # We can pre-read the value
-                    result += "{} {} = __{}.val<1>();".format(
-                        memlet_type, local_name, local_name)
-                else:
-                    # The value will be written during the tasklet, and will be
-                    # automatically written out after
+        if var_type in [DefinedType.Scalar, DefinedType.Pointer]:
+            if output:
+                if not memlet.dynamic or (memlet.dynamic
+                                          and memlet.wcr is not None):
+                    # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
-                self._dispatcher.defined_vars.add(
-                    local_name,
-                    DefinedType.Scalar,
-                    allow_shadowing=allow_shadowing)
+                    defined = DefinedType.Scalar
             else:
-                if output:
-                    # Variable number of writes: get reference to the target of
-                    # the view to reflect writes at the data
-                    if not memlet.dynamic or memlet.wcr is None:
-                        result += "auto &{} = __{}.ref<1>();".format(
-                            local_name, local_name)
-                    else:
-                        # Dynamic WCR memlets start uninitialized
-                        result += "{} {};".format(memlet_type, local_name)
+                if not memlet.dynamic:
+                    # We can pre-read the value
+                    result += "{} {} = {};".format(memlet_type, local_name,
+                                                   expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
-                    result += "auto const &{} = __{}.ref<1>();".format(
-                        local_name, local_name)
-                self._dispatcher.defined_vars.add(
-                    local_name,
-                    DefinedType.Scalar,
-                    allow_shadowing=allow_shadowing)
-        elif var_type == DefinedType.Pointer:
-            if is_scalar and not memlet.dynamic:
-                if output:
-                    result += "{} {};".format(memlet_type, local_name)
-                else:
-                    result += "{} {} = __{}.val<1>();".format(
-                        memlet_type, local_name, local_name)
-                self._dispatcher.defined_vars.add(
-                    local_name,
-                    DefinedType.Scalar,
-                    allow_shadowing=allow_shadowing)
-            else:
-                if is_scalar:
-                    if not memlet.dynamic or memlet.wcr is None:
-                        # Forward ArrayView
-                        result += "auto &{} = __{}.ref<1>();".format(
-                            local_name, local_name)
-                    else:
-                        # Dynamic WCR memlets start uninitialized
-                        result += "{} {};".format(memlet_type, local_name)
-                    self._dispatcher.defined_vars.add(
-                        local_name,
-                        DefinedType.Scalar,
-                        allow_shadowing=allow_shadowing)
-                else:
-                    result += "auto *{} = __{}.ptr<1>();".format(
-                        local_name, local_name)
-                    self._dispatcher.defined_vars.add(
-                        local_name,
-                        DefinedType.Pointer,
-                        allow_shadowing=allow_shadowing)
+                    result += "{} const &{} = {};".format(
+                        memlet_type, local_name, expr)
+                defined = (DefinedType.Scalar
+                           if is_scalar else DefinedType.Pointer)
         elif var_type in [
                 DefinedType.Stream, DefinedType.StreamArray,
                 DefinedType.StreamView
         ]:
             if not memlet.dynamic and memlet.num_accesses == 1:
-                if output:
-                    result += "{} {};".format(memlet_type, local_name)
-                else:
-                    result += "auto {} = __{}.pop();".format(
-                        local_name, local_name)
-                self._dispatcher.defined_vars.add(
-                    local_name,
-                    DefinedType.Scalar,
-                    allow_shadowing=allow_shadowing)
+                if not output:
+                    result += "{} {} = ({}).pop();".format(
+                        memlet_type, local_name, expr)
+                    defined = DefinedType.Scalar
             else:
                 # Just forward actions to the underlying object
-                result += "auto &{} = __{};".format(local_name, local_name)
-                self._dispatcher.defined_vars.add(
-                    local_name,
-                    DefinedType.StreamView,
-                    allow_shadowing=allow_shadowing)
+                result += "auto &{} = {};".format(local_name, expr)
+                defined = DefinedType.StreamView
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
+
+        if defined is not None:
+            self._dispatcher.defined_vars.add(local_name,
+                                              defined,
+                                              allow_shadowing=allow_shadowing)
 
         return result
 
@@ -1025,9 +969,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ]:
             return self.memlet_stream_ctor(sdfg, memlet)
 
-        elif def_type in [
-                DefinedType.Pointer, DefinedType.Scalar, DefinedType.ArrayView
-        ]:
+        elif def_type in [DefinedType.Pointer, DefinedType.Scalar]:
             return self.memlet_view_ctor(sdfg, memlet, dtype, is_output)
 
         else:
@@ -1102,8 +1044,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
                 arrays.add(edge.dst_conn)
 
-        inner_stream.write("\n", sdfg, state_id, node)
-
         # Use outgoing edges to preallocate output local vars
         # in two stages: first we preallocate for data<->code cases,
         # followed by code<->code
@@ -1117,19 +1057,17 @@ class CPUCodeGen(TargetCodeGenerator):
             if edge.src_conn:
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
-                else:
-                    self._dispatcher.dispatch_copy(
-                        node,
-                        dst_node,
-                        edge,
-                        sdfg,
-                        state_dfg,
-                        state_id,
-                        function_stream,
-                        inner_stream,
-                    )
 
                 cdtype = node.out_connectors[edge.src_conn]
+                if isinstance(cdtype, dtypes.pointer):
+                    # If pointer, also point to output
+                    base_ptr = cpp_ptr_expr(sdfg, edge.data)
+                    inner_stream.write(
+                        f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg,
+                        state_id, node)
+                elif not isinstance(sdfg.arrays[edge.data.data], data.Stream):
+                    inner_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
+                                       state_id, node)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
@@ -1274,26 +1212,20 @@ class CPUCodeGen(TargetCodeGenerator):
             if vconn in inout or in_memlet.data is None:
                 continue
             callsite_stream.write(
-                self.memlet_definition(sdfg,
-                                       in_memlet,
-                                       False,
-                                       vconn,
-                                       conntype=node.in_connectors[vconn],
-                                       allow_shadowing=True), sdfg, state_id,
-                node)
+                emit_memlet_reference(self._dispatcher,
+                                      sdfg,
+                                      in_memlet,
+                                      vconn,
+                                      conntype=node.in_connectors[vconn]), sdfg,
+                state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
-                if out_memlet.wcr is not None:
-                    out_code = emit_memlet_reference(self._dispatcher, sdfg,
-                                                     out_memlet, uconn)
-                else:
-                    out_code = self.memlet_definition(
-                        sdfg,
-                        out_memlet,
-                        True,
-                        uconn,
-                        conntype=node.out_connectors[uconn],
-                        allow_shadowing=True)
+                out_code = emit_memlet_reference(
+                    self._dispatcher,
+                    sdfg,
+                    out_memlet,
+                    uconn,
+                    conntype=node.out_connectors[uconn])
 
                 callsite_stream.write(out_code, sdfg, state_id, node)
 

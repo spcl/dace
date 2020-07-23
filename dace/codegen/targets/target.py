@@ -159,7 +159,6 @@ class DefinedType(aenum.AutoNumberEnum):
     """
     Pointer = ()
     Scalar = ()
-    ArrayView = ()
     Stream = ()
     StreamArray = ()
     StreamView = ()
