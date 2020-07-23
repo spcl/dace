@@ -2336,7 +2336,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise NotImplementedError
     
-    def visit_NamedExpr(self, node: ast.NamedExpr):
+    def visit_NamedExpr(self, node):  # node : ast.NamedExpr
         self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
