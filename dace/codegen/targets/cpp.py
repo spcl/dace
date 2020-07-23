@@ -716,15 +716,19 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             strides = shape_to_strides(self.constants[target].shape)
         else:
             memlet = self.memlets[target][0]
+            dtype = self.memlets[target][3]
             dname = memlet.data
             strides = self.sdfg.arrays[dname].strides
             # Get memlet absolute strides, including tile sizes
             strides = memlet.subset.absolute_strides(strides)
             # Filter ("squeeze") strides w.r.t. scalar dimensions
-            indexdims = [
-                i for i, s in enumerate(memlet.subset.size()) if s == 1
+            dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
+            subset_size = memlet.subset.size()
+            indexdims = [i for i, s in enumerate(subset_size) if s == 1]
+            strides = [
+                s for i, s in enumerate(strides) if i not in indexdims
+                and not (s == 1 and subset_size[i] == dimlen)
             ]
-            strides = [s for i, s in enumerate(strides) if i not in indexdims]
 
         if isinstance(visited_slice.value, ast.Tuple):
             if len(strides) != len(visited_slice.value.elts):
@@ -738,7 +742,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, '
-                              ' got one)' % len(strides))
+                              'got one)' % len(strides))
 
         return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
 
