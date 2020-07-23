@@ -183,17 +183,13 @@ class Dot(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from dot product")
         out_memlet = out_edges[0].data
         size = in_memlets[0].subset.size()
-        veclen = in_memlets[0].veclen
         if len(size) != 1:
             raise ValueError(
                 "dot product only supported on 1-dimensional arrays")
         if size != in_memlets[1].subset.size():
             raise ValueError("Inputs to dot product must have equal size")
-        if out_memlet.subset.num_elements() != 1 or out_memlet.veclen != 1:
+        if out_memlet.subset.num_elements() != 1:
             raise ValueError("Output of dot product must be a single element")
-        if veclen != in_memlets[1].veclen:
-            raise ValueError(
-                "Vector lengths of inputs to dot product must be identical")
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):
             raise ValueError("WCR on dot product memlets not supported")

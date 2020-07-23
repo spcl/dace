@@ -103,6 +103,14 @@ l = dace::math::ifloor(l / 8);""")
     # Array assignment
     success &= _test_py2cpp('A[i] = b[j]', """A[i] = b[j];""")
 
+    # Named constants
+    success &= _test_py2cpp(
+        '''if x is not None:
+    y = True if x else False
+    ''', '''if ((x != nullptr)) {
+    auto y = (x ? true : false);
+}''')
+
     print('Result: %s' % ('PASSED' if success else 'FAILED'))
     if not success:
         exit(1)

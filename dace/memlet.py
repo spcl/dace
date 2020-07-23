@@ -44,7 +44,6 @@ class Memlet(object):
                          'lambda function. The syntax of the lambda function '
                          'receives two elements: `current` value and `new` '
                          'value, and returns the value after resolution')
-    veclen = Property(dtype=int, desc="Vector length", default=1)
 
     # Code generation and validation hints
     debuginfo = DebugInfoProperty(desc='Line information to track source and '
@@ -62,7 +61,6 @@ class Memlet(object):
                  data: str = None,
                  subset: Union[str, subsets.Subset] = None,
                  other_subset: Union[str, subsets.Subset] = None,
-                 veclen: int = 1,
                  volume: Union[int, str, symbolic.SymbolicType] = None,
                  dynamic: bool = False,
                  wcr: Union[str, ast.AST] = None,
@@ -138,7 +136,6 @@ class Memlet(object):
         self.wcr = wcr
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
-        self.veclen = veclen
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -182,7 +179,6 @@ class Memlet(object):
         node.other_subset = dcpy(self.other_subset, memo=memo)
         node.data = dcpy(self.data, memo=memo)
         node.wcr = dcpy(self.wcr, memo=memo)
-        node._veclen = self._veclen
         node.debuginfo = dcpy(self.debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
@@ -218,7 +214,6 @@ class Memlet(object):
     @staticmethod
     def simple(data,
                subset_str,
-               veclen=1,
                wcr_str=None,
                other_subset_str=None,
                wcr_conflict=True,
@@ -231,8 +226,6 @@ class Memlet(object):
                         AccessNode.
             :param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
-            :param veclen: The length of a single unit of access to
-                           the data (used for vectorization optimizations).
             :param wcr_str: A lambda function (as a string) specifying
                             how write-conflicts are resolved. The syntax
                             of the lambda function receives two elements:
@@ -299,7 +292,6 @@ class Memlet(object):
             result.data = data
 
         result.wcr_nonatomic = not wcr_conflict
-        result.veclen = veclen
 
         return result
 
@@ -371,6 +363,10 @@ class Memlet(object):
             if path[-1].dst.data == self._data:
                 is_data_src = False
         self._is_data_src = is_data_src
+
+        # If subset is None, fill in with entire array
+        if (self.data is not None and self.subset is None):
+            self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):

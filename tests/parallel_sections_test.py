@@ -16,31 +16,25 @@ if __name__ == "__main__":
     fifo_in_a_0 = state.add_stream("fifo_in_a",
                                    dace.dtypes.int32,
                                    1,
-                                   1,
                                    transient=True)
     fifo_in_b_0 = state.add_stream("fifo_in_b",
                                    dace.dtypes.int32,
-                                   1,
                                    1,
                                    transient=True)
     fifo_in_a_1 = state.add_stream("fifo_in_a",
                                    dace.dtypes.int32,
                                    1,
-                                   1,
                                    transient=True)
     fifo_in_b_1 = state.add_stream("fifo_in_b",
                                    dace.dtypes.int32,
-                                   1,
                                    1,
                                    transient=True)
     fifo_out_0 = state.add_stream("fifo_out",
                                   dace.dtypes.int32,
                                   1,
-                                  1,
                                   transient=True)
     fifo_out_1 = state.add_stream("fifo_out",
                                   dace.dtypes.int32,
-                                  1,
                                   1,
                                   transient=True)
 

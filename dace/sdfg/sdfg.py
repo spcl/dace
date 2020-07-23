@@ -120,8 +120,8 @@ class InterstateEdge(object):
         return result - set(self.assignments.keys())
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
-        """ 
-        Returns a mapping between symbols defined by this edge (i.e., 
+        """
+        Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -251,7 +251,7 @@ class SDFG(OrderedDiGraph):
 
     @property
     def sdfg_id(self):
-        """ 
+        """
         Returns the unique index of the current SDFG within the current
         tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
         """
@@ -396,12 +396,12 @@ class SDFG(OrderedDiGraph):
         self._start_state = states[state_id]
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Sets C++ code that will be generated in a global scope on 
+        """
+        Sets C++ code that will be generated in a global scope on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -409,36 +409,36 @@ class SDFG(OrderedDiGraph):
                                                dace.dtypes.Language.CPP)
 
     def set_init_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Sets C++ code that will be generated in the __dace_init_* functions on 
+        """
+        Sets C++ code that will be generated in the __dace_init_* functions on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
         self.init_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
 
     def set_exit_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Sets C++ code that will be generated in the __dace_exit_* functions on 
+        """
+        Sets C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
         self.exit_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
 
     def append_global_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Appends C++ code that will be generated in a global scope on 
+        """
+        Appends C++ code that will be generated in a global scope on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -447,12 +447,12 @@ class SDFG(OrderedDiGraph):
         self.global_code[location].code += cpp_code
 
     def append_init_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Appends C++ code that will be generated in the __dace_init_* functions on 
+        """
+        Appends C++ code that will be generated in the __dace_init_* functions on
         one of the generated code files.
         :param cpp_code: The code to append.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -461,12 +461,12 @@ class SDFG(OrderedDiGraph):
         self.init_code[location].code += cpp_code
 
     def append_exit_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Appends C++ code that will be generated in the __dace_exit_* functions on 
+        """
+        Appends C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
         :param cpp_code: The code to append.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -763,8 +763,8 @@ class SDFG(OrderedDiGraph):
 
     @property
     def free_symbols(self) -> Set[str]:
-        """ 
-        Returns a set of symbol names that are used by the SDFG, but not 
+        """
+        Returns a set of symbol names that are used by the SDFG, but not
         defined within it. This property is used to determine the symbolic
         parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
         :note: Assumes that the graph is valid (i.e., without undefined or
@@ -796,19 +796,19 @@ class SDFG(OrderedDiGraph):
         return free_syms - defined_syms
 
     def arglist(self) -> Dict[str, dt.Data]:
-        """ 
-        Returns an ordered dictionary of arguments (names and types) required 
+        """
+        Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
-        
-        The arguments follow the following order: 
+
+        The arguments follow the following order:
         <sorted data arguments>, <sorted scalar arguments>.
-        Data arguments are all the non-transient data containers in the 
-        SDFG; and scalar arguments are all the non-transient scalar data 
+        Data arguments are all the non-transient data containers in the
+        SDFG; and scalar arguments are all the non-transient scalar data
         containers and free symbols (see ``SDFG.free_symbols``). This structure
         will create a sorted list of pointers followed by a sorted list of PoDs
         and structs.
 
-        :return: An ordered dictionary of (name, data descriptor type) of all 
+        :return: An ordered dictionary of (name, data descriptor type) of all
                  the arguments, sorted as defined here.
         """
         # Start with data descriptors
@@ -1148,7 +1148,6 @@ class SDFG(OrderedDiGraph):
     def add_stream(self,
                    name: str,
                    dtype,
-                   veclen=1,
                    buffer_size=1,
                    shape=(1, ),
                    storage=dtypes.StorageType.Default,
@@ -1163,9 +1162,8 @@ class SDFG(OrderedDiGraph):
             dtype = dtypes.typeclass(dtype)
 
         desc = dt.Stream(
-            dtype,
-            veclen,
-            buffer_size,
+            dtype=dtype,
+            buffer_size=buffer_size,
             shape=shape,
             storage=storage,
             transient=transient,

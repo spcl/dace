@@ -14,6 +14,7 @@ from dace.subsets import Indices
 N = dace.symbol("N", positive=True)
 W = dace.symbol("W", positive=True)
 dtype = dace.float32
+vtype = dace.vector(dtype, W)
 buffer_size = 2048  # Of internal FIFOs
 
 
@@ -21,16 +22,15 @@ def make_copy_to_device(sdfg):
 
     pre_state = sdfg.add_state("copy_to_device")
 
-    A_host = pre_state.add_array("A", [N], dtype=dtype)
+    A_host = pre_state.add_array("A", [N / W], dtype=vtype)
 
-    A_device = pre_state.add_array("A_device", [N],
-                                   dtype=dtype,
+    A_device = pre_state.add_array("A_device", [N / W],
+                                   dtype=vtype,
                                    transient=True,
                                    storage=StorageType.FPGA_Global)
 
-    pre_state.add_edge(
-        A_host, None, A_device, None,
-        dace.memlet.Memlet.simple(A_device, "0:N", veclen=W.get()))
+    pre_state.add_edge(A_host, None, A_device, None,
+                       dace.memlet.Memlet.simple(A_device, "0:N/W"))
 
     return pre_state
 
@@ -39,8 +39,8 @@ def make_copy_to_host(sdfg):
 
     post_state = sdfg.add_state("copy_to_host")
 
-    B_device = post_state.add_array("B_device", [N],
-                                    dtype=dtype,
+    B_device = post_state.add_array("B_device", [N / W],
+                                    dtype=vtype,
                                     transient=True,
                                     storage=StorageType.FPGA_Global)
     outsize_device = post_state.add_array("outsize_device", [1],
@@ -48,11 +48,11 @@ def make_copy_to_host(sdfg):
                                           transient=True,
                                           storage=StorageType.FPGA_Global)
 
-    B_host = post_state.add_array("B", [N], dtype=dtype)
+    B_host = post_state.add_array("B", [N / W], dtype=vtype)
     outsize_host = post_state.add_array("outsize", [1], dtype=dace.uint32)
 
     post_state.add_edge(B_device, None, B_host, None,
-                        dace.memlet.Memlet.simple(B_device, "0:N", W.get()))
+                        dace.memlet.Memlet.simple(B_device, "0:N/W"))
     post_state.add_edge(outsize_device, None, outsize_host, None,
                         dace.memlet.Memlet.simple(outsize_device, "0"))
 
@@ -92,14 +92,12 @@ def make_iteration_space(sdfg, add_one=False):
 def make_compute_state(state):
 
     A_pipe = state.add_stream("_A_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Global)
     B_pipe = state.add_stream("_B_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Global)
     valid_pipe = state.add_stream("_valid_pipe",
                                   dtype=dtype,
@@ -233,10 +231,7 @@ count_out = std::min<unsigned>(W * count + elements_in_output, N);"""
     state.add_memlet_path(A_pipe,
                           tasklet,
                           dst_conn="A_pipe_in",
-                          memlet=Memlet.simple(A_pipe,
-                                               "0",
-                                               num_accesses="N",
-                                               veclen=W.get()))
+                          memlet=Memlet.simple(A_pipe, "0", num_accesses="N"))
     state.add_memlet_path(ratio,
                           tasklet,
                           dst_conn="ratio_in",
@@ -247,8 +242,7 @@ count_out = std::min<unsigned>(W * count + elements_in_output, N);"""
                           memlet=Memlet.simple(B_pipe,
                                                "0",
                                                num_accesses="N",
-                                               dynamic=True,
-                                               veclen=W.get()))
+                                               dynamic=True))
     state.add_memlet_path(tasklet,
                           valid_pipe,
                           src_conn="valid_pipe_out",
@@ -269,31 +263,6 @@ def make_compute_sdfg():
     state = sdfg.add_state("compute")
 
     make_compute_state(state)
-
-    return sdfg
-
-
-def make_read_sdfg():
-
-    sdfg = SDFG("filter_read")
-
-    state = make_iteration_space(sdfg)
-
-    A = state.add_array("A_mem", [N],
-                        dtype=dtype,
-                        storage=StorageType.FPGA_Global)
-    A_pipe = state.add_stream("_A_pipe",
-                              dtype=dtype,
-                              buffer_size=buffer_size,
-                              veclen=W.get(),
-                              storage=StorageType.FPGA_Local)
-
-    state.add_memlet_path(A,
-                          A_pipe,
-                          memlet=Memlet.simple(A_pipe,
-                                               '0',
-                                               other_subset_str='i',
-                                               veclen=W.get()))
 
     return sdfg
 
@@ -336,13 +305,12 @@ def make_write_sdfg():
     sdfg.add_edge(state, loop_entry,
                   dace.sdfg.InterstateEdge(assignments={"i": "i + W"}))
 
-    B = state.add_array("B_mem", [N],
-                        dtype=dtype,
+    B = state.add_array("B_mem", [N / W],
+                        dtype=vtype,
                         storage=StorageType.FPGA_Global)
     B_pipe = state.add_stream("_B_pipe",
-                              dtype=dtype,
+                              dtype=vtype,
                               buffer_size=buffer_size,
-                              veclen=W.get(),
                               storage=StorageType.FPGA_Local)
     valid_pipe = state.add_stream("_valid_pipe",
                                   dtype=dace.dtypes.bool,
@@ -368,7 +336,7 @@ def make_write_sdfg():
     state.add_memlet_path(B_pipe,
                           tasklet,
                           dst_conn="b_in",
-                          memlet=Memlet.simple(B_pipe, "0", veclen=W.get()))
+                          memlet=Memlet.simple(B_pipe, "0"))
     state.add_memlet_path(valid_pipe,
                           tasklet,
                           dst_conn="valid_in",
@@ -384,7 +352,7 @@ def make_write_sdfg():
     state.add_memlet_path(tasklet,
                           B,
                           src_conn="b_out",
-                          memlet=Memlet.simple(B, "0:N", W.get()))
+                          memlet=Memlet.simple(B, "0:N"))
 
     return sdfg
 
@@ -393,8 +361,8 @@ def make_main_state(sdfg):
 
     state = sdfg.add_state("filter")
 
-    A = state.add_array("A_device", [N],
-                        dtype=dtype,
+    A = state.add_array("A_device", [N / W],
+                        dtype=vtype,
                         transient=True,
                         storage=StorageType.FPGA_Global)
     ratio = state.add_scalar("ratio",
@@ -405,33 +373,29 @@ def make_main_state(sdfg):
                               dtype=dace.uint32,
                               transient=True,
                               storage=StorageType.FPGA_Global)
-    B = state.add_array("B_device", [N],
-                        dtype=dtype,
+    B = state.add_array("B_device", [N / W],
+                        dtype=vtype,
                         transient=True,
                         storage=StorageType.FPGA_Global)
 
     A_pipe_in = state.add_stream("A_pipe",
-                                 dtype=dtype,
+                                 dtype=vtype,
                                  buffer_size=buffer_size,
-                                 veclen=W.get(),
                                  transient=True,
                                  storage=StorageType.FPGA_Local)
     A_pipe_out = state.add_stream("A_pipe",
-                                  dtype=dtype,
+                                  dtype=vtype,
                                   buffer_size=buffer_size,
-                                  veclen=W.get(),
                                   transient=True,
                                   storage=StorageType.FPGA_Local)
     B_pipe_in = state.add_stream("B_pipe",
-                                 dtype=dtype,
+                                 dtype=vtype,
                                  buffer_size=buffer_size,
-                                 veclen=W.get(),
                                  transient=True,
                                  storage=StorageType.FPGA_Local)
     B_pipe_out = state.add_stream("B_pipe",
-                                  dtype=dtype,
+                                  dtype=vtype,
                                   buffer_size=buffer_size,
-                                  veclen=W.get(),
                                   transient=True,
                                   storage=StorageType.FPGA_Local)
     valid_pipe_in = state.add_stream("valid_pipe",
@@ -445,10 +409,6 @@ def make_main_state(sdfg):
                                       transient=True,
                                       storage=StorageType.FPGA_Local)
 
-    read_sdfg = make_read_sdfg()
-    read_tasklet = state.add_nested_sdfg(read_sdfg, sdfg, {"A_mem"},
-                                         {"_A_pipe"})
-
     compute_sdfg = make_compute_sdfg()
     compute_tasklet = state.add_nested_sdfg(compute_sdfg, sdfg,
                                             {"_A_pipe", "ratio_nested"},
@@ -459,28 +419,15 @@ def make_main_state(sdfg):
                                           {"_B_pipe", "_valid_pipe"}, {"B_mem"})
 
     state.add_memlet_path(A,
-                          read_tasklet,
-                          dst_conn="A_mem",
-                          memlet=Memlet.simple(A,
-                                               "0:N",
-                                               num_accesses="N",
-                                               veclen=W.get()))
-    state.add_memlet_path(read_tasklet,
                           A_pipe_out,
-                          src_conn="_A_pipe",
-                          memlet=Memlet.simple(A_pipe_out,
-                                               "0",
-                                               dynamic=True,
-                                               num_accesses="N",
-                                               veclen=W.get()))
+                          memlet=Memlet.simple(A, "0:N/W", num_accesses="N/W"))
 
     state.add_memlet_path(A_pipe_in,
                           compute_tasklet,
                           dst_conn="_A_pipe",
                           memlet=Memlet.simple(A_pipe_in,
                                                "0",
-                                               num_accesses="N",
-                                               veclen=W.get()))
+                                               num_accesses="N/W"))
     state.add_memlet_path(ratio,
                           compute_tasklet,
                           dst_conn="ratio_nested",
@@ -490,9 +437,8 @@ def make_main_state(sdfg):
                           src_conn="_B_pipe",
                           memlet=Memlet.simple(B_pipe_out,
                                                "0",
-                                               num_accesses="N",
-                                               dynamic=True,
-                                               veclen=W.get()))
+                                               num_accesses="N/W",
+                                               dynamic=True))
     state.add_memlet_path(compute_tasklet,
                           valid_pipe_out,
                           src_conn="_valid_pipe",
@@ -510,8 +456,7 @@ def make_main_state(sdfg):
                           dst_conn="_B_pipe",
                           memlet=Memlet.simple(B_pipe_in,
                                                "0",
-                                               veclen=W.get(),
-                                               num_accesses="N"))
+                                               num_accesses="N/W"))
     state.add_memlet_path(valid_pipe_in,
                           write_tasklet,
                           dst_conn="_valid_pipe",
@@ -521,10 +466,7 @@ def make_main_state(sdfg):
     state.add_memlet_path(write_tasklet,
                           B,
                           src_conn="B_mem",
-                          memlet=Memlet.simple(B,
-                                               "0:N",
-                                               num_accesses=-1,
-                                               veclen=W.get()))
+                          memlet=Memlet.simple(B, "0:N/W", dynamic=True))
 
     return state
 
@@ -564,15 +506,16 @@ if __name__ == "__main__":
                         help="Fix all symbols at compile time/in hardware")
     args = vars(parser.parse_args())
 
+    # Specialize vector width regardless
+    W.set(args["W"])
+    num_stages = 2 * W.get() - 1
+    vtype.veclen = W.get()
+
     if args["specialize"]:
-        W.set(args["W"])
-        num_stages = 2 * W.get() - 1
         N.set(args["N"])
         sdfg = make_sdfg(True)
         sdfg.specialize(dict(W=W, N=N))
     else:
-        W.set(args["W"])
-        num_stages = 2 * W.get() - 1
         sdfg = make_sdfg(False)
         sdfg.specialize(dict(W=W))
         N.set(args["N"])
