@@ -244,7 +244,7 @@ _DISALLOWED_STMTS = [
     'Print', 'Nonlocal', 'Yield', 'YieldFrom', 'Raise', 'Try', 'TryExcept',
     'TryFinally', 'ExceptHandler', 'Starred', 'Ellipsis', 'ClassDef',
     'AsyncFor', 'Await', 'Bytes', 'Set', 'Dict', 'ListComp', 'GeneratorExp',
-    'SetComp', 'DictComp', 'comprehension', 'Lambda'
+    'SetComp', 'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -2973,7 +2973,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.visit_Call(node.value)
             return
 
-        elif isinstance(node.value, ast.NamedExpr):
+        elif (sys.version_info.major == 3 and sys.version_info.minor >= 8
+                and isinstance(node.value, ast.NamedExpr)):
             self.visit_NamedExpr(node.value)
             return
 
