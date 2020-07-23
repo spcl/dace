@@ -1086,8 +1086,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double'
     ]
 
-    def __init__(self, sdfg, defined_vars, memlets, *args,
-                 **kwargs):
+    def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
         self.used_streams = [
@@ -1095,31 +1094,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
         super().__init__(sdfg, memlets, constants=sdfg.constants)
-
-    def visit_Subscript(self, node):
-        target = rname(node)
-        if target not in self.memlets and target not in self.constants:
-            return self.generic_visit(node)
-
-        slice = self.visit(node.slice)
-        if not isinstance(slice, ast.Index):
-            raise NotImplementedError('Range subscripting not implemented')
-
-        if isinstance(slice.value, ast.Tuple):
-            subscript = cpp.unparse(slice)[1:-1]
-        else:
-            subscript = cpp.unparse(slice)
-
-        if target in self.constants:
-            shape = self.constants[target].shape
-        else:
-            shape = self.sdfg.arrays[self.memlets[target][0].data].shape
-        slice_str = cpp.DaCeKeywordRemover.ndslice_cpp(subscript.split(', '),
-                                                       shape)
-
-        newnode = ast.parse('%s[%s]' % (target, slice_str)).body[0].value
-
-        return ast.copy_location(newnode, node)
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
@@ -1217,8 +1191,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         else:
             raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
                                "memory size {}, {} accesses".format(
-                                   target, defined_type, veclen_lhs,
-                                   veclen_lhs, memlet.num_accesses))
+                                   target, defined_type, veclen_lhs, veclen_lhs,
+                                   memlet.num_accesses))
 
         return ast.copy_location(updated, node)
 

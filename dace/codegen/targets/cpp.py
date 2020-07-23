@@ -432,7 +432,10 @@ def write_and_resolve_expr(sdfg,
 
     redtype = operations.detect_reduction_type(memlet.wcr)
     atomic = "_atomic" if not nc else ""
-    ptr = cpp_ptr_expr(sdfg, memlet, indices=indices)
+    if isinstance(indices, str):
+        ptr = '%s + %s' % (cpp_ptr_expr(sdfg, memlet), indices)
+    else:
+        ptr = cpp_ptr_expr(sdfg, memlet, indices=indices)
 
     if isinstance(dtype, dtypes.pointer):
         dtype = dtype.base_type
@@ -621,6 +624,16 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 
+def shape_to_strides(shape):
+    """ Constructs strides from shape (for objects with no special strides). """
+    strides = []
+    curstride = 1
+    for s in reversed(shape):
+        strides.append(curstride)
+        curstride *= s
+    return list(reversed(strides))
+
+
 class DaCeKeywordRemover(ExtNodeTransformer):
     """ Removes memlets and other DaCe keywords from a Python AST, and
         converts array accesses to C++ methods that can be generated.
@@ -737,32 +750,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return self._replace_assignment(newnode, node)
 
-    # TODO: Remove!
-    @staticmethod
-    def ndslice_cpp(slice, dims, rowmajor=True):
-        result = StringIO()
-
-        if len(slice) == 0:  # Scalar
-            return "0"
-
-        for i, d in enumerate(slice):
-            if isinstance(d, tuple):
-                raise SyntaxError(
-                    "CPU backend does not yet support ranges as inputs/outputs")
-
-            result.write(sym2cpp(d))
-
-            # If not last
-            if i < len(slice) - 1:
-                # We use the shape as-is since this function is intended for
-                # constant arrays only
-                strdims = [str(dim) for dim in dims[i + 1:]]
-                result.write(
-                    "*%s + " %
-                    "*".join(strdims))  # Multiply by leading dimensions
-
-        return result.getvalue()
-
     def visit_Subscript(self, node):
         target = rname(node)
         if target not in self.memlets and target not in self.constants:
@@ -778,13 +765,17 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             subscript = unparse(slice)
 
         if target in self.constants:
-            strides = self.constants[target].shape
+            strides = shape_to_strides(self.constants[target].shape)
         else:
-            strides = self.sdfg.arrays[target].strides
+            dname = self.memlets[target][0].data
+            strides = self.sdfg.arrays[dname].strides
 
-        slice_str = DaCeKeywordRemover.ndslice_cpp(subscript.split(", "),
-                                                   strides)
-        newnode = ast.parse("%s[%s]" % (target, slice_str)).body[0].value
+        slice_str = sym2cpp(
+            sum(
+                symbolic.pystr_to_symbolic(sub) * s
+                for sub, s in zip(subscript.split(", "), strides)))
+        # Creating as a malformed ast.Name object so it does not visit again
+        newnode = ast.Name(id="%s[%s]" % (target, slice_str))
 
         return ast.copy_location(newnode, node)
 

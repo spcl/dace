@@ -902,6 +902,8 @@ class CPUCodeGen(TargetCodeGenerator):
         expr = (cpp_array_expr(sdfg, memlet) if var_type in [
             DefinedType.Pointer, DefinedType.StreamArray
         ] else memlet.data)
+        if not is_scalar:
+            expr = '&' + expr
         defined = None
 
         if var_type in [DefinedType.Scalar, DefinedType.Pointer]:
@@ -1473,7 +1475,7 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(
                 "__dace_" + node.consume.label + "_element", DefinedType.Scalar)
         else:
-            chunk = "const %s *%s, size_t %s" % (
+            chunk = "%s *%s, size_t %s" % (
                 input_streamdesc.dtype.ctype,
                 "__dace_" + node.consume.label + "_elements",
                 "__dace_" + node.consume.label + "_numelems",
