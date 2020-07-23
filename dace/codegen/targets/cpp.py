@@ -439,10 +439,14 @@ def cpp_ptr_expr(sdfg,
                                         s,
                                         o,
                                         indices=indices)
+    dname = memlet.data
+    if isinstance(sdfg.arrays[dname], data.Scalar):
+        dname = '&' + dname
+
     if offset_cppstr == '0':
-        return memlet.data
+        return dname
     else:
-        return '%s + %s' % (memlet.data, offset_cppstr)
+        return '%s + %s' % (dname, offset_cppstr)
 
 
 def write_and_resolve_expr(sdfg,

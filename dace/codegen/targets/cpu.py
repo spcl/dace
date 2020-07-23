@@ -1073,13 +1073,15 @@ class CPUCodeGen(TargetCodeGenerator):
                     continue
 
                 cdtype = node.out_connectors[edge.src_conn]
-                if isinstance(cdtype, dtypes.pointer):
+                if isinstance(sdfg.arrays[edge.data.data], data.Stream):
+                    pass
+                elif isinstance(cdtype, dtypes.pointer):
                     # If pointer, also point to output
                     base_ptr = cpp_ptr_expr(sdfg, edge.data)
                     inner_stream.write(
                         f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg,
                         state_id, node)
-                elif not isinstance(sdfg.arrays[edge.data.data], data.Stream):
+                else:
                     inner_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                        state_id, node)
 
