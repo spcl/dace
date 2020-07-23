@@ -37,10 +37,7 @@ class symbol(sympy.Symbol):
             # to modifying different references of symbols with the same name.
             self = sympy.Symbol.__xnew__(cls, name, **assumptions)
         else:
-            self = sympy.Symbol.__xnew__(cls,
-                                         name,
-                                         integer=True,
-                                         **assumptions)
+            self = sympy.Symbol.__xnew__(cls, name, integer=True, **assumptions)
 
         self.dtype = dtype
         self._constraints = []
@@ -167,12 +164,21 @@ class SymExpr(object):
             return SymExpr(self.expr + other, self.approx + other)
         return self + pystr_to_symbolic(other)
 
+    __radd__ = __add__
+
     def __sub__(self, other):
         if isinstance(other, SymExpr):
             return SymExpr(self.expr - other.expr, self.approx - other.approx)
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr - other, self.approx - other)
         return self - pystr_to_symbolic(other)
+
+    def __rsub__(self, other):
+        if isinstance(other, SymExpr):
+            return SymExpr(other.expr - self.expr, other.approx - self.approx)
+        if isinstance(other, sympy.Expr):
+            return SymExpr(other - self.expr, other - self.approx)
+        return pystr_to_symbolic(other) - self
 
     def __mul__(self, other):
         if isinstance(other, SymExpr):
@@ -194,8 +200,7 @@ class SymExpr(object):
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(self.expr // other.expr,
-                           self.approx // other.approx)
+            return SymExpr(self.expr // other.expr, self.approx // other.approx)
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr // other, self.approx // other)
         return self // pystr_to_symbolic(other)
@@ -517,8 +522,8 @@ def sympy_intdiv_fix(expr):
             # Floor of floor: "floor(a / floor(c/d))"
             m = floor.match(sympy.floor(a / int_floor(c, d)))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a],
-                                                    int_floor(m[c], m[d])))
+                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c],
+                                                                    m[d])))
                 processed += 1
                 continue
 

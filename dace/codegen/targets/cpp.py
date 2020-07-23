@@ -677,6 +677,41 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         return ast.copy_location(
             ast.Assign(targets=node.targets[:-1], value=locfix), node)
 
+    def _subscript_expr(self, slicenode: ast.AST,
+                        target: str) -> symbolic.SymbolicType:
+        visited_slice = self.visit(slicenode)
+        if not isinstance(visited_slice, ast.Index):
+            raise NotImplementedError("Range subscripting not implemented")
+
+        # Collect strides for index expressions
+        if target in self.constants:
+            strides = shape_to_strides(self.constants[target].shape)
+        else:
+            memlet = self.memlets[target][0]
+            dname = memlet.data
+            strides = self.sdfg.arrays[dname].strides
+            # Get memlet absolute strides, including tile sizes
+            strides = memlet.subset.absolute_strides(strides)
+            # Filter ("squeeze") strides w.r.t. scalar dimensions
+            indexdims = [i for i, s in enumerate(memlet.subset.size()) if s == 1]
+            strides = [s for i, s in enumerate(strides) if i not in indexdims]
+
+        if isinstance(visited_slice.value, ast.Tuple):
+            if len(strides) != len(visited_slice.value.elts):
+                raise SyntaxError(
+                    'Invalid number of dimensions in expression (expected %d, '
+                    'got %d)' % (len(strides), len(visited_slice.value.elts)))
+
+            return sum(
+                symbolic.pystr_to_symbolic(unparse(elt)) * s
+                for elt, s in zip(visited_slice.value.elts, strides))
+
+        if len(strides) != 1:
+            raise SyntaxError('Missing dimensions in expression (expected %d, '
+                              ' got one)' % len(strides))
+
+        return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+
     def visit_Assign(self, node):
         target = rname(node.targets[-1])
         if target not in self.memlets:
@@ -688,7 +723,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts
             try:
-                if memlet is not None and (memlet.dynamic or isinstance(
+                if memlet and memlet.data and (memlet.dynamic or isinstance(
                         self.sdfg.arrays[memlet.data], data.Stream)):
                     if wcr is not None:
                         newnode = ast.Name(id=write_and_resolve_expr(
@@ -717,22 +752,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
             return self.generic_visit(node)
 
-        # Collect strides for index expressions
-        strides = [
-            self.sdfg.arrays[memlet.data].strides[i]
-            for i, s in enumerate(memlet.subset.size()) if s != 1
-        ]
-        slice = self.visit(node.targets[-1].slice)
-        if not isinstance(slice, ast.Index):
-            raise NotImplementedError("Range subscripting not implemented")
-
-        if isinstance(slice.value, ast.Tuple):
-            subscript = sum([
-                symbolic.pystr_to_symbolic(unparse(elt)) * s
-                for elt, s in zip(slice.value.elts, strides)
-            ])
-        else:
-            subscript = symbolic.pystr_to_symbolic(unparse(slice)) * strides[0]
+        subscript = self._subscript_expr(node.targets[-1].slice, target)
 
         if wcr is not None:
             newnode = ast.Name(id=write_and_resolve_expr(
@@ -756,27 +776,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if target not in self.memlets and target not in self.constants:
             return self.generic_visit(node)
 
-        slice = self.visit(node.slice)
-        if not isinstance(slice, ast.Index):
-            raise NotImplementedError("Range subscripting not implemented")
+        subscript = self._subscript_expr(node.slice, target)
 
-        if isinstance(slice.value, ast.Tuple):
-            subscript = unparse(slice)[1:-1]
-        else:
-            subscript = unparse(slice)
-
-        if target in self.constants:
-            strides = shape_to_strides(self.constants[target].shape)
-        else:
-            dname = self.memlets[target][0].data
-            strides = self.sdfg.arrays[dname].strides
-
-        slice_str = sym2cpp(
-            sum(
-                symbolic.pystr_to_symbolic(sub) * s
-                for sub, s in zip(subscript.split(", "), strides)))
         # Creating as a malformed ast.Name object so it does not visit again
-        newnode = ast.Name(id="%s[%s]" % (target, slice_str))
+        newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript)))
 
         return ast.copy_location(newnode, node)
 
