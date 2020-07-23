@@ -722,8 +722,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         "Cannot copy memlet without a local connector: {} to {}"
                         .format(str(edge.src), str(edge.dst)))
 
-                is_scalar = not isinstance(node.out_connectors[uconn],
-                                           dtypes.pointer)
+                conntype = node.out_connectors[uconn]
+                is_scalar = not isinstance(conntype, dtypes.pointer)
                 is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
 
                 if is_scalar and not memlet.dynamic and not is_stream:
@@ -753,9 +753,18 @@ class CPUCodeGen(TargetCodeGenerator):
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
+                        # If there is a type mismatch, cast pointer (used in vector
+                        # packing/unpacking)
+                        expr = cpp_array_expr(sdfg, memlet)
+                        if conntype != sdfg.arrays[memlet.data].dtype:
+                            if is_scalar:
+                                expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
+                            elif conntype.base_type != sdfg.arrays[
+                                    memlet.data].dtype:
+                                expr = '(%s *)(%s)' % (conntype.ctype, expr)
+
                         result.write(
-                            "%s = %s;\n" %
-                            (cpp_array_expr(sdfg, memlet), in_local_name),
+                            "%s = %s;\n" % (expr, in_local_name),
                             sdfg,
                             state_id,
                             node,
@@ -905,6 +914,15 @@ class CPUCodeGen(TargetCodeGenerator):
         ] else memlet.data)
         if not is_scalar:
             expr = '&' + expr
+
+        # If there is a type mismatch, cast pointer (used in vector
+        # packing/unpacking)
+        if conntype != sdfg.arrays[memlet.data].dtype:
+            if is_scalar:
+                expr = '*(%s *)(&%s)' % (memlet_type, expr)
+            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+                expr = '(%s *)(%s)' % (memlet_type, expr)
+
         defined = None
 
         if var_type in [DefinedType.Scalar, DefinedType.Pointer]:
