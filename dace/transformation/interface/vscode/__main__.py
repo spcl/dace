@@ -30,11 +30,14 @@ def get_transformations(sdfg):
     matches = optimizer.get_pattern_matches()
 
     transformations = []
+    docstrings = {}
     for transformation in matches:
         transformations.append(transformation.to_json())
+        docstrings[type(transformation).__name__] = transformation.__doc__
 
     return {
         'transformations': transformations,
+        'docstrings': docstrings,
     }
 
 def run_daemon():
