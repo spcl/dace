@@ -724,8 +724,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 is_scalar = not isinstance(node.out_connectors[uconn],
                                            dtypes.pointer)
+                is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
 
-                if is_scalar and not memlet.dynamic:
+                if is_scalar and not memlet.dynamic and not is_stream:
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:

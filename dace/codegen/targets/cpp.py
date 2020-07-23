@@ -686,9 +686,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         value = self.visit(node.value)
 
         if not isinstance(node.targets[-1], ast.Subscript):
-            # Dynamic accesses -> every access counts
+            # Dynamic accesses or streams -> every access counts
             try:
-                if memlet is not None and memlet.dynamic:
+                if memlet is not None and (memlet.dynamic or isinstance(
+                        self.sdfg.arrays[memlet.data], data.Stream)):
                     if wcr is not None:
                         newnode = ast.Name(id=write_and_resolve_expr(
                             self.sdfg,
