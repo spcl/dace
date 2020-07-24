@@ -162,7 +162,6 @@
     <ClInclude Include="include\dace\xilinx\reduce.h" />
     <ClInclude Include="include\dace\xilinx\stream.h" />
     <ClInclude Include="include\dace\xilinx\vec.h" />
-    <ClInclude Include="include\dace\xilinx\view.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="include\dace\cuda\copy.cuh" />

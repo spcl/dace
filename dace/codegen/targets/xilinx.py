@@ -7,6 +7,7 @@ import numpy as np
 import dace
 from dace import registry, dtypes
 from dace.config import Config
+from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
@@ -264,6 +265,41 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
+
+    def write_and_resolve_expr(self,
+                               sdfg,
+                               memlet,
+                               nc,
+                               outname,
+                               inname,
+                               indices=None,
+                               dtype=None):
+        """
+        Emits a conflict resolution call from a memlet.
+        """
+        redtype = operations.detect_reduction_type(memlet.wcr)
+        if isinstance(indices, str):
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet), indices)
+        else:
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, indices=indices)
+
+        if isinstance(dtype, dtypes.pointer):
+            dtype = dtype.base_type
+
+        # Special call for detected reduction types
+        if redtype != dtypes.ReductionType.Custom:
+            credtype = "dace::ReductionType::" + str(
+                redtype)[str(redtype).find(".") + 1:]
+            if isinstance(dtype, dtypes.vector):
+                return (f'dace::xilinx_wcr_fixed_vec<{credtype}, '
+                        f'{dtype.vtype.ctype}, {dtype.veclen}>::reduce('
+                        f'{ptr}, {inname})')
+            return (
+                f'dace::xilinx_wcr_fixed<{credtype}, {dtype.ctype}>::reduce('
+                f'{ptr}, {inname})')
+
+        # General reduction
+        raise NotImplementedError('General reductions not yet implemented')
 
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
@@ -771,9 +807,15 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
         # Process outgoing memlets
-        self._cpu_codegen.process_out_memlets(sdfg, state_id, node, state_dfg,
-                                              self._dispatcher, callsite_stream,
-                                              True, function_stream)
+        self._cpu_codegen.process_out_memlets(sdfg,
+                                              state_id,
+                                              node,
+                                              state_dfg,
+                                              self._dispatcher,
+                                              callsite_stream,
+                                              True,
+                                              function_stream,
+                                              codegen=self)
 
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]

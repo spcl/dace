@@ -713,8 +713,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             result,
                             locals_defined,
                             function_stream,
-                            skip_wcr=False):
-
+                            skip_wcr=False,
+                            codegen=None):
+        codegen = codegen or self
         scope_dict = sdfg.nodes()[state_id].scope_dict()
 
         for edge in dfg.out_edges(node):
@@ -794,7 +795,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         nc = not is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         result.write(
-                            self.write_and_resolve_expr(
+                            codegen.write_and_resolve_expr(
                                 sdfg,
                                 memlet,
                                 nc,
