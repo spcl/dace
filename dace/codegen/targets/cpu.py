@@ -647,13 +647,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     dst_expr = self.memlet_view_ctor(sdfg, memlet,
                                                      dst_nodedesc.dtype, True)
                     stream.write(
-                        write_and_resolve_expr(sdfg,
-                                               memlet,
-                                               nc,
-                                               dst_expr,
-                                               '*(' + src_expr + ')',
-                                               dtype=dst_nodedesc.dtype) + ';',
-                        sdfg, state_id, [src_node, dst_node])
+                        self.write_and_resolve_expr(sdfg,
+                                                    memlet,
+                                                    nc,
+                                                    dst_expr,
+                                                    '*(' + src_expr + ')',
+                                                    dtype=dst_nodedesc.dtype) +
+                        ';', sdfg, state_id, [src_node, dst_node])
                 else:
                     raise NotImplementedError("Accumulation of arrays "
                                               "with WCR not yet implemented")
@@ -668,6 +668,41 @@ class CPUCodeGen(TargetCodeGenerator):
 
     ###########################################################################
     # Memlet handling
+
+    def write_and_resolve_expr(self,
+                               sdfg,
+                               memlet,
+                               nc,
+                               outname,
+                               inname,
+                               indices=None,
+                               dtype=None):
+        """
+        Emits a conflict resolution call from a memlet.
+        """
+
+        redtype = operations.detect_reduction_type(memlet.wcr)
+        atomic = "_atomic" if not nc else ""
+        if isinstance(indices, str):
+            ptr = '%s + %s' % (cpp_ptr_expr(sdfg, memlet), indices)
+        else:
+            ptr = cpp_ptr_expr(sdfg, memlet, indices=indices)
+
+        if isinstance(dtype, dtypes.pointer):
+            dtype = dtype.base_type
+
+        # Special call for detected reduction types
+        if redtype != dtypes.ReductionType.Custom:
+            credtype = "dace::ReductionType::" + str(
+                redtype)[str(redtype).find(".") + 1:]
+            return (
+                f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::reduce{atomic}('
+                f'{ptr}, {inname})')
+
+        # General reduction
+        custom_reduction = unparse_cr(sdfg, memlet.wcr, dtype)
+        return (f'dace::wcr_custom<{dtype.ctype}>:: template reduce{atomic}('
+                f'{custom_reduction}, {ptr}, {inname})')
 
     def process_out_memlets(self,
                             sdfg,
@@ -759,7 +794,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         nc = not is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         result.write(
-                            write_and_resolve_expr(
+                            self.write_and_resolve_expr(
                                 sdfg,
                                 memlet,
                                 nc,
@@ -1190,7 +1225,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                         inner_stream, self._locals, self._ldepth,
-                        self._toplevel_schedule)
+                        self._toplevel_schedule, self)
 
         inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
 

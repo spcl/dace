@@ -457,39 +457,6 @@ def cpp_ptr_expr(sdfg,
     else:
         return '%s + %s' % (dname, offset_cppstr)
 
-
-def write_and_resolve_expr(sdfg,
-                           memlet,
-                           nc,
-                           outname,
-                           inname,
-                           indices=None,
-                           dtype=None):
-    """ Helper function that emits a write_and_resolve call from a memlet. """
-
-    redtype = operations.detect_reduction_type(memlet.wcr)
-    atomic = "_atomic" if not nc else ""
-    if isinstance(indices, str):
-        ptr = '%s + %s' % (cpp_ptr_expr(sdfg, memlet), indices)
-    else:
-        ptr = cpp_ptr_expr(sdfg, memlet, indices=indices)
-
-    if isinstance(dtype, dtypes.pointer):
-        dtype = dtype.base_type
-
-    # Special call for detected reduction types
-    if redtype != dtypes.ReductionType.Custom:
-        credtype = "dace::ReductionType::" + str(
-            redtype)[str(redtype).find(".") + 1:]
-        return (f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::reduce{atomic}('
-                f'{ptr}, {inname})')
-
-    # General reduction
-    custom_reduction = unparse_cr(sdfg, memlet.wcr, dtype)
-    return (f'dace::wcr_custom<{dtype.ctype}>:: template reduce{atomic}('
-            f'{custom_reduction}, {ptr}, {inname})')
-
-
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
         using atomics or critical sections. """
@@ -578,7 +545,7 @@ def unparse_cr(sdfg, wcr_ast, dtype):
 
 
 def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
-                    locals, ldepth, toplevel_schedule):
+                    locals, ldepth, toplevel_schedule, codegen):
 
     if node.label is None or node.label == "":
         return ""
@@ -649,10 +616,11 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets,
-                                    sdfg.constants).visit_TopLevelExpr(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants,
+                                    codegen).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants).visit(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants,
+                                    codegen).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
@@ -681,10 +649,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         @note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """
-    def __init__(self, sdfg, memlets, constants):
+    def __init__(self, sdfg, memlets, constants, codegen):
         self.sdfg = sdfg
         self.memlets = memlets
         self.constants = constants
+        self.codegen = codegen
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -769,7 +738,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 if memlet and memlet.data and (memlet.dynamic or isinstance(
                         self.sdfg.arrays[memlet.data], data.Stream)):
                     if wcr is not None:
-                        newnode = ast.Name(id=write_and_resolve_expr(
+                        newnode = ast.Name(id=self.codegen.write_and_resolve_expr(
                             self.sdfg,
                             memlet,
                             nc,
@@ -798,7 +767,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         subscript = self._subscript_expr(node.targets[-1].slice, target)
 
         if wcr is not None:
-            newnode = ast.Name(id=write_and_resolve_expr(
+            newnode = ast.Name(id=self.codegen.write_and_resolve_expr(
                 self.sdfg,
                 memlet,
                 nc,

@@ -1051,7 +1051,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         for stmt in body:  # for each statement in tasklet body
             stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
-                sdfg, self._dispatcher.defined_vars, memlets, sdfg.constants)
+                sdfg, self._dispatcher.defined_vars, memlets, self)
             if isinstance(stmt, ast.Expr):
                 rk = ocl_visitor.visit_TopLevelExpr(stmt)
             else:
@@ -1095,14 +1095,14 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double'
     ]
 
-    def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
+    def __init__(self, sdfg, defined_vars, memlets, codegen):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
         self.used_streams = [
         ]  # keep track of the different streams used in a tasklet
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
-        super().__init__(sdfg, memlets, constants=sdfg.constants)
+        super().__init__(sdfg, memlets, sdfg.constants, codegen)
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])

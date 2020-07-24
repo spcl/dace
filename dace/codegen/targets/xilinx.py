@@ -766,7 +766,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                             callsite_stream, self._cpu_codegen._locals,
                             self._cpu_codegen._ldepth,
-                            self._cpu_codegen._toplevel_schedule)
+                            self._cpu_codegen._toplevel_schedule, self)
 
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
