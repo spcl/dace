@@ -1164,11 +1164,25 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             instr.on_scope_exit(sdfg, state, scope_exit, outer_stream,
                                 self.scope_exit_stream, self._globalcode)
 
+        # Redefine constant arguments
+        # TODO: This (const behavior and code below) is all a hack.
+        #       Refactor and fix when nested SDFGs are separate functions.
+        self._dispatcher.defined_vars.enter_scope(scope_entry)
+        for aname, arg in kernel_args.items():
+            if aname in const_params:
+                defined_type, ctype = self._dispatcher.defined_vars.get(aname)
+                self._dispatcher.defined_vars.add(aname,
+                                                  defined_type,
+                                                  'const %s' % ctype,
+                                                  allow_shadowing=True)
+
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map,
                                    kernel_name, grid_dims, block_dims, tbmap,
                                    dtbmap, kernel_args_typed, self._globalcode,
                                    kernel_stream)
+
+        self._dispatcher.defined_vars.exit_scope(scope_entry)
 
         # Add extra kernel arguments for a grid barrier object
         extra_kernel_args_typed = []

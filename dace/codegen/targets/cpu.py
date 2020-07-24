@@ -265,6 +265,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
@@ -941,9 +942,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     defined = DefinedType.Scalar
             else:
                 if not memlet.dynamic:
-                    # We can pre-read the value
-                    result += "{} {} = {};".format(memlet_type, local_name,
-                                                   expr)
+                    if is_scalar:
+                        # We can pre-read the value
+                        result += "{} {} = {};".format(memlet_type, local_name,
+                                                       expr)
+                    else:
+                        # Pointer reference
+                        result += "{} {} = {};".format(ctypedef, local_name,
+                                                       expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
@@ -1532,7 +1538,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 ctype)
         else:
             ctype = 'const %s *' % input_streamdesc.dtype.ctype
-            chunk = "%s *%s, size_t %s" % (
+            chunk = "%s %s, size_t %s" % (
                 ctype, "__dace_" + node.consume.label + "_elements",
                 "__dace_" + node.consume.label + "_numelems")
             self._dispatcher.defined_vars.add(
