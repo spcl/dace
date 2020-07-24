@@ -943,8 +943,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
-                    result += (f'{memlet_type} {local_name}; '
-                               f'({expr}).pop({local_name});')
+                    result += f'{memlet_type} {local_name} = ({expr}).pop();'
                     defined = DefinedType.Scalar
             else:
                 # Just forward actions to the underlying object

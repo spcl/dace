@@ -208,6 +208,10 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     offset_expr = '[' + cpp_offset_expr(desc, memlet.subset) + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
 
+    # Special case to avoid self-reference
+    if pointer_name == datadef and offset_expr == '[0]':
+        return ''
+
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
     defined_type = dispatcher.defined_vars.get(memlet.data)

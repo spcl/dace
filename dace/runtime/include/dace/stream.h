@@ -86,6 +86,11 @@ namespace dace {
             if (!noupdate)
                 m_elements--;
         }
+        inline T pop(bool noupdate = false) {
+            T item;
+            pop(item, noupdate);
+            return item;
+        }
         inline size_t pop(T *valarr, int max_size, bool noupdate = false) {
             size_t result = m_queue.wait_dequeue_bulk(valarr, max_size);
             if (result > 0 && !noupdate)
