@@ -48,7 +48,7 @@ def copy_expr(
 
     expr = dataname
 
-    def_type = dispatcher.defined_vars.get(dataname)
+    def_type, _ = dispatcher.defined_vars.get(dataname)
 
     add_offset = offset_cppstr != "0"
 
@@ -207,6 +207,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     datadef = memlet.data
     offset_expr = '[' + cpp_offset_expr(desc, memlet.subset) + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
+    ref = ''
 
     # Special case to avoid self-reference
     if pointer_name == datadef and offset_expr == '[0]':
@@ -214,20 +215,23 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type = dispatcher.defined_vars.get(memlet.data)
+    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data)
     if defined_type == DefinedType.Pointer:
         pass
     elif defined_type == DefinedType.Scalar:
-        typedef += '&'
+        typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        ref = '&' if is_scalar else ''
+        defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
     elif defined_type == DefinedType.Stream:
-        typedef = 'auto&'
+        typedef = defined_ctype
+        ref = '&'
         offset_expr = ''
         if not is_scalar:
             conntype = conntype.base_type
             is_scalar = True
     else:
-        typedef += '&'
+        ref = '&' if is_scalar else ''
         defined_type = DefinedType.Pointer
 
     # Cast as necessary
@@ -237,9 +241,10 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
                                 defined_type,
+                                typedef,
                                 allow_shadowing=True)
 
-    return '%s %s = %s;' % (typedef, pointer_name, expr)
+    return '%s%s %s = %s;' % (typedef, ref, pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):

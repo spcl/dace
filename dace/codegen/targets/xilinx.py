@@ -186,20 +186,20 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
                       kernel_stream):
+        ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
+                                                dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
-            kernel_stream.write("dace::FIFO<{}, {}, {}> {}(\"{}\");".format(
-                dtype.base_type.ctype, dtype.veclen, buffer_size, var_name,
-                var_name))
+            kernel_stream.write("{} {}(\"{}\");".format(ctype, var_name,
+                                                        var_name))
         else:
-            kernel_stream.write("dace::FIFO<{}, {}, {}> {}[{}];\n".format(
-                dtype.base_type.ctype, dtype.veclen, buffer_size, var_name,
-                cpp.sym2cpp(array_size)))
+            kernel_stream.write("{} {}[{}];\n".format(ctype, var_name,
+                                                      cpp.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
+        return ctype
 
-    def define_local_array(self, var_name, desc, array_size,
-                           function_stream, kernel_stream, sdfg, state_id,
-                           node):
+    def define_local_array(self, var_name, desc, array_size, function_stream,
+                           kernel_stream, sdfg, state_id, node):
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name,
                                                   cpp.sym2cpp(array_size)))
@@ -214,7 +214,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         else:
             raise ValueError("Unsupported storage type: {}".format(
                 desc.storage.name))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer,
+                                          '%s *' % dtype.ctype)
 
     def define_shift_register(*args, **kwargs):
         raise NotImplementedError("Xilinx shift registers NYI")
@@ -265,8 +266,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
     @staticmethod
-    def make_read(defined_type, dtype, var_name, expr, index,
-                  is_pack, packing_factor):
+    def make_read(defined_type, dtype, var_name, expr, index, is_pack,
+                  packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
             read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.StreamArray:
@@ -791,7 +792,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                    dst_node, edge, callsite_stream):
         memlet = edge.data
         if (self._dispatcher.defined_vars.get(
-                memlet.data) == DefinedType.FPGA_ShiftRegister):
+                memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,

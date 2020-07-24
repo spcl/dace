@@ -176,6 +176,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_stream.write("channel {} {}{}{};".format(vec_type, var_name,
                                                         size_str,
                                                         depth_attribute))
+        return 'channel {}'.format(vec_type)
 
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):
@@ -187,7 +188,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes,
                                                     var_name,
                                                     cpp.sym2cpp(array_size)))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer,
+                                          vec_type)
 
     def define_shift_register(self, *args, **kwargs):
         # Shift registers are just arrays on Intel
@@ -794,7 +796,7 @@ __kernel void \\
 
         result = ""
 
-        def_type = self._dispatcher.defined_vars.get(data_name)
+        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
             if not memlet.dynamic:
                 if not is_output:
@@ -807,13 +809,15 @@ __kernel void \\
                     init = ""
 
                     result += "{} {}{};".format(memlet_type, connector, init)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 # Variable number of reads or writes
                 result += "{} *{} = &{};".format(memlet_type, connector,
                                                  data_name)
                 self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Pointer)
+                                                  DefinedType.Pointer,
+                                                  '%s *' % memlet_type)
         elif def_type == DefinedType.Pointer:
             if is_scalar and not memlet.dynamic:
                 if is_output:
@@ -821,17 +825,18 @@ __kernel void \\
                 else:
                     result += "{} {} = {}[{}];".format(memlet_type, connector,
                                                        data_name, offset)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
                     qualifiers = "__global volatile "
                 else:
                     qualifiers = ""
-                result += "{}{} *{} = &{}[{}];".format(qualifiers, memlet_type,
-                                                       connector, data_name,
-                                                       offset)
+                ctype = '{}{} *'.format(qualifiers, memlet_type)
+                result += "{}{} = &{}[{}];".format(ctype, connector, data_name,
+                                                   offset)
                 self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Pointer)
+                                                  DefinedType.Pointer, ctype)
         elif def_type == DefinedType.Stream:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
@@ -839,12 +844,14 @@ __kernel void \\
                 else:
                     result += "{} {} = read_channel_intel({});".format(
                         memlet_type, connector, data_name)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
                     connector, data_name)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Stream)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
+                                                  ctypedef)
         elif def_type == DefinedType.StreamArray:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
@@ -856,7 +863,8 @@ __kernel void \\
                     else:
                         result += "{} {} = read_channel_intel({});".format(
                             memlet_type, connector, data_name)
-                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 # Must happen directly in the code
                 # Here we create a macro which take the proper channel
@@ -872,7 +880,8 @@ __kernel void \\
                     result += "#define {} {} ".format(connector, data_name)
 
                 self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.StreamArray)
+                                                  DefinedType.StreamArray,
+                                                  ctypedef)
         else:
             raise TypeError("Unknown variable type: {}".format(def_type))
 
@@ -894,8 +903,8 @@ __kernel void \\
 
             result = ""
 
-            src_def_type = self._dispatcher.defined_vars.get(connector)
-            dst_def_type = self._dispatcher.defined_vars.get(data_name)
+            src_def_type, _ = self._dispatcher.defined_vars.get(connector)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(data_name)
 
             # TODO: implement vector conversion
             read_expr = self.make_read(src_def_type, dtype, connector,
@@ -1135,7 +1144,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 value = value[1:]
             value = "{}({})".format(pack_str, value)
 
-        defined_type = self.defined_vars.get(target)
+        defined_type, _ = self.defined_vars.get(target)
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
@@ -1165,7 +1174,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 if veclen_rhs > veclen_lhs:
                     code_str = unpack_str + "({}, {});".format(value, target)
                 else:
-                    if self.defined_vars.get(target) == DefinedType.Pointer:
+                    if self.defined_vars.get(target)[0] == DefinedType.Pointer:
                         code_str = "*{} = {};".format(target, value)
                     else:
                         code_str = "{} = {};".format(target, value)
@@ -1201,7 +1210,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[node.id]
-        defined_type = self.defined_vars.get(node.id)
+        defined_type, _ = self.defined_vars.get(node.id)
         updated = node
 
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
