@@ -217,7 +217,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data)
     if defined_type == DefinedType.Pointer:
-        pass
+        typedef = defined_ctype if not is_scalar else typedef
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''

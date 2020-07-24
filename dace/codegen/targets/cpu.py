@@ -1249,25 +1249,25 @@ class CPUCodeGen(TargetCodeGenerator):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
-        # Emit nested SDFG as a separate function
+        # TODO: Emit nested SDFG as a separate function
         nested_stream = CodeIOStream()
 
         sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id, state_id,
                                       dfg.node_id(node))
         # Arguments are input connectors, output connectors, and symbols
-        #node.sdfg.arglist()
-        arguments = [
-            f'{atype.ctype} {aname}' for aname, atype in set(
-                itertools.chain(node.in_connectors.items(),
-                                node.out_connectors.items()))
-        ]
-        arguments += [
-            f'{node.sdfg.symbols[aname].ctype} {aname}'
-            for aname in node.symbol_mapping.keys()
-        ]
-        arguments = ', '.join(arguments)
-        nested_stream.write(f'void {sdfg_label}({arguments}) {{}}', sdfg,
-                            state_id, node)
+        # TODO: Use one method for kernels and nested SDFGs
+        # arguments = [
+        #     f'{atype.ctype} {aname}' for aname, atype in set(
+        #         itertools.chain(node.in_connectors.items(),
+        #                         node.out_connectors.items()))
+        # ]
+        # arguments += [
+        #     f'{node.sdfg.symbols[aname].ctype} {aname}'
+        #     for aname in node.symbol_mapping.keys()
+        # ]
+        # arguments = ', '.join(arguments)
+        # nested_stream.write(f'void {sdfg_label}({arguments}) {{}}', sdfg,
+        #                     state_id, node)
 
         # Emit accessors as pointers/references (rather than new objects)
         # Take care of nested SDFG I/O
