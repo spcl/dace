@@ -217,7 +217,9 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     # accordingly.
     defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data)
     if defined_type == DefinedType.Pointer:
-        typedef = defined_ctype if not is_scalar else typedef
+        if not is_scalar and desc.dtype == conntype.base_type:
+            # Cast potential consts
+            typedef = defined_ctype
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -456,6 +458,7 @@ def cpp_ptr_expr(sdfg,
         return dname
     else:
         return '%s + %s' % (dname, offset_cppstr)
+
 
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
@@ -738,13 +741,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 if memlet and memlet.data and (memlet.dynamic or isinstance(
                         self.sdfg.arrays[memlet.data], data.Stream)):
                     if wcr is not None:
-                        newnode = ast.Name(id=self.codegen.write_and_resolve_expr(
-                            self.sdfg,
-                            memlet,
-                            nc,
-                            target,
-                            cppunparse.cppunparse(value, expr_semicolon=False),
-                            dtype=dtype))
+                        newnode = ast.Name(
+                            id=self.codegen.write_and_resolve_expr(
+                                self.sdfg,
+                                memlet,
+                                nc,
+                                target,
+                                cppunparse.cppunparse(value,
+                                                      expr_semicolon=False),
+                                dtype=dtype))
                         node.value = ast.copy_location(newnode, node.value)
                         return node
                     elif isinstance(self.sdfg.arrays[memlet.data], data.Stream):
