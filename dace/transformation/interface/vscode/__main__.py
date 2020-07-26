@@ -12,10 +12,11 @@ def apply_transformation(sdfg, transformation):
 
     revived_transformation = Transformation.from_json(transformation)
     revived_transformation.apply_pattern(sdfg_object)
+    sdfg_object.append_transformation(revived_transformation)
 
     new_sdfg = sdfg_object.to_json()
     return {
-        'sdfg': new_sdfg
+        'sdfg': new_sdfg,
     }
 
 def get_transformations(sdfg):
