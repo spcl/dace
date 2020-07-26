@@ -349,8 +349,7 @@ class TFSession:
         self.graph.fill_scope_connectors()
         # self.graph.apply_strict_transformations(validate=False)
         if gpu:
-            from dace.transformation.interstate import GPUTransformSDFG
-            self.graph.apply_transformations([GPUTransformSDFG])
+            self.graph.apply_gpu_transformations()
 
         # Compile and call the SDFG
         compiled_sdfg = self.graph.compile(optimizer=False)
