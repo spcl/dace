@@ -512,9 +512,7 @@ def add_indirection_subgraph(sdfg: SDFG,
     #                         indirectRange, num_accesses=memlet.num_accesses)
     # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
-    valueMemlet = Memlet.simple(tmp_name,
-                                indirectRange,
-                                num_accesses=1)
+    valueMemlet = Memlet.simple(tmp_name, indirectRange, num_accesses=1)
     if output:
         path = [src] + inp_base_path
         if isinstance(src, nodes.AccessNode):
@@ -910,10 +908,6 @@ class TaskletTransformer(ExtNodeTransformer):
         self.lang = dtypes.Language.CPP
 
         return node
-
-
-# TODO: Take care of recursive SDFG generation w.r.t. temporary transient creation (maybe there
-#  is no need if the temporary transients from the parent SDFG are added to the current SDFG arrays)
 
 
 class ProgramVisitor(ExtNodeVisitor):
@@ -2060,7 +2054,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         target: Union[str, Tuple[str, subsets.Range]],
                         operand: Union[str, Tuple[str, subsets.Range]],
                         op: str = None):
-
+        op_is_scalar = False
         if isinstance(target, tuple):
             target_name, target_subset = target
         else:
@@ -2069,6 +2063,8 @@ class ProgramVisitor(ExtNodeVisitor):
             target_subset = subsets.Range.from_array(target_array)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
+        elif isinstance(operand, (int, float, complex)):
+            op_is_scalar = True
         else:
             op_name = operand
             op_array = self.sdfg.arrays[op_name]
@@ -2078,7 +2074,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                         c=node.col_offset))
 
         if target_subset.num_elements() != 1:
-            if op_subset.num_elements() != 1:
+            if not op_is_scalar and op_subset.num_elements() != 1:
                 op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
                 op2 = state.add_write(target_name,
                                       debuginfo=self.current_lineinfo)
@@ -2092,30 +2088,49 @@ class ProgramVisitor(ExtNodeVisitor):
                 if op:
                     memlet.wcr = LambdaProperty.from_string(
                         'lambda x, y: x {} y'.format(op))
-                state.add_mapped_tasklet(
-                    state.label, {
+                if op_is_scalar:
+                    state.add_mapped_tasklet(state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
+                    }, {},
+                                             '__out = %s' % operand,
+                                             {'__out': memlet},
+                                             external_edges=True,
+                                             debuginfo=self.current_lineinfo)
+                else:
+                    state.add_mapped_tasklet(state.label, {
+                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
+                        for i, (start, end, step) in enumerate(target_subset)
+                    }, {
+                        '__inp':
+                        Memlet.simple(op_name, '%s' % op_subset[0][0])
                     },
-                    {'__inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
-                    '__out = __inp', {'__out': memlet},
-                    external_edges=True,
-                    debuginfo=self.current_lineinfo)
+                                             '__out = __inp', {'__out': memlet},
+                                             external_edges=True,
+                                             debuginfo=self.current_lineinfo)
         else:
-            if op_subset.num_elements() != 1:
+            if not op_is_scalar and op_subset.num_elements() != 1:
                 raise DaceSyntaxError(
                     self, node, "Incompatible subsets %s and %s" %
                     (target_subset, op_subset))
-            op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+            if op_is_scalar:
+                tasklet = state.add_tasklet(name=state.label,
+                                            inputs={},
+                                            outputs={'__out'},
+                                            code='__out = %s' % operand,
+                                            debuginfo=self.current_lineinfo)
+            else:
+                op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+                tasklet = state.add_tasklet(name=state.label,
+                                            inputs={'__inp'},
+                                            outputs={'__out'},
+                                            code='__out = __inp',
+                                            debuginfo=self.current_lineinfo)
+                inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
+
             op2 = state.add_write(target_name, debuginfo=self.current_lineinfo)
-            tasklet = state.add_tasklet(name=state.label,
-                                        inputs={'__inp'},
-                                        outputs={'__out'},
-                                        code='__out = __inp',
-                                        debuginfo=self.current_lineinfo)
-            inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
             out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
-            state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
