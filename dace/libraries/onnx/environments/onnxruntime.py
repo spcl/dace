@@ -10,7 +10,13 @@ if 'ORT_ROOT' not in os.environ:
     )
 
 ORT_PATH = os.environ['ORT_ROOT']
-ORT_BUILD_PATH = os.path.join(ORT_PATH, "build", "Linux", "Release")
+cand_path = os.path.join(ORT_PATH, "build", "Linux", dace.Config.get("compiler", "build_type"))
+
+if os.path.isdir(cand_path):
+    ORT_BUILD_PATH = cand_path
+else:
+    ORT_BUILD_PATH = os.path.join(ORT_PATH, "build", "Linux", "Release")
+
 
 
 @dace.library.environment

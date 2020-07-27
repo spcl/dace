@@ -1,5 +1,6 @@
 import numpy as np
 import dace
+from dace.libraries.onnx.check_impl import check_impl
 from dace.libraries.onnx.nodes.onnx_op import ONNXConv
 
 import torch
@@ -32,6 +33,7 @@ def test_expansion():
     Z_t = torch.nn.functional.conv2d(torch.tensor(X), torch.tensor(W), stride=2)
 
     assert np.allclose(Z, Z_t)
+    check_impl(sdfg, state, c)
 
 
 if __name__ == '__main__':

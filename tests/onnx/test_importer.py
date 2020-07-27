@@ -27,11 +27,11 @@ def test_importer_resnet():
 
 
 def test_importer_bert():
-    model = onnx.load("/home/orausch/sources/dace/bert.onnx")
+    model = onnx.load("/home/orausch/bert_infer.onnx")
     dace_model = ONNXModel("bert", model)
     sdfg = dace_model.sdfg
     sdfg.validate()
-    sdfg.compile()
+    sdfg.view()
 
 
 if __name__ == "__main__":
