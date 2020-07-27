@@ -19,7 +19,7 @@
 #endif
 
 // Visual Studio (<=2017) + CUDA support
-#if defined(_MSC_VER) && (_MSC_VER <= 1999 || defined(__CUDACC__)) || defined(DACE_XILINX)
+#if defined(_MSC_VER) && _MSC_VER <= 1999
 #define DACE_CONSTEXPR
 #else
 #define DACE_CONSTEXPR constexpr
