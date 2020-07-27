@@ -57,3 +57,13 @@ The DaCe Python-Frontend supports all Python delimiters. However, not all uses o
 those delimiters are supported. For example, we do not support lists, sets, and
 dictionaries. Therefore, the delimiters `[, ], {, }` cannot be used to define
 those datatypes.
+
+## Expressions
+### 6.1 Arithmetic Conversions
+
+The arithmetic conversions for binary operators (except the power operator)
+are implemented with explicit casting:
+- If any of the operands is of complex type, but the other operand is a float,
+  int or bool, then it is casted to the same type.
+- If any of the operands is of float type, but the other operand is int or bool,
+  the it is casted to the same type.  
