@@ -161,6 +161,7 @@ struct xilinx_wcr_fixed {
         typename ConvertReduction<reduction_type>::template Operator<T>;
     T old_val = *ptr;
     *ptr = Reduce<T, 1, 1, Functor>(old_val, value);
+    return old_val;
   }
 };
 
@@ -174,6 +175,7 @@ struct xilinx_wcr_fixed_vec {
         typename ConvertReduction<reduction_type>::template Operator<T>;
     vec<T, veclen> old_val = *ptr;
     *ptr = Reduce<T, veclen, veclen, Functor>(old_val, value);
+    return old_val;
   }
 };
 

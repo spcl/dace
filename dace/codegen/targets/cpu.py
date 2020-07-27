@@ -54,8 +54,8 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(arg_type, dace.data.Stream):
                 if arg_type.is_stream_array():
                     self._dispatcher.defined_vars.add(
-                        name,
-                        DefinedType.StreamArray.arg_type.signature(name=''))
+                        name, DefinedType.StreamArray,
+                        arg_type.signature(name=''))
                 else:
                     self._dispatcher.defined_vars.add(
                         name, DefinedType.Stream, arg_type.signature(name=''))
@@ -961,7 +961,8 @@ class CPUCodeGen(TargetCodeGenerator):
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
         result = ''
         expr = (cpp_array_expr(sdfg, memlet) if var_type in [
-            DefinedType.Pointer, DefinedType.StreamArray
+            DefinedType.Pointer, DefinedType.StreamArray,
+            DefinedType.ArrayInterface
         ] else memlet.data)
 
         # If there is a type mismatch, cast pointer
@@ -969,7 +970,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         defined = None
 
-        if var_type in [DefinedType.Scalar, DefinedType.Pointer]:
+        if var_type in [
+                DefinedType.Scalar, DefinedType.Pointer,
+                DefinedType.ArrayInterface
+        ]:
             if output:
                 if not memlet.dynamic or (memlet.dynamic
                                           and memlet.wcr is not None):

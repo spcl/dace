@@ -52,7 +52,7 @@ def copy_expr(
 
     add_offset = offset_cppstr != "0"
 
-    if def_type == DefinedType.Pointer:
+    if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
         return "{}{}{}".format(
             dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
@@ -74,7 +74,6 @@ def copy_expr(
             return "{}&{}".format(dt, expr)
         else:
             return dataname
-
     else:
         raise NotImplementedError("copy_expr not implemented "
                                   "for connector type: {}".format(def_type))
@@ -232,6 +231,12 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
         if not is_scalar:
             conntype = conntype.base_type
             is_scalar = True
+    elif defined_type == DefinedType.ArrayInterface:
+        ref = ''
+        typedef = defined_ctype
+        is_scalar = True  # Avoid "&" in expression below
+        offset_expr = ' + ' + offset_expr[1:-1]  # Trim brackets
+        conntype = conntype.base_type  # Avoid vector-esque casts
     else:
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Pointer
