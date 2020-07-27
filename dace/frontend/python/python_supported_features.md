@@ -25,14 +25,14 @@ The following keywords are recognized (for at least a subset of their Python fun
 - or, and, not
 - if, elif, else
 - for, while, break, continue, in
-- def, return, lambda
+- def, return, lambda, with
 
 The following keywords are NOT accepted:
 - global, nonlocal
 - class
 - try, except, finally
 - raise, yield, pass
-- import, from, as, with
+- import, from, as
 - assert, async, await, del
 
 #### 2.3.2 Reserved classes of identifiers
