@@ -718,6 +718,37 @@ def _is_op_boolean(op: str):
     return False
 
 
+def _convert_type(dtype1, dtype2, opcode) -> Tuple[dace.dtypes.typeclass]:
+
+    if opcode == "**":
+        return None, None
+
+    complex_types = {np.complex64, np.complex128}
+    float_types = {np.float16, np.float32, np.float64}
+
+    if dtype1 in complex_types:
+        type1 = 2  # complex
+    elif dtype1 in float_types:
+        type1 = 1  # float
+    else:
+        type1 = 0  # int, bool
+    
+    if dtype2 in complex_types:
+        type2 = 2  # complex
+    elif dtype2 in float_types:
+        type2 = 1  # float
+    else:
+        type2 = 0  # int, bool
+
+    if type1 == type2:
+        return None, None
+    
+    if type1 > type2:
+        return None, dtype1
+    
+    return dtype2, None
+
+
 def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
                    op1: str, op2: str, op: str, opcode: str):
 
@@ -738,12 +769,21 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     else:
         restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
 
+    opstring = ["s1", "s2"]
+    if type1 != type2:
+        new_types = _convert_type(type1, type2, opcode)
+        if new_types[0] is not None:
+            opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
+        if new_types[1] is not None:
+            opstring[1] = "dace.{}(s2)".format(new_types[1].__name__)
+
+
     if isscal1 and isscal2:
         arr1 = sdfg.arrays[op1]
         arr2 = sdfg.arrays[op2]
         op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
         tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'}, {'s3'},
-                                    's3 = s1 %s s2' % opcode)
+                                    's3 = {0} {1} {2}'.format(opstring[0], opcode, opstring[1]))
         n1 = state.add_read(op1)
         n2 = state.add_read(op2)
         n3 = state.add_write(op3)
