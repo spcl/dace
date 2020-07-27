@@ -245,16 +245,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                             'written to, but only given to nested SDFG as an '
                             'input connector' % node.data, sdfg, state_id, nid)
 
-            # Find reads from output-only arrays
-            if not arr.transient and state.out_degree(node) > 0:
-                nsdfg_node = sdfg.parent_nsdfg_node
-                if nsdfg_node is not None:
-                    if node.data not in nsdfg_node.in_connectors:
-                        raise InvalidSDFGNodeError(
-                            'Data descriptor %s is '
-                            'read from, but only given to nested SDFG as an '
-                            'output connector' % node.data, sdfg, state_id, nid)
-
         if (isinstance(node, nd.ConsumeEntry)
                 and "IN_stream" not in node.in_connectors):
             raise InvalidSDFGNodeError(
