@@ -63,7 +63,7 @@ def copy_expr(
         return expr
 
     elif def_type in [
-            DefinedType.Scalar, DefinedType.Stream, DefinedType.StreamView
+            DefinedType.Scalar, DefinedType.Stream
     ]:
 
         if add_offset:

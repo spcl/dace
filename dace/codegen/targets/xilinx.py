@@ -304,7 +304,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
+        if defined_type == DefinedType.Stream:
             read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.StreamArray:
             if " " in expr:
@@ -330,10 +330,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
                    wcr, is_unpack, packing_factor):
-        if defined_type in [
-                DefinedType.Stream, DefinedType.StreamView,
-                DefinedType.StreamArray
-        ]:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
                 write_expr = "{}[{}]".format(write_expr,
                                              "0" if not index else index)

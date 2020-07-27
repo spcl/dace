@@ -161,7 +161,6 @@ class DefinedType(aenum.AutoNumberEnum):
     Scalar = ()
     Stream = ()
     StreamArray = ()
-    StreamView = ()
     FPGA_ShiftRegister = ()
     ArrayInterface = ()
 

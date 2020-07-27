@@ -247,7 +247,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
+        if defined_type == DefinedType.Stream:
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
@@ -275,10 +275,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
-        if defined_type in [
-                DefinedType.Stream, DefinedType.StreamView,
-                DefinedType.StreamArray
-        ]:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
                 if index == "0":
                     # remove "[0]" index as this is not allowed if the

@@ -998,10 +998,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                     expr)
                 defined = (DefinedType.Scalar
                            if is_scalar else DefinedType.Pointer)
-        elif var_type in [
-                DefinedType.Stream, DefinedType.StreamArray,
-                DefinedType.StreamView
-        ]:
+        elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
                     result += f'{memlet_type} {local_name} = ({expr}).pop();'
@@ -1010,7 +1007,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Just forward actions to the underlying object
                 memlet_type = ctypedef
                 result += "{} &{} = {};".format(memlet_type, local_name, expr)
-                defined = DefinedType.StreamView
+                defined = DefinedType.Stream
         else:
             raise TypeError("Unknown variable type: {}".format(var_type))
 
@@ -1026,23 +1023,15 @@ class CPUCodeGen(TargetCodeGenerator):
         def_type, _ = self._dispatcher.defined_vars.get(memlet.data)
 
         stream = sdfg.arrays[memlet.data]
-        expr = memlet.data + ("[{}]".format(
+        return memlet.data + ("[{}]".format(
             cpp_offset_expr(stream, memlet.subset)) if isinstance(
                 stream, dace.data.Stream) and stream.is_stream_array() else "")
-
-        if def_type == DefinedType.StreamView:
-            return expr
-
-        return "dace::make_streamview({})".format(expr)
 
     def memlet_ctor(self, sdfg, memlet, dtype, is_output):
 
         def_type, _ = self._dispatcher.defined_vars.get(memlet.data)
 
-        if def_type in [
-                DefinedType.Stream, DefinedType.StreamArray,
-                DefinedType.StreamView
-        ]:
+        if def_type in [DefinedType.Stream, DefinedType.StreamArray]:
             return self.memlet_stream_ctor(sdfg, memlet)
 
         elif def_type in [DefinedType.Pointer, DefinedType.Scalar]:
