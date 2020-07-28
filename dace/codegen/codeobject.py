@@ -38,7 +38,7 @@ class CodeObject(object):
                  target_type="",
                  additional_compiler_kwargs=None,
                  linkable=True,
-                 environments=set()):
+                 environments=None):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -49,4 +49,4 @@ class CodeObject(object):
         self.title = title
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
-        self.environments = environments
+        self.environments = environments or set()
