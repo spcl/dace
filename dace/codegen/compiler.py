@@ -466,8 +466,9 @@ def generate_program_folder(sdfg,
     else:
         Config.save(os.path.join(out_path, "dace.conf"))
 
-    # Save the SDFG itself
-    sdfg.save(os.path.join(out_path, "program.sdfg"))
+    if sdfg is not None:
+        # Save the SDFG itself
+        sdfg.save(os.path.join(out_path, "program.sdfg"))
 
     return out_path
 

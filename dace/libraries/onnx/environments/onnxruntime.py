@@ -1,5 +1,6 @@
 import os
 import dace.library
+from ctypes import CDLL
 
 if 'ORT_ROOT' not in os.environ:
     raise ValueError(
@@ -65,3 +66,7 @@ class ONNXRuntime:
     ]
     init_code = ""
     finalize_code = ""
+
+def has_cuda():
+    ort = CDLL(os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"))
+    return hasattr(ort, "OrtSessionOptionsAppendExecutionProvider_CUDA")

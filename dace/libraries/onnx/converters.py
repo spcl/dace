@@ -145,6 +145,17 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
 }
 
 
+def dace_type_to_onnx_tensor_type(dtype: typeclass) -> int:
+    #  we cache the reverse map as an attribute of the method
+    if not hasattr(dace_type_to_onnx_tensor_type, "inv_map"):
+        dace_type_to_onnx_tensor_type.inv_map = {
+            v: getattr(onnx.TensorProto.DataType, k.upper())
+            for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
+        }
+
+    return dace_type_to_onnx_tensor_type.inv_map[dtype]
+
+
 def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
     #  we cache the reverse map as an attribute of the method
     if hasattr(onnx_tensor_type_to_dace_type, "inv_map"):

@@ -721,7 +721,8 @@ for schema in onnx.defs.get_all_schemas():
         unknown_attrs = set(op_attributes).difference(self.schema.attributes)
         if len(unknown_attrs) > 0:
             raise TypeError(
-                "__init__() got an unexpected keyword argument '{}'".format(
+                "{}.__init__() got an unexpected keyword argument '{}'".format(
+                    self.schema.name,
                     list(unknown_attrs)[0]))
 
         for name, attr in op_attributes.items():
