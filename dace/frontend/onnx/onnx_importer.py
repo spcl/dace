@@ -11,9 +11,12 @@ from dace.frontend.python.parser import infer_symbols_from_shapes
 from dace.sdfg import SDFG, SDFGState
 from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_dace_type
 from dace.libraries.onnx import get_onnx_node, has_onnx_node, ONNXParameterType
-from dace.dtypes import AccessType, StorageType
+from dace.dtypes import AccessType, StorageType, AllocationLifetime
 import dace.sdfg.nodes as nd
 from dace.symbolic import pystr_to_symbolic
+
+from dace.transformation import optimizer
+from dace.transformation.interstate import GPUTransformSDFG
 
 
 def _nested_HasField(obj, full_attr):
@@ -300,8 +303,24 @@ class ONNXModel:
                      for d in arr.shape]
             outputs[clean_name] = np.empty(shape,
                                            dtype=arr.dtype.as_numpy_dtype())
+        if self.cuda:
+            self.sdfg.apply_strict_transformations()
+
+            # apply the GPU transform
+            opt = optimizer.SDFGOptimizer(self.sdfg, inplace=True)
+            matches = list(opt.get_pattern_matches(patterns=[GPUTransformSDFG]))
+            if len(matches) == 0:
+                raise ValueError("Could not apply GPUTransformSDFG")
+            for match in matches:
+                match.apply(self.sdfg)
+
+            # set all gpu transients to be persistent
+            for _, _, arr in self.sdfg.arrays_recursive():
+                if arr.transient and arr.storage == StorageType.GPU_Global:
+                    arr.lifetime = AllocationLifetime.Persistent
 
         self.sdfg(**clean_inputs, **params, **outputs, **inferred_symbols)
+
 
         if len(outputs) == 1:
             return next(iter(outputs.values()))
