@@ -217,6 +217,8 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
+        if is_scalar:
+            defined_type = DefinedType.Scalar
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -235,9 +237,24 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
         is_scalar = True  # Avoid "&" in expression below
         offset_expr = ' + ' + offset_expr[1:-1]  # Trim brackets
         conntype = conntype.base_type  # Avoid vector-esque casts
-    else:
+    elif defined_type == DefinedType.StreamArray:
+        # Stream array to stream (reference)
+        if memlet.subset.num_elements() == 1:
+            ref = '&'
+            typedef = defined_ctype
+            is_scalar = True  # Avoid "&" in expression below
+            conntype = conntype.base_type  # Avoid vector-esque casts
+            defined_type = DefinedType.Stream
+        else:
+            # Stream array to stream array (pointer)
+            ref = ''
+            typedef = defined_ctype
+            defined_type = DefinedType.StreamArray
+    elif defined_type == FPGA_ShiftRegister:
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Pointer
+    else:
+        raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
     # Cast as necessary
     expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
