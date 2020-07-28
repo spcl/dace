@@ -808,11 +808,27 @@ class CPUCodeGen(TargetCodeGenerator):
                             memlet.data)
                         if defined_type == DefinedType.Scalar:
                             expr = memlet.data
+                        elif defined_type == DefinedType.ArrayInterface:
+                            # Special case: No need to write anything between
+                            # array interfaces going out
+                            try:
+                                deftype, _ = self._dispatcher.defined_vars.get(
+                                    in_local_name)
+                            except KeyError:
+                                deftype = None
+                            if deftype == DefinedType.ArrayInterface:
+                                return
+
+                            expr = '*(%s + %s).ptr_out()' % (
+                                memlet.data,
+                                cpp_array_expr(
+                                    sdfg, memlet, with_brackets=False))
                         else:
                             expr = cpp_array_expr(sdfg, memlet)
                             # If there is a type mismatch, cast pointer
                             expr = make_ptr_vector_cast(sdfg, expr, memlet,
-                                                        conntype, is_scalar)
+                                                        conntype, is_scalar,
+                                                        defined_type)
 
                         result.write(
                             "%s = %s;\n" % (expr, in_local_name),
@@ -943,6 +959,7 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False):
+        # TODO: Robust rule set
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without '
                              'connector type' % local_name)
@@ -960,13 +977,27 @@ class CPUCodeGen(TargetCodeGenerator):
 
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
         result = ''
-        expr = (cpp_array_expr(sdfg, memlet) if var_type in [
-            DefinedType.Pointer, DefinedType.StreamArray,
-            DefinedType.ArrayInterface
-        ] else memlet.data)
+        expr = (cpp_array_expr(sdfg, memlet, with_brackets=False)
+                if var_type in [
+                    DefinedType.Pointer, DefinedType.StreamArray,
+                    DefinedType.ArrayInterface
+                ] else memlet.data)
 
-        # If there is a type mismatch, cast pointer
-        expr = make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar)
+        # Special case: ArrayInterface - get input/output pointers from array
+        if var_type == DefinedType.ArrayInterface and not is_scalar:
+            if output:
+                expr = '(%s + %s).ptr_out()' % (memlet.data, expr)
+                ctypedef = memlet_type
+            else:
+                expr = '(%s + %s).ptr_in()' % (memlet.data, expr)
+                ctypedef = 'const ' + memlet_type
+        else:
+            # Otherwise, "&arr[ind]" syntax can be used
+            if expr != memlet.data:
+                expr = '%s[%s]' % (memlet.data, expr)
+            # If there is a type mismatch, cast pointer
+            expr = make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar,
+                                        var_type)
 
         defined = None
 
@@ -975,11 +1006,15 @@ class CPUCodeGen(TargetCodeGenerator):
                 DefinedType.ArrayInterface
         ]:
             if output:
-                if not memlet.dynamic or (memlet.dynamic
-                                          and memlet.wcr is not None):
+                if var_type == DefinedType.ArrayInterface:
+                    result += "{} {} = {};".format(memlet_type, local_name,
+                                                   expr)
+                elif not memlet.dynamic or (memlet.dynamic
+                                            and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
+
             else:
                 if not memlet.dynamic:
                     if is_scalar:

@@ -62,9 +62,7 @@ def copy_expr(
     elif def_type == DefinedType.FPGA_ShiftRegister:
         return expr
 
-    elif def_type in [
-            DefinedType.Scalar, DefinedType.Stream
-    ]:
+    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
 
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(
@@ -243,7 +241,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
 
     # Cast as necessary
     expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
-                                is_scalar)
+                                is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
@@ -422,7 +420,7 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar):
+def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
     """ 
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
@@ -431,7 +429,7 @@ def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar):
             expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
         elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
             expr = '(%s)(&%s)' % (conntype.ctype, expr)
-        else:
+        elif defined_type in [DefinedType.Pointer, DefinedType.StreamArray]:
             expr = '&' + expr
     elif not is_scalar:
         expr = '&' + expr
@@ -763,10 +761,20 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
                     else:
-                        newnode = ast.Name(id="*%s = %s;" % (
-                            target,
-                            cppunparse.cppunparse(value, expr_semicolon=False),
-                        ))
+                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(
+                            memlet.data)
+                        if var_type == DefinedType.Scalar:
+                            newnode = ast.Name(id="%s = %s;" % (
+                                memlet.data,
+                                cppunparse.cppunparse(value,
+                                                      expr_semicolon=False),
+                            ))
+                        else:
+                            newnode = ast.Name(id="*(%s) = %s;" % (
+                                cpp_array_expr(sdfg, memlet),
+                                cppunparse.cppunparse(value,
+                                                      expr_semicolon=False),
+                            ))
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational

@@ -25,13 +25,6 @@ vec<T, vector_length> Read(vec<T, vector_length> const &ref) {
 }
 
 template <typename T, unsigned vector_length>
-void Write(ArrayInterface<vec<T, vector_length>> &interface,
-           vec<T, vector_length> const &value) {
-  #pragma HLS INLINE
-  *interface.ptr_out() = value;
-}
-
-template <typename T, unsigned vector_length>
 void Write(ArrayInterface<vec<T, vector_length>> interface,
            vec<T, vector_length> const &value) {
   #pragma HLS INLINE
