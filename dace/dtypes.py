@@ -16,7 +16,6 @@ class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
-    Immaterial = ()  # Data that is materialized on access
     Register = ()  # Local data on registers, stack, or equivalent memory
     CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
     CPU_Heap = ()  # Host memory allocated on heap
@@ -217,7 +216,7 @@ class typeclass(object):
         These types are defined for three reasons:
             1. Controlling DaCe types
             2. Enabling declaration syntax: `dace.float32[M,N]`
-            3. Enabling extensions such as `dace.struct` and `dace.immaterial`
+            3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
     def __init__(self, wrapped_type):
         # Convert python basic types
@@ -254,10 +253,9 @@ class typeclass(object):
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
-        self.materialize_func = None  # Materialize function for immaterial types
 
     def __hash__(self):
-        return hash((self.type, self.ctype, self.materialize_func))
+        return hash((self.type, self.ctype))
 
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
@@ -426,7 +424,6 @@ class pointer(typeclass):
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
-        self.materialize_func = None
 
     def to_json(self):
         return {'type': 'pointer', 'dtype': self._typeclass.to_json()}
@@ -462,7 +459,6 @@ class vector(typeclass):
         self._veclen = vector_length
         self.bytes = dtype.bytes * vector_length
         self.dtype = self
-        self.materialize_func = None
 
     def to_json(self):
         return {
@@ -505,14 +501,6 @@ class vector(typeclass):
         self._veclen = val
 
 
-def immaterial(dace_data, materialize_func):
-    """ A data type with a materialize/serialize function. Data objects with
-        this type do not allocate new memory. Whenever it is accessed, the
-        materialize/serialize function is invoked instead. """
-    dace_data.materialize_func = materialize_func
-    return dace_data
-
-
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
 
@@ -527,7 +515,6 @@ class struct(typeclass):
         self.ctype = name
         self.ctype_unaligned = name
         self.dtype = self
-        self.materialize_func = None
         self._parse_field_and_types(**fields_and_types)
 
     @property
@@ -653,7 +640,6 @@ class callback(typeclass):
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
         self.bytes = int64.bytes
-        self.materialize_func = None
         self.type = self
         self.ctype = self
 

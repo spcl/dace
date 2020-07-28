@@ -17,7 +17,7 @@
 #include "complex.h"
 #include "pyinterop.h"
 #include "copy.h"
-#include "view.h"
+#include "reduction.h"
 #include "stream.h"
 #include "os.h"
 #include "perf/reporting.h"

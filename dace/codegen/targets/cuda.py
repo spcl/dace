@@ -306,13 +306,15 @@ void __dace_exit_cuda({params}) {{
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize),
                                               nodedesc.dtype.ctype)
+        ctypedef = '%s *' % nodedesc.dtype.ctype
+
         dataname = node.data
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            result_decl.write('%s *%s = nullptr;\n' %
-                              (nodedesc.dtype.ctype, dataname))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
+            result_decl.write('%s %s = nullptr;\n' % (ctypedef, dataname))
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
+                                              ctypedef)
 
             # Strides are left to the user's discretion
             result_alloc.write('cudaMalloc(&%s, %s);\n' %
@@ -322,9 +324,9 @@ void __dace_exit_cuda({params}) {{
                                    (dataname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            result_decl.write('%s *%s = nullptr;\n' %
-                              (nodedesc.dtype.ctype, dataname))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
+            result_decl.write('%s %s = nullptr;\n' % (ctypedef, dataname))
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
+                                              ctypedef)
 
             # Strides are left to the user's discretion
             result_alloc.write('cudaMallocHost(&%s, %s);\n' %
@@ -338,7 +340,8 @@ void __dace_exit_cuda({params}) {{
             result_decl.write(
                 "__shared__ %s %s[%s];\n" %
                 (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
+                                              ctypedef)
             if node.setzero:
                 result_alloc.write(
                     'dace::ResetShared<{type}, {block_size}, {elements}, '
@@ -354,7 +357,8 @@ void __dace_exit_cuda({params}) {{
             result_decl.write(
                 "%s %s[%s]%s;\n" %
                 (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
+                                              ctypedef)
         else:
             raise NotImplementedError("CUDA: Unimplemented storage type " +
                                       str(nodedesc.storage))
@@ -383,7 +387,9 @@ void __dace_exit_cuda({params}) {{
                 '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node)),
             }
 
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
+            ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
+                                              ctypedef)
 
             if is_array_stream_view(sdfg, dfg, node):
                 edges = dfg.out_edges(node)
@@ -1158,11 +1164,25 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             instr.on_scope_exit(sdfg, state, scope_exit, outer_stream,
                                 self.scope_exit_stream, self._globalcode)
 
+        # Redefine constant arguments
+        # TODO: This (const behavior and code below) is all a hack.
+        #       Refactor and fix when nested SDFGs are separate functions.
+        self._dispatcher.defined_vars.enter_scope(scope_entry)
+        for aname, arg in kernel_args.items():
+            if aname in const_params:
+                defined_type, ctype = self._dispatcher.defined_vars.get(aname)
+                self._dispatcher.defined_vars.add(aname,
+                                                  defined_type,
+                                                  'const %s' % ctype,
+                                                  allow_shadowing=True)
+
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map,
                                    kernel_name, grid_dims, block_dims, tbmap,
                                    dtbmap, kernel_args_typed, self._globalcode,
                                    kernel_stream)
+
+        self._dispatcher.defined_vars.exit_scope(scope_entry)
 
         # Add extra kernel arguments for a grid barrier object
         extra_kernel_args_typed = []
@@ -1513,7 +1533,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
                 kernel_stream.write('int %s = %s;' % (varname, expr), sdfg,
                                     state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar,
+                                                  'int')
 
             # Delinearize beyond the third dimension
             if len(krange) > 3:
@@ -1530,7 +1551,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     kernel_stream.write('int %s = %s;' % (varname, expr), sdfg,
                                         state_id, node)
                     self._dispatcher.defined_vars.add(varname,
-                                                      DefinedType.Scalar)
+                                                      DefinedType.Scalar, 'int')
 
         # Dispatch internal code
         assert self._in_device_code is False
@@ -1754,7 +1775,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
 
                 declarations.append((varname, expr))
 
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar,
+                                                  'int')
 
             # Delinearize beyond the third dimension
             if len(device_map_range) > 3:
@@ -1773,7 +1795,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     declarations.append((varname, expr))
 
                     self._dispatcher.defined_vars.add(varname,
-                                                      DefinedType.Scalar)
+                                                      DefinedType.Scalar, 'int')
 
             kmap_min = subsets.Range(self._kernel_map.range[::-1]).min_element()
             kmap_max = subsets.Range(self._kernel_map.range[::-1]).max_element()
@@ -1874,7 +1896,8 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                 callsite_stream.write('int %s = %s;' % (varname, expr), sdfg,
                                       state_id, scope_entry)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar,
+                                                  'int')
 
             # Delinearize beyond the third dimension
             if len(brange) > 3:
@@ -1891,7 +1914,7 @@ cudaLaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dy
                     callsite_stream.write('int %s = %s;' % (varname, expr),
                                           sdfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname,
-                                                      DefinedType.Scalar)
+                                                      DefinedType.Scalar, 'int')
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
