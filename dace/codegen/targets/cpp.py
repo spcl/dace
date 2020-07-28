@@ -770,8 +770,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                       expr_semicolon=False),
                             ))
                         else:
-                            newnode = ast.Name(id="*(%s) = %s;" % (
-                                cpp_array_expr(sdfg, memlet),
+                            newnode = ast.Name(id="%s = %s;" % (
+                                cpp_array_expr(self.sdfg, memlet),
                                 cppunparse.cppunparse(value,
                                                       expr_semicolon=False),
                             ))
