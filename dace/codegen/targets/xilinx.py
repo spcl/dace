@@ -197,6 +197,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                                       cpp.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
+
+        # Return value is used for adding to defined_vars in fpga.py
         return ctype
 
     def define_local_array(self, var_name, desc, array_size, function_stream,

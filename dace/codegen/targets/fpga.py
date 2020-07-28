@@ -423,7 +423,6 @@ class FPGACodeGen(TargetCodeGenerator):
                                                               bank)
                         else:
                             self._bank_assignments[(dataname, sdfg)] = None
-                        # TODO: Remove auto keyword
                         result.write(
                             "auto {} = dace::fpga::_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"

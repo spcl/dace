@@ -176,6 +176,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         kernel_stream.write("channel {} {}{}{};".format(vec_type, var_name,
                                                         size_str,
                                                         depth_attribute))
+
+        # Return value is used for adding to defined_vars in fpga.py
         return 'channel {}'.format(vec_type)
 
     def define_local_array(self, var_name, desc, array_size, function_stream,

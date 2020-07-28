@@ -825,7 +825,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         subscript = self._subscript_expr(node.slice, target)
 
-        # Creating as a malformed ast.Name object so it does not visit again
+        # New subscript is created as a name AST object (rather than a
+        # subscript), as otherwise the visitor will recursively descend into
+        # the new expression and modify it erroneously.
         newnode = ast.Name(id="%s[%s]" % (target, sym2cpp(subscript)))
 
         return ast.copy_location(newnode, node)
