@@ -7,7 +7,7 @@ import resnet50
 from resnet50 import SEED
 
 learning_rate = 0.1
-batch_size = 128
+batch_size = 8
 num_classes = 10
 
 
@@ -53,15 +53,16 @@ y = build_resnet(input_placeholder, label_placeholder)
 #[y] = xla.compile(build_resnet, inputs=[input_placeholder, label_placeholder])
 
 init = tf.global_variables_initializer()
-sess.run(init)
+from dace.transformation.interstate.transient_reuse import TransientReuse
+sess.run(init, transformations=[TransientReuse])
 
 images, labels = random_batch(batch_size)
 
 # Warmup run
-sess_run = sess.compile(y, gpu=True)  # Change to gpu=True to run on the GPU
+sess_run = sess.compile(y, gpu=False, cudnn=False, patterns=[TransientReuse])  # Change to gpu=True to run on the GPU
 
 start = time.time()
-times = [0.0] * 100
+times = [0.0] * 1
 for i in range(100):
     times[i] = time.time()
     sess_run(feed_dict={input_placeholder: images, label_placeholder: labels})

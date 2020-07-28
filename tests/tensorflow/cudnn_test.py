@@ -121,45 +121,53 @@ if __name__ == '__main__':
     for num in [1,2,3,4]:
         sample = conv_training_set[num*10]
         input_shape = [sample.n, sample.h, sample.w, sample.c]
-        input = tf.placeholder(tf.float64, input_shape)
+        input = tf.placeholder(tf.float32, input_shape)
         filter_shape = [sample.r, sample.s, sample.c, sample.k]
-        filter = tf.placeholder(tf.float64, filter_shape)
+        filter = tf.placeholder(tf.float32, filter_shape)
         output = tf.nn.conv2d(input, filter, [1, sample.hstride, sample.wstride, 1],
-                              padding=[(0, 0), (0, sample.pad_h), (0, sample.pad_w), (0, 0)], data_format="NHWC")
+                              padding=[(0, 0), (sample.pad_h, sample.pad_h), (sample.pad_w, sample.pad_w), (0, 0)], data_format="NHWC")
 
-        test_input = np.random.uniform(size=tuple(input_shape)).astype(np.float64)
-        test_filter = np.random.uniform(size=tuple(filter_shape)).astype(np.float64)
+        test_input = np.random.uniform(size=tuple(input_shape)).astype(np.float32)
+        test_filter = np.random.uniform(size=tuple(filter_shape)).astype(np.float32)
 
         sess_dace = TFSession()
         sess_tf = tf.Session()
 
         sess_run = sess_dace.compile(output, gpu=True, cudnn=True)
         start = time.time()
-        times = [0.0] * 1000
-        for i in range(1000):
+        times = [0.0] * 100
+        for i in range(100):
             if i == 0:
-                sess_run(feed_dict={input: test_input, filter: test_filter})
+                output_dace = sess_run(feed_dict={input: test_input, filter: test_filter})
             else:
                 times[i] = time.time()
                 sess_run(feed_dict={input: test_input, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"time": times[i], "version": "cudnn", "sample": num}
+                dict1 = {"time": times[i], "version": "DaCe + cuDNN", "sample": num}
                 rows_list.append(dict1)
 
         start = time.time()
-        times = [0.0] * 1000
-        for i in range(1000):
+        times = [0.0] * 100
+        for i in range(100):
             if i == 0:
-                sess_tf.run(output, feed_dict={input: test_input, filter: test_filter})
+                output_tf = sess_tf.run(output, feed_dict={input: test_input, filter: test_filter})
             else:
                 times[i] = time.time()
                 sess_tf.run(output, feed_dict={input: test_input, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"time": times[i], "version": "tf", "sample": num}
+                dict1 = {"time": times[i], "version": "TensorFlow", "sample": num}
                 rows_list.append(dict1)
+        try:
+            assert tf.norm(output_dace - output_tf).eval(session=sess_tf) < 10
+        except:
+            print(output_tf)
+            print(output_dace)
+            print(tf.linalg.norm(output_tf - output_dace).eval(session=sess_tf))
+            raise AssertionError("Convolution test failed")
 
     panda_set_1 = pd.DataFrame(rows_list)
     ax = sns.barplot(x="sample", y="time", hue='version', data=panda_set_1, ci=95, estimator=np.median)
+    ax.set(xlabel="Configuration", ylabel="Time [s]")
     plt.show()
     ax.figure.savefig("convolution.png")
 
@@ -168,28 +176,28 @@ if __name__ == '__main__':
     for num in [1,2,3,4]:
         sample = conv_training_set[num*10]
         strides = [1, sample.hstride, sample.wstride, 1]
-        padding = [(0, 0), (0, sample.pad_h), (0, sample.pad_w), (0, 0)]
-        padding_backprop = [0, 0, 0, sample.pad_h, 0, sample.pad_w, 0, 0]
+        padding = [(0, 0), (sample.pad_h, sample.pad_h), (sample.pad_w, sample.pad_w), (0, 0)]
+        padding_backprop = [0, 0, sample.pad_h, sample.pad_h, sample.pad_w, sample.pad_w, 0, 0]
         input_shape = [sample.n, sample.h, sample.w, sample.c]
-        input = tf.placeholder(tf.float64, input_shape)
+        input = tf.placeholder(tf.float32, input_shape)
         filter_shape = [sample.r, sample.s, sample.c, sample.k]
-        filter = tf.placeholder(tf.float64, filter_shape)
+        filter = tf.placeholder(tf.float32, filter_shape)
         output = tf.nn.conv2d(input, filter, strides=strides, padding=padding, data_format="NHWC")
 
-        output_backprop = tf.placeholder(tf.float64, output.shape)
+        output_backprop = tf.placeholder(tf.float32, output.shape)
         input_gradients = gen_nn_ops.conv2d_backprop_input(input_shape,filter, output_backprop, strides=strides
                                                            ,padding='EXPLICIT', explicit_paddings=padding_backprop)
 
-        test_grads = np.random.uniform(size=output.shape).astype(np.float64)
-        test_filter = np.random.uniform(size=tuple(filter_shape)).astype(np.float64)
+        test_grads = np.random.uniform(size=output.shape).astype(np.float32)
+        test_filter = np.random.uniform(size=tuple(filter_shape)).astype(np.float32)
 
         sess_dace = TFSession()
         sess_tf = tf.Session()
 
         sess_run = sess_dace.compile(input_gradients, gpu=True, cudnn=True)
         start = time.time()
-        times = [0.0] * 1000
-        for i in range(1000):
+        times = [0.0] * 100
+        for i in range(100):
             if i == 0:
                 sess_run(feed_dict={output_backprop: test_grads, filter: test_filter})
             else:
@@ -200,8 +208,8 @@ if __name__ == '__main__':
                 rows_list.append(dict1)
 
         start = time.time()
-        times = [0.0] * 1000
-        for i in range(1000):
+        times = [0.0] * 100
+        for i in range(100):
             if i == 0:
                 sess_tf.run(input_gradients, feed_dict={output_backprop: test_grads, filter: test_filter})
             else:
@@ -221,28 +229,28 @@ if __name__ == '__main__':
     for num in [1,2,3,4]:
         sample = conv_training_set[num*10]
         strides = [1, sample.hstride, sample.wstride, 1]
-        padding = [(0, 0), (0, sample.pad_h), (0, sample.pad_w), (0, 0)]
-        padding_backprop = [0, 0, 0, sample.pad_h, 0, sample.pad_w, 0, 0]
+        padding = [(0, 0), (sample.pad_h, sample.pad_h), (sample.pad_w, sample.pad_w), (0, 0)]
+        padding_backprop = [0, 0, sample.pad_h, sample.pad_h, sample.pad_w, sample.pad_w, 0, 0]
         input_shape = [sample.n, sample.h, sample.w, sample.c]
-        input = tf.placeholder(tf.float64, input_shape)
+        input = tf.placeholder(tf.float32, input_shape)
         filter_shape = [sample.r, sample.s, sample.c, sample.k]
-        filter = tf.placeholder(tf.float64, filter_shape)
+        filter = tf.placeholder(tf.float32, filter_shape)
         output = tf.nn.conv2d(input, filter, strides=strides, padding=padding, data_format="NHWC")
 
-        output_backprop = tf.placeholder(tf.float64, output.shape)
+        output_backprop = tf.placeholder(tf.float32, output.shape)
         filter_gradients = gen_nn_ops.conv2d_backprop_filter(input, filter_shape, output_backprop, strides=strides
                                                            , padding='EXPLICIT', explicit_paddings=padding_backprop)
 
-        test_grads = np.random.uniform(size=output.shape).astype(np.float64)
-        test_input = np.random.uniform(size=tuple(input_shape)).astype(np.float64)
+        test_grads = np.random.uniform(size=output.shape).astype(np.float32)
+        test_input = np.random.uniform(size=tuple(input_shape)).astype(np.float32)
 
         sess_dace = TFSession()
         sess_tf = tf.Session()
 
         sess_run = sess_dace.compile(filter_gradients, gpu=True, cudnn=True)
         start = time.time()
-        times = [0.0] * 1000
-        for i in range(1000):
+        times = [0.0] * 100
+        for i in range(100):
             if i == 0:
                 sess_run(feed_dict={input: test_input, output_backprop: test_grads})
             else:
@@ -254,8 +262,8 @@ if __name__ == '__main__':
 
 
         start = time.time()
-        times = [0.0] * 1000
-        for i in range(1000):
+        times = [0.0] * 100
+        for i in range(100):
             if i == 0:
                 sess_tf.run(filter_gradients, feed_dict={input: test_input, output_backprop: test_grads})
             else:
