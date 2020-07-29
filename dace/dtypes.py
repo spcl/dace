@@ -778,7 +778,10 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
-bool = typeclass(numpy.bool)
+int = typeclass(int)
+float = typeclass(float)
+complex = typeclass(complex)
+bool = typeclass(numpy.bool)  # TODO: Maybe switch to just bool?
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -798,7 +801,7 @@ DTYPE_TO_TYPECLASS = {
     float: float32,
     bool: uint8,
     numpy.bool: uint8,
-    numpy.bool_: bool,
+    numpy.bool_: bool,  # TODO: This seems to have changed in the latest numpy version
     numpy.int8: int8,
     numpy.int16: int16,
     numpy.int32: int32,
