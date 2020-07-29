@@ -83,7 +83,7 @@ def specifies_datatype(func: Callable[[Any, data.Data], Tuple[str, data.Data]],
 @specifies_datatype(datatype=data.Scalar)
 def _method(sdfg: SDFG, sample_data: data.Scalar):
     name = sdfg.temp_data_name()
-    new_data = sdfg.add_scalar(name, sample_data.dtype, transient=True)
+    _, new_data = sdfg.add_scalar(name, sample_data.dtype, transient=True)
     return name, new_data
 
 
@@ -3109,6 +3109,8 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append(
                     (operand, type(self.scope_arrays[operand]).__name__))
+            elif isinstance(operand, (int, float, complex, bool)):
+                result.append((operand, 'NumBoolConst'))
             else:
                 result.append((operand, type(operand).__name__))
 
