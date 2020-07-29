@@ -5,11 +5,11 @@ from __future__ import print_function
 import copy
 import dace
 import inspect
-from typing import Dict
+from typing import Dict, Set, Union
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
 from dace.sdfg.graph import SubgraphView
-from dace.properties import make_properties, Property, DictProperty
+from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
@@ -200,7 +200,10 @@ class Transformation(object):
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
+        subgraph = {
+            expr.node(int(k)): int(v)
+            for k, v in json_obj['_subgraph'].items()
+        }
 
         # Reconstruct transformation
         ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
@@ -281,12 +284,24 @@ class ExpandTransformation(Transformation):
 
 
 @make_registry
+@make_properties
 class SubgraphTransformation(object):
     """
     Base class for transformations that apply on arbitrary subgraphs, rather than
     matching a specific pattern. Subclasses need to implement the `match` and `apply`
     operations.
     """
+
+    subgraph = SetProperty(element_type=int,
+                           desc='Subgraph in transformation instance')
+
+    def __init__(self, subgraph: Union[Set[int], SubgraphView]):
+        if isinstance(subgraph, SubgraphView):
+            self.subgraph = set(
+                subgraph.graph.node_id(n) for n in subgraph.nodes())
+        else:
+            self.subgraph = subgraph
+
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         """
@@ -299,7 +314,7 @@ class SubgraphTransformation(object):
         """
         pass
 
-    def apply(self, sdfg: SDFG, subgraph: SubgraphView):
+    def apply(self, sdfg: SDFG):
         """
         Applies the transformation on the given subgraph.
         :param sdfg: The SDFG that includes the subgraph.
@@ -307,6 +322,30 @@ class SubgraphTransformation(object):
                          transformation on.
         """
         pass
+
+    def to_json(self, parent=None):
+        props = dace.serialize.all_properties_to_json(self)
+        return {
+            'type': 'SubgraphTransformation',
+            'transformation': type(self).__name__,
+            **props
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        xform = next(ext for ext in Transformation.extensions().keys()
+                     if ext.__name__ == json_obj['transformation'])
+
+        # Reconstruct transformation
+        ret = xform(json_obj['subgraph'])
+        context = context or {}
+        context['transformation'] = ret
+        dace.serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'transformation', 'type'})
+        return ret
 
 
 # Module functions ############################################################
