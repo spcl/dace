@@ -250,7 +250,14 @@ class typeclass(object):
                     "Unknown configuration for default_data_types: {}".format(
                         config_data_types))
         elif wrapped_type is complex:
-            wrapped_type = numpy.complex128
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.complex128
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.complex64
+            else:
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
