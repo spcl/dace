@@ -679,16 +679,44 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         return _unop(sdfg, state, op1, opcode, op)
+    
+    @oprepo.replaces_operator('Scalar', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2=None):
+        scalar1 = sdfg.arrays[op1]
+        restype = scalar1.dtype
+        op2 = sdfg.temp_data_name()
+        _, scalar2 = sdfg.add_scalar(op2, restype, transient=True)
+        tasklet = state.add_tasklet("_%s_" % op, {'__in'}, {'__out'},
+                                    "__out = %s __in" % opcode)
+        node1 = state.add_read(op1)
+        node2 = state.add_write(op2)
+        state.add_edge(node1, None, tasklet, '__in',
+                       dace.Memlet.from_array(op1, scalar1))
+        state.add_edge(tasklet, '__out', node2, None,
+                        dace.Memlet.from_array(op2, scalar2))
+        return op2
+    
+    @oprepo.replaces_operator('NumBoolConst', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: Union[int, float, complex, bool],
+            op2=None):
+        return eval("{0}({1})".format(opcode, op1))    
 
 
-@oprepo.replaces_operator('int', 'USub', None)
-@oprepo.replaces_operator('float', 'USub', None)
-def _neg(visitor: 'ProgramVisitor',
-         sdfg: SDFG,
-         state: SDFGState,
-         op1: Union[int, float],
-         op2=None):
-    return -op1
+# @oprepo.replaces_operator('int', 'USub', None)
+# @oprepo.replaces_operator('float', 'USub', None)
+# def _neg(visitor: 'ProgramVisitor',
+#          sdfg: SDFG,
+#          state: SDFGState,
+#          op1: Union[int, float],
+#          op2=None):
+#     return -op1
 
 
 @oprepo.replaces_operator('symbol', 'Add', 'int')
@@ -719,9 +747,6 @@ def _is_op_boolean(op: str):
 
 
 def _convert_type(dtype1, dtype2, opcode) -> Tuple[dace.dtypes.typeclass]:
-
-    if opcode == "**":
-        return None, None
 
     complex_types = {np.complex64, np.complex128}
     float_types = {np.float16, np.float32, np.float64}
@@ -798,6 +823,58 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
         return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
 
+def _python2numpy_type(constant: Union[int, float, complex, bool]):
+    if isinstance(constant, int):
+        return np.int64
+    elif isinstance(constant, float):
+        return np.float64
+    elif isinstance(constant, complex):
+        return np.complex128
+    elif isinstance(constant, bool):
+        return np.bool
+    else:
+        raise KeyError("Unknown Python type {}.".format(type(constant)))
+
+
+def _binop_impl(visitor: 'ProgramVisitor',
+                sdfg: SDFG, state: SDFGState,
+                operand1: Union[str, int, float, complex, bool],
+                operand2: Union[str, int, float, complex, bool],
+                op: str, opcode: str):
+
+    if isinstance(operand1, str):
+        if isinstance(operand2, str):
+            return _array_x_binop(visitor, sdfg, state,
+                                  operand1, operand2, op, opcode)
+        else:
+            pass
+    else:
+        if isinstance(operand2, str):
+            pass
+        else:
+            optype1 = _python2numpy_type(operand1)
+            optype2 = _python2numpy_type(operand2)
+            opstring = [str(operand1), str(operand2)]
+            if optype1 != optype2:
+                new_types = _convert_type(optype1, optype2, opcode)
+                if new_types[0] is not None:
+                    opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
+                if new_types[1] is not None:
+                    opstring[1] = "dace.{}(s2)".format(new_types[1].__name__)
+            restype = dace.DTYPE_TO_TYPECLASS[
+                np.result_type(optype1, optype2).type
+            ]
+            operand3 = sdfg.temp_data_name()
+            _, scalar3 = sdfg.add_scalar(operand3, restype, transient=True)
+            tasklet = state.add_tasklet(
+                '_SS%s_' % op, {}, {'s3'},
+                's3 = {0} {1} {2}'.format(opstring[0], opcode, opstring[1]))
+            node3 = state.add_write(operand3)
+            state.add_edge(tasklet, 's3', node3, None,
+                           dace.Memlet.from_array(operand3, scalar3))
+            return operand3
+
+
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -818,6 +895,11 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('NumBoolConst', op, otherclass='NumBoolConst')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _binop_impl(visitor, sdfg, state, op1, op2, op, opcode)
 
 
 # Define all standard Python augmented assignment operators
