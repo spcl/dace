@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from copy import deepcopy
 from itertools import chain, repeat
 
 import numpy as np
@@ -161,6 +162,16 @@ class ONNXModel:
                         dace.Memlet.from_array(self._clean_array_name(name),
                                                data_desc))
 
+        if self.cuda:
+            self.sdfg.apply_strict_transformations()
+            self.sdfg.apply_gpu_transformations()
+            self.sdfg.apply_strict_transformations()
+
+            # set all gpu transients to be persistent
+            for _, _, arr in self.sdfg.arrays_recursive():
+                if arr.transient and arr.storage == StorageType.GPU_Global:
+                    arr.lifetime = AllocationLifetime.Persistent
+
     @staticmethod
     def _update_access_type(node: dace.nodes.AccessNode, is_input: bool):
         if node.access == AccessType.ReadOnly and not is_input:
@@ -253,7 +264,7 @@ class ONNXModel:
                                 transient=transient)
 
     def __call__(self, *args, **inputs):
-        # TODO @orausch docstring, mention symbolic shapes
+        sdfg = deepcopy(self.sdfg)
 
         # convert the positional args to kwargs
         if len(args) > len(self.inputs):
@@ -271,13 +282,13 @@ class ONNXModel:
         # NOTE symbols can only be passed as kwargs
         if len(
                 set(inputs).difference(self.inputs).difference(
-                    self.sdfg.free_symbols)) != 0:
+                    sdfg.free_symbols)) != 0:
             raise ValueError("Unknown inputs {}".format(", ".join(
                 set(inputs).difference(self.inputs))))
 
         clean_inputs = {}
         for input, arr in inputs.items():
-            if input in self.sdfg.free_symbols:
+            if input in sdfg.free_symbols:
                 clean_inputs[input] = arr
             else:
                 clean_inputs[self._clean_array_name(input)] = arr
@@ -290,13 +301,13 @@ class ONNXModel:
             else:
                 if self.cuda:
                     clean_name = self._clean_array_name(name)
-                    self.sdfg.arrays[
+                    sdfg.arrays[
                         clean_name].storage = StorageType.GPU_Global
                     params[clean_name] = numba.cuda.to_device(arr)
                 else:
                     params[self._clean_array_name(name)] = arr.copy()
 
-        inferred_symbols = infer_symbols_from_shapes(self.sdfg, {
+        inferred_symbols = infer_symbols_from_shapes(sdfg, {
             **clean_inputs,
             **params
         })
@@ -314,7 +325,7 @@ class ONNXModel:
         # create numpy arrays for the outputs
         for output in self.outputs:
             clean_name = self._clean_array_name(output)
-            arr = self.sdfg.arrays[clean_name]
+            arr = sdfg.arrays[clean_name]
 
             # TODO @orausch add error handling for evalf
             shape = [
@@ -322,23 +333,11 @@ class ONNXModel:
             ]
             outputs[clean_name] = np.empty(shape,
                                            dtype=arr.dtype.as_numpy_dtype())
-        if self.cuda:
-            self.sdfg.apply_strict_transformations()
 
-            # apply the GPU transform
-            opt = optimizer.SDFGOptimizer(self.sdfg, inplace=True)
-            matches = list(opt.get_pattern_matches(patterns=[GPUTransformSDFG]))
-            if len(matches) == 0:
-                raise ValueError("Could not apply GPUTransformSDFG")
-            for match in matches:
-                match.apply(self.sdfg)
+        sdfg.expand_library_nodes()
+        sdfg.apply_strict_transformations()
 
-            # set all gpu transients to be persistent
-            for _, _, arr in self.sdfg.arrays_recursive():
-                if arr.transient and arr.storage == StorageType.GPU_Global:
-                    arr.lifetime = AllocationLifetime.Persistent
-
-        self.sdfg(**clean_inputs, **params, **outputs, **inferred_symbols)
+        sdfg(**clean_inputs, **params, **outputs, **inferred_symbols)
 
 
         if len(outputs) == 1:

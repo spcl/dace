@@ -68,5 +68,6 @@ class ONNXRuntime:
     finalize_code = ""
 
 def has_cuda():
+    return True
     ort = CDLL(os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"))
     return hasattr(ort, "OrtSessionOptionsAppendExecutionProvider_CUDA")

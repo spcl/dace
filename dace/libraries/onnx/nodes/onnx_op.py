@@ -5,6 +5,7 @@ from collections import Iterable
 from itertools import chain, repeat, count
 from functools import reduce
 from typing import Iterator, Tuple, List
+from copy import deepcopy
 
 import numpy as np
 import onnx
@@ -18,7 +19,8 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.properties import make_properties, Property, ListProperty
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.standard.nodes.code import _get_inputs_and_outputs
-from dace.libraries.onnx import ONNXRuntime
+from dace.libraries.onnx.environments import ONNXRuntime
+from dace.libraries.onnx.check_impl import check_op
 from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS
 from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute
 from dace.sdfg import InvalidSDFGNodeError
@@ -241,6 +243,19 @@ class ONNXOp(nd.LibraryNode):
         if None in all_connectors:
             raise ValueError("Edges to ONNX Ops must not have connector None")
 
+        # check that all edges have connectors
+        ##########################################
+        for edge, is_input in self.iter_edges(state):
+            if is_input:
+                conn_name = edge.dst_conn
+                if conn_name not in self.in_connectors:
+                    raise ValueError("Memlet {} leading to nonexistent input connector '{}'".format(edge.data, conn_name))
+            else:
+                conn_name = edge.src_conn
+                if conn_name not in self.out_connectors:
+                    raise ValueError("Memlet {} leading to nonexistent output connector '{}'".format(edge.data, conn_name))
+
+
         # check that we have all required in_edges
         ##########################################
         required_inputs = {
@@ -455,7 +470,6 @@ class ONNXOp(nd.LibraryNode):
             OrtKernelSession* __ort_session;
             OrtSessionOptions* __ort_session_options;
 
-            // TODO check what this does. Is it fine to use the CpuMemoryInfo for CUDA?
             OrtMemoryInfo* __ort_mem_info;
 
             // End global ORT setup
@@ -613,10 +627,26 @@ class ONNXOp(nd.LibraryNode):
                     _gen_attr_init_code("proto", node.schema.attributes[name],
                                         getattr(node, name)))
 
+        sdfg.prepend_exit_code(
+            "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n".
+            format(unique_id))
+
+        tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Compute(__ort_context_{}));\n".format(
+            unique_id)
+
+        cpu_fallback = False
+        # check if ORT supports CUDA for this node
         if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
             provider_index = 0
         elif node.schedule == ScheduleType.GPU_Device:
             provider_index = 1
+            try:
+                check_op(sdfg, state, node)
+            except Exception as e:
+                # fallback to CPU
+                print("Falling back to CPU for node {}. Reason:\n{}".format(node.name, str(e)))
+                cpu_fallback = True
+                provider_index = 0
         else:
             raise NotImplementedError(
                 "ORT expansion for schedule '{}' is not implemented".format(
@@ -629,19 +659,76 @@ class ONNXOp(nd.LibraryNode):
         sdfg.append_init_code(
             "}} // end setup for context_{}".format(unique_id))
 
-        sdfg.prepend_exit_code(
-            "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n".
-            format(unique_id))
-
-        tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Compute(__ort_context_{}));\n".format(
-            unique_id)
-
         tasklet_code = tasklet_setup_code + tasklet_code + tasklet_cleanup_code
-        return nd.Tasklet('onnx_code',
-                          set(inputs.keys()),
-                          set(outputs.keys()),
-                          tasklet_code,
-                          language=dace.dtypes.Language.CPP)
+        tasklet = nd.Tasklet('onnx_code',
+                             set(inputs.keys()),
+                             set(outputs.keys()),
+                             tasklet_code,
+                             language=dace.dtypes.Language.CPP)
+        tasklet.environments = {"ONNXRuntime"}
+
+        if cpu_fallback:
+            nsdfg = dace.SDFG("nested_{}".format(unique_id))
+            nstate = nsdfg.add_state()
+            ntasklet = deepcopy(tasklet)
+            nstate.add_node(ntasklet)
+
+            for edge, is_input in node.iter_edges(state):
+                parameter_name = edge.dst_conn if is_input else edge.src_conn
+                memlet = edge.data
+                arr = sdfg.arrays[memlet.data]
+
+                # add the original gpu array
+                nsdfg.add_array(parameter_name,
+                                arr.shape,
+                                arr.dtype,
+                                storage=arr.storage,
+                                transient=False,
+                                strides=arr.strides,
+                                offset=arr.offset,
+                                lifetime=arr.lifetime,
+                                allow_conflicts=arr.allow_conflicts,
+                                total_size=arr.total_size,
+                                alignment=arr.alignment)
+
+                # add the copy of the gpu array
+                nsdfg.add_transient("cpu_" + memlet.data,
+                                    arr.shape,
+                                    arr.dtype,
+                                    storage=dace.StorageType.Default,
+                                    strides=arr.strides,
+                                    offset=arr.offset,
+                                    lifetime=arr.lifetime,
+                                    allow_conflicts=arr.allow_conflicts,
+                                    total_size=arr.total_size,
+                                    alignment=arr.alignment)
+
+                nmemlet = deepcopy(memlet)
+                nmemlet.data = "cpu_" + nmemlet.data
+                if is_input:
+                    access = nstate.add_read(parameter_name)
+                    access_cpu = nstate.add_access("cpu_" + memlet.data)
+                    nstate.add_edge(access, None, access_cpu, None,
+                                    nsdfg.get_array_memlet("cpu_" + memlet.data))
+                    nstate.add_edge(access_cpu, None, ntasklet, parameter_name,
+                                    nmemlet)
+                else:
+                    access = nstate.add_write(parameter_name)
+                    access_cpu = nstate.add_access("cpu_" + memlet.data)
+                    nstate.add_edge(ntasklet, parameter_name, access_cpu, None,
+                                    nmemlet)
+                    nstate.add_edge(access_cpu, None, access, None,
+                                    nsdfg.get_array_memlet("cpu_" + memlet.data))
+
+            return nd.NestedSDFG(
+                label="nested_{}".format(unique_id),
+                sdfg=nsdfg,
+                inputs=set(inputs.keys()),
+                outputs=set(outputs.keys()),
+            )
+
+        else:
+            return tasklet
 
 
 _ONNX_OPS_BY_NAME = {}
@@ -738,8 +825,8 @@ for schema in onnx.defs.get_all_schemas():
                     node.validate(sdfg, state)
                 except Exception as ex:
                     raise ValueError(
-                        "Node validation failed: {} (at ONNX Operator {})".
-                        format(str(ex), self.schema.name)) from ex
+                        "Node validation failed: {} (at state {}, node {}, which is an ONNX Operator of type {})".
+                        format(str(ex), state, node, self.schema.name)) from ex
 
                 return self.expansion(node, state, sdfg)
 

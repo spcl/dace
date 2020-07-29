@@ -6,8 +6,7 @@ import onnx
 
 import dace
 from dace.libraries.onnx.converters import dace_type_to_onnx_tensor_type
-from dace.libraries.onnx.nodes.onnx_op import ONNXOp
-from dace.libraries.onnx.environments import ONNXRuntime, has_cuda
+from dace.libraries.onnx.environments import has_cuda
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiler import generate_program_folder, configure_and_compile, get_binary_name
 from dace.codegen.targets import cpu
@@ -71,10 +70,16 @@ class OpChecker:
     def add_output(self, type: onnx.TensorProto.DataType):
         self.dll.add_output(self._state, type)
 
+    def add_attribute(self, attribute: onnx.AttributeProto):
+        self.dll.add_attribute()
 
-def check_op(sdfg, state, node: ONNXOp):
+
+def check_op(sdfg, state, node):
     """ Check whether a ONNXOp node has an implementation in ORT """
 
+    for attr_name in node.schema.attributes.keys():
+        if hasattr(node, attr_name):
+            checker.
     checker = OpChecker(node.schema.name, node.name)
     for edge, is_input in node.iter_edges(state):
         edge_data = edge.data.data

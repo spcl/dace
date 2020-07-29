@@ -99,7 +99,9 @@ extern "C" {
         OrtExecutableKernelContext *context;
         auto status = ort_api->CreateExecutableKernelContext(ort_session, /*provider_index*/provider_index, &state->proto, &state->type_map, &context);
 
-        ort_api->ReleaseExecutableKernelContext(context);
+        if (!status)
+            ort_api->ReleaseExecutableKernelContext(context);
+
         ort_api->ReleaseKernelSession(ort_session);
         ort_api->ReleaseMemoryInfo(mem_info);
         ort_api->ReleaseSessionOptions(session_options);
