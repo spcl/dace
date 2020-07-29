@@ -791,6 +791,12 @@ class Indices(Subset):
         for i, ind in enumerate(self.indices):
             self.indices[i] = (ind.subs(repl_dict)
                                if symbolic.issymbolic(ind) else ind)
+    def pop(self, dimensions):
+        new_indices = []
+        for i in range(len(self.indices)):
+            if i not in dimensions:
+                new_indices.append(self.indices[i])
+        self.indices = new_indices
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
@@ -799,9 +805,34 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
         raise ValueError('Dimension mismatch between %s and %s' %
                          (str(subset_a), str(subset_b)))
 
-    result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-        subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
-        subset_b.max_element())]
+    result = []
+    for arb, brb, are, bre in zip(subset_a.min_element(), subset_b.min_element(), 
+                                  subset_a.max_element(), subset_b.max_element()):
+        try:
+            minrb = min(arb, brb)
+        except TypeError:
+            if len(arb.free_symbols) == 0:
+                minrb = arb
+            elif len(brb.free_symbols) == 0:
+                minrb = brb
+            else:
+                raise
+
+        try:
+            maxre = max(are, bre)
+        except TypeError:
+            if len(are.free_symbols) == 0:
+                maxre = bre
+            elif len(bre.free_symbols) == 0:
+                maxre = are
+            else:
+                raise
+        result.append((minrb, maxre, 1))
+
+    #result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
+    #    subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
+    #    subset_b.max_element())]
+
     return Range(result)
 
 
