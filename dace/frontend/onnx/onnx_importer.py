@@ -104,9 +104,7 @@ class ONNXModel:
             for param_idx, (name, is_input) in chain(
                     enumerate(zip(node.input, repeat(True))),
                     enumerate(zip(node.output, repeat(False)))):
-                if self._clean_array_name(
-                        name
-                ) not in self.sdfg.arrays:
+                if self._clean_array_name(name) not in self.sdfg.arrays:
                     if name not in self.value_infos:
                         raise ValueError(
                             "Could not find array with name '{}'".format(name))
@@ -187,7 +185,18 @@ class ONNXModel:
             self.sdfg.add_scalar(name, dtype)
         else:
             dims = [d for d in tensor.dims]
-            self.sdfg.add_array(name, dims, dtype)
+            if name not in self.sdfg.arrays:
+                self.sdfg.add_array(name, dims, dtype)
+            else:
+                existing_arr = self.sdfg.arrays[name]
+                if existing_arr.dtype != dtype:
+                    raise ValueError(
+                        "Invalid ONNX model; found two values with name '{}', but different dtypes ({} and {})"
+                        .format(name, existing_arr.dtype, dtype))
+                if tuple(existing_arr.shape) != tuple(dims):
+                    raise ValueError(
+                        "Invalid ONNX model; found two values with name '{}', but different dimensions ({} and {})"
+                        .format(name, existing_arr.shape, dims))
 
         self.weights[tensor.name] = numpy_helper.to_array(tensor)
 
@@ -217,9 +226,12 @@ class ONNXModel:
                 parsed = pystr_to_symbolic(d.dim_param)
 
                 for sym in parsed.free_symbols:
-                    if self._clean_array_name(str(sym)) not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(self._clean_array_name(str(sym)), stype=int)
-                    parsed = parsed.subs(sym, dace.symbol(self._clean_array_name(str(sym))))
+                    if self._clean_array_name(
+                            str(sym)) not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(self._clean_array_name(str(sym)),
+                                             stype=int)
+                    parsed = parsed.subs(
+                        sym, dace.symbol(self._clean_array_name(str(sym))))
 
                 shape.append(parsed)
             else:
@@ -257,7 +269,9 @@ class ONNXModel:
 
         # check that there are no unknown inputs
         # NOTE symbols can only be passed as kwargs
-        if len(set(inputs).difference(self.inputs).difference(self.sdfg.free_symbols)) != 0:
+        if len(
+                set(inputs).difference(self.inputs).difference(
+                    self.sdfg.free_symbols)) != 0:
             raise ValueError("Unknown inputs {}".format(", ".join(
                 set(inputs).difference(self.inputs))))
 
@@ -276,12 +290,16 @@ class ONNXModel:
             else:
                 if self.cuda:
                     clean_name = self._clean_array_name(name)
-                    self.sdfg.arrays[clean_name].storage = StorageType.GPU_Global
+                    self.sdfg.arrays[
+                        clean_name].storage = StorageType.GPU_Global
                     params[clean_name] = numba.cuda.to_device(arr)
                 else:
                     params[self._clean_array_name(name)] = arr.copy()
 
-        inferred_symbols = infer_symbols_from_shapes(self.sdfg, {**clean_inputs, **params})
+        inferred_symbols = infer_symbols_from_shapes(self.sdfg, {
+            **clean_inputs,
+            **params
+        })
         # TODO @orausch if this is removed the SDFG complains
         # TypeError: Type mismatch for argument ONNX_unk__493: expected scalar type, got <class 'sympy.core.numbers.Integer'>
         # fix this better
@@ -299,8 +317,9 @@ class ONNXModel:
             arr = self.sdfg.arrays[clean_name]
 
             # TODO @orausch add error handling for evalf
-            shape = [eval_dim(d) if type(d) is dace.symbol else d
-                     for d in arr.shape]
+            shape = [
+                eval_dim(d) if type(d) is dace.symbol else d for d in arr.shape
+            ]
             outputs[clean_name] = np.empty(shape,
                                            dtype=arr.dtype.as_numpy_dtype())
         if self.cuda:
@@ -331,4 +350,5 @@ class ONNXModel:
     def _clean_array_name(name: str) -> str:
         """Modifies a onnx array name that is potentially invalid in dace
            to make it valid"""
-        return "ONNX_" + name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH")
+        return "ONNX_" + name.replace(".", "DOT").replace(":", "COLON").replace(
+            "/", "SLASH")
