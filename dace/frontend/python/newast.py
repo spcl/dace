@@ -3053,9 +3053,13 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.s
 
     def visit_Num(self, node: ast.Num):
+        if isinstance(node.n, (int, float, complex, bool)):
+            return dtypes.DTYPE_TO_TYPECLASS[type(node.n)](node.n)
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
+        if isinstance(node.value, (int, float, complex, bool)):
+            return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
         return node.value
 
     def visit_Name(self, node: ast.Name):
