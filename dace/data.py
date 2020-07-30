@@ -43,7 +43,7 @@ class Data(object):
 
     dtype = TypeClassProperty(default=dtypes.int32)
     shape = ShapeProperty(default=[])
-    dist_shape = ShapeProperty(default=[])
+    dist_shape = ShapeProperty(default=None, allow_none=True)
     transient = Property(dtype=bool, default=False)
     storage = Property(dtype=dtypes.StorageType,
                        desc="Storage location",
