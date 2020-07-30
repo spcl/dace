@@ -149,7 +149,7 @@ _CTYPES = {
     None: "void",
     int: "int",
     float: "float",
-    complex: "dace::complex128",
+    complex: "dace::complex64",
     bool: "bool",
     numpy.bool: "bool",
     numpy.int8: "char",
@@ -172,7 +172,7 @@ _FFI_CTYPES = {
     None: ctypes.c_void_p,
     int: ctypes.c_int,
     float: ctypes.c_float,
-    complex: ctypes.c_longdouble,
+    complex: ctypes.c_uint64,
     bool: ctypes.c_bool,
     numpy.bool: ctypes.c_bool,
     numpy.int8: ctypes.c_int8,
@@ -195,7 +195,7 @@ _BYTES = {
     None: 0,
     int: 4,
     float: 4,
-    complex: 16,
+    complex: 8,
     bool: 1,
     numpy.bool: 1,
     numpy.int8: 1,
@@ -778,9 +778,6 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
-int = typeclass(int)
-float = typeclass(float)
-complex = typeclass(complex)
 bool = typeclass(numpy.bool)  # TODO: Maybe switch to just bool?
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -797,8 +794,9 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 DTYPE_TO_TYPECLASS = {
-    int: int32,
-    float: float32,
+    int: typeclass(int),
+    float: typeclass(float),
+    complex: typeclass(complex),
     bool: uint8,
     numpy.bool: uint8,
     numpy.bool_: bool,  # TODO: This seems to have changed in the latest numpy version
