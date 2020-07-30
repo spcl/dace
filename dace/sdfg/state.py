@@ -434,9 +434,12 @@ class StateGraphView(object):
 
         # Gather data descriptors from nodes
         descs = {}
+        scalars_with_nodes = set()
         for node in self.nodes():
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
+                if isinstance(node.desc(sdfg), dt.Scalar):
+                    scalars_with_nodes.add(node.data)
 
         # If a subgraph, and a node appears outside the subgraph as well,
         # it is externally allocated
@@ -469,8 +472,8 @@ class StateGraphView(object):
         for name, desc in descs.items():
             if name in data_args or name in scalar_args:
                 continue
-            # If scalar, always add
-            if isinstance(desc, dt.Scalar):
+            # If scalar, always add if there are no scalar nodes
+            if isinstance(desc, dt.Scalar) and name not in scalars_with_nodes:
                 scalar_args[name] = desc
             # If array/stream is not transient, then it is external
             elif not desc.transient:
