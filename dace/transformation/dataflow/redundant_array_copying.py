@@ -91,7 +91,7 @@ class RedundantArrayCopying(pm.Transformation):
                 for out_e in graph.out_edges(med_e.dst):
                     path = graph.memlet_path(out_e)
                     for pe in path:
-                        if pe.data.data == out_array.data:
+                        if pe.data.data == out_array.data or pe.data.data == med_array.data:
                             pe.data.data = in_array.data
                     # Redirect edge to in_array
                     graph.remove_edge(out_e)
