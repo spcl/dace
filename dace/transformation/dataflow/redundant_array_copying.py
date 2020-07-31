@@ -9,8 +9,8 @@ from dace.config import Config
 
 @registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArrayCopying(pm.Transformation):
-    """ Implements the redundant array removal transformation. Removes array B
-        in pattern A -> B -> A.
+    """ Implements the redundant array removal transformation. Removes the last access node
+        in pattern A -> B -> A, and the second (if possible)
     """
 
     _arrays_removed = 0
@@ -38,8 +38,8 @@ class RedundantArrayCopying(pm.Transformation):
         if graph.out_degree(in_array) != 1:
             return False
 
-        # Make sure that the candidate is a transient variable
-        if strict and not in_array.desc(sdfg).transient:
+        # Make sure that the removal candidate is a transient variable
+        if strict and not out_array.desc(sdfg).transient:
             return False
 
         # Make sure that both arrays are using the same storage location
@@ -70,8 +70,9 @@ class RedundantArrayCopying(pm.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
+        out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
 
-        return "Remove " + str(med_array)
+        return "Remove " + str(out_array) +  " and " + str(med_array)
 
     def apply(self, sdfg):
         def gnode(nname):
@@ -85,8 +86,7 @@ class RedundantArrayCopying(pm.Transformation):
         med_edges = len(graph.out_edges(med_array))
         med_out_edges = 0
         for med_e in graph.out_edges(med_array):
-            if (isinstance(med_e.dst, nodes.AccessNode)
-                    and med_e.dst.data == out_array.data):
+            if med_e.dst == out_array:
                 # Modify all outcoming edges to point to in_array
                 for out_e in graph.out_edges(med_e.dst):
                     path = graph.memlet_path(out_e)
