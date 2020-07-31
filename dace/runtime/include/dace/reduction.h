@@ -14,8 +14,9 @@
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
 
-#ifdef __HIP_ARCH__
-#define __CUDA_ARCH__ 300
+#ifdef __HIPCC__
+// Workaround to define atomic operations on HIP GPU code
+#define __CUDA_ARCH__ 600
 #endif
 
 // Specializations for reductions implemented in frameworks like OpenMP, MPI
