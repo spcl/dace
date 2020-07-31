@@ -42,6 +42,11 @@ class RedundantArrayCopying(pm.Transformation):
         if strict and not out_array.desc(sdfg).transient:
             return False
 
+        # Make sure that the middle access node is not transient. We do this to ensure that everything copied from
+        # B -> A is either copied in from A, or uninitialized memory.
+        if strict and not med_array.desc(sdfg).transient:
+            return False
+
         # Make sure that both arrays are using the same storage location
         if in_array.desc(sdfg).storage != out_array.desc(sdfg).storage:
             return False
@@ -72,7 +77,7 @@ class RedundantArrayCopying(pm.Transformation):
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
 
-        return "Remove " + str(out_array) +  " and " + str(med_array)
+        return "Remove " + str(out_array) +  " and (maybe) " + str(med_array)
 
     def apply(self, sdfg):
         def gnode(nname):
