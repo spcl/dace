@@ -39,7 +39,7 @@ class RedundantArrayCopying(pm.Transformation):
             return False
 
         # Make sure that the candidate is a transient variable
-        if strict and not in_array.desc.transient:
+        if strict and not in_array.desc(sdfg).transient:
             return False
 
         # Make sure that both arrays are using the same storage location
