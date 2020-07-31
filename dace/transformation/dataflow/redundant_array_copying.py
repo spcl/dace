@@ -7,7 +7,7 @@ from dace.transformation import pattern_matching as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True)
+@registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArrayCopying(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes array B
         in pattern A -> B -> A.
@@ -39,8 +39,8 @@ class RedundantArrayCopying(pm.Transformation):
             return False
 
         # Make sure that the candidate is a transient variable
-        # if not in_array.desc.transient:
-        #     return False
+        if strict and not in_array.desc.transient:
+            return False
 
         # Make sure that both arrays are using the same storage location
         if in_array.desc(sdfg).storage != out_array.desc(sdfg).storage:
