@@ -50,7 +50,7 @@ class GPUEventProvider(InstrumentationProvider):
 {backend}EventSynchronize(__dace_ev_e{id});
 {backend}EventElapsedTime(&__dace_ms_{id}, __dace_ev_b{id}, __dace_ev_e{id});
 dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
-            id=idstr, timer_name=timer_name)
+            id=idstr, timer_name=timer_name, backend=self.backend)
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
