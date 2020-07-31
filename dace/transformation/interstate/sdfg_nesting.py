@@ -6,7 +6,7 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, EmptyMemlet
+from dace import memlet, registry, sdfg as sd, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -37,7 +37,7 @@ class InlineSDFG(pattern_matching.Transformation):
 
     """
 
-    _nested_sdfg = nodes.NestedSDFG('_', sd.SDFG('_'), set(), set())
+    _nested_sdfg = nodes.NestedSDFG('_', sd.SDFG('_'), {}, {})
 
     @staticmethod
     def annotates_memlets():
@@ -144,9 +144,8 @@ class InlineSDFG(pattern_matching.Transformation):
                 pedge = None
                 for pedge in (reversed(path) if reverse else path):
                     # If there are no other edges, it is safe to remove
-                    if len([
-                            e for e in edge_func(pedge) if edge_pred(pedge, e)
-                    ]) == 1:
+                    if len([e for e in edge_func(pedge)
+                            if edge_pred(pedge, e)]) == 1:
                         # Remove connectors as well
                         state.remove_edge_and_connectors(pedge)
                     else:
@@ -219,8 +218,7 @@ class InlineSDFG(pattern_matching.Transformation):
             if isinstance(node, nodes.AccessNode):
                 datadesc = nsdfg.arrays[node.data]
                 if node.data not in transients and datadesc.transient:
-                    name = sdfg.add_datadesc('%s_%s' %
-                                             (nsdfg.label, node.data),
+                    name = sdfg.add_datadesc('%s_%s' % (nsdfg.label, node.data),
                                              datadesc,
                                              find_new_name=True)
                     transients[node.data] = name
@@ -229,13 +227,14 @@ class InlineSDFG(pattern_matching.Transformation):
         for edge in nstate.edges():
             if (isinstance(edge.src, nodes.CodeNode)
                     and isinstance(edge.dst, nodes.CodeNode)):
-                datadesc = nsdfg.arrays[edge.data.data]
-                if edge.data.data not in transients and datadesc.transient:
-                    name = sdfg.add_datadesc('%s_%s' %
-                                             (nsdfg.label, edge.data.data),
-                                             datadesc,
-                                             find_new_name=True)
-                    transients[edge.data.data] = name
+                if edge.data.data is not None:
+                    datadesc = nsdfg.arrays[edge.data.data]
+                    if edge.data.data not in transients and datadesc.transient:
+                        name = sdfg.add_datadesc('%s_%s' %
+                                                 (nsdfg.label, edge.data.data),
+                                                 datadesc,
+                                                 find_new_name=True)
+                        transients[edge.data.data] = name
 
         # Collect nodes to add to top-level graph
         new_incoming_edges: Dict[nodes.Node, MultiConnectorEdge] = {}
@@ -328,16 +327,16 @@ class InlineSDFG(pattern_matching.Transformation):
             for node in subgraph.nodes():
                 if state.in_degree(node) == 0:
                     state.add_edge(nsdfg_scope_entry, None, node, None,
-                                   EmptyMemlet())
+                                   Memlet())
                 if state.out_degree(node) == 0:
-                    state.add_edge(node, None, nsdfg_scope_exit, None,
-                                   EmptyMemlet())
+                    state.add_edge(node, None, nsdfg_scope_exit, None, Memlet())
 
         # Replace nested SDFG parents with new SDFG
         for node in nstate.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 node.sdfg.parent = state
                 node.sdfg.parent_sdfg = sdfg
+                node.sdfg.parent_nsdfg_node = node
 
         # Remove all unused external inputs/output memlet paths, as well as
         # resulting isolated nodes
@@ -393,9 +392,8 @@ class InlineSDFG(pattern_matching.Transformation):
                     mtree = state.memlet_tree(new_edge)
                 else:
                     new_edge = state.add_edge(inner_edge.src,
-                                              inner_edge.src_conn,
-                                              top_edge.dst, top_edge.dst_conn,
-                                              new_memlet)
+                                              inner_edge.src_conn, top_edge.dst,
+                                              top_edge.dst_conn, new_memlet)
                     mtree = state.memlet_tree(new_edge)
 
                 # Modify all memlets going forward/backward
@@ -469,8 +467,7 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in outputs:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname +
-                                               '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
                             outputs[arrname] = '__' + arrname + '_out'
@@ -486,8 +483,7 @@ class NestSDFG(pattern_matching.Transformation):
                         arrname = node.data
                         if arrname not in transients and not scope_dict[node]:
                             arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname +
-                                               '_out'] = arrobj
+                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
                             outer_sdfg.arrays[arrname] = dc(arrobj)
                             transients[arrname] = '__' + arrname + '_out'
                         node.data = '__' + arrname + '_out'
@@ -522,8 +518,8 @@ class NestSDFG(pattern_matching.Transformation):
         outer_state = outer_sdfg.add_state(outer_sdfg.label)
 
         nested_node = outer_state.add_nested_sdfg(nested_sdfg, outer_sdfg,
-                                                  inputs.values(),
-                                                  outputs.values())
+                                                  set(inputs.values()),
+                                                  set(outputs.values()))
         for key, val in inputs.items():
             arrnode = outer_state.add_read(key)
             outer_state.add_edge(

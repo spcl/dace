@@ -1,3 +1,4 @@
+import functools
 import os
 from typing import List
 
@@ -6,6 +7,7 @@ from dace import data
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
+from dace.sdfg.infer_types import infer_connector_types
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpu
@@ -51,11 +53,12 @@ def generate_dummy(sdfg) -> str:
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
-            dims_mul = "*".join(map(str, arg.shape))
+            dims_mul = cpu.sym2cpp(
+                functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
             allocations += "  " + str(arg.signature(name=argname, with_types=True)) + \
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
-            deallocations += "  free(" + str(arg) + ");\n"
+            deallocations += "  free(" + argname + ");\n"
 
     sdfg_call = '''
   __dace_init_{name}({params});
@@ -96,6 +99,9 @@ def generate_code(sdfg) -> List[CodeObject]:
 
         # Run with the deserialized version
         sdfg = sdfg2
+
+    # Before generating the code, run type inference on the SDFG connectors
+    infer_connector_types(sdfg)
 
     frame = framecode.DaCeCodeGenerator()
 

@@ -159,7 +159,6 @@ class DefinedType(aenum.AutoNumberEnum):
     """
     Pointer = ()
     Scalar = ()
-    ArrayView = ()
     Stream = ()
     StreamArray = ()
     StreamView = ()
@@ -472,7 +471,6 @@ class TargetDispatcher(object):
                                     state_id, function_stream, callsite_stream)
 
                 # Skip scope subgraph nodes
-                #print(scope_subgraph.nodes())
                 nodes_to_skip.update(scope_subgraph.nodes())
             else:
                 self.dispatch_node(sdfg, dfg, state_id, v, function_stream,
@@ -514,6 +512,7 @@ class TargetDispatcher(object):
                        function_stream, callsite_stream):
         """ Dispatches a code generator function for a scope in an SDFG
             state. """
+
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])

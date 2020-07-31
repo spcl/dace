@@ -18,6 +18,8 @@ def program(f, *args, **kwargs) -> parser.DaceProgram:
     return parser.DaceProgram(f, args, kwargs)
 
 
+function = program
+
 # Internal DaCe decorators, these are not actually run, but rewritten
 
 

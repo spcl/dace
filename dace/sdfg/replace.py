@@ -34,7 +34,8 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
     """
     symrepl = {
         symbolic.symbol(name):
-        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(new_name)
+        if isinstance(new_name, str) else new_name
     }
 
     # Replace in node properties
@@ -55,7 +56,8 @@ def replace_properties(node: Any, name: str, new_name: str):
         return
     symrepl = {
         symbolic.symbol(name):
-        symbolic.symbol(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(new_name)
+        if isinstance(new_name, str) else new_name
     }
 
     for propclass, propval in node.properties():
@@ -83,10 +85,14 @@ def replace_properties(node: Any, name: str, new_name: str):
                         replacement = 'auto %s = %s;\n' % (name, new_name)
                         propval.code = replacement + newcode
                     else:
-                        warnings.warn(
-                            'Replacement of %s with %s was not made '
-                            'for string tasklet code of language %s' %
-                            (name, new_name, lang))
+                        warnings.warn('Replacement of %s with %s was not made '
+                                      'for string tasklet code of language %s' %
+                                      (name, new_name, lang))
             elif propval.code is not None:
                 for stmt in propval.code:
                     ASTFindReplace({name: new_name}).visit(stmt)
+        elif (isinstance(propclass, properties.DictProperty)
+              and pname == 'symbol_mapping'):
+            # Symbol mappings for nested SDFGs
+            for symname, sym_mapping in propval.items():
+                propval[symname] = sym_mapping.subs(symrepl)

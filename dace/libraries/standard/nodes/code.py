@@ -65,10 +65,20 @@ class CodeLibraryNode(LibraryNode):
                  *args,
                  name='Custom Code',
                  **kwargs):
+        # Store connector types, if given
+        if isinstance(input_names, dict):
+            self._inputdict = input_names
+        else:
+            self._inputdict = {k: None for k in set(input_names)}
+        if isinstance(output_names, dict):
+            self._outputdict = output_names
+        else:
+            self._outputdict = {k: None for k in set(output_names)}
+
         super().__init__(name,
                          *args,
-                         inputs=input_names,
-                         outputs=output_names,
+                         inputs=set(input_names),
+                         outputs=set(output_names),
                          **kwargs)
 
         # Inline the class such that "self" is included in the expansion
@@ -84,8 +94,8 @@ class CodeLibraryNode(LibraryNode):
                 code = self.generate_code(inputs, outputs)
                 # Replace this node with a C++ tasklet
                 return Tasklet('custom_code',
-                               set(inputs.keys()),
-                               set(outputs.keys()),
+                               self._inputdict,
+                               self._outputdict,
                                code,
                                language=dtypes.Language.CPP)
 

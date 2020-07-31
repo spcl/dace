@@ -530,19 +530,22 @@ class CPPUnparser:
 
     def _Constant(self, t):
         value = t.value
-        if isinstance(value, tuple):
-            self.write("(")
-            if len(value) == 1:
-                self._write_constant(value[0])
-                self.write(",")
-            else:
-                interleave(lambda: self.write(", "), self._write_constant,
-                           value)
-            self.write(")")
-        elif value is Ellipsis:  # instead of `...` for Py2 compatibility
-            self.write("...")
+        if value is True or value is False or value is None:
+            self.write(_py2c_nameconst[value])
         else:
-            self._write_constant(t.value)
+            if isinstance(value, tuple):
+                self.write("(")
+                if len(value) == 1:
+                    self._write_constant(value[0])
+                    self.write(",")
+                else:
+                    interleave(lambda: self.write(", "), self._write_constant,
+                               value)
+                self.write(")")
+            elif value is Ellipsis:  # instead of `...` for Py2 compatibility
+                self.write("...")
+            else:
+                self._write_constant(t.value)
 
     def _ClassDef(self, t):
         raise NotImplementedError('Classes are unsupported')
@@ -857,8 +860,8 @@ class CPPUnparser:
             self.write(")")
         # Special case for integer power
         elif t.op.__class__.__name__ == 'Pow':
-            if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
-                    and t.right.n >= 0):
+            if (isinstance(t.right, (ast.Num, ast.Constant))
+                    and int(t.right.n) == t.right.n and t.right.n >= 0):
                 self.write("(")
                 if t.right.n == 0:
                     self.write("1")
@@ -920,7 +923,8 @@ class CPPUnparser:
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
-        if isinstance(t.value, ast.Num) and isinstance(t.value.n, int):
+        if (isinstance(t.value, (ast.Num, ast.Constant))
+                and isinstance(t.value.n, int)):
             self.write(" ")
         self.write(".")
         self.write(t.attr)
