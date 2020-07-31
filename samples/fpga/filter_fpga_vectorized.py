@@ -100,7 +100,7 @@ def make_compute_state(state):
                               buffer_size=buffer_size,
                               storage=StorageType.FPGA_Global)
     valid_pipe = state.add_stream("_valid_pipe",
-                                  dtype=dtype,
+                                  dtype=dace.bool,
                                   storage=StorageType.FPGA_Global)
     ratio = state.add_scalar("ratio_nested",
                              dtype=dtype,
@@ -131,7 +131,7 @@ Vec_t output, next;
 
 Count_t elements_in_output = 0;
 
-unsigned count = 0;
+unsigned _count = 0;
 
 for (unsigned i = 0; i < N / W + 1; ++i) {
   #pragma HLS PIPELINE II=1
@@ -216,12 +216,12 @@ for (unsigned i = 0; i < N / W + 1; ++i) {
   if (is_full) {
     output = next;
     next = Vec_t(Data_t(0));
-    ++count;
+    ++_count;
   }
 
 } // End loop
 
-count_out = std::min<unsigned>(W * count + elements_in_output, N);"""
+count_out = std::min<unsigned>(W * _count + elements_in_output, N);"""
 
     tasklet = state.add_tasklet("filter", {"A_pipe_in", "ratio_in"},
                                 {"B_pipe_out", "valid_pipe_out", "count_out"},

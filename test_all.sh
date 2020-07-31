@@ -131,7 +131,7 @@ echo "====== All-Inclusive Test Runner ======"
 
 cd $SCRIPTPATH/tests
 
-SUBTESTS=`find . -type d -not -name '.*' | cut -c3- | grep -v "/[._]" | grep -v '^[._]'`
+SUBTESTS=`find . -type d -not -path '*/\.*' | cut -c3- | grep -v "/[._]" | grep -v '^[._]'`
 
 DACE_compiler_use_cache=0
 DACE_optimizer_detect_control_flow=1

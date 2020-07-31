@@ -1,7 +1,7 @@
 import aenum
 import os
 import shutil  # which
-from typing import Dict
+from typing import Dict, Tuple
 import warnings
 
 import dace
@@ -159,11 +159,10 @@ class DefinedType(aenum.AutoNumberEnum):
     """
     Pointer = ()
     Scalar = ()
-    ArrayView = ()
     Stream = ()
     StreamArray = ()
-    StreamView = ()
     FPGA_ShiftRegister = ()
+    ArrayInterface = ()
 
 
 class DefinedMemlets:
@@ -189,15 +188,16 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name):
+    def get(self, name) -> Tuple[DefinedType, str]:
         for _, scope in reversed(self._scopes):
             if name in scope:
                 return scope[name]
         raise KeyError("Variable {} has not been defined".format(name))
 
     def add(self,
-            name,
-            connector_type,
+            name: str,
+            dtype: DefinedType,
+            ctype: str,
             ancestor: int = 0,
             allow_shadowing: bool = False):
         if not isinstance(name, str):
@@ -207,14 +207,14 @@ class DefinedMemlets:
         for _, scope in reversed(self._scopes):
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(
-                    name, scope[name], connector_type)
+                    name, scope[name], dtype)
                 if (allow_shadowing or dace.config.Config.get_bool(
                         "compiler", "allow_shadowing")):
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
                 else:
                     raise dace.codegen.codegen.CodegenError(err_str)
-        self._scopes[-1 - ancestor][1][name] = connector_type
+        self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
 
 #############################################################################
@@ -415,8 +415,9 @@ class TargetDispatcher(object):
         if num_satisfied > 1:
             raise RuntimeError(
                 "Multiple predicates satisfied for {}: {}".format(
-                    state, ", ".join(
-                        [type(x).__name__ for x in satisfied_dispatchers])))
+                    state,
+                    ", ".join([type(x).__name__
+                               for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
             satisfied_dispatchers[0].generate_state(sdfg, state,
                                                     function_stream,
@@ -482,8 +483,9 @@ class TargetDispatcher(object):
         if num_satisfied > 1:
             raise RuntimeError(
                 "Multiple predicates satisfied for {}: {}".format(
-                    node, ", ".join(
-                        [type(x).__name__ for x in satisfied_dispatchers])))
+                    node,
+                    ", ".join([type(x).__name__
+                               for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
             self._used_targets.add(satisfied_dispatchers[0])
             satisfied_dispatchers[0].generate_node(sdfg, dfg, state_id, node,
@@ -492,8 +494,9 @@ class TargetDispatcher(object):
         else:  # num_satisfied == 0
             # Otherwise use the generic code generator (CPU)
             self._used_targets.add(self._generic_node_dispatcher)
-            self._generic_node_dispatcher.generate_node(
-                sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._generic_node_dispatcher.generate_node(sdfg, dfg, state_id,
+                                                        node, function_stream,
+                                                        callsite_stream)
 
     def dispatch_scope(self, map_schedule, sdfg, sub_dfg, state_id,
                        function_stream, callsite_stream):
@@ -516,8 +519,9 @@ class TargetDispatcher(object):
                    dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
-        self._array_dispatchers[storage].allocate_array(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._array_dispatchers[storage].allocate_array(sdfg, dfg, state_id,
+                                                        node, function_stream,
+                                                        callsite_stream)
 
     def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
                             callsite_stream):

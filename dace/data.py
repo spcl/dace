@@ -142,8 +142,8 @@ class Scalar(Data):
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage,
-                                     location, lifetime, debuginfo)
+        super(Scalar, self).__init__(dtype, shape, transient, storage, location,
+                                     lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -177,10 +177,6 @@ class Scalar(Data):
     @property
     def offset(self):
         return [0]
-
-    @property
-    def materialize_func(self):
-        return None
 
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
@@ -216,19 +212,6 @@ class Scalar(Data):
         return True
 
 
-def set_materialize_func(obj, val):
-    """ Change the storage type of an array with a materialize function to
-        immaterial.
-    """
-    if val is not None:
-        if (obj.storage != dtypes.StorageType.Default
-                and obj.storage != dtypes.StorageType.Immaterial):
-            raise ValueError("Immaterial array must have immaterial storage, "
-                             "but has: {}".format(obj.storage))
-        obj.storage = dtypes.StorageType.Immaterial
-    obj._materialize_func = val
-
-
 def _prod(sequence):
     return functools.reduce(lambda a, b: a * b, sequence, 1)
 
@@ -244,11 +227,6 @@ class Array(Data):
         desc='If enabled, allows more than one '
         'memlet to write to the same memory location without conflict '
         'resolution.')
-
-    # TODO: Should we use a Code property here?
-    materialize_func = Property(dtype=str,
-                                allow_none=True,
-                                setter=set_materialize_func)
 
     strides = ShapeProperty(
         # element_type=symbolic.pystr_to_symbolic,
@@ -277,7 +255,6 @@ class Array(Data):
     def __init__(self,
                  dtype,
                  shape,
-                 materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
                  storage=dtypes.StorageType.Default,
@@ -297,7 +274,6 @@ class Array(Data):
             raise IndexError('Shape must not be None')
 
         self.allow_conflicts = allow_conflicts
-        self.materialize_func = materialize_func
         self.may_alias = may_alias
         self.alignment = alignment
 
@@ -319,11 +295,10 @@ class Array(Data):
         return 'Array (dtype=%s, shape=%s)' % (self.dtype, self.shape)
 
     def clone(self):
-        return Array(self.dtype, self.shape, self.materialize_func,
-                     self.transient, self.allow_conflicts, self.storage,
-                     self.location, self.strides, self.offset, self.may_alias,
-                     self.lifetime, self.alignment, self.debuginfo,
-                     self.total_size)
+        return Array(self.dtype, self.shape, self.transient,
+                     self.allow_conflicts, self.storage, self.location,
+                     self.strides, self.offset, self.may_alias, self.lifetime,
+                     self.alignment, self.debuginfo, self.total_size)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -356,8 +331,7 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol,
-                                  symbolic.sympy.Basic))
-               for s in self.strides):
+                                  symbolic.sympy.Basic)) for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer '
                             'values or symbols')
 
@@ -422,12 +396,6 @@ class Array(Data):
 
     def signature(self, with_types=True, for_call=False, name=None):
         arrname = name
-        if self.materialize_func is not None:
-            if for_call:
-                return 'nullptr'
-            if not with_types:
-                return arrname
-            arrname = '/* ' + arrname + ' (immaterial) */'
 
         if not with_types or for_call:
             return arrname
@@ -487,8 +455,8 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage,
-                                     location, lifetime, debuginfo)
+        super(Stream, self).__init__(dtype, shape, transient, storage, location,
+                                     lifetime, debuginfo)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -522,9 +490,9 @@ class Stream(Data):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
 
     def clone(self):
-        return Stream(self.dtype, self.buffer_size, self.shape,
-                      self.transient, self.storage, self.location, self.offset,
-                      self.lifetime, self.debuginfo)
+        return Stream(self.dtype, self.buffer_size, self.shape, self.transient,
+                      self.storage, self.location, self.offset, self.lifetime,
+                      self.debuginfo)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):

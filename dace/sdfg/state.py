@@ -532,9 +532,7 @@ class StateGraphView(object):
             subgraph, formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
-                             calling the SDFG. This means that immaterial data
-                             will generate "nullptr" arguments instead of the
-                             argument names.
+                             calling the SDFG.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
@@ -1536,7 +1534,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                   shape,
                   dtype,
                   storage=dtypes.StorageType.Default,
-                  materialize_func=None,
                   transient=False,
                   strides=None,
                   offset=None,
@@ -1557,7 +1554,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                               shape,
                               dtype,
                               storage,
-                              materialize_func,
                               transient,
                               strides,
                               offset,
@@ -1627,7 +1623,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                       shape,
                       dtype,
                       storage=dtypes.StorageType.Default,
-                      materialize_func=None,
                       strides=None,
                       offset=None,
                       lifetime=dtypes.AllocationLifetime.Scope,
@@ -1639,7 +1634,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                               shape,
                               dtype,
                               storage,
-                              materialize_func,
                               True,
                               strides,
                               offset,

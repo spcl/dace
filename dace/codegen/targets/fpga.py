@@ -373,17 +373,20 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise dace.codegen.codegen.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
+            # Language-specific implementation
+            ctype = self.define_stream(nodedesc.dtype, nodedesc.buffer_size,
+                                       dataname, arrsize, function_stream,
+                                       result)
+
             if sym2cpp(arrsize) != "1":
                 # Is a stream array
                 self._dispatcher.defined_vars.add(dataname,
-                                                  DefinedType.StreamArray)
+                                                  DefinedType.StreamArray,
+                                                  ctype)
             else:
                 # Single stream
-                self._dispatcher.defined_vars.add(dataname, DefinedType.Stream)
-
-            # Language-specific implementation
-            self.define_stream(nodedesc.dtype, nodedesc.buffer_size, dataname,
-                               arrsize, function_stream, result)
+                self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
+                                                  ctype)
 
         elif isinstance(nodedesc, dace.data.Array):
 
@@ -426,7 +429,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             "({}{});".format(dataname, nodedesc.dtype.ctype,
                                              memory_bank_arg, sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
-                            dataname, DefinedType.Pointer)
+                            dataname, DefinedType.Pointer, 'auto')
 
             elif (nodedesc.storage in (
                     dace.dtypes.StorageType.FPGA_Local,
@@ -447,11 +450,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 if generate_scalar:
                     # Language-specific
-                    define_str = "{} {};".format(
-                        self.make_vector_type(nodedesc.dtype, False), dataname)
+                    ctype = self.make_vector_type(nodedesc.dtype, False)
+                    define_str = "{} {};".format(ctype, dataname)
                     callsite_stream.write(define_str, sdfg, state_id, node)
                     self._dispatcher.defined_vars.add(dataname,
-                                                      DefinedType.Scalar)
+                                                      DefinedType.Scalar, ctype)
                 else:
                     # Language-specific
                     if (nodedesc.storage ==
@@ -471,7 +474,8 @@ class FPGACodeGen(TargetCodeGenerator):
         elif isinstance(nodedesc, dace.data.Scalar):
 
             result.write("{} {};\n".format(nodedesc.dtype.ctype, dataname))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar,
+                                              nodedesc.dtype.ctype)
 
         else:
             raise TypeError("Unhandled data type: {}".format(
@@ -739,8 +743,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
 
-            src_def_type = self._dispatcher.defined_vars.get(src_node.data)
-            dst_def_type = self._dispatcher.defined_vars.get(dst_node.data)
+            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
 
             pattern = re.compile(r"([^\s]+)(\s*\+\s*)?(.*)")
 
@@ -763,8 +767,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Language specific
             read_expr = self.make_read(src_def_type, dtype, src_node.label,
-                                       src_expr, src_index,
-                                       is_pack, packing_factor)
+                                       src_expr, src_index, is_pack,
+                                       packing_factor)
 
             # Language specific
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
