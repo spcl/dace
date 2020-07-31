@@ -8,6 +8,90 @@ from dace.config import Config
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
+class RedundantArrayCopyingIn(pm.Transformation):
+    """ Implements the redundant array removal transformation. Removes the first and second access nodeds
+        in pattern A -> B -> A
+    """
+
+    _arrays_removed = 0
+    _in_array = nodes.AccessNode("_")
+    _med_array = nodes.AccessNode("_")
+    _out_array = nodes.AccessNode("_")
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(
+                RedundantArrayCopying._in_array,
+                RedundantArrayCopying._med_array,
+                RedundantArrayCopying._out_array,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
+        med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
+        out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
+
+        # Safety first (could be relaxed)
+        if not (graph.out_degree(in_array) == 1 and graph.in_degree(med_array)
+                == 1 and graph.out_degree(med_array)):
+            return False
+
+        # Make sure that the removal candidates are transient
+        if not (in_array.desc(sdfg).transient
+                and med_array.desc(sdfg).transient):
+            return False
+
+        # Make sure that both arrays are using the same storage location
+        if in_array.desc(sdfg).storage != out_array.desc(sdfg).storage:
+            return False
+
+        # Only apply if arrays are of same shape (no need to modify memlet subset)
+        if len(in_array.desc(sdfg).shape) != len(
+                out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
+                    in_array.desc(sdfg).shape,
+                    out_array.desc(sdfg).shape)):
+            return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
+        med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
+
+        return "Remove " + str(in_array) + " and " + str(med_array)
+
+    def apply(self, sdfg):
+        def gnode(nname):
+            return graph.nodes()[self.subgraph[nname]]
+
+        graph = sdfg.nodes()[self.state_id]
+        in_array = gnode(RedundantArrayCopying._in_array)
+        med_array = gnode(RedundantArrayCopying._med_array)
+        out_array = gnode(RedundantArrayCopying._out_array)
+
+        # Modify all edges that point to in_array to point to out_array
+        for in_edge in graph.in_edges(in_array):
+
+            # Make all memlets that write to in_array write to out_array instead
+            tree = graph.memlet_tree(in_edge)
+            for te in tree:
+                if te.data.data == in_array.data:
+                    te.data.data = out_array.data
+
+            # Redirect edge to in_array
+            graph.remove_edge(in_edge)
+            graph.add_edge(in_edge.src, in_edge.src_conn, out_array, None,
+                           in_edge.data)
+
+        graph.remove_node(med_array)
+        graph.remove_node(in_array)
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
 class RedundantArrayCopying(pm.Transformation):
     """ Implements the redundant array removal transformation. Removes the last access node
         in pattern A -> B -> A, and the second (if possible)
@@ -77,7 +161,7 @@ class RedundantArrayCopying(pm.Transformation):
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
 
-        return "Remove " + str(out_array) +  " and (maybe) " + str(med_array)
+        return "Remove " + str(out_array) + " and (maybe) " + str(med_array)
 
     def apply(self, sdfg):
         def gnode(nname):
