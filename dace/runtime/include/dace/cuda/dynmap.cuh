@@ -25,7 +25,11 @@
 #ifndef __DACE_DYNMAP_CUH
 #define __DACE_DYNMAP_CUH
 
+#ifdef __CUDACC__
 #include <cooperative_groups.h>
+/*#elif defined(__HIPCC__)
+#include <hip/hip_cooperative_groups.h>
+#endif*/
 
 namespace dace {
 
@@ -201,5 +205,6 @@ namespace dace {
     };  // struct DynamicMap
 }  // namespace dace
 
+#endif // __CUDACC__
 
 #endif // __DACE_DYNMAP_CUH

@@ -8,12 +8,13 @@
 #include <mutex>
 #include <new> // Used for the in-memory ctor call in the move assignment operator below  
 
+#ifdef __HIPCC__
+#include <hip/hip_runtime.h>
+#include <hip/hip_cooperative_groups.h>
+#else
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
 
-#include "../../../../external/cub/cub/util_ptx.cuh"
-#include "../../../../external/cub/cub/warp/warp_reduce.cuh"
-#include "../../../../external/cub/cub/warp/warp_scan.cuh"
 
 #include "cudacommon.cuh"
 
@@ -242,4 +243,7 @@ namespace dace {
     }
 
 }  // namespace dace
+
+#endif // !__CUDACC__
+
 #endif // __DACE_STREAM_CUH

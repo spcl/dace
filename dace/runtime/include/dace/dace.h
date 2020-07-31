@@ -22,7 +22,7 @@
 #include "os.h"
 #include "perf/reporting.h"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/copy.cuh"
 #include "cuda/dynmap.cuh"
 #else

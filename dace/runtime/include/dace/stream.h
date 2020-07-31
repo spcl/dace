@@ -10,11 +10,10 @@
 
 #include "vector.h"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/stream.cuh"
 #else
 #include "cudainterop.h"
-#include "cuda/cudacommon.cuh"
 
 namespace dace {
     // Forward/mirror declaration of GPU classes

@@ -2,7 +2,13 @@
 #define __DACE_CUDAINTEROP_H
 
 #ifdef WITH_CUDA
-#include <cuda_runtime.h>
+  #if defined(__HIPCC__) || defined(WITH_HIP)
+    #include <hip/hip_runtime.h>
+  #else
+    #include <cuda_runtime.h>
+  #endif
+
+  #include "cuda/cudacommon.cuh"
 #else
 
 // CUDA interoperability (defining external functions without having to include

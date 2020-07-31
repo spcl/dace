@@ -14,6 +14,10 @@
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
 #endif
 
+#ifdef __HIP_ARCH__
+#define __CUDA_ARCH__ 300
+#endif
+
 // Specializations for reductions implemented in frameworks like OpenMP, MPI
 
 namespace dace {
