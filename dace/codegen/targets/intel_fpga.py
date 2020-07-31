@@ -269,13 +269,12 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 memlet = dfg.in_edges(node)[0].data
                 rcv_rank = node.desc(sdfg).location["rcv_rank"]
                 port = node.desc(sdfg).location["port"][0]
-                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not isinstance(rcv_rank, dace.sympy.numbers.Integer):
+                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Receiver rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
 
-                if not isinstance(port, int) and (port not in sdfg.constants
-                                                  and not isinstance(port, dace.sympy.numbers.Integer)):
+                if not isinstance(port, int) and not port.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
@@ -296,13 +295,12 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 memlet = dfg.out_edges(node)[0].data
                 snd_rank = node.desc(sdfg).location["snd_rank"]
                 port = node.desc(sdfg).location["port"][0]
-                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not isinstance(snd_rank, dace.sympy.numbers.Integer):
+                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Sender rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
 
-                if not isinstance(port, int) and (port not in sdfg.constants
-                                                  and not isinstance(port, dace.sympy.numbers.Integer)):
+                if not isinstance(port, int) and not port.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
