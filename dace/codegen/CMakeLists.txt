@@ -225,6 +225,7 @@ endif()
 
 # Create CUDA object files
 if(DACE_ENABLE_CUDA)
+
   # Get local CUDA architectures
   if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
       execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "-ccbin" "${CMAKE_CXX_COMPILER}" "--run"
@@ -259,7 +260,53 @@ if(DACE_ENABLE_HIP)
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
     # Compile and run a test program
-    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o 
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
+      "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+      OUTPUT_VARIABLE _arch_compout
+      RESULT_VARIABLE _arch_res)
+    if(_arch_res EQUAL 0)
+      execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+	OUTPUT_VARIABLE _arch_out
+	RESULT_VARIABLE _arch_runres)
+    endif()
+
+    if((_arch_res EQUAL 0) AND (_arch_runres EQUAL 0))
+      string(REGEX REPLACE "\n" ";" _arch_out "${_arch_out}")
+      list(GET _arch_out -1 _local_arch)
+      string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
+      set(LOCAL_HIP_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local AMD GPUs for compilation")
+      message("-- Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
+    else()
+      if(_arch_res EQUAL 0)
+	set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
+      endif()
+      message("-- No local HIP-capable GPUs found")
+    endif()
+  endif()
+
+  # Add flags to compile for local AMD architectures
+  foreach(var ${LOCAL_HIP_ARCHITECTURES})
+    list(APPEND HIP_HIPCC_FLAGS --offload-arch=gfx${var})
+  endforeach()
+
+  # Add flags from dace config
+  list(APPEND HIP_HIPCC_FLAGS ${EXTRA_HIP_FLAGS})
+
+  # Add include directories for other files
+  set(DACE_LIBS ${DACE_LIBS} hip::host)
+
+  set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
+  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})#HIPCC_OPTIONS ${HIP_HIPCC_FLAGS})
+  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
+endif() # DACE_ENABLE_HIP
+
+
+# Create HIP object files
+if(DACE_ENABLE_HIP)
+  # Get local AMD architectures
+  if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
+    # Compile and run a test program
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
       "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
       OUTPUT_VARIABLE _arch_compout
       RESULT_VARIABLE _arch_res)
@@ -293,7 +340,7 @@ if(DACE_ENABLE_HIP)
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
-  
+
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
