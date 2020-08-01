@@ -286,7 +286,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     "SMI_Channel {} = SMI_Open_send_channel({}, {}, {}, {}, smi_comm);"
                     .format(var_name, message_size, TYPE_TO_SMI_TYPE[vec_type],
                             rcv_rank, port))
-
                 self._dispatcher.defined_vars.add(var_name,
                                                   DefinedType.RemoteStream, vec_type)
                 pass
@@ -1020,6 +1019,7 @@ __kernel void \\
         result = ""
 
         def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
+
         if def_type == DefinedType.Scalar:
             if not memlet.dynamic:
                 if not is_output:

@@ -378,9 +378,11 @@ class FPGACodeGen(TargetCodeGenerator):
                                                   DefinedType.StreamArray,
                                                   ctype)
             else:
-                # Single stream
-                self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
+                # Single stream, non remote
+                if nodedesc.storage != dace.dtypes.StorageType.FPGA_Remote:
+                    self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
                                                   ctype)
+
 
         elif isinstance(nodedesc, dace.data.Array):
 
