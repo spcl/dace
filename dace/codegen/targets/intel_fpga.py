@@ -226,13 +226,14 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                       ])))
 
         # Since CodeObject defines target_name, I have to explicitely indicate intel_fpga_smi if remote streams are used
-        host_code_obj = CodeObject(self._program_name,
-                                   host_code.getvalue(),
-                                   "cpp",
-                                   IntelFPGACodeGen,
-                                   "Intel FPGA",
-                                   target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
-                                   target_type="host")
+        host_code_obj = CodeObject(
+            self._program_name,
+            host_code.getvalue(),
+            "cpp",
+            IntelFPGACodeGen,
+            "Intel FPGA",
+            target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
+            target_type="host")
 
         kernel_code_objs = [
             CodeObject(kernel_name,
@@ -241,7 +242,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                        IntelFPGACodeGen,
                        "Intel FPGA",
                        target_type="device",
-                       target_name="intel_fpga_smi" if self.enable_smi else "intel_fpga",
+                       target_name="intel_fpga_smi"
+                       if self.enable_smi else "intel_fpga",
                        additional_compiler_kwargs={"smi": self.enable_smi})
             for (kernel_name, code) in self._kernel_codes
         ]
@@ -249,8 +251,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         return [host_code_obj] + kernel_code_objs
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
-                      function_stream, kernel_stream, storage,
-                      sdfg, dfg, node):
+                      function_stream, kernel_stream, storage, sdfg, dfg, node):
         vec_type = self.make_vector_type(dtype, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
@@ -270,7 +271,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 memlet = dfg.in_edges(node)[0].data
                 rcv_rank = node.desc(sdfg).location["rcv_rank"]
                 port = node.desc(sdfg).location["port"][0]
-                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdecimal():
+                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdecimal(
+                ):
                     raise dace.codegen.codegen.CodegenError(
                         "Receiver rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
@@ -287,7 +289,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     .format(var_name, message_size, TYPE_TO_SMI_TYPE[vec_type],
                             rcv_rank, port))
                 self._dispatcher.defined_vars.add(var_name,
-                                                  DefinedType.RemoteStream, vec_type)
+                                                  DefinedType.RemoteStream,
+                                                  vec_type)
                 pass
             else:
                 # input stream
@@ -295,7 +298,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 memlet = dfg.out_edges(node)[0].data
                 snd_rank = node.desc(sdfg).location["snd_rank"]
                 port = node.desc(sdfg).location["port"][0]
-                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdecimal():
+                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdecimal(
+                ):
                     raise dace.codegen.codegen.CodegenError(
                         "Sender rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
@@ -313,7 +317,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
                 # add this as defined vars of type Remote Stream, so that we will no further open it in the following
                 self._dispatcher.defined_vars.add(var_name,
-                                                  DefinedType.RemoteStream, vec_type)
+                                                  DefinedType.RemoteStream,
+                                                  vec_type)
 
         else:
             kernel_stream.write("channel {} {}{}{};".format(
@@ -421,7 +426,10 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
-        if defined_type in [DefinedType.Stream, DefinedType.StreamArray, DefinedType.RemoteStream]:
+        if defined_type in [
+                DefinedType.Stream, DefinedType.StreamArray,
+                DefinedType.RemoteStream
+        ]:
             if defined_type == DefinedType.StreamArray:
                 if index == "0":
                     # remove "[0]" index as this is not allowed if the
@@ -466,7 +474,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         dtype.base_type.ctype, packing_factor, read_expr,
                         write_expr, index)
                 else:
-                    return result + "{}[{}] = {};".format(write_expr, index, read_expr)
+                    return result + "{}[{}] = {};".format(
+                        write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -482,8 +491,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr)
             else:
                 if (isinstance(src_node_desc, dace.data.Stream)
-                        and src_node_desc.storage
-                        == dace.dtypes.StorageType.FPGA_Remote):
+                        and src_node_desc.storage ==
+                        dace.dtypes.StorageType.FPGA_Remote):
                     return "SMI_Pop(&{},(void *)&{})".format(
                         read_expr, var_name)
                 else:
@@ -740,8 +749,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 host_body_stream.write(
                     "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
                     format(
-                        module_function_name,
-                        ", ".join([""] + kernel_args_call)
+                        module_function_name, ", ".join([""] + kernel_args_call)
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
         else:
             # We will generate a separate kernel for each PE. Adds host call
@@ -1088,7 +1096,8 @@ __kernel void \\
                 result += "#define {} {} // God save us".format(
                     connector, data_name)
             self._dispatcher.defined_vars.add(connector,
-                                              DefinedType.RemoteStream, ctypedef)
+                                              DefinedType.RemoteStream,
+                                              ctypedef)
         elif def_type == DefinedType.StreamArray:
             if not memlet.dynamic and memlet.volume == 1:
                 if is_output:
@@ -1392,7 +1401,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         defined_type, _ = self.defined_vars.get(target)
         updated = node
 
-
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
@@ -1422,9 +1430,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # If the value is a Name, we should check whether it is a remote stream and the number of accesses
                 if isinstance(node.value,
                               ast.Name) and self.defined_vars.get_if_defined(
-                    node.value.id
-                ) == DefinedType.RemoteStream and self.memlets[
-                    node.value.id][0].volume != 1:
+                                  node.value.id
+                              ) == DefinedType.RemoteStream and self.memlets[
+                                  node.value.id][0].volume != 1:
                     # read from a remote stream in the right part of the assignment
                     # Corner case: if we are dealing with vectors, target is already a pointer
                     updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
@@ -1453,7 +1461,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # instead of directly writing to channel
                 updated = ast.Name(id="{} = {};".format(target, value))
         elif memlet is not None and defined_type == DefinedType.RemoteStream:
-            if memlet.volume !=1:
+            if memlet.volume != 1:
                 # if the target is a Remote Stream, perform a push
                 #Corner case: if we are working with vectorized data type, this would result in having some `pack_..` in
                 #value. This in practice is an rvalue, and we can not get its address. Therefore, we have to
@@ -1471,8 +1479,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         id="SMI_Push(&{}, &{}); ".format(target, value))
                     return ast.copy_location(newnode, node)
         elif memlet is not None and (not is_scalar or memlet.dynamic):
-                newnode = ast.Name(id="*{} = {}; ".format(target, value))
-                return ast.copy_location(newnode, node)
+            newnode = ast.Name(id="*{} = {}; ".format(target, value))
+            return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
             if isinstance(node.value, ast.Name) and self.defined_vars.get_if_defined(node.value.id) \
                     == DefinedType.RemoteStream and self.memlets[node.value.id][0].volume != 1:
@@ -1484,10 +1492,11 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 code_str = "{} = {};".format(target, value)
                 updated = ast.Name(id=code_str)
         else:
-            raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
-                               "memory size {}, {} accesses, dynamic is {}".format(
-                                   target, defined_type, veclen_lhs, veclen_lhs,
-                                   memlet.volume, memlet.dynamic))
+            raise RuntimeError(
+                "Unhandled case: {}, type {}, veclen {}, "
+                "memory size {}, {} accesses, dynamic is {}".format(
+                    target, defined_type, veclen_lhs, veclen_lhs, memlet.volume,
+                    memlet.dynamic))
 
         return ast.copy_location(updated, node)
 

@@ -370,7 +370,8 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language-specific implementation
             ctype = self.define_stream(nodedesc.dtype, nodedesc.buffer_size,
                                        dataname, arrsize, function_stream,
-                                       result, nodedesc.storage, sdfg, dfg, node)
+                                       result, nodedesc.storage, sdfg, dfg,
+                                       node)
 
             if sym2cpp(arrsize) != "1":
                 # Is a stream array
@@ -380,9 +381,8 @@ class FPGACodeGen(TargetCodeGenerator):
             else:
                 # Single stream, non remote
                 if nodedesc.storage != dace.dtypes.StorageType.FPGA_Remote:
-                    self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
-                                                  ctype)
-
+                    self._dispatcher.defined_vars.add(dataname,
+                                                      DefinedType.Stream, ctype)
 
         elif isinstance(nodedesc, dace.data.Array):
 
@@ -775,7 +775,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,
                                              dst_index, read_expr, None,
-                                             is_unpack, packing_factor, src_node.desc(sdfg))
+                                             is_unpack, packing_factor,
+                                             src_node.desc(sdfg))
 
             callsite_stream.write(write_expr)
 

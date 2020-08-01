@@ -189,8 +189,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream, storage, sdfg, dfg,
-                      node):
+                      kernel_stream, storage, sdfg, dfg, node):
         if storage == dace.dtypes.StorageType.FPGA_Remote:
             raise dace.codegen.codegen.CodegenError(
                 "Remote streams are not supported in Xilinx")
