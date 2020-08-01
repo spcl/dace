@@ -288,7 +288,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                             rcv_rank, port))
 
                 self._dispatcher.defined_vars.add(var_name,
-                                                  DefinedType.RemoteStream)
+                                                  DefinedType.RemoteStream, vec_type)
                 pass
             else:
                 # input stream
@@ -314,7 +314,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
                 # add this as defined vars of type Remote Stream, so that we will no further open it in the following
                 self._dispatcher.defined_vars.add(var_name,
-                                                  DefinedType.RemoteStream)
+                                                  DefinedType.RemoteStream, vec_type)
 
         else:
             kernel_stream.write("channel {} {}{}{};".format(
@@ -1349,6 +1349,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
+
         if target not in self.memlets:
             return self.generic_visit(node)
 
@@ -1390,6 +1391,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         defined_type, _ = self.defined_vars.get(target)
         updated = node
+
+
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
@@ -1432,7 +1435,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                             value, target)
                     else:
                         if self.defined_vars.get(
-                                target) == DefinedType.Pointer:
+                                target)[0] == DefinedType.Pointer:
                             code_str = "*{} = {};".format(target, value)
                         else:
                             code_str = "{} = {};".format(target, value)
