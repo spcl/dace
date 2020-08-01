@@ -1383,7 +1383,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         defined_type = self.defined_vars.get(target)
         updated = node
-
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
@@ -1443,27 +1442,26 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # previously defined an output local var: we use that one
                 # instead of directly writing to channel
                 updated = ast.Name(id="{} = {};".format(target, value))
-        elif memlet is not None:
+        elif memlet is not None and defined_type == DefinedType.RemoteStream:
             if memlet.volume !=1:
                 # if the target is a Remote Stream, perform a push
-                if self.defined_vars.get(target) == DefinedType.RemoteStream:
-                    #Corner case: if we are working with vectorized data type, this would result in having some `pack_..` in
-                    #value. This in practice is an rvalue, and we can not get its address. Therefore, we have to
-                    #create a temporary variable of the given type, assign the result of pack and then use it.
-                    #It turns out that with Node Transformer we can return a list of nodes
-                    if veclen_lhs > veclen_rhs:
-                        tmp_var_name = "__dace_smi_{}".format(original_value)
-                        tmp_var = ast.Name(id="{}{} {}={};".format(
-                            dtype.ctype, veclen, tmp_var_name, value))
-                        newnode = ast.Name(
-                            id="SMI_Push(&{}, &{}); ".format(target, tmp_var_name))
-                        return [tmp_var, ast.copy_location(newnode, node)]
-                    else:
-                        newnode = ast.Name(
-                            id="RRRSMI_Push(&{}, &{}); ".format(target, value))
-                        return ast.copy_location(newnode, node)
+                #Corner case: if we are working with vectorized data type, this would result in having some `pack_..` in
+                #value. This in practice is an rvalue, and we can not get its address. Therefore, we have to
+                #create a temporary variable of the given type, assign the result of pack and then use it.
+                #It turns out that with Node Transformer we can return a list of nodes
+                if veclen_lhs > veclen_rhs:
+                    tmp_var_name = "__dace_smi_{}".format(original_value)
+                    tmp_var = ast.Name(id="{}{} {}={};".format(
+                        dtype.ctype, veclen, tmp_var_name, value))
+                    newnode = ast.Name(
+                        id="SMI_Push(&{}, &{}); ".format(target, tmp_var_name))
+                    return [tmp_var, ast.copy_location(newnode, node)]
                 else:
-                    newnode = ast.Name(id="*{} = {}; ".format(target, value))
+                    newnode = ast.Name(
+                        id="SMI_Push(&{}, &{}); ".format(target, value))
+                    return ast.copy_location(newnode, node)
+        elif memlet is not None and (not is_scalar or memlet.dynamic):
+                newnode = ast.Name(id="*{} = {}; ".format(target, value))
                 return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
             if isinstance(node.value, ast.Name) and self.defined_vars.get_if_defined(node.value.id) \
