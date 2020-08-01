@@ -30,7 +30,11 @@ def function_to_ast(f):
     # TypeError: X is not a module, class, method, function, traceback, frame,
     # or code object; OR OSError: could not get source code
     except (TypeError, OSError):
-        raise TypeError('cannot obtain source code for dace program')
+        raise TypeError('Cannot obtain source code for dace program. This may '
+                        'happen if you are using the "python" default '
+                        'interpreter. Please either use the "ipython" '
+                        'interpreter, a Jupyter or Colab notebook, or place '
+                        'the source code in a file and import it.')
 
     src_file = inspect.getfile(f)
     _, src_line = inspect.findsource(f)

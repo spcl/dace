@@ -7,6 +7,7 @@ import numpy as np
 import dace
 from dace import registry, dtypes
 from dace.config import Config
+from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
@@ -188,25 +189,28 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream,storage, sdfg, dfg,
+                      kernel_stream, storage, sdfg, dfg,
                       node):
         if storage == dace.dtypes.StorageType.FPGA_Remote:
             raise dace.codegen.codegen.CodegenError(
                 "Remote streams are not supported in Xilinx")
+
+        ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
+                                                dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
-            kernel_stream.write("dace::FIFO<{}, {}, {}> {}(\"{}\");".format(
-                dtype.base_type.ctype, dtype.veclen, buffer_size, var_name,
-                var_name))
+            kernel_stream.write("{} {}(\"{}\");".format(ctype, var_name,
+                                                        var_name))
         else:
-            kernel_stream.write("dace::FIFO<{}, {}, {}> {}[{}];\n".format(
-                dtype.base_type.ctype, dtype.veclen, buffer_size, var_name,
-                cpp.sym2cpp(array_size)))
+            kernel_stream.write("{} {}[{}];\n".format(ctype, var_name,
+                                                      cpp.sym2cpp(array_size)))
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
-    def define_local_array(self, var_name, desc, array_size,
-                           function_stream, kernel_stream, sdfg, state_id,
-                           node):
+        # Return value is used for adding to defined_vars in fpga.py
+        return ctype
+
+    def define_local_array(self, var_name, desc, array_size, function_stream,
+                           kernel_stream, sdfg, state_id, node):
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name,
                                                   cpp.sym2cpp(array_size)))
@@ -221,7 +225,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         else:
             raise ValueError("Unsupported storage type: {}".format(
                 desc.storage.name))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer)
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer,
+                                          '%s *' % dtype.ctype)
 
     def define_shift_register(*args, **kwargs):
         raise NotImplementedError("Xilinx shift registers NYI")
@@ -271,10 +276,45 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
+    def write_and_resolve_expr(self,
+                               sdfg,
+                               memlet,
+                               nc,
+                               outname,
+                               inname,
+                               indices=None,
+                               dtype=None):
+        """
+        Emits a conflict resolution call from a memlet.
+        """
+        redtype = operations.detect_reduction_type(memlet.wcr)
+        if isinstance(indices, str):
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet), indices)
+        else:
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, indices=indices)
+
+        if isinstance(dtype, dtypes.pointer):
+            dtype = dtype.base_type
+
+        # Special call for detected reduction types
+        if redtype != dtypes.ReductionType.Custom:
+            credtype = "dace::ReductionType::" + str(
+                redtype)[str(redtype).find(".") + 1:]
+            if isinstance(dtype, dtypes.vector):
+                return (f'dace::xilinx_wcr_fixed_vec<{credtype}, '
+                        f'{dtype.vtype.ctype}, {dtype.veclen}>::reduce('
+                        f'{ptr}, {inname})')
+            return (
+                f'dace::xilinx_wcr_fixed<{credtype}, {dtype.ctype}>::reduce('
+                f'{ptr}, {inname})')
+
+        # General reduction
+        raise NotImplementedError('General reductions not yet implemented')
+
     @staticmethod
-    def make_read(defined_type, dtype, var_name, expr, index,
-                  is_pack, packing_factor):
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
+    def make_read(defined_type, dtype, var_name, expr, index, is_pack,
+                  packing_factor):
+        if defined_type == DefinedType.Stream:
             read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.StreamArray:
             if " " in expr:
@@ -299,11 +339,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
-                   wcr, is_unpack, packing_factor,src_node_desc):
-        if defined_type in [
-                DefinedType.Stream, DefinedType.StreamView,
-                DefinedType.StreamArray
-        ]:
+                   wcr, is_unpack, packing_factor, src_node_desc):
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
                 write_expr = "{}[{}]".format(write_expr,
                                              "0" if not index else index)
@@ -578,9 +615,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 in_ptr = ("{}_in".format(argname) if has_in_ptr else "nullptr")
                 out_ptr = ("{}_out".format(argname)
                            if has_out_ptr else "nullptr")
-                module_body_stream.write(
-                    "dace::ArrayInterface<{}> {}({}, {});".format(
-                        arg.dtype.ctype, argname, in_ptr, out_ptr))
+                ctype = "dace::ArrayInterface<{}>".format(arg.dtype.ctype)
+                module_body_stream.write("{} {}({}, {});".format(
+                    ctype, argname, in_ptr, out_ptr))
+                self._dispatcher.defined_vars.add(argname,
+                                                  DefinedType.ArrayInterface,
+                                                  ctype,
+                                                  allow_shadowing=True)
             module_body_stream.write("\n")
 
         # Allocate local transients
@@ -772,14 +813,20 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
                             callsite_stream, self._cpu_codegen._locals,
                             self._cpu_codegen._ldepth,
-                            self._cpu_codegen._toplevel_schedule)
+                            self._cpu_codegen._toplevel_schedule, self)
 
         callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
 
         # Process outgoing memlets
-        self._cpu_codegen.process_out_memlets(sdfg, state_id, node, state_dfg,
-                                              self._dispatcher, callsite_stream,
-                                              True, function_stream)
+        self._cpu_codegen.process_out_memlets(sdfg,
+                                              state_id,
+                                              node,
+                                              state_dfg,
+                                              self._dispatcher,
+                                              callsite_stream,
+                                              True,
+                                              function_stream,
+                                              codegen=self)
 
         for edge in state_dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
@@ -798,7 +845,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                    dst_node, edge, callsite_stream):
         memlet = edge.data
         if (self._dispatcher.defined_vars.get(
-                memlet.data) == DefinedType.FPGA_ShiftRegister):
+                memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
