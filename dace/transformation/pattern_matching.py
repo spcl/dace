@@ -292,15 +292,42 @@ class SubgraphTransformation(object):
     operations.
     """
 
+    sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
+    state_id = Property(
+        dtype=int,
+        desc='ID of state to transform subgraph within, or -1 to transform the '
+        'SDFG')
     subgraph = SetProperty(element_type=int,
                            desc='Subgraph in transformation instance')
 
-    def __init__(self, subgraph: Union[Set[int], SubgraphView]):
+    def __init__(self,
+                 subgraph: Union[Set[int], SubgraphView],
+                 sdfg_id: int = None,
+                 state_id: int = None):
+        if (not isinstance(subgraph, SubgraphView)
+                and (sdfg_id is None or state_id is None)):
+            raise TypeError(
+                'Subgraph transformation either expects a SubgraphView or a '
+                'set of node IDs, SDFG ID and state ID (or -1).')
+
         if isinstance(subgraph, SubgraphView):
             self.subgraph = set(
                 subgraph.graph.node_id(n) for n in subgraph.nodes())
+
+            if isinstance(subgraph.graph, SDFGState):
+                sdfg = subgraph.graph.parent
+                self.sdfg_id = sdfg.sdfg_id
+                self.state_id = sdfg.node_id(subgraph.graph)
+            elif isinstance(subgraph.graph, SDFG):
+                self.sdfg_id = subgraph.graph.sdfg_id
+                self.state_id = -1
+            else:
+                raise TypeError('Unrecognized graph type "%s"' %
+                                type(subgraph.graph).__name__)
         else:
             self.subgraph = subgraph
+            self.sdfg_id = sdfg_id
+            self.state_id = state_id
 
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
@@ -333,11 +360,12 @@ class SubgraphTransformation(object):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        xform = next(ext for ext in Transformation.extensions().keys()
+        xform = next(ext for ext in SubgraphTransformation.extensions().keys()
                      if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct transformation
-        ret = xform(json_obj['subgraph'])
+        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'],
+                    json_obj['state_id'])
         context = context or {}
         context['transformation'] = ret
         dace.serialize.set_properties_from_json(
