@@ -410,10 +410,6 @@ void __dace_exit_cuda({params}) {{
                 '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node)),
             }
 
-            if self.backend == 'hip':
-                raise NotImplementedError('GPU Stream nodes on HIP are '
-                                          'currently unsupported')
-
             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
                                               ctypedef)
@@ -1688,6 +1684,9 @@ void  *{kname}_args[] = {{ {kargs} }};
         callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
+            if self.backend == 'hip':
+                raise NotImplementedError('Dynamic thread-block maps on HIP '
+                                          'are currently unsupported')
             if len(scope_map.params) > 1:
                 raise ValueError('Only one-dimensional maps are supported for '
                                  'dynamic block map schedule (got %d)' %
