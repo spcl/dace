@@ -1406,7 +1406,7 @@ class SDFG(OrderedDiGraph):
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def optimize(self, optimizer=None) -> SDFG:
+    def optimize(self, optimizer=None) -> 'SDFG':
         """ 
         Optimize an SDFG using the CLI or external hooks. 
         :param optimizer: If defines a valid class name, it will be called
@@ -1563,7 +1563,11 @@ class SDFG(OrderedDiGraph):
 
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
-        sdfg = self.optimize()
+        if Config.get_bool('optimizer', 'autooptimize'):
+            sdfg = self.optimize()
+        else:
+            sdfg = self
+
         binaryobj = sdfg.compile()
 
         # Verify passed arguments (unless disabled by the user)

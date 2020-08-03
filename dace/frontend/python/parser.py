@@ -255,7 +255,8 @@ class DaceProgram:
         kwargs.update(infer_symbols_from_shapes(sdfg, kwargs))
 
         # Allow CLI to prompt for optimizations
-        sdfg.optimize()
+        if Config.get_bool('optimizer', 'autooptimize'):
+            sdfg.optimize()
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
