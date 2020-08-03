@@ -1425,6 +1425,8 @@ class SDFG(OrderedDiGraph):
 
             opt = optclass(self)
             sdfg = opt.optimize()
+        else:
+            sdfg = self
 
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
         return sdfg

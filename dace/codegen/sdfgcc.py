@@ -19,7 +19,7 @@ def main():
     sdfg = dace.SDFG.from_file(filename)
 
     # Compile SDFG
-    sdfg.compile(optimizer=False)
+    sdfg.compile()
 
 
 if __name__ == '__main__':
