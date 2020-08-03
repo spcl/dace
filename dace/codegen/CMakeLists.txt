@@ -275,12 +275,12 @@ if(DACE_ENABLE_HIP)
       list(GET _arch_out -1 _local_arch)
       string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
       set(LOCAL_HIP_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local AMD GPUs for compilation")
-      message("-- Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
+      message(STATUS "Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
     else()
       if(_arch_res EQUAL 0)
 	set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
       endif()
-      message("-- No local HIP-capable GPUs found")
+      message(STATUS "No local HIP-capable GPUs found")
     endif()
   endif()
 
@@ -296,7 +296,7 @@ if(DACE_ENABLE_HIP)
   set(DACE_LIBS ${DACE_LIBS} hip::host)
 
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
-  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})#HIPCC_OPTIONS ${HIP_HIPCC_FLAGS})
+  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
 endif() # DACE_ENABLE_HIP
 
