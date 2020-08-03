@@ -19,7 +19,7 @@
 #endif
 
 // Visual Studio (<=2017) + CUDA support
-#if defined(_MSC_VER) && (_MSC_VER <= 1999 || defined(__CUDACC__)) || defined(DACE_XILINX)
+#if defined(_MSC_VER) && _MSC_VER <= 1999
 #define DACE_CONSTEXPR
 #else
 #define DACE_CONSTEXPR constexpr
@@ -73,7 +73,6 @@ namespace dace
 
     enum NumAccesses
     {
-        NA_DYNAMIC = -1, // Dynamic number of accesses
         NA_RUNTIME = 0, // Given at runtime
     };
 
@@ -110,6 +109,7 @@ namespace dace
         Bitwise_Xor = 10,
         Min_Location = 11,
         Max_Location = 12,
+        Exchange = 13
     };
 }
 

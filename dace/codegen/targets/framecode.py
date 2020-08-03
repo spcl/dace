@@ -1,12 +1,16 @@
 from typing import Optional, Set, Tuple
 
 import collections
+import copy
 import dace
 import functools
+from dace.codegen import control_flow as cflow
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.graph import nodes
+from dace.sdfg import nodes
+from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
@@ -53,11 +57,15 @@ class DaCeCodeGenerator(object):
                     "constexpr %s %s = %s;\n" %
                     (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
 
-    def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream):
+    def generate_fileheader(self,
+                            sdfg: SDFG,
+                            global_stream: CodeIOStream,
+                            backend: str = 'frame'):
         """ Generate a header in every output file that includes custom types
             and constants.
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
+            :param backend: Whose backend this header belongs to.
         """
         #########################################################
         # Custom types
@@ -83,7 +91,11 @@ class DaCeCodeGenerator(object):
         self.generate_constants(sdfg, global_stream)
 
         for sd in sdfg.all_sdfgs_recursive():
-            global_stream.write(sd.global_code, sd)
+            if None in sd.global_code:
+                global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
+            if backend in sd.global_code:
+                global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
+                                    sd)
 
     def generate_header(self, sdfg: SDFG, used_environments: Set[str],
                         global_stream: CodeIOStream,
@@ -114,7 +126,7 @@ class DaCeCodeGenerator(object):
 
         global_stream.write("\n", sdfg)
 
-        self.generate_fileheader(sdfg, global_stream)
+        self.generate_fileheader(sdfg, global_stream, 'frame')
 
         # Instrumentation preamble
         if len(self._dispatcher.instrumentation) > 1:
@@ -147,8 +159,8 @@ class DaCeCodeGenerator(object):
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save(".dacecache/%s/perf");' % sdfg.name,
-                sdfg)
+                'dace::perf::report.save("%s/perf");' %
+                sdfg.build_folder.replace('\\', '/'), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -191,7 +203,10 @@ DACE_EXPORTED int __dace_init_%s(%s)
                 callsite_stream.write(env.init_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write(sdfg.init_code, sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
+            callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -206,7 +221,10 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
-        callsite_stream.write(sdfg.exit_code, sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            if None in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
+            callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -242,9 +260,38 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
                                                global_stream, callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, sid, node,
-                                                 global_stream,
-                                                 callsite_stream)
+
+        callsite_stream.write('\n')
+
+        # Emit internal transient array allocation for nested SDFGs
+        # TODO: Replace with global allocation management
+        gpu_persistent_subgraphs = [
+            state.scope_subgraph(node) for node in state.nodes()
+            if isinstance(node, dace.nodes.MapEntry)
+            and node.map.schedule == dace.ScheduleType.GPU_Persistent
+        ]
+        nested_allocated = set()
+        for sub_graph in gpu_persistent_subgraphs:
+            for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
+                                if isinstance(n, nodes.NestedSDFG)]:
+                nested_shared_transients = set(nested_sdfg.shared_transients())
+                for nested_state in nested_sdfg.nodes():
+                    nested_sid = nested_sdfg.node_id(nested_state)
+                    nested_to_allocate = (
+                        set(nested_state.top_level_transients())
+                        - nested_shared_transients
+                    )
+                    nodes_to_allocate = [n for n in nested_state.data_nodes()
+                                         if n.data in nested_to_allocate
+                                         and n.data not in nested_allocated]
+                    for nested_node in nodes_to_allocate:
+                        nested_allocated.add(nested_node.data)
+                        self._dispatcher.dispatch_allocate(
+                            nested_sdfg, nested_state, nested_sid,
+                            nested_node, global_stream, callsite_stream,
+                        )
+
+        callsite_stream.write('\n')
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -285,6 +332,37 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         # Write state footer
 
         if generate_state_footer:
+
+            # Emit internal transient array deallocation for nested SDFGs
+            # TODO: Replace with global allocation management
+            gpu_persistent_subgraphs = [
+                state.scope_subgraph(node) for node in state.nodes()
+                if isinstance(node, dace.nodes.MapEntry)
+                and node.map.schedule == dace.ScheduleType.GPU_Persistent]
+            nested_deallocated = set()
+            for sub_graph in gpu_persistent_subgraphs:
+                for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
+                                    if isinstance(n, nodes.NestedSDFG)]:
+                    nested_shared_transients = \
+                        set(nested_sdfg.shared_transients())
+                    for nested_state in nested_sdfg:
+                        nested_sid = nested_sdfg.node_id(nested_state)
+                        nested_to_allocate = (
+                                set(nested_state.top_level_transients())
+                                - nested_shared_transients
+                        )
+                        nodes_to_deallocate = [
+                            n for n in nested_state.data_nodes()
+                            if n.data in nested_to_allocate
+                            and n.data not in nested_deallocated
+                        ]
+                        for nested_node in nodes_to_deallocate:
+                            nested_deallocated.add(nested_node.data)
+                            self._dispatcher.dispatch_deallocate(
+                                nested_sdfg, nested_state, nested_sid,
+                                nested_node, global_stream, callsite_stream
+                            )
+
             # Emit internal transient array deallocation
             deallocated = set()
             for node in state.data_nodes():
@@ -318,7 +396,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
 
-        condition_string = cppunparse.cppunparse(edge.data.condition, False)
+        condition_string = cppunparse.cppunparse(edge.data.condition.code,
+                                                 False)
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -332,7 +411,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     [""]), sdfg, sid)
 
         callsite_stream.write(
-            "goto __state_{}_{};".format(sdfg.name, edge.dst.label), sdfg, sid)
+            "goto __state_{}_{};".format(sdfg.sdfg_id, edge.dst.label), sdfg,
+            sid)
 
         if not always_true:
             callsite_stream.write("}")
@@ -362,13 +442,10 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             sid = sdfg.node_id(state)
 
             callsite_stream.write(
-                "__state_{}_{}:\n".format(sdfg.name, state.label), sdfg, sid)
+                "__state_{}_{}:\n".format(sdfg.sdfg_id, state.label), sdfg, sid)
 
             # Don't generate brackets and comments for empty states
-            if len([
-                    n for n in state.nodes()
-                    if not isinstance(n, dace.graph.nodes.EmptyTasklet)
-            ]) > 0:
+            if len([n for n in state.nodes()]) > 0:
 
                 callsite_stream.write('{', sdfg, sid)
 
@@ -395,24 +472,23 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                     for control in control_flow[edge]:
 
-                        if isinstance(control,
-                                      dace.graph.edges.LoopAssignment):
+                        if isinstance(control, cflow.LoopAssignment):
                             # Generate the transition, but leave the
                             # assignments to the loop
                             generate_transition &= True
                             generate_assignments &= False
 
-                        elif isinstance(control, dace.graph.edges.LoopBack):
+                        elif isinstance(control, cflow.LoopBack):
                             generate_transition &= False
                             generate_assignments &= False
 
-                        elif isinstance(control, dace.graph.edges.LoopExit):
+                        elif isinstance(control, cflow.LoopExit):
                             # Need to strip the condition, so generate it from
                             # the loop entry
                             generate_transition &= False
                             generate_assignments &= True
 
-                        elif isinstance(control, dace.graph.edges.LoopEntry):
+                        elif isinstance(control, cflow.LoopEntry):
                             generate_transition &= False
                             generate_assignments &= False
 
@@ -433,7 +509,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             entry_edge = control.scope.entry.edge
                             condition = cppunparse.cppunparse(
-                                entry_edge.data.condition, False)
+                                entry_edge.data.condition.code, False)
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -448,11 +524,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                     sid)
 
                             # Generate loop body
-                            self.generate_states(
-                                sdfg, entry_edge.src.label + "_loop",
-                                control_flow, global_stream, callsite_stream,
-                                control.scope, states_generated,
-                                generated_edges)
+                            self.generate_states(sdfg,
+                                                 entry_edge.src.label + "_loop",
+                                                 control_flow, global_stream,
+                                                 callsite_stream, control.scope,
+                                                 states_generated,
+                                                 generated_edges)
 
                             callsite_stream.write("}", sdfg, sid)
 
@@ -475,15 +552,15 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
+                                        sdfg.sdfg_id,
                                         control.scope.exit.edge.dst))
                                 generated_edges.add(control.scope.exit.edge)
 
-                        elif isinstance(control, dace.graph.edges.IfExit):
+                        elif isinstance(control, cflow.IfExit):
                             generate_transition &= True
                             generate_assignments &= True
 
-                        elif isinstance(control, dace.graph.edges.IfEntry):
+                        elif isinstance(control, cflow.IfEntry):
                             generate_transition &= False
                             generate_assignments &= True
 
@@ -496,7 +573,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             then_entry = then_scope.entry.edge
 
                             condition = cppunparse.cppunparse(
-                                then_entry.data.condition, False)
+                                then_entry.data.condition.code, False)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
@@ -537,7 +614,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             else:
                                 callsite_stream.write(
                                     "goto __state_{}_{};".format(
-                                        sdfg.name,
+                                        sdfg.sdfg_id,
                                         control.scope.exit.edge.dst))
 
                         else:
@@ -567,8 +644,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                         pass
                     else:
                         self._generate_transition(sdfg, sid, callsite_stream,
-                                                  edge,
-                                                  assignments_to_generate)
+                                                  edge, assignments_to_generate)
                         # Assignments will be generated in the transition
                         generate_assignments = False
 
@@ -582,22 +658,23 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 # End of out_edges loop
 
             if (((len(out_edges) == 0) or
-                 (not isinstance(scope, dace.graph.edges.ControlFlowScope) and
+                 (not isinstance(scope, cflow.ControlFlowScope) and
                   (len(states_to_generate) == 0)))
                     and (len(states_generated) != sdfg.number_of_nodes())):
                 callsite_stream.write(
-                    "goto __state_exit_{}_{};".format(sdfg.name, scope_label),
-                    sdfg, sid)
+                    "goto __state_exit_{}_{};".format(sdfg.sdfg_id,
+                                                      scope_label), sdfg, sid)
 
         # Write exit state
         callsite_stream.write(
-            "__state_exit_{}_{}:;".format(sdfg.name, scope_label), sdfg)
+            "__state_exit_{}_{}:;".format(sdfg.sdfg_id, scope_label), sdfg)
 
-    def generate_code(self,
-                      sdfg: SDFG,
-                      schedule: Optional[dtypes.ScheduleType],
-                      sdfg_id: str = ""
-                      ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+    def generate_code(
+        self,
+        sdfg: SDFG,
+        schedule: Optional[dtypes.ScheduleType],
+        sdfg_id: str = ""
+    ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.
@@ -608,6 +685,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
+
+        if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
+            sdfg_id = '_%d' % sdfg.sdfg_id
 
         sdfg_label = sdfg.name + sdfg_id
 
@@ -637,29 +717,24 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     self._dispatcher.dispatch_allocate(sdfg, state, None, node,
                                                        global_stream,
                                                        callsite_stream)
-                    self._dispatcher.dispatch_initialize(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
                     allocated.add(node.data)
 
         # Allocate inter-state variables
-        assigned, _ = sdfg.interstate_symbols()
-        for isvarName, isvarType in assigned.items():
+        global_symbols = copy.deepcopy(sdfg.symbols)
+        interstate_symbols = {}
+        for e in sdfg.edges():
+            symbols = e.data.new_symbols(global_symbols)
+            interstate_symbols.update(symbols)
+            global_symbols.update(symbols)
+
+        for isvarName, isvarType in interstate_symbols.items():
             # Skip symbols that have been declared as outer-level transients
             if isvarName in allocated:
                 continue
+            isvar = data.Scalar(isvarType)
             callsite_stream.write(
-                '%s;\n' %
-                (isvarType.signature(with_types=True, name=isvarName)), sdfg)
-
-        # Initialize parameter arrays
-        for argnode in dtypes.deduplicate(sdfg.input_arrays() +
-                                          sdfg.output_arrays()):
-            # Ignore transient arrays
-            if argnode.desc(sdfg).transient: continue
-            self._dispatcher.dispatch_initialize(sdfg, sdfg, None, argnode,
-                                                 global_stream,
-                                                 callsite_stream)
+                '%s;\n' % (isvar.signature(with_types=True, name=isvarName)),
+                sdfg)
 
         callsite_stream.write('\n', sdfg)
 
@@ -745,17 +820,15 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 # Nested loops case I - previous edge of internal loop is a
                 # loop-entry of an external loop (first state in a loop is
                 # another loop)
-                if (len(control_flow[previous_edge]) == 1
-                        and isinstance(control_flow[previous_edge][0],
-                                       dace.graph.edges.LoopEntry)):
+                if (len(control_flow[previous_edge]) == 1 and isinstance(
+                        control_flow[previous_edge][0], cflow.LoopEntry)):
                     # Nested loop, mark parent scope
                     loop_parent = control_flow[previous_edge][0].scope
                 # Nested loops case II - exit edge of internal loop is a
                 # back-edge of an external loop (last state in a loop is another
                 # loop)
-                elif (len(control_flow[exit_edge]) == 1
-                      and isinstance(control_flow[exit_edge][0],
-                                     dace.graph.edges.LoopBack)):
+                elif (len(control_flow[exit_edge]) == 1 and isinstance(
+                        control_flow[exit_edge][0], cflow.LoopBack)):
                     # Nested loop, mark parent scope
                     loop_parent = control_flow[exit_edge][0].scope
                 elif (len(control_flow[exit_edge]) == 0
@@ -776,7 +849,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     continue
 
                 # This is a loop! Generate the necessary annotation objects.
-                loop_scope = dace.graph.edges.LoopScope(internal_nodes)
+                loop_scope = cflow.LoopScope(internal_nodes)
 
                 if ((len(previous_edge.data.assignments) > 0
                      or len(back_edge.data.assignments) > 0) and
@@ -785,15 +858,14 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                       control_flow[previous_edge][0].scope == loop_parent))):
                     # Generate assignment edge, if available
                     control_flow[previous_edge].append(
-                        dace.graph.edges.LoopAssignment(
-                            loop_scope, previous_edge))
+                        cflow.LoopAssignment(loop_scope, previous_edge))
                 # Assign remaining control flow constructs
                 control_flow[entry_edge].append(
-                    dace.graph.edges.LoopEntry(loop_scope, entry_edge))
+                    cflow.LoopEntry(loop_scope, entry_edge))
                 control_flow[exit_edge].append(
-                    dace.graph.edges.LoopExit(loop_scope, exit_edge))
+                    cflow.LoopExit(loop_scope, exit_edge))
                 control_flow[back_edge].append(
-                    dace.graph.edges.LoopBack(loop_scope, back_edge))
+                    cflow.LoopBack(loop_scope, back_edge))
 
             ###################################################################
             # If/then/else detection procedure
@@ -858,39 +930,34 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     continue
 
                 # This is a valid if/then/else construct. Generate annotations
-                if_then_else = dace.graph.edges.IfThenElse(
-                    candidate, dominator)
+                if_then_else = cflow.IfThenElse(candidate, dominator)
 
                 # Arbitrarily assign then/else to the two branches. If one edge
                 # has no dominator but leads to the dominator, it means there's
                 # only a then clause (and no else).
                 has_else = False
                 if len(dominators[left]) == 1:
-                    then_scope = dace.graph.edges.IfThenScope(
-                        if_then_else, left_nodes)
-                    else_scope = dace.graph.edges.IfElseScope(
-                        if_then_else, right_nodes)
+                    then_scope = cflow.IfThenScope(if_then_else, left_nodes)
+                    else_scope = cflow.IfElseScope(if_then_else, right_nodes)
                     control_flow[left_entry].append(
-                        dace.graph.edges.IfEntry(then_scope, left_entry))
+                        cflow.IfEntry(then_scope, left_entry))
                     control_flow[left_exit].append(
-                        dace.graph.edges.IfExit(then_scope, left_exit))
+                        cflow.IfExit(then_scope, left_exit))
                     control_flow[right_exit].append(
-                        dace.graph.edges.IfExit(else_scope, right_exit))
+                        cflow.IfExit(else_scope, right_exit))
                     if len(dominators[right]) == 1:
                         control_flow[right_entry].append(
-                            dace.graph.edges.IfEntry(else_scope, right_entry))
+                            cflow.IfEntry(else_scope, right_entry))
                         has_else = True
                 else:
-                    then_scope = dace.graph.edges.IfThenScope(
-                        if_then_else, right_nodes)
-                    else_scope = dace.graph.edges.IfElseScope(
-                        if_then_else, left_nodes)
+                    then_scope = cflow.IfThenScope(if_then_else, right_nodes)
+                    else_scope = cflow.IfElseScope(if_then_else, left_nodes)
                     control_flow[right_entry].append(
-                        dace.graph.edges.IfEntry(then_scope, right_entry))
+                        cflow.IfEntry(then_scope, right_entry))
                     control_flow[right_exit].append(
-                        dace.graph.edges.IfExit(then_scope, right_exit))
+                        cflow.IfExit(then_scope, right_exit))
                     control_flow[left_exit].append(
-                        dace.graph.edges.IfExit(else_scope, left_exit))
+                        cflow.IfExit(else_scope, left_exit))
 
         #######################################################################
         # Generate actual program body
@@ -920,8 +987,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if (node.data in shared_transients
                         and node.data not in deallocated):
                     self._dispatcher.dispatch_deallocate(
-                        sdfg, state, None, node, global_stream,
-                        callsite_stream)
+                        sdfg, state, None, node, global_stream, callsite_stream)
                     deallocated.add(node.data)
 
         # Now that we have all the information about dependencies, generate
@@ -956,62 +1022,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             generated_code = callsite_stream.getvalue()
 
         # Return the generated global and local code strings
-        return (generated_header, generated_code,
-                self._dispatcher.used_targets,
+        return (generated_header, generated_code, self._dispatcher.used_targets,
                 self._dispatcher.used_environments)
 
-
-def set_default_schedule_and_storage_types(sdfg, toplevel_schedule):
-    """ Sets default storage and schedule types throughout SDFG.
-        Replaces `ScheduleType.Default` and `StorageType.Default`
-        with the corresponding types according to the parent scope's
-        schedule. """
-    for state in sdfg.nodes():
-        scope_dict = state.scope_dict()
-        reverse_scope_dict = state.scope_dict(node_to_children=True)
-
-        def set_default_in_scope(parent_node):
-            if parent_node is None:
-                parent_schedule = toplevel_schedule
-            else:
-                parent_schedule = parent_node.map.schedule
-
-            for node in reverse_scope_dict[parent_node]:
-                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
-                # Set default schedule type
-                if isinstance(node, nodes.MapEntry):
-                    if node.map.schedule == dtypes.ScheduleType.Default:
-                        node.map.schedule = child_schedule
-                    # Also traverse children (recursively)
-                    set_default_in_scope(node)
-                elif isinstance(node, nodes.ConsumeEntry):
-                    if node.consume.schedule == dtypes.ScheduleType.Default:
-                        node.consume.schedule = child_schedule
-
-                    # Also traverse children (recursively)
-                    set_default_in_scope(node)
-                elif isinstance(node, nodes.NestedSDFG):
-                    # Nested SDFGs retain same schedule as their parent scope
-                    if node.schedule == dtypes.ScheduleType.Default:
-                        node.schedule = parent_schedule
-                elif getattr(node, 'schedule', False):
-                    if node.schedule == dtypes.ScheduleType.Default:
-                        node.schedule = child_schedule
-
-        ## End of recursive function
-
-        # Start with top-level nodes
-        set_default_in_scope(None)
-
-        # Set default storage type
-        for node in state.nodes():
-            if isinstance(node, nodes.AccessNode):
-                if node.desc(sdfg).storage == dtypes.StorageType.Default:
-                    if scope_dict[node] is None:
-                        parent_schedule = toplevel_schedule
-                    else:
-                        parent_schedule = scope_dict[node].map.schedule
-
-                    node.desc(sdfg).storage = (
-                        dtypes.SCOPEDEFAULT_STORAGE[parent_schedule])
-        ### End of storage type loop

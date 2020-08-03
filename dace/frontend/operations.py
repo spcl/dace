@@ -30,7 +30,19 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     REPS = int(Config.get('treps'))
     times = [start] * (REPS + 1)
     ret = None
-    for i in range(REPS):
+    print('\nProfiling...')
+    iterator = range(REPS)
+    if Config.get_bool('profiling_status'):
+        try:
+            from tqdm import tqdm
+            iterator = tqdm(iterator, desc="Profiling")
+        except ImportError:
+                print('WARNING: Cannot show profiling progress, missing optional '
+                    'dependency tqdm...\n\tTo see a live progress bar please install '
+                    'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
+                    'this warning) set `profiling_status` to false in the dace '
+                    'config (~/.dace.conf).')
+    for i in iterator:
         # Call function
         ret = f(*args, **kwargs)
         times[i + 1] = timer()
@@ -59,11 +71,12 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
     return ret
 
 
-def detect_reduction_type(wcr_str):
+def detect_reduction_type(wcr_str, openmp=False):
     """ Inspects a lambda function and tries to determine if it's one of the 
         built-in reductions that frameworks such as MPI can provide.
 
         :param wcr_str: A Python string representation of the lambda function.
+        :param openmp: Detect additional OpenMP reduction types.
         :return: dtypes.ReductionType if detected, dtypes.ReductionType.Custom
                  if not detected, or None if no reduction is found.
     """
@@ -109,6 +122,13 @@ def detect_reduction_type(wcr_str):
     elif (isinstance(wcr_ast, ast.Compare)
           and isinstance(wcr_ast.ops[0], ast.NotEq)):
         return dtypes.ReductionType.Logical_Xor
+    elif result == b:
+        return dtypes.ReductionType.Exchange
+    # OpenMP extensions
+    elif openmp and result == a - b:
+        return dtypes.ReductionType.Sub
+    elif openmp and result == a / b:
+        return dtypes.ReductionType.Div
 
     return dtypes.ReductionType.Custom
 
@@ -166,13 +186,29 @@ def is_op_associative(wcr_str):
     return aRbc == abRc
 
 
-def reduce(op, in_array, out_array, axis=None, identity=None):
-    """ Reduces an array according to an operation `op`, starting with 
-        initial value `identity`, over the given axis (or all axes if none 
-        given), to `out_array`.
+def reduce(op, in_array, out_array=None, axis=None, identity=None):
+    """ Reduces an array according to a binary operation `op`, starting with initial value
+        `identity`, over the given axis (or axes if axis is a list), to `out_array`.
 
-        Requires `out_array` with one dimension less than `in_array`, or a 
-        scalar if `axis` is None.
+        Requires `out_array` with `len(axis)` dimensions less than `in_array`, or a scalar if `axis` is None.
+
+        :param op: binary operation to use for reduction.
+        :param in_array: array to reduce.
+        :param out_array: output array to write the result to. If `None`, a new array will be returned.
+        :param axis: the axis or axes to reduce over. If `None`, all axes will be reduced.
+        :param identity: intial value for the reduction. If `None`, uses value stored in output.
+        :return: `None` if out_array is given, or the newly created `out_array` if `out_array` is `None`.
+    """
+    # The function is empty because it is parsed in the Python frontend
+    return None
+
+
+def elementwise(func, in_array, out_array=None):
+    """ Applies a function to each element of the array
+        :param in_array: array to apply to.
+        :param out_array: output array to write the result to. If `None`, a new array will be returned
+        :param func: lambda function to apply to each element.
+        :return: new array with the lambda applied to each element
     """
     # The function is empty because it is parsed in the Python frontend
     return None

@@ -4,7 +4,7 @@ import numpy as np
 
 import dace as dp
 from dace.sdfg import SDFG
-from dace.memlet import Memlet, EmptyMemlet
+from dace.memlet import Memlet
 
 N = dp.symbol('N')
 sdfg = SDFG('tlstream')
@@ -18,7 +18,7 @@ globalarr = state.add_array('ga', [N], dp.float32)
 me, mx = state.add_map('par', dict(i='0:N'))
 tasklet = state.add_tasklet('arange', set(), {'a'}, 'a = i')
 
-state.add_nedge(me, tasklet, EmptyMemlet())
+state.add_nedge(me, tasklet, Memlet())
 state.add_edge(tasklet, 'a', localstream, None,
                Memlet.from_array(localstream.data, localstream.desc(sdfg)))
 state.add_nedge(localstream, localarr,
@@ -31,7 +31,6 @@ state.add_nedge(globalstream, globalarr,
                 Memlet.from_array(globalarr.data, globalarr.desc(sdfg)))
 
 sdfg.fill_scope_connectors()
-sdfg.draw_to_file()
 
 if __name__ == '__main__':
     print('Thread-local stream test')
@@ -47,7 +46,7 @@ if __name__ == '__main__':
         print('ERROR: Thread-local stream was not created')
         exit(1)
 
-    func = dp.compile(sdfg)
+    func = sdfg.compile()
     func(ga=output, N=N)
 
     output = np.sort(output)

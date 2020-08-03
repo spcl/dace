@@ -104,7 +104,7 @@ class NameValidationTests(unittest.TestCase):
     def test_interstate_edge(self):
         try:
             sdfg = dace.SDFG('ok')
-            state = sdfg.add_state('also_ok')
+            state = sdfg.add_state('also_ok', is_start_state=True)
             A = state.add_array('A', [1], dace.float32)
             B = state.add_array('B', [1], dace.float32)
             t = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a')

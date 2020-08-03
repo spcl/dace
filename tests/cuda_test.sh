@@ -169,7 +169,7 @@ runall() {
     runopt samples/simple/sum.py $1
     runopt samples/simple/sum.py $1 'GPUTransformMap$0'
     
-    runtestopt cuda_blockreduce.py $1 'GPUTransformMap$0'
+    runtestopt blockreduce_cudatest.py $1
 
     runtestopt cuda_highdim_kernel_test.py $1 'GPUTransformMap$0(fullcopy=True)'
     
@@ -182,9 +182,17 @@ runall() {
     runtestopt wcr_cudatest.py $1
     
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
+    runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
     
     runtestargs instrumentation_test.py gpu
     runtestargs library/matmul_cudatest.py
+
+    runtestargs dynamic_tb_map_cudatest.py
+    runtestargs kernel_fusion_cudatest.py
+
+    runtestargs persistent_map_cudatest.py
+    runtestargs persistent_tb_map_cudatest.py
+    runtestargs persistent_fusion_cudatest.py
 }
 
 

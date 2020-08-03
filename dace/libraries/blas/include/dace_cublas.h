@@ -63,8 +63,6 @@ class CublasHandle {
   std::unordered_map<int, cublasHandle_t> handles_;
 };
 
-namespace {
-
 class _CublasConstants {
  public:
   __half const* HalfZero() const { return (__half*)zero_; }
@@ -136,8 +134,6 @@ class _CublasConstants {
   cuComplex* complex64_pone_;
   cuDoubleComplex* complex128_pone_;
 };
-
-}  // namespace
 
 class CublasConstants {
  public:

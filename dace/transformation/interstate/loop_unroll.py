@@ -7,7 +7,8 @@ from typing import List, Optional, Tuple
 
 from dace import dtypes, registry, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.graph import edges, graph as gr, nodes, nxutil
+from dace.sdfg import graph as gr, nodes
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import DetectLoop
 
@@ -23,8 +24,9 @@ class LoopUnroll(DetectLoop):
                      "iterations (loop must be constant-sized for 0)")
 
     @staticmethod
-    def _loop_range(itervar: str, inedges: List[gr.Edge], condition: sp.Expr
-                    ) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
+    def _loop_range(
+            itervar: str, inedges: List[gr.Edge],
+            condition: sp.Expr) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
         """
         Finds loop range from state machine.
         :param itersym: String representing the iteration variable.
@@ -122,7 +124,8 @@ class LoopUnroll(DetectLoop):
             raise NotImplementedError  # TODO(later)
 
         # Find the state prior to the loop
-        if str(rng[0]) == guard_inedges[0].data.assignments[itervar]:
+        if rng[0] == symbolic.pystr_to_symbolic(
+                guard_inedges[0].data.assignments[itervar]):
             before_state: sd.SDFGState = guard_inedges[0].src
             last_state: sd.SDFGState = guard_inedges[1].src
         else:
@@ -131,7 +134,7 @@ class LoopUnroll(DetectLoop):
 
         # Get loop states
         loop_states = list(
-            nxutil.dfs_topological_sort(
+            sdutil.dfs_topological_sort(
                 sdfg,
                 sources=[begin],
                 condition=lambda _, child: child != guard))
@@ -140,8 +143,7 @@ class LoopUnroll(DetectLoop):
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants)
-                              for r in rng)
+        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
 
         # Create states for loop subgraph
         unrolled_states = []
@@ -156,7 +158,7 @@ class LoopUnroll(DetectLoop):
             # Replace iterate with value in each state
             for state in new_states:
                 state.set_label(state.label + '_%s_%d' % (itervar, i))
-                state.replace(itervar, str(i))
+                state.replace(itervar, i)
 
             # Add subgraph to original SDFG
             for edge in loop_subgraph.edges():
@@ -164,7 +166,7 @@ class LoopUnroll(DetectLoop):
                 dst = new_states[loop_states.index(edge.dst)]
 
                 # Replace conditions in subgraph edges
-                data: edges.InterstateEdge = copy.deepcopy(edge.data)
+                data: sd.InterstateEdge = copy.deepcopy(edge.data)
                 if data.condition:
                     ASTFindReplace({itervar: str(i)}).visit(data.condition)
 
@@ -173,16 +175,16 @@ class LoopUnroll(DetectLoop):
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
                 sdfg.add_edge(unrolled_states[-1][1], new_states[first_id],
-                              edges.InterstateEdge())
+                              sd.InterstateEdge())
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
         # Connect new states to before and after states without conditions
         if unrolled_states:
             sdfg.add_edge(before_state, unrolled_states[0][0],
-                          edges.InterstateEdge())
+                          sd.InterstateEdge())
             sdfg.add_edge(unrolled_states[-1][1], after_state,
-                          edges.InterstateEdge())
+                          sd.InterstateEdge())
 
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)

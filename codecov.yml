@@ -6,3 +6,6 @@ coverage:
   round: nearest
   status:
     patch: off
+    project:
+      default:
+        threshold: 1%

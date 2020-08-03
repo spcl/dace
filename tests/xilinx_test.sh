@@ -34,45 +34,45 @@ run_sample() {
     #  3-x - Other args to forward to kernel
     TESTS=`expr $TESTS + 1`
     echo -e "${YELLOW}Running test $1...${NC}"
-    yes | $PYTHON_BINARY ../samples/fpga/$1.py ${@:4}
+    yes | $PYTHON_BINARY $1.py ${@:4}
     if [ $? -ne 0 ]; then
       bail "$1 (${RED}simulation failed${NC})"
       return 1
     fi
-    cd .dacecache/$2/build
-    make xilinx_compile_hardware
+    (cd .dacecache/$2/build && make xilinx_compile_hardware)
     if [ $? -ne 0 ]; then
       bail "$1 (${RED}high-level synthesis failed${NC})"
       return 1
     fi
     if [ $3 -ne 0 ]; then
-      grep -n xocc_*_hw.log -e "Final II = \([2-9]\|1[0-9]+\)"
+      grep -n .dacecache/$2/build/xocc_*_hw.log -e "Final II = \([2-9]\|1[0-9]+\)"
       if [ $? == 0 ]; then
         bail "$1 (${RED}design was not fully pipelined${NC})"
       fi
     fi
-    cd ../../../
     return 0
 }
 
 run_all() {
     # Args:
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
-    run_sample axpy_transformed axpy_fpga_24 0 24
-    run_sample histogram_fpga_parallel histogram_fpga_parallel_16 0 128 128 16
-    run_sample spmv_fpga_stream spmv_fpga_stream 0 64 64 640
-    run_sample gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 
-    run_sample filter_fpga_vectorized filter_fpga_vectorized_4 1 8192 4 0.25
+    run_sample remove_degenerate_loop remove_degenerate_loop_test 0
+    run_sample pipeline_scope pipeline_test 1
+    run_sample veclen_copy_conversion veclen_copy_conversion 1
+    run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 0 24
+    run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream 0 64 64 640
+    run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 
+    run_sample ../samples/fpga/filter_fpga_vectorized filter_fpga_vectorized_4 1 8192 4 0.25
     # run_sample jacobi_fpga_systolic jacobi_fpga_systolic_4_Hx128xT 1 128 128 8 4
     # TODO: this doesn't pipeline. Should it? Why doesn't it?
-    run_sample gemv_transposed_fpga gemv_transposed_1024xM 0 1024 1024
+    run_sample ../samples/fpga/gemv_transposed_fpga gemv_transposed_1024xM 0 1024 1024
     if [ "$1" -ne "0" ]; then
-      run_sample histogram_fpga histogram_fpga 0 128 128
-      run_sample spmv_fpga spmv_fpga 0 64 64 640
-      run_sample gemm_fpga_pipelined gemm_fpga_pipelined_NxKx128 1 128 128 128
-      run_sample gemm_fpga_stream gemm_fpga_stream_NxKx64 1 64 64 64
-      run_sample filter_fpga filter_fpga 1 8192 0.5
-      run_sample jacobi_fpga_stream jacobi_fpga_stream_Hx128xT 1 128 128 8
+      run_sample ../samples/fpga/histogram_fpga histogram_fpga 0 128 128
+      run_sample ../samples/fpga/spmv_fpga spmv_fpga 0 64 64 640
+      run_sample ../samples/fpga/gemm_fpga_pipelined gemm_fpga_pipelined_NxKx128 1 128 128 128
+      run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx64 1 64 64 64
+      run_sample ../samples/fpga/filter_fpga filter_fpga 1 8192 0.5
+      run_sample ../samples/fpga/jacobi_fpga_stream jacobi_fpga_stream_Hx128xT 1 128 128 8
     fi
 }
 
@@ -89,6 +89,7 @@ fi
 echo "====== Target: Xilinx ======"
 
 DACE_compiler_use_cache=0
+DACE_testing_single_cache=0
 DACE_compiler_fpga_vendor="xilinx"
 DACE_compiler_xilinx_mode="simulation"
 

@@ -2,10 +2,11 @@
 import copy
 from typing import List, Optional
 
-from dace.graph import nodes
-from dace.graph.graph import SubgraphView, MultiConnectorEdge
+from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
+from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.memlet import EmptyMemlet, Memlet
+from dace.memlet import Memlet
 
 
 def nest_state_subgraph(sdfg: SDFG,
@@ -54,8 +55,7 @@ def nest_state_subgraph(sdfg: SDFG,
         scope_node = scope_dict[node]
         if scope_node not in subgraph.nodes():
             if top_scopenode != -1 and top_scopenode != scope_node:
-                raise ValueError(
-                    'Subgraph is contained in more than one scope')
+                raise ValueError('Subgraph is contained in more than one scope')
             top_scopenode = scope_node
 
     scope = scope_tree[top_scopenode]
@@ -160,6 +160,7 @@ def nest_state_subgraph(sdfg: SDFG,
         if isinstance(node, nodes.NestedSDFG):
             node.sdfg.parent = nstate
             node.sdfg.parent_sdfg = nsdfg
+            node.sdfg.parent_nsdfg_node = node
 
     # Add access nodes and edges as necessary
     edges_to_offset = []
@@ -167,16 +168,16 @@ def nest_state_subgraph(sdfg: SDFG,
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge,
-                                nstate.add_edge(node, None, edge.dst,
-                                                edge.dst_conn, new_edge)))
+        edges_to_offset.append(
+            (edge, nstate.add_edge(node, None, edge.dst, edge.dst_conn,
+                                   new_edge)))
     for name, edge in zip(output_names, outputs):
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge,
-                                nstate.add_edge(edge.src, edge.src_conn, node,
-                                                None, new_edge)))
+        edges_to_offset.append(
+            (edge, nstate.add_edge(edge.src, edge.src_conn, node, None,
+                                   new_edge)))
 
     # Offset memlet paths inside nested SDFG according to subsets
     for original_edge, new_edge in edges_to_offset:
@@ -212,13 +213,13 @@ def nest_state_subgraph(sdfg: SDFG,
     for name in input_arrays:
         node = state.add_read(name)
         if entry is not None:
-            state.add_nedge(entry, node, EmptyMemlet())
+            state.add_nedge(entry, node, Memlet())
         state.add_edge(node, None, nested_sdfg, name,
                        Memlet.from_array(name, sdfg.arrays[name]))
     for name in output_arrays:
         node = state.add_write(name)
         if exit is not None:
-            state.add_nedge(node, exit, EmptyMemlet())
+            state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None,
                        Memlet.from_array(name, sdfg.arrays[name]))
 
@@ -250,8 +251,7 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_memlet.subset) == 1
-                and ones == list(range(len(shape)))
+        if (len(internal_memlet.subset) == 1 and ones == list(range(len(shape)))
                 and (internal_memlet.subset[0] == (0, 0, 1)
                      or internal_memlet.subset[0] == 0)):
             to_unsqueeze = ones[1:]
@@ -275,3 +275,49 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
         raise NotImplementedError
 
     return result
+
+
+def replicate_scope(sdfg: SDFG, state: SDFGState,
+                    scope: ScopeSubgraphView) -> ScopeSubgraphView:
+    """
+    Replicates a scope subgraph view within a state, reconnecting all external
+    edges to the same nodes.
+    :param sdfg: The SDFG in which the subgraph scope resides.
+    :param state: The SDFG state in which the subgraph scope resides.
+    :param scope: The scope subgraph to replicate.
+    :return: A reconnected replica of the scope.
+    """
+    exit_node = state.exit_node(scope.entry)
+
+    # Replicate internal graph
+    new_nodes = []
+    new_entry = None
+    new_exit = None
+    for node in scope.nodes():
+        node_copy = copy.deepcopy(node)
+        if node == scope.entry:
+            new_entry = node_copy
+        elif node == exit_node:
+            new_exit = node_copy
+
+        state.add_node(node_copy)
+        new_nodes.append(node_copy)
+
+    for edge in scope.edges():
+        src = scope.nodes().index(edge.src)
+        dst = scope.nodes().index(edge.dst)
+        state.add_edge(new_nodes[src], edge.src_conn, new_nodes[dst],
+                       edge.dst_conn, copy.deepcopy(edge.data))
+
+    # Reconnect external scope nodes
+    for edge in state.in_edges(scope.entry):
+        state.add_edge(edge.src, edge.src_conn, new_entry, edge.dst_conn,
+                       copy.deepcopy(edge.data))
+    for edge in state.out_edges(exit_node):
+        state.add_edge(new_exit, edge.src_conn, edge.dst, edge.dst_conn,
+                       copy.deepcopy(edge.data))
+
+    # Set the exit node's map to match the entry node
+    new_exit.map = new_entry.map
+
+    return ScopeSubgraphView(state, new_nodes, new_entry)
