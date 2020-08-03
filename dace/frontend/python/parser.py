@@ -256,7 +256,7 @@ class DaceProgram:
 
         # Allow CLI to prompt for optimizations
         if Config.get_bool('optimizer', 'autooptimize'):
-            sdfg.optimize()
+            sdfg = sdfg.optimize()
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
