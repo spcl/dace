@@ -119,12 +119,12 @@ class AST_Matrix(AST_Node):
             code += ", ".join(str(i) for i in vals) + "};\n"
             code += "out[i] = VALUES[i];"
 
-            tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'},
-                                                      code, dace.Language.CPP)
+            tasklet = sdfg.nodes()[state].add_tasklet('init', {}, {'out'}, code,
+                                                      dace.Language.CPP)
             me, mx = sdfg.nodes()[state].add_map('init',
                                                  dict(i='0:' + str(arrlen)))
             sdfg.nodes()[state].add_edge(me, None, tasklet, None,
-                                         dace.memlet.EmptyMemlet())
+                                         dace.memlet.Memlet())
             sdfg.nodes()[state].add_edge(
                 tasklet, "out", mx, None,
                 dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
@@ -188,10 +188,10 @@ class AST_Transpose(AST_Node):
         N = str(dims[0])
         M = str(dims[1])
         s = sdfg.nodes()[state]
-        map_entry, map_exit = s.add_map('transpose',
-                                        dict(i='0:' + N, j='0:' + M))
-        map_entry._in_connectors.add('IN_1')
-        map_entry._out_connectors.add('OUT_1')
+        map_entry, map_exit = s.add_map('transpose', dict(i='0:' + N,
+                                                          j='0:' + M))
+        map_entry.add_in_connector('IN_1')
+        map_entry.add_out_connector('OUT_1')
         s.add_edge(A, None, map_entry, 'IN_1',
                    dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
         tasklet = s.add_tasklet('identity', {'a'}, {'out'}, 'out = a')

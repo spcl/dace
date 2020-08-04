@@ -17,12 +17,13 @@
 #include "complex.h"
 #include "pyinterop.h"
 #include "copy.h"
-#include "view.h"
+#include "reduction.h"
 #include "stream.h"
 #include "os.h"
 #include "perf/reporting.h"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#include "cuda/cudacommon.cuh"
 #include "cuda/copy.cuh"
 #include "cuda/dynmap.cuh"
 #else

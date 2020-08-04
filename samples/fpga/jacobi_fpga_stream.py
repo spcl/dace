@@ -29,15 +29,13 @@ def make_init_state(sdfg):
     tmp0 = add_tmp(state)
     state.add_memlet_path(a0,
                           tmp0,
-                          memlet=dace.memlet.Memlet.simple(
-                              tmp0, "0, 0:H, 0:W"))
+                          memlet=dace.memlet.Memlet.simple(tmp0, "0, 0:H, 0:W"))
 
     a1 = state.add_array("A", (H, W), dtype)
     tmp1 = add_tmp(state)
     state.add_memlet_path(a1,
                           tmp1,
-                          memlet=dace.memlet.Memlet.simple(
-                              tmp1, "1, 0:H, 0:W"))
+                          memlet=dace.memlet.Memlet.simple(tmp1, "1, 0:H, 0:W"))
 
     return state
 
@@ -186,54 +184,42 @@ if y >= 3 and x >= 3 and y < H - 1 and x < W - 1:
                                   window_compute_in, "0:3, 0:3"))
 
     # Output result (conditional write)
-    out_memlet = dace.memlet.Memlet(
-        stream_out, dace.symbolic.pystr_to_symbolic("-1"),
-        dace.properties.SubsetProperty.from_string("0"), 1)
+    out_memlet = dace.memlet.Memlet.simple(stream_out, "0", num_accesses=-1)
     loop_body.add_memlet_path(tasklet,
                               stream_out,
                               src_conn="result",
                               memlet=out_memlet)
 
     # Read row buffer
-    read_row_memlet = dace.memlet.Memlet(
-        rows_in,
-        dace.symbolic.pystr_to_symbolic("2"),
-        dace.properties.SubsetProperty.from_string("0:2, x"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0:2, 2"))
+    read_row_memlet = dace.memlet.Memlet.simple(rows_in,
+                                                '0:2, x',
+                                                other_subset_str="0:2, 2")
     pre_shift.add_memlet_path(rows_in,
                               window_buffer_out,
                               memlet=read_row_memlet)
 
     # Read from memory
-    read_memory_memlet = dace.memlet.Memlet(
-        stream_in,
-        dace.symbolic.pystr_to_symbolic("1"),
-        dace.properties.SubsetProperty.from_string("0"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("2, 2"))
+    read_memory_memlet = dace.memlet.Memlet.simple(stream_in,
+                                                   '0',
+                                                   other_subset_str="2, 2")
     pre_shift.add_memlet_path(stream_in,
                               window_buffer_out,
                               memlet=read_memory_memlet)
 
     # Shift window
-    shift_window_memlet = dace.memlet.Memlet(
-        window_shift_in,
-        dace.symbolic.pystr_to_symbolic("6"),
-        dace.properties.SubsetProperty.from_string("0:3, 1:3"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0:3, 0:2"))
+    shift_window_memlet = dace.memlet.Memlet.simple(window_shift_in,
+                                                    "0:3, 1:3",
+                                                    num_accesses=6,
+                                                    other_subset_str="0:3, 0:2")
     post_shift.add_memlet_path(window_shift_in,
                                window_shift_out,
                                memlet=shift_window_memlet)
 
     # To row buffer
-    write_row_memlet = dace.memlet.Memlet(
-        window_buffer_in,
-        dace.symbolic.pystr_to_symbolic("2"),
-        dace.properties.SubsetProperty.from_string("1:3, 2"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0:2, x"))
+    write_row_memlet = dace.memlet.Memlet.simple(window_buffer_in,
+                                                 '1:3, 2',
+                                                 num_accesses="2",
+                                                 other_subset_str="0:2, x")
     post_shift.add_memlet_path(window_buffer_in,
                                rows_out,
                                memlet=write_row_memlet)
@@ -315,12 +301,9 @@ def make_read_sdfg():
         storage=dace.dtypes.StorageType.FPGA_Global)
 
     # Read from memory
-    read_memory_memlet = dace.memlet.Memlet(
-        mem_read,
-        dace.symbolic.pystr_to_symbolic("1"),
-        dace.properties.SubsetProperty.from_string("t%2, y, x"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0"))
+    read_memory_memlet = dace.memlet.Memlet.simple(mem_read,
+                                                   "t%2, y, x",
+                                                   other_subset_str="0")
     loop_body.add_memlet_path(mem_read,
                               stream_to_kernel,
                               memlet=read_memory_memlet)
@@ -397,19 +380,13 @@ def make_write_sdfg():
         dtype,
         1,
         storage=dace.dtypes.StorageType.FPGA_Global)
-    mem_write = loop_body.add_array(
-        "mem_write", (2, H, W),
-        dtype,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    mem_write = loop_body.add_array("mem_write", (2, H, W),
+                                    dtype,
+                                    storage=dace.dtypes.StorageType.FPGA_Global)
 
     # Read from memory
-    write_memory_memlet = dace.memlet.Memlet(
-        stream_from_kernel,
-        dace.symbolic.pystr_to_symbolic("1"),
-        dace.properties.SubsetProperty.from_string("0"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string(
-            "1 - t%2, y, x"))
+    write_memory_memlet = dace.memlet.Memlet.simple(
+        stream_from_kernel, "0", other_subset_str="1 - t%2, y, x")
     loop_body.add_memlet_path(stream_from_kernel,
                               mem_write,
                               memlet=write_memory_memlet)
@@ -451,8 +428,8 @@ def make_outer_compute_state(sdfg):
     read_sdfg_node = state.add_nested_sdfg(read_sdfg, sdfg, {"mem_read"},
                                            {"stream_to_kernel"})
     compute_sdfg = make_compute_sdfg()
-    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg,
-                                              {"stream_in"}, {"stream_out"})
+    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg, {"stream_in"},
+                                              {"stream_out"})
     write_sdfg = make_write_sdfg()
     write_sdfg_node = state.add_nested_sdfg(write_sdfg, sdfg,
                                             {"stream_from_kernel"},
@@ -465,40 +442,39 @@ def make_outer_compute_state(sdfg):
                           dst_conn="mem_read",
                           memlet=dace.memlet.Memlet.simple(
                               tmp_in, "0:2, 0:H, 0:W"))
-    state.add_memlet_path(read_sdfg_node,
-                          stream_read_out,
-                          src_conn="stream_to_kernel",
-                          memlet=dace.memlet.Memlet(
-                              stream_read_out,
-                              dace.symbolic.pystr_to_symbolic("T*H*W"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+    state.add_memlet_path(
+        read_sdfg_node,
+        stream_read_out,
+        src_conn="stream_to_kernel",
+        memlet=dace.memlet.Memlet.simple(
+            stream_read_out,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*H*W")))
 
-    state.add_memlet_path(stream_read_in,
-                          compute_sdfg_node,
-                          dst_conn="stream_in",
-                          memlet=dace.memlet.Memlet(
-                              stream_read_in,
-                              dace.symbolic.pystr_to_symbolic("T*H*W"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+    state.add_memlet_path(
+        stream_read_in,
+        compute_sdfg_node,
+        dst_conn="stream_in",
+        memlet=dace.memlet.Memlet.simple(
+            stream_read_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*H*W")))
     state.add_memlet_path(
         compute_sdfg_node,
         stream_write_out,
         src_conn="stream_out",
-        memlet=dace.memlet.Memlet(
+        memlet=dace.memlet.Memlet.simple(
             stream_write_out,
-            dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)"),
-            dace.properties.SubsetProperty.from_string("0"), 1))
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)")))
 
     state.add_memlet_path(
         stream_write_in,
         write_sdfg_node,
         dst_conn="stream_from_kernel",
-        memlet=dace.memlet.Memlet(
-            stream_write_in,
-            dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)"),
-            dace.properties.SubsetProperty.from_string("0"), 1))
+        memlet=dace.memlet.Memlet.simple(
+            stream_write_in, '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)")))
     state.add_memlet_path(write_sdfg_node,
                           tmp_out,
                           src_conn="mem_write",
@@ -609,8 +585,7 @@ if __name__ == "__main__":
                                                    H.get() * W.get()))
         print("Highest difference: {}".format(highest_diff))
         print("** Result:\n", A[:min(6, H.get()), :min(6, W.get())])
-        print("** Reference:\n",
-              regression[:min(4, H.get()), :min(4, W.get())])
+        print("** Reference:\n", regression[:min(4, H.get()), :min(4, W.get())])
         print("Type \"debug\" to enter debugger, "
               "or any other string to quit (timeout in 10 seconds)")
         read, _, _ = select.select([sys.stdin], [], [], 10)

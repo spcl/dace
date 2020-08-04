@@ -8,17 +8,27 @@
 #include <mutex>
 #include <new> // Used for the in-memory ctor call in the move assignment operator below  
 
+#ifdef __HIPCC__
+#include <hip/hip_runtime.h>
+#include <hip/hip_cooperative_groups.h>
+#define gpuLaunchKernel hipLaunchKernel
+#define gpuMalloc hipMalloc
+#define gpuMemset hipMemset
+#define gpuFree hipFree
+#else
 #include <cuda_runtime.h>
 #include <cooperative_groups.h>
-
-#include "../../../../external/cub/cub/util_ptx.cuh"
-#include "../../../../external/cub/cub/warp/warp_reduce.cuh"
-#include "../../../../external/cub/cub/warp/warp_scan.cuh"
+#define gpuLaunchKernel cudaLaunchKernel
+#define gpuMalloc cudaMalloc
+#define gpuMemset cudaMemset
+#define gpuFree cudaFree
+#endif
 
 #include "cudacommon.cuh"
 
 namespace dace {
     // Adapted from https://devblogs.nvidia.com/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/
+#ifndef __HIPCC__
     __inline__ __device__ uint32_t atomicAggInc(uint32_t *ctr) {
         auto g = cooperative_groups::coalesced_threads();
         uint32_t warp_res;
@@ -34,16 +44,38 @@ namespace dace {
         int rank = g.thread_rank();
         if (rank == 0)
             warp_res = atomicAdd(ctr, -g.size());
-        return g.shfl(warp_res, 0) + rank;
+        return g.shfl(warp_res, 0) - g.size() + rank;
+    }
+#else
+    // Version without cooperative groups to support HIP
+    __inline__ __device__ uint32_t atomicAggInc(uint32_t *ctr) {
+        unsigned int lane = threadIdx.x % warpSize;
+        unsigned long long int mask = __ballot(1);  // 64-bit because AMD warp size is 64
+        unsigned int thread_offset = __popcll(mask & ((1ULL << lane) - 1));
+        unsigned int leader = __ffsll(mask) - 1;
+        unsigned int count = __popcll(mask);
+        uint32_t warp_res;
+        if (lane == leader)
+            warp_res = atomicAdd(ctr, count);
+
+        warp_res = __shfl(warp_res, leader);
+        return warp_res + thread_offset;
     }
 
-    /*
-    __inline__ __device__ uint32_t warpReduceSum(uint32_t val) {
-        for (int offset = CUB_PTX_WARP_THREADS / 2; offset > 0; offset /= 2)
-            val += __shfl_down(val, offset);
-        return val;
+    __inline__ __device__ uint32_t atomicAggDec(uint32_t *ctr) {
+        unsigned int lane = threadIdx.x % warpSize;
+        unsigned long long int mask = __ballot(1);  // 64-bit because AMD warp size is 64
+        unsigned int thread_offset = __popcll(mask & ((1ULL << lane) - 1));
+        unsigned int leader = __ffsll(mask) - 1;
+        unsigned int count = __popcll(mask);
+        uint32_t warp_res;
+        if (lane == leader)
+            warp_res = atomicAdd(ctr, -count);
+
+        warp_res = __shfl(warp_res, leader);
+        return warp_res - count + thread_offset;
     }
-    */
+#endif // __HIPCC__
 
     //
     // Queue classes (device):
@@ -180,9 +212,9 @@ namespace dace {
     void ResetGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         void *args_reset[1] = { &stream };
-        DACE_CUDA_CHECK(cudaLaunchKernel((void *)&ResetGPUStream_kernel<T, IS_POW2>,
+        DACE_CUDA_CHECK(gpuLaunchKernel((void *)&ResetGPUStream_kernel<T, IS_POW2>,
                                          dim3(1, 1, 1), dim3(1, 1, 1), 
-                                         args_reset, 0, (cudaStream_t)0));
+                                         args_reset, 0, (gpuStream_t)0));
     }
 
     template<typename T, bool IS_POW2>
@@ -196,9 +228,9 @@ namespace dace {
     void PushToGPUStream(GPUStream<T, IS_POW2>& stream, const T& item)
     {
         void *args_push[2] = { &stream, &item };
-        DACE_CUDA_CHECK(cudaLaunchKernel((void *)&PushToGPUStream_kernel<T, IS_POW2>,
+        DACE_CUDA_CHECK(gpuLaunchKernel((void *)&PushToGPUStream_kernel<T, IS_POW2>,
                                          dim3(1, 1, 1), dim3(1, 1, 1), 
-                                         args_push, 0, (cudaStream_t)0));
+                                         args_push, 0, (gpuStream_t)0));
     }
 
     ////////////////////////////////////////////////////////////
@@ -209,12 +241,12 @@ namespace dace {
     GPUStream<T, IS_POW2> AllocGPUArrayStreamView(T *ptr, uint32_t capacity)
     {
         uint32_t *gStart, *gEnd, *gPending;
-        DACE_CUDA_CHECK(cudaMalloc(&gStart, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMalloc(&gEnd, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMalloc(&gPending, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMemset(gStart, 0, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMemset(gEnd, 0, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(cudaMemset(gPending, 0, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(gpuMalloc(&gStart, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(gpuMalloc(&gEnd, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(gpuMalloc(&gPending, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(gpuMemset(gStart, 0, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(gpuMemset(gEnd, 0, sizeof(uint32_t)));
+        DACE_CUDA_CHECK(gpuMemset(gPending, 0, sizeof(uint32_t)));
         return GPUStream<T, IS_POW2>(ptr, capacity, gStart, gEnd, gPending);
     }
 
@@ -222,24 +254,25 @@ namespace dace {
     GPUStream<T, IS_POW2> AllocGPUStream(uint32_t capacity)
     {
         T *gData;
-        DACE_CUDA_CHECK(cudaMalloc(&gData, capacity * sizeof(T)));
+        DACE_CUDA_CHECK(gpuMalloc(&gData, capacity * sizeof(T)));
         return AllocGPUArrayStreamView<T, IS_POW2>(gData, capacity);
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUArrayStreamView(GPUStream<T, IS_POW2>& stream)
     {
-        DACE_CUDA_CHECK(cudaFree(stream.m_start));
-        DACE_CUDA_CHECK(cudaFree(stream.m_end));
-        DACE_CUDA_CHECK(cudaFree(stream.m_pending));
+        DACE_CUDA_CHECK(gpuFree(stream.m_start));
+        DACE_CUDA_CHECK(gpuFree(stream.m_end));
+        DACE_CUDA_CHECK(gpuFree(stream.m_pending));
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         FreeGPUArrayStreamView(stream);
-        DACE_CUDA_CHECK(cudaFree(stream.m_data));
+        DACE_CUDA_CHECK(gpuFree(stream.m_data));
     }
 
 }  // namespace dace
+
 #endif // __DACE_STREAM_CUH

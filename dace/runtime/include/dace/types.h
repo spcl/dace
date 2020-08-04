@@ -19,7 +19,7 @@
 #endif
 
 // Visual Studio (<=2017) + CUDA support
-#if defined(_MSC_VER) && (_MSC_VER <= 1999 || defined(__CUDACC__)) || defined(DACE_XILINX)
+#if defined(_MSC_VER) && _MSC_VER <= 1999
 #define DACE_CONSTEXPR
 #else
 #define DACE_CONSTEXPR constexpr
@@ -33,13 +33,18 @@
     #define DACE_HDFI __host__ __device__ __forceinline__
     #define DACE_HFI __host__ __forceinline__
     #define DACE_DFI __device__ __forceinline__
+#elif defined(__HIPCC__)
+    #include <hip/hip_runtime.h>
+    #define DACE_HDFI __host__ __device__ __forceinline__
+    #define DACE_HFI __host__ __forceinline__
+    #define DACE_DFI __device__ __forceinline__
 #else
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline
 #endif
 
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__) || defined(__HIP_ARCH__)
     #define __DACE_UNROLL DACE_PRAGMA(unroll)
 #else
     #define __DACE_UNROLL
@@ -73,7 +78,6 @@ namespace dace
 
     enum NumAccesses
     {
-        NA_DYNAMIC = -1, // Dynamic number of accesses
         NA_RUNTIME = 0, // Given at runtime
     };
 
@@ -110,6 +114,7 @@ namespace dace
         Bitwise_Xor = 10,
         Min_Location = 11,
         Max_Location = 12,
+        Exchange = 13
     };
 }
 

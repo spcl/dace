@@ -121,8 +121,8 @@ def make_compute_state(sdfg):
                                transient=True,
                                storage=dace.dtypes.StorageType.FPGA_Local)
 
-    cols_entry, cols_exit = state.add_map(
-        "cols", {"m": "0:M"}, schedule=dace.ScheduleType.Sequential)
+    cols_entry, cols_exit = state.add_map("cols", {"m": "0:M"},
+                                          schedule=dace.ScheduleType.Sequential)
     rows_entry, rows_exit = state.add_map("rows", {"n": "0:N"})
 
     tasklet = state.add_tasklet("update", {"a", "x_in"}, {"update"},
@@ -163,11 +163,11 @@ def make_outer_compute_state(sdfg):
     compute_state = make_compute_state(nested_sdfg)
     store_state = make_store_state(nested_sdfg)
     nested_sdfg.add_edge(load_state, compute_state, dace.sdfg.InterstateEdge())
-    nested_sdfg.add_edge(compute_state, store_state,
-                         dace.sdfg.InterstateEdge())
+    nested_sdfg.add_edge(compute_state, store_state, dace.sdfg.InterstateEdge())
 
     tasklet = state.add_nested_sdfg(nested_sdfg, sdfg,
-                                    {"A_nested", "x_nested"}, {"y_nested"})
+                                    {"A_nested", "x_nested", "y_nested"},
+                                    {"y_nested"})
 
     a_device = state.add_array("A_device", (M, N),
                                dtype,
@@ -177,10 +177,14 @@ def make_outer_compute_state(sdfg):
                                dtype,
                                transient=True,
                                storage=dace.dtypes.StorageType.FPGA_Global)
-    y_device = state.add_array("y_device", (N, ),
-                               dtype,
-                               transient=True,
-                               storage=dace.dtypes.StorageType.FPGA_Global)
+    y_device_r = state.add_array("y_device", (N, ),
+                                 dtype,
+                                 transient=True,
+                                 storage=dace.dtypes.StorageType.FPGA_Global)
+    y_device_w = state.add_array("y_device", (N, ),
+                                 dtype,
+                                 transient=True,
+                                 storage=dace.dtypes.StorageType.FPGA_Global)
 
     state.add_memlet_path(a_device,
                           tasklet,
@@ -191,10 +195,14 @@ def make_outer_compute_state(sdfg):
                           tasklet,
                           dst_conn="x_nested",
                           memlet=dace.memlet.Memlet.simple(x_device, "0:M"))
+    state.add_memlet_path(y_device_r,
+                          tasklet,
+                          dst_conn="y_nested",
+                          memlet=dace.memlet.Memlet.simple(y_device_r, "0:N"))
     state.add_memlet_path(tasklet,
-                          y_device,
+                          y_device_w,
                           src_conn="y_nested",
-                          memlet=dace.memlet.Memlet.simple(y_device, "0:N"))
+                          memlet=dace.memlet.Memlet.simple(y_device_w, "0:N"))
 
     return state
 

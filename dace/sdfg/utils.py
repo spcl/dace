@@ -239,7 +239,7 @@ RangesType = List[sbs.Subset]
 
 
 def merge_maps(
-    graph: gr.OrderedMultiDiConnectorGraph,
+    graph: SDFGState,
     outer_map_entry: nd.MapEntry,
     outer_map_exit: nd.MapExit,
     inner_map_entry: nd.MapEntry,
@@ -274,30 +274,34 @@ def merge_maps(
     graph.add_nodes_from([merged_entry, merged_exit])
 
     # Redirect inner in edges.
-    inner_in_edges = graph.out_edges(inner_map_entry)
-    for edge in graph.edges_between(outer_map_entry, inner_map_entry):
-        if edge.dst_conn is None:  # Empty memlets
-            out_conn = None
-        else:
-            out_conn = 'OUT_' + edge.dst_conn[3:]
-        inner_edge = [e for e in inner_in_edges if e.src_conn == out_conn][0]
-        graph.remove_edge(edge)
-        graph.remove_edge(inner_edge)
-        graph.add_edge(merged_entry, edge.src_conn, inner_edge.dst,
-                       inner_edge.dst_conn, inner_edge.data)
+    for edge in graph.out_edges(inner_map_entry):
+        if edge.src_conn is None:  # Empty memlets
+            graph.add_edge(merged_entry, edge.src_conn, edge.dst, edge.dst_conn,
+                           edge.data)
+            continue
+
+        # Get memlet path and edge
+        path = graph.memlet_path(edge)
+        ind = path.index(edge)
+        # Add an edge directly from the previous source connector to the
+        # destination
+        graph.add_edge(merged_entry, path[ind - 1].src_conn, edge.dst,
+                       edge.dst_conn, edge.data)
 
     # Redirect inner out edges.
-    inner_out_edges = graph.in_edges(inner_map_exit)
-    for edge in graph.edges_between(inner_map_exit, outer_map_exit):
-        if edge.src_conn is None:  # Empty memlets
-            in_conn = None
-        else:
-            in_conn = 'IN_' + edge.src_conn[4:]
-        inner_edge = [e for e in inner_out_edges if e.dst_conn == in_conn][0]
-        graph.remove_edge(edge)
-        graph.remove_edge(inner_edge)
-        graph.add_edge(inner_edge.src, inner_edge.src_conn, merged_exit,
-                       edge.dst_conn, inner_edge.data)
+    for edge in graph.in_edges(inner_map_exit):
+        if edge.dst_conn is None:  # Empty memlets
+            graph.add_edge(edge.src, edge.src_conn, merged_exit, edge.dst_conn,
+                           edge.data)
+            continue
+
+        # Get memlet path and edge
+        path = graph.memlet_path(edge)
+        ind = path.index(edge)
+        # Add an edge directly from the source to the next destination
+        # connector
+        graph.add_edge(edge.src, edge.src_conn, merged_exit,
+                       path[ind + 1].dst_conn, edge.data)
 
     # Redirect outer edges.
     change_edge_dest(graph, outer_map_entry, merged_entry)
@@ -574,11 +578,52 @@ def concurrent_subgraphs(graph):
     ]
 
 
+def separate_maps(state, dfg, schedule):
+    """ Separates the given ScopeSubgraphView into subgraphs with and without
+        maps of the given schedule type. The function assumes that the given
+        ScopeSubgraph view does not contain any concurrent segments (i.e. pass
+        it through concurrent_subgraphs first). Only top level maps will be
+        accounted for, if the desired schedule occurs in another (undesired)
+        map, it will be ignored.
+
+        Returns a list with the subgraph views in order of the original DFG.
+        ScopeSubgraphViews for the parts with maps, StateSubgraphViews for the
+        parts without maps. """
+
+    from dace import nodes
+    from dace.sdfg.scope import StateSubgraphView
+
+    sorted_nodes = list(dfs_topological_sort(dfg, dfg.source_nodes()[0]))
+    nodes_to_skip = [dfg.source_nodes()[0], dfg.sink_nodes()[0]]
+    result = []
+
+    current = []
+    for node in sorted_nodes:
+        if node in nodes_to_skip:
+            continue
+        if isinstance(node, nodes.MapEntry):
+            if node.map.schedule == schedule:
+                result.append(StateSubgraphView(state, current))
+                result.append(state.scope_subgraph(node))
+                nodes_to_skip += result[-1].nodes()
+                current = []
+            else:
+                temp_nodes = state.scope_subgraph(node).nodes()
+                nodes_to_skip += temp_nodes
+                current += temp_nodes
+        else:
+            current.append(node)
+
+    if len(current) > 0:
+        result.append(StateSubgraphView(state, current))
+
+    return result
+
+
 def _transients_in_scope(sdfg, scope, scope_dict):
-    return set(node.data
-               for node in scope_dict[scope.entry if scope else scope]
-               if isinstance(node, nd.AccessNode)
-               and sdfg.arrays[node.data].transient)
+    return set(
+        node.data for node in scope_dict[scope.entry if scope else scope]
+        if isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient)
 
 
 def local_transients(sdfg, dfg, entry_node):

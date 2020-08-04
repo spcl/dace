@@ -107,8 +107,7 @@ def _reduce(sdfg: SDFG,
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                            ast.parse(in_array).body[0].value,
                                            {})
-        input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
-                              1)
+        input_memlet = Memlet.simple(inarr, input_subset)
         output_shape = None
         if axis is None:
             output_shape = [1]
@@ -134,13 +133,11 @@ def _reduce(sdfg: SDFG,
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                            ast.parse(in_array).body[0].value,
                                            {})
-        input_memlet = Memlet(inarr, input_subset.num_elements(), input_subset,
-                              1)
+        input_memlet = Memlet.simple(inarr, input_subset)
         output_subset = parse_memlet_subset(sdfg.arrays[outarr],
                                             ast.parse(out_array).body[0].value,
                                             {})
-        output_memlet = Memlet(outarr, output_subset.num_elements(),
-                               output_subset, 1)
+        output_memlet = Memlet.simple(outarr, output_subset)
 
     # Create reduce subgraph
     inpnode = state.add_read(inarr)
@@ -342,8 +339,7 @@ def _conj(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.real')
 def _real(sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return _simple_call(sdfg, state, input, 'real',
-                        _complex_to_scalar(inptype))
+    return _simple_call(sdfg, state, input, 'real', _complex_to_scalar(inptype))
 
 
 @oprepo.replaces('imag')
@@ -351,8 +347,7 @@ def _real(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('numpy.imag')
 def _imag(sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
-    return _simple_call(sdfg, state, input, 'imag',
-                        _complex_to_scalar(inptype))
+    return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
 
 @oprepo.replaces('transpose')
@@ -404,31 +399,13 @@ def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(sdfg: SDFG,
-            state: SDFGState,
-            a: str,
-            axis,
-            result_type=dace.int32):
-    return _argminmax(sdfg,
-                      state,
-                      a,
-                      axis,
-                      func="max",
-                      result_type=result_type)
+def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(sdfg: SDFG,
-            state: SDFGState,
-            a: str,
-            axis,
-            result_type=dace.int32):
-    return _argminmax(sdfg,
-                      state,
-                      a,
-                      axis,
-                      func="min",
-                      result_type=result_type)
+def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(sdfg, state, a, axis, func="min", result_type=result_type)
 
 
 def _argminmax(sdfg: SDFG,
@@ -483,10 +460,8 @@ def _argminmax(sdfg: SDFG,
 
     nest.add_state().add_mapped_tasklet(
         name="_arg{}_reduce_".format(func),
-        map_ranges={
-            '__i%d' % i: '0:%s' % n
-            for i, n in enumerate(a_arr.shape)
-        },
+        map_ranges={'__i%d' % i: '0:%s' % n
+                    for i, n in enumerate(a_arr.shape)},
         inputs={
             '__in':
             Memlet.simple(
@@ -555,8 +530,7 @@ def _argminmax(sdfg: SDFG,
 ##############################################################################
 
 
-def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str,
-              opname: str):
+def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array assignment operator. """
     arr1 = sdfg.arrays[op1]
 
@@ -724,6 +698,12 @@ def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     return op1 + op2
 
 
+@oprepo.replaces_operator('symbol', 'Gt', 'symbol')
+def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+           op1: symbolic.symbol, op2: Union[int, float]):
+    return op1 > op2
+
+
 def _is_scalar(sdfg: SDFG, arrname: str):
     """ Checks whether array is pseudo-scalar (shape=(1,)). """
     shape = sdfg.arrays[arrname].shape
@@ -845,8 +825,9 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
         if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
-                              'not supported')
+            raise SyntaxError(
+                'Matrix multiplication of tensors of dimensions > 3 '
+                'not supported')
 
         if arr1.shape[-1] != arr2.shape[-2]:
             raise SyntaxError('Matrix dimension mismatch %s != %s' %
@@ -871,7 +852,7 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
         output_shape = (arr1.shape[0], )
 
-    elif len(arr1.shape) == 1 and len(arr2.shape) == 1: # vector * vector
+    elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
         if arr1.shape[0] != arr2.shape[0]:
             raise SyntaxError("Vectors in vector product must have same size: "
@@ -897,11 +878,8 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     tasklet = MatMul('_MatMult_', restype)
     state.add_node(tasklet)
-    state.add_edge(acc1, None, tasklet, '_a',
-                   dace.Memlet.from_array(op1, arr1))
-    state.add_edge(acc2, None, tasklet, '_b',
-                   dace.Memlet.from_array(op2, arr2))
-    state.add_edge(tasklet, '_c', acc3, None,
-                   dace.Memlet.from_array(op3, arr3))
+    state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(op1, arr1))
+    state.add_edge(acc2, None, tasklet, '_b', dace.Memlet.from_array(op2, arr2))
+    state.add_edge(tasklet, '_c', acc3, None, dace.Memlet.from_array(op3, arr3))
 
     return op3

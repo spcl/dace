@@ -119,8 +119,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode)
-                                    and last_edge.dst_conn and
-                                    not last_edge.dst_conn.startswith('IN_')
+                                    and last_edge.dst_conn
+                                    and not last_edge.dst_conn.startswith('IN_')
                                     and sdict[last_edge.dst] is None):
                                 break
                         else:
@@ -151,6 +151,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for inodename, inode in set(input_nodes):
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
+            if inode.storage == dtypes.StorageType.GPU_Global:
+                continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
@@ -161,6 +163,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
+                continue
+            if onode.storage == dtypes.StorageType.GPU_Global:
                 continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
@@ -275,10 +279,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 # when they are removed from the graph
                 in_edges = list(state.in_edges(gcode))
                 out_edges = list(state.out_edges(gcode))
-                me.in_connectors = set('IN_' + e.dst_conn for e in in_edges)
-                me.out_connectors = set('OUT_' + e.dst_conn for e in in_edges)
-                mx.in_connectors = set('IN_' + e.src_conn for e in out_edges)
-                mx.out_connectors = set('OUT_' + e.src_conn for e in out_edges)
+                me.in_connectors = {('IN_' + e.dst_conn): None
+                                    for e in in_edges}
+                me.out_connectors = {('OUT_' + e.dst_conn): None
+                                     for e in in_edges}
+                mx.in_connectors = {('IN_' + e.src_conn): None
+                                    for e in out_edges}
+                mx.out_connectors = {('OUT_' + e.src_conn): None
+                                     for e in out_edges}
 
                 # Create memlets through map
                 for e in in_edges:
@@ -296,7 +304,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
                 # Map without inputs
                 if len(in_edges) == 0:
-                    state.add_nedge(me, gcode, memlet.EmptyMemlet())
+                    state.add_nedge(me, gcode, memlet.Memlet())
         #######################################################
         # Step 6: Change all top-level maps and library nodes to GPU schedule
 
@@ -306,8 +314,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node,
-                                     (nodes.EntryNode, nodes.LibraryNode))
+                    elif (isinstance(node, (nodes.EntryNode, nodes.LibraryNode))
                           and self.sequential_innermaps):
                         node.schedule = dtypes.ScheduleType.Sequential
 

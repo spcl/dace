@@ -111,8 +111,7 @@ class AST_ArrayAccess(AST_Node):
                         str(self))
             else:
                 raise NotImplementedError(
-                    "Non-constant array indexing not implemented: " +
-                    str(self))
+                    "Non-constant array indexing not implemented: " + str(self))
         ret = dace.subsets.Range(rangelist)
         return ret
 
@@ -140,13 +139,9 @@ class AST_ArrayAccess(AST_Node):
 
         if self.is_data_dependent_access() == False:
             msubset = self.make_range_from_accdims()
-            memlet = dace.memlet.Memlet(arrnode,
-                                        msubset.num_elements(),
-                                        msubset,
-                                        1,
-                                        None,
-                                        None,
-                                        debuginfo=self.context)
+            memlet = dace.memlet.Memlet.simple(arrnode,
+                                               msubset,
+                                               debuginfo=self.context)
             sdfg.nodes()[state].add_edge(arrnode, None, resnode, None, memlet)
         else:
             # add a map around the access and feed the access dims that are
@@ -185,13 +180,13 @@ class AST_ArrayAccess(AST_Node):
             if len(mdict) == 0:
                 mdict = {'__DAPUNUSED_i': '0:1'}
             men, mex = s.add_map('datadepacc', mdict)
-            men._in_connectors.add('IN_1')
-            men._out_connectors.add('OUT_1')
+            men.add_in_connector('IN_1')
+            men.add_out_connector('OUT_1')
             s.add_edge(arrnode, None, men, 'IN_1',
                        dace.memlet.Memlet.from_array(arrnode.data, arrdesc))
             for a in access_data_nodes:
                 aname = a.get_name_in_sdfg(sdfg)
-                men._in_connectors.add(aname)
+                men.add_in_connector(aname)
                 datanode = a.get_datanode(sdfg, state)
                 s.add_edge(
                     datanode, None, men, aname,
@@ -204,12 +199,10 @@ class AST_ArrayAccess(AST_Node):
                 dace.memlet.Memlet.simple(arrnode, ','.join(access_dims)))
             s.add_edge(
                 tasklet, 'out', mex, None,
-                dace.memlet.Memlet.from_array(resnode.data,
-                                              resnode.desc(sdfg)))
+                dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
             s.add_edge(
                 mex, None, resnode, None,
-                dace.memlet.Memlet.from_array(resnode.data,
-                                              resnode.desc(sdfg)))
+                dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
 
         print("The result of " + str(self) + " will be stored in " + str(name))
 

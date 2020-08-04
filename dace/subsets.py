@@ -159,9 +159,8 @@ class Range(Subset):
         return Range(tuples)
 
     @staticmethod
-    def from_array(array):
-        """ Constructs a range that covers the full array given as input.
-            @type array: dace.data.Data """
+    def from_array(array: 'dace.data.Data'):
+        """ Constructs a range that covers the full array given as input. """
         return Range([(0, s - 1, 1) for s in array.shape])
 
     def __hash__(self):
@@ -464,7 +463,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except sympy.core.sympify.SympifyError:
+            except sympy.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -517,24 +516,50 @@ class Range(Subset):
     def compose(self, other):
         if not isinstance(other, Subset):
             raise TypeError("Cannot compose ranges with non-subsets")
-        if self.data_dims() != other.dims():
-            raise ValueError("Dimension mismatch in composition")
+
         new_subset = []
-        idx = 0
-        for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
-            if re - rb == 0:
-                if isinstance(other, Indices):
-                    new_subset.append(rb)
+        if self.data_dims() == other.dims():
+            # case 1: subsets may differ in dimensions, but data_dims correspond
+            #         to other dims -> all non-data dims are cut out
+            idx = 0
+            for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
+                if re - rb == 0:
+                    if isinstance(other, Indices):
+                        new_subset.append(rb)
+                    else:
+                        new_subset.append((rb, re, rs, rt))
                 else:
-                    new_subset.append((rb, re, rs, rt))
-            else:
-                if isinstance(other[idx], tuple):
-                    new_subset.append(
-                        (rb + rs * other[idx][0], rb + rs * other[idx][1],
-                         rs * other[idx][2], rt))
+                    if isinstance(other[idx], tuple):
+                        new_subset.append(
+                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
+                             rs * other[idx][2], rt))
+                    else:
+                        new_subset.append(rb + rs * other[idx])
+                    idx += 1
+        elif self.dims() == other.dims():
+            # case 2: subsets have the same dimensions (but possibly different
+            # data_dims) -> all non-data dims remain
+            for idx, ((rb, re, rs),
+                      rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+                if re - rb == 0:
+                    if isinstance(other, Indices):
+                        new_subset.append(rb)
+                    else:
+                        new_subset.append((rb, re, rs, rt))
                 else:
-                    new_subset.append(rb + rs * other[idx])
-                idx += 1
+                    if isinstance(other[idx], tuple):
+                        new_subset.append(
+                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
+                             rs * other[idx][2], rt))
+                    else:
+                        new_subset.append(rb + rs * other[idx])
+
+        else:
+            raise ValueError("Dimension mismatch in composition:"
+                             "Subset composed must be either completely"
+                             "stripped of all non-data dimensions"
+                             "or be not stripped of latter at all.")
+
         if isinstance(other, Range):
             return Range(new_subset)
         elif isinstance(other, Indices):
@@ -577,8 +602,8 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
-        for i, ((rb, re, rs),
-                ts) in enumerate(zip(self.ranges, self.tile_sizes)):
+        for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges,
+                                                   self.tile_sizes)):
             self.ranges[i] = (
                 rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
                 re.subs(repl_dict) if symbolic.issymbolic(re) else re,

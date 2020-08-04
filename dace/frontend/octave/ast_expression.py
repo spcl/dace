@@ -134,10 +134,10 @@ class AST_BinExpression(AST_Node):
         s = sdfg.nodes()[state]
         map_entry, map_exit = s.add_map('M' + _OP_TO_STRING[op] + 'M',
                                         dict(i='0:' + M, j='0:' + N))
-        map_entry._in_connectors.add('IN_1')
-        map_entry._in_connectors.add('IN_2')
-        map_entry._out_connectors.add('OUT_1')
-        map_entry._out_connectors.add('OUT_2')
+        map_entry.add_in_connector('IN_1')
+        map_entry.add_in_connector('IN_2')
+        map_entry.add_out_connector('OUT_1')
+        map_entry.add_out_connector('OUT_2')
         s.add_edge(A, None, map_entry, 'IN_1',
                    dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
         s.add_edge(B, None, map_entry, 'IN_2',
@@ -167,10 +167,10 @@ class AST_BinExpression(AST_Node):
         s = sdfg.nodes()[state]
         map_entry, map_exit = s.add_map(
             'MMM', dict(i='0:' + M, j='0:' + N, k='0:' + K))
-        map_entry._in_connectors.add('IN_1')
-        map_entry._in_connectors.add('IN_2')
-        map_entry._out_connectors.add('OUT_1')
-        map_entry._out_connectors.add('OUT_2')
+        map_entry.add_in_connector('IN_1')
+        map_entry.add_in_connector('IN_2')
+        map_entry.add_out_connector('OUT_1')
+        map_entry.add_out_connector('OUT_2')
         s.add_edge(A, None, map_entry, 'IN_1',
                    dace.memlet.Memlet.simple(A, '0:' + M + ',0:' + K))
         s.add_edge(B, None, map_entry, 'IN_2',
@@ -206,10 +206,10 @@ class AST_BinExpression(AST_Node):
 
         s = sdfg.nodes()[state]
         map_entry, map_exit = s.add_map('VVM', dict(i='0:' + N))
-        map_entry._in_connectors.add('IN_1')
-        map_entry._in_connectors.add('IN_2')
-        map_entry._out_connectors.add('OUT_1')
-        map_entry._out_connectors.add('OUT_2')
+        map_entry.add_in_connector('IN_1')
+        map_entry.add_in_connector('IN_2')
+        map_entry.add_out_connector('OUT_1')
+        map_entry.add_out_connector('OUT_2')
         s.add_edge(A, None, map_entry, 'IN_1',
                    dace.memlet.Memlet.simple(A, '0:' + N))
         s.add_edge(B, None, map_entry, 'IN_2',
@@ -243,10 +243,10 @@ class AST_BinExpression(AST_Node):
         s = sdfg.nodes()[state]
         map_entry, map_exit = s.add_map('M' + _OP_TO_STRING[op] + 'M',
                                         dict(i='0:' + M, j='0:' + N))
-        map_entry._in_connectors.add('IN_1')
-        map_entry._in_connectors.add('IN_2')
-        map_entry._out_connectors.add('OUT_1')
-        map_entry._out_connectors.add('OUT_2')
+        map_entry.add_in_connector('IN_1')
+        map_entry.add_in_connector('IN_2')
+        map_entry.add_out_connector('OUT_1')
+        map_entry.add_out_connector('OUT_2')
         s.add_edge(A, None, map_entry, 'IN_1',
                    dace.memlet.Memlet.simple(A, '0:' + N + ',0:' + M))
         s.add_edge(B, None, map_entry, 'IN_2',
