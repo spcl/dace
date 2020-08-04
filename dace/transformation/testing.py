@@ -87,7 +87,7 @@ class TransformationTester(Optimizer):
                     new_sdfg.generate_code()
 
                 if self.compile:
-                    compiled = new_sdfg.compile(optimizer='')
+                    compiled = new_sdfg.compile()
                     del compiled
 
                 print('PASS', file=self.stdout)

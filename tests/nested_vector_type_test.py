@@ -95,7 +95,7 @@ test_state.add_memlet_path(nested_sdfg,
 
 def test_nested_vectorization():
     # Compile
-    compiledSDFG = test_sdfg.compile(optimizer=False)
+    compiledSDFG = test_sdfg.compile()
 
     # Run and verify
     testSize = 96
