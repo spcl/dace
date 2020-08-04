@@ -30,41 +30,45 @@ class RedundantArray(pm.Transformation):
         in_array = graph.nodes()[candidate[RedundantArray._in_array]]
         out_array = graph.nodes()[candidate[RedundantArray._out_array]]
 
+        in_desc = in_array.desc(sdfg)
+        out_desc = out_array.desc(sdfg)
+
         # Ensure out degree is one (only one target, which is out_array)
         if graph.out_degree(in_array) != 1:
             return False
 
         # Make sure that the candidate is a transient variable
-        if not in_array.desc(sdfg).transient:
+        if not in_desc.transient:
             return False
 
         # Make sure that both arrays are using the same storage location
-        if in_array.desc(sdfg).storage != out_array.desc(sdfg).storage:
+        # and are of the same type (e.g., Stream->Stream)
+        if in_desc.storage != out_desc.storage:
+            return False
+        if type(in_desc) != type(out_desc):
             return False
 
         # Find occurrences in this and other states
         occurrences = []
         for state in sdfg.nodes():
             occurrences.extend([
-                n for n in state.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == in_array.desc(sdfg)
+                n for n in state.nodes()
+                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc
             ])
 
         if len(occurrences) > 1:
             return False
 
         # Only apply if arrays are of same shape (no need to modify subset)
-        if len(in_array.desc(sdfg).shape) != len(
-                out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
-                    in_array.desc(sdfg).shape,
-                    out_array.desc(sdfg).shape)):
+        if len(in_desc.shape) != len(out_desc.shape) or any(
+                i != o for i, o in zip(in_desc.shape, out_desc.shape)):
             return False
 
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             edge = graph.edges_between(in_array, out_array)[0]
-            if any(m != a for m, a in zip(edge.data.subset.size(),
-                                          in_array.desc(sdfg).shape)):
+            if any(m != a
+                   for m, a in zip(edge.data.subset.size(), in_desc.shape)):
                 return False
 
         return True
@@ -125,34 +129,40 @@ class RedundantSecondArray(pm.Transformation):
         in_array = graph.nodes()[candidate[RedundantSecondArray._in_array]]
         out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
 
+        in_desc = in_array.desc(sdfg)
+        out_desc = out_array.desc(sdfg)
+
         # Ensure in degree is one (only one source, which is in_array)
         if graph.in_degree(out_array) != 1:
             return False
 
         # Make sure that the candidate is a transient variable
-        if not out_array.desc(sdfg).transient:
+        if not out_desc.transient:
             return False
 
         # Make sure that both arrays are using the same storage location
-        if in_array.desc(sdfg).storage != out_array.desc(sdfg).storage:
+        # and are of the same type (e.g., Stream->Stream)
+        if in_desc.storage != out_desc.storage:
+            return False
+        if type(in_desc) != type(out_desc):
             return False
 
         # Find occurrences in this and other states
         occurrences = []
         for state in sdfg.nodes():
             occurrences.extend([
-                n for n in state.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == out_array.desc(sdfg)
+                n for n in state.nodes()
+                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == out_desc
             ])
 
         if len(occurrences) > 1:
             return False
 
         # Only apply if arrays are of same shape (no need to modify memlet subset)
-        # if len(in_array.desc(sdfg).shape) != len(
-        #         out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
-        #             in_array.desc(sdfg).shape,
-        #             out_array.desc(sdfg).shape)):
+        # if len(in_desc.shape) != len(
+        #         out_desc.shape) or any(i != o for i, o in zip(
+        #             in_desc.shape,
+        #             out_desc.shape)):
         #     return False
 
         return True
