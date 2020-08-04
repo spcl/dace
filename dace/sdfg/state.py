@@ -1483,19 +1483,20 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                 dst_conn, edges[-1].dst.label))
 
         path = edges if propagate_forward else reversed(edges)
+        last_conn = None
         # Propagate and add edges
         for i, edge in enumerate(path):
             # Figure out source and destination connectors
             if propagate_forward:
-                sconn = src_conn if i == 0 else ("OUT_" +
-                                                 edge.src.last_connector())
-                dconn = (dst_conn if i == len(edges) - 1 else
-                         ("IN_" + edge.dst.next_connector()))
+                next_conn = edge.dst.next_connector(memlet.data)
+                sconn = src_conn if i == 0 else "OUT_" + last_conn
+                dconn = dst_conn if i == len(edges) - 1 else "IN_" + next_conn
             else:
-                sconn = (src_conn if i == len(edges) - 1 else
-                         ("OUT_" + edge.src.next_connector()))
-                dconn = dst_conn if i == 0 else ("IN_" +
-                                                 edge.dst.last_connector())
+                next_conn = edge.src.next_connector(memlet.data)
+                sconn = src_conn if i == len(edges) - 1 else "OUT_" + next_conn
+                dconn = dst_conn if i == 0 else "IN_" + last_conn
+            
+            last_conn = next_conn
 
             if cur_memlet.is_empty():
                 if propagate_forward:
