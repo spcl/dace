@@ -29,10 +29,10 @@ required:
                     Automatically specialize every SDFG to the symbol values 
                     at call-time. Requires all symbols to be set.
 
-            autooptimize:
+            transform_on_call:
                 type: bool
                 default: false
-                title: Auto-optimize SDFGs
+                title: Transform SDFGs on Invocation
                 description: >
                     Automatically calls sdfg.optimize() every time a DaCe
                     program or SDFG is invoked.

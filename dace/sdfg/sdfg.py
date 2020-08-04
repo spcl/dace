@@ -1565,7 +1565,7 @@ class SDFG(OrderedDiGraph):
 
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
-        if Config.get_bool('optimizer', 'autooptimize'):
+        if Config.get_bool('optimizer', 'transform_on_call'):
             sdfg = self.optimize()
         else:
             sdfg = self
