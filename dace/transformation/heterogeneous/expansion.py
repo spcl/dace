@@ -19,7 +19,7 @@ import dace.libraries.standard as stdlib
 
 
 @make_properties
-class MultiExpansion():
+class MultiExpansion(pattern_matching.SubgraphTransformation):
 
     debug = Property(dtype = bool,
                      desc = "Debug Mode",
@@ -27,6 +27,42 @@ class MultiExpansion():
     sequential_innermaps = Property(dtype = bool,
                                     desc = "Sequential innermaps",
                                     default = False)
+
+    @staticmethod
+    def match(sdfg, subgraph) -> bool:
+        ### get lowest scope maps of subgraph
+        # grab first node and see whether all nodes are in the same graph
+        # (or nested sdfgs therein)
+
+        graph = subgraph.graph
+
+        for node in subgraph.nodes():
+            if node not in graph.nodes():
+                return False
+
+        # next, get all the maps
+        maps = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
+        brng = helpers.common_map_base_ranges(maps)
+
+        # if leq than one map found -> fail
+        if len(maps) <= 1:
+            return False
+
+        # see whether they have common parameters; if not -> fail
+        if len(brng) == 0:
+            return False
+
+        return True
+
+
+    def apply(self, sdfg, subgraph, map_base_variables = None):
+        # get lowest scope map entries and expand
+
+        graph = subgraph.graph
+
+        # next, get all the base maps and expand
+        maps = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
+        self.expand(sdfg, graph, maps, map_base_variables = map_base_variables)
 
     def expand(self, sdfg, graph, map_entries, map_base_variables = None):
 
@@ -87,7 +123,6 @@ class MultiExpansion():
                         # nothing to do
                         pass
                     else:
-                        # TODO: this part is a bit ugly, beautify
                         current_var = map.params[i]
                         current_assignment = params_dict_map[current_var]
                         target_assignment = map_base_variables[reassignment]
@@ -95,7 +130,6 @@ class MultiExpansion():
                             if target_assignment in params_dict_map.values():
                                 # do a swap
                                 key1 = current_var
-                                # get the corresponding key, cumbersome
                                 for key, value in params_dict_map.items():
                                     if value == target_assignment:
                                         key2 = key
@@ -105,7 +139,7 @@ class MultiExpansion():
                                 params_dict_map[key1] = key2
                                 params_dict_map[key2] = key1
                             else:
-                                # just reassign - noone cares
+                                # just reassign
                                 params_dict_map[current_var] = target_assignment
 
                 # done, assign params_dict_map to the global one

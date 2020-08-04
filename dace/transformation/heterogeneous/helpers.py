@@ -110,3 +110,21 @@ def toplevel_scope_maps(graph, maps, scope_dict = None):
             return scope
 
     raise RuntimeError("Map structure is not sound (underlying subgraph must be connected")
+
+
+def get_lowest_scope_maps(sdfg, graph, subgraph = None):
+    subgraph = graph if not subgraph else subgraph
+    scope_dict = graph.scope_dict()
+
+    def is_lowest_scope(node):
+        while scope_dict[node]:
+            if scope_dict[node] in subgraph.nodes():
+                return False
+            node = scope_dict[node]
+
+        return True
+
+    maps = [node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
+                                              and is_lowest_scope(node)]
+
+    return maps

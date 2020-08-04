@@ -12,6 +12,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 
 from dace.frontend.operations import detect_reduction_type
 
+from dace.transformation.heterogeneous.reduce import CUDABlockAllReduce
 
 from copy import deepcopy as dcpy
 from typing import List, Union
@@ -38,20 +39,27 @@ class ReduceMap(pattern_matching.Transformation):
                      dtype = bool,
                      default = True)
 
-    map_transient_to_registers = Property(desc="Push out-transient created inside"
-                                                "the reduction into register",
-                                                dtype = bool,
-                                                default = True)
-
-    create_in_transient = Property(desc = "Create local in-transient",
+    create_in_transient = Property(desc = "Create local in-transient in"
+                                          "shared memory",
                                    dtype = bool,
                                    default = False)
+
+    create_out_transient = Property(desc = "Create local out-transient"
+                                           "in register",
+                                    dtype = bool,
+                                    default = False)
 
     reduce_implementation = Property(desc = "Reduce implementation of inner reduce",
                                      dtype = str,
                                      default = 'pure',
                                      choices = ['pure', 'OpenMP',
                                                 'CUDA (device)', 'CUDA (block)','CUDA (warp)'])
+
+    cuda_expand = Property(desc = "If implementation is of type CUDA (block) or CUDA (warp),"
+                                  "perform necessary additional transformations",
+                           dtype = bool,
+                           default = True)
+
 
     reduction_type_update = {
         dtypes.ReductionType.Max: 'out = max(reduction_in, array_in)',
@@ -127,10 +135,9 @@ class ReduceMap(pattern_matching.Transformation):
             nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
         except Exception:
             print(f"Aborting: Could not execute expansion in {reduce_node}")
-            raise TypeError("EXPANSION_ABORT")
+            raise TypeError("Exception in ReduceMap::_expand_reduce")
 
-        # find the new nested sdfg
-
+        # find the new nodes in the nested sdfg created
         nstate = nsdfg.sdfg.nodes()[0]
         for node, scope in nstate.scope_dict().items():
             if isinstance(node, nodes.MapEntry):
@@ -144,36 +151,41 @@ class ReduceMap(pattern_matching.Transformation):
         inner_exit = nstate.exit_node(inner_entry)
         outer_exit = nstate.exit_node(outer_entry)
 
-        ###### create an out transient between inner and outer map exit
-        array_out = nstate.out_edges(outer_exit)[0].data.data
+        if self.create_out_transient:
+            ###### create an out transient between inner and outer map exit
+            array_out = nstate.out_edges(outer_exit)[0].data.data
 
-        from dace.transformation.dataflow.local_storage import LocalStorage
-        local_storage_subgraph = {
-            LocalStorage._node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
-            LocalStorage._node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
-        }
-        nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
-        nstate_id = 0
+            from dace.transformation.dataflow.local_storage import LocalStorage
+            local_storage_subgraph = {
+                LocalStorage._node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
+                LocalStorage._node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
+            }
+            nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
+            nstate_id = 0
+            local_storage = LocalStorage(nsdfg_id,
+                                         nstate_id,
+                                         local_storage_subgraph,
+                                         0)
+            local_storage.array = array_out
+            local_storage.apply(nsdfg.sdfg)
+            out_transient_node_inner = local_storage._data_node
 
-
-        local_storage = LocalStorage(nsdfg_id,
-                                     nstate_id,
-                                     local_storage_subgraph,
-                                     0)
-        local_storage.array = array_out
-        local_storage.apply(nsdfg.sdfg)
-        out_transient_node_inner = local_storage._data_node
-
+            # push to register
+            nsdfg.sdfg.data(out_transient_node_inner.data).storage = dtypes.StorageType.Register
 
 
         if self.create_in_transient:
-            # create an in-transient as well.
+            # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data
+
+            from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
                 LocalStorage._node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
                 LocalStorage._node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry )
             }
 
+            nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
+            nstate_id = 0
             local_storage = LocalStorage(nsdfg_id,
                                          nstate_id,
                                          local_storage_subgraph,
@@ -182,17 +194,14 @@ class ReduceMap(pattern_matching.Transformation):
             local_storage.apply(nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
 
+            # push to shared memory / default
             nsdfg.sdfg.data(in_transient_node_inner.data).storage = dtypes.StorageType.Default
 
-
-        if self.map_transient_to_registers:
-            nsdfg.sdfg.data(out_transient_node_inner.data).storage = dtypes.StorageType.Register
 
 
         # find earliest parent read-write occurrence of array onto which
         # we perform the reduction:
         # do BFS, best complexity O(V+E)
-
 
         queue = [nsdfg]
         array_closest_ancestor = None
@@ -202,12 +211,11 @@ class ReduceMap(pattern_matching.Transformation):
                 if current.data == out_storage_node.data:
                     # it suffices to find the first node
                     # no matter what access (ReadWrite or Read)
-                    # can't be Read only, else state would be ambiguous
                     array_closest_ancestor = current
                     break
             queue.extend([in_edge.src for in_edge in graph.in_edges(current)])
 
-        # if it doesnt exist:
+        # if ancestor doesn't exist:
         #           if non-transient: create data node accessing it
         #           if transient: ancestor_node = none, set_zero on outer node
 
@@ -218,8 +226,9 @@ class ReduceMap(pattern_matching.Transformation):
                 print("ReduceMap::Shortcut applied")
             # we are lucky
             shortcut = True
-            nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
-            nstate.out_edges(out_transient_node_inner)[0].data.num_accesses = 1
+            if self.create_out_transient:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
             nstate.out_edges(outer_exit)[0].data.wcr = None
 
 
@@ -237,11 +246,6 @@ class ReduceMap(pattern_matching.Transformation):
 
         # first, inline fuse back our NSDFG
         from dace.transformation.interstate import InlineSDFG
-        # debug
-        if InlineSDFG.can_be_applied(graph, \
-                                     {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, \
-                                     0, sdfg) is False:
-            print("ERROR: This should not appear")
         inline_sdfg = InlineSDFG(sdfg.sdfg_list.index(sdfg),
                                  sdfg.nodes().index(graph),
                                  {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)},
@@ -250,7 +254,7 @@ class ReduceMap(pattern_matching.Transformation):
 
 
         if not shortcut:
-            # TODO: also for other types of reductions
+
             deduction_type = detect_reduction_type(wcr)
             if deduction_type in ReduceMap.reduction_type_update:
                 code = ReduceMap.reduction_type_update[deduction_type]
@@ -263,25 +267,23 @@ class ReduceMap(pattern_matching.Transformation):
                                             outputs = {"out"},
                                             code = code)
 
-            edge_to_remove = graph.out_edges(out_transient_node_inner)[0]
+            edge_to_remove = graph.out_edges(out_transient_node_inner)[0] \
+                             if self.create_out_transient \
+                             else graph.out_edges(inner_exit)[0]
 
             new_memlet_array_inner =    Memlet(data = out_storage_node.data,
-                                            num_accesses = 1,
-                                            subset = edge_to_remove.data.subset,
-                                            vector_length = 1)
+                                            volume = 1,
+                                            subset = edge_to_remove.data.subset)
             new_memlet_array_outer =    Memlet(data = array_closest_ancestor.data,
-                                            num_accesses = graph.in_edges(outer_entry)[0].data.num_accesses,
-                                            subset = subsets.Range.from_array(sdfg.data(out_storage_node.data)),
-                                            vector_length = 1)
+                                            volume = graph.in_edges(outer_entry)[0].data.volume,
+                                            subset = subsets.Range.from_array(sdfg.data(out_storage_node.data)))
 
             new_memlet_reduction =      Memlet(data = graph.out_edges(inner_exit)[0].data.data,
-                                            num_accesses = 1,
-                                            subset = graph.out_edges(inner_exit)[0].data.subset,
-                                            vector_length = 1)
+                                            volume = 1,
+                                            subset = graph.out_edges(inner_exit)[0].data.subset)
             new_memlet_out_inner =      Memlet(data = edge_to_remove.data.data,
-                                            num_accesses = 1,
-                                            subset = edge_to_remove.data.subset,
-                                            vector_length = 1)
+                                            volume = 1,
+                                            subset = edge_to_remove.data.subset)
             new_memlet_out_outer =      dcpy(new_memlet_array_outer)
 
             # remove old edges
@@ -299,7 +301,8 @@ class ReduceMap(pattern_matching.Transformation):
             graph.remove_edge_and_connectors(outer_edge_to_remove)
 
 
-            graph.add_edge(out_transient_node_inner,
+            graph.add_edge(out_transient_node_inner if self.create_out_transient \
+                                                    else inner_exit,
                            None,
                            new_tasklet,
                            "reduction_in",
@@ -349,9 +352,8 @@ class ReduceMap(pattern_matching.Transformation):
 
         edge_tmp = graph.out_edges(inner_exit)[0]
         memlet_reduce_dst = Memlet(data = edge_tmp.data.data,
-                                   num_accesses = 1,
-                                   subset = edge_tmp.data.subset,
-                                   vector_length = edge_tmp.data.veclen)
+                                   volume = 1,
+                                   subset = edge_tmp.data.subset)
 
         graph.add_edge(reduce_node_new, None, edge_tmp.dst, edge_tmp.dst_conn, memlet_reduce_dst)
 
@@ -362,9 +364,7 @@ class ReduceMap(pattern_matching.Transformation):
 
         sdfg.validate()
 
-        # setzero stuff
-
-        if identity is None:
+        if identity is None and self.create_out_transient:
             # set transient_inner to set_zero = True
             # TODO: create identities for other reductions
             out_transient_node_inner.setzero = True
@@ -372,10 +372,29 @@ class ReduceMap(pattern_matching.Transformation):
         # create variables for outside access
         self._new_reduce = reduce_node_new
         self._outer_entry = outer_entry
+
+        # CUDA reduce kernels might need some extra work if they are
+        # not allocated on CUDA (device)
+        if self.cuda_expand:
+            if self.reduce_implementation == 'CUDA (block)':
+                # check whether can be applied
+                candidate = {CUDABlockAllReduce._reduce: graph.nodes().index(reduce_node_new)}
+                applicable = CUDABlockAllReduce.can_be_applied(graph, candidate, 0, sdfg)
+                if not applicable:
+                    print("WARNING: CUDABlockAllReduce::Can_Be_Applied returned False")
+
+                transformation = CUDABlockAllReduce(self.sdfg_id, self.state_id,
+                                                    candidate, 0)
+                transformation.apply(sdfg)
+
+            if self.reduce_implementation == 'CUDA (warp)':
+                raise NotImplementedError('Not implemented yet.')
         return
 
 
     def _expand_reduce(self, sdfg, state, node):
+        # expands a reduce into two nested maps
+        # taken from legacy expand_reduce.py
 
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]

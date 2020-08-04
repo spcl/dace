@@ -19,6 +19,9 @@ TRANSFORMATION_TIMER = True
 
 """
 #################
+An alternative, convenient method to call ReduceMap, MultiExpansion
+and SubgraphFusion on a subgraph.
+
 Usual Pipeline:
     - Expand all desired Reduce Nodes using ReduceMap transformation
       (source found in reduce_map.py)
@@ -30,7 +33,6 @@ Usual Pipeline:
       (source found in subgraph_fusion.py)
 #################
 """
-
 
 
 def expand_reduce(sdfg: dace.SDFG,
@@ -118,7 +120,7 @@ def expand_maps(sdfg: dace.SDFG,
         start = timeit.default_timer()
 
     for sg in subgraph:
-        map_entries = get_highest_scope_maps(sdfg, graph, sg)
+        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
         start = timeit.default_timer()
         trafo_expansion.expand(sdfg, graph, map_entries)
 
@@ -157,7 +159,7 @@ def fusion(sdfg: dace.SDFG,
         start = timeit.default_timer()
 
     for sg in subgraph:
-        map_entries = get_highest_scope_maps(sdfg, graph, sg)
+        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -192,11 +194,11 @@ def go(sdfg: dace.SDFG,
     expand_maps(sdfg, graph, subgraph)
     fusion(sdfg, graph, subgraph)
 
-def get_highest_scope_maps(sdfg, graph, subgraph = None):
+def get_lowest_scope_maps(sdfg, graph, subgraph = None):
     subgraph = graph if not subgraph else subgraph
     scope_dict = graph.scope_dict()
 
-    def is_highest_scope(node):
+    def is_lowest_scope(node):
         while scope_dict[node]:
             if scope_dict[node] in subgraph.nodes():
                 return False
@@ -205,6 +207,6 @@ def get_highest_scope_maps(sdfg, graph, subgraph = None):
         return True
 
     maps = [node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
-                                              and is_highest_scope(node)]
+                                              and is_lowest_scope(node)]
 
     return maps
