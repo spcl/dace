@@ -94,7 +94,6 @@ def test_subgraph():
 
 
     graph = mapfission_sdfg()
-    graph.view()
     graph.apply_transformations(MapFission)
     dace.sdfg.propagation.propagate_memlets_sdfg(graph)
     cgraph = graph.compile()
