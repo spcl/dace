@@ -732,7 +732,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
         data_intermediate = set([node.data for node in intermediate_nodes])
         for data_name in data_intermediate:
             if subgraph_contains_data[data_name]:
-                all_nodes = [n for n in self.subgraph.nodes() if isinstance(n, nodes.AccessNode) and n.data == data_name]
+                all_nodes = [n for n in intermediate_nodes if n.data == data_name]
                 in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
 
                 in_edges_iter = iter(in_edges)

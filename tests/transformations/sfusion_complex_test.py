@@ -6,6 +6,9 @@ from dace.transformation.heterogeneous.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
 
+from dace.sdfg.graph import SubgraphView
+
+
 from dace.transformation.heterogeneous.pipeline import expand_reduce, expand_maps, fusion
 
 
@@ -106,6 +109,8 @@ def test_qualitatively(sdfg, graph):
     print("PASS")
 
 def test_quantitatively(sdfg, graph):
+
+
     A = np.random.rand(N.get()).astype(np.float64)
     B = np.random.rand(M.get()).astype(np.float64)
     C = np.random.rand(O.get()).astype(np.float64)
@@ -120,15 +125,18 @@ def test_quantitatively(sdfg, graph):
 
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
+    #sgf = SubgraphFusion()
+    #matcher = sgf.match(sdfg, SubgraphView(graph, [node for node in graph.nodes()]))
+    #assert matcher == True
     fusion(sdfg, graph)
     sdfg.validate()
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, OUT1 = OUT1, OUT2 = OUT2, OUT3 = OUT3, N=N, M=M, O=O)
 
-    sdfg.view()
     assert np.allclose(OUT1, OUT1_base)
     assert np.allclose(OUT2, OUT2_base)
     assert np.allclose(OUT3, OUT3_base)
+    print('PASS')
 
 
 if __name__ == "__main__":

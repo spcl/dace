@@ -1,6 +1,7 @@
 import copy
 import dace
 from dace.sdfg import nodes
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
@@ -8,7 +9,7 @@ import unittest
 import sys
 
 from dace.transformation.heterogeneous.pipeline import expand_reduce, expand_maps, fusion
-
+from dace.transformation.heterogeneous import MultiExpansion, SubgraphFusion
 
 N = dace.symbol('N')
 N.set(1000)
@@ -52,8 +53,14 @@ def test_quantitatively(sdfg):
     csdfg(A=A, B=B, C=C1, D=D1, N=N)
 
     expand_reduce(sdfg, graph)
-    expand_maps(sdfg, graph)
-    fusion(sdfg, graph)
+
+    subgraph = SubgraphView(graph, [node for node in graph.nodes()])
+    expansion = MultiExpansion()
+    fusion = SubgraphFusion()
+    assert expansion.match(sdfg, subgraph) == True
+    expansion.apply(sdfg, subgraph)
+    assert fusion.match(sdfg, subgraph) == True
+    fusion.apply(sdfg, subgraph)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)

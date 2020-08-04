@@ -36,7 +36,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -94,6 +94,7 @@ def test_subgraph():
 
 
     graph = mapfission_sdfg()
+    graph.view()
     graph.apply_transformations(MapFission)
     dace.sdfg.propagation.propagate_memlets_sdfg(graph)
     cgraph = graph.compile()
