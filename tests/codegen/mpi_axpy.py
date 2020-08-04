@@ -52,13 +52,13 @@ if __name__ == "__main__":
 
     # Compile MPI program once
     if ranks == 1:
-        csdfg = sdfg.compile(False)
+        csdfg = sdfg.compile()
         print('Compiled, exiting')
         exit(0)
     else:
         # Use cached compiled file
         dace.Config.set('compiler', 'use_cache', value=True)
-        csdfg = sdfg.compile(False)
+        csdfg = sdfg.compile()
 
     csdfg(A=a, X=x, Y=y, N=N)
 
