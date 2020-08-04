@@ -168,24 +168,37 @@ required:
                         default: ''
                         
             #############################################
-            # GPU (CUDA) compiler
+            # GPU (CUDA/HIP) compiler
             cuda:
                 type: dict
                 title: GPU
-                description: GPU (CUDA) compiler preferences
+                description: GPU (CUDA/HIP) compiler preferences
                 required:
+                    backend:
+                        type: str
+                        default: 'cuda'
+                        title: Compilation backend
+                        description: >
+                            Backend to compile for ('cuda' for NVIDIA or 'hip' for AMD).
+
                     path:
                         type: str
                         default: ''
-                        title: CUDA path override
-                        description: Path to CUDA toolkit root directory
+                        title: CUDA/HIP path override
+                        description: Path to CUDA toolkit or ROCm/HIP root directory
 
                     args:
                         type: str
-                        title: Arguments
-                        description: Compiler argument flags
+                        title: nvcc Arguments
+                        description: Compiler argument flags for CUDA
                         default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
                         default_Windows: '-std=c++14 -O3 --use_fast_math'
+
+                    hip_args:
+                        type: str
+                        title: hipcc Arguments
+                        description: Compiler argument flags for HIP
+                        default: '-std=c++17 -fPIC -O3 -ffast-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
@@ -195,12 +208,21 @@ required:
                             to compile GPU code for, excluding the current 
                             architecture on the compiling machine.
                         default: '35'
-                
+
+                    hip_arch:
+                        type: str
+                        title: Additional HIP architectures
+                        description: >
+                            Additional HIP architectures (separated by commas)
+                            to compile GPU code for, excluding the current 
+                            architecture on the compiling machine.
+                        default: '906'
+
                     default_block_size:
                         type: str
                         title: Default thread-block size
                         description: >
-                            Default thread-block size for CUDA kernels when
+                            Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
                         default: '32,1,1'
 
@@ -250,9 +272,9 @@ required:
 
                     max_concurrent_streams:
                         type: int
-                        title: Concurrent CUDA streams
+                        title: Concurrent execution streams
                         description: >
-                            Maximum number of concurrent CUDA streams to 
+                            Maximum number of concurrent CUDA/HIP streams to 
                             generate. Special values: -1 only uses the 
                             default stream, 0 uses infinite concurrent streams.
                         default: 0
@@ -261,7 +283,7 @@ required:
                         type: bool
                         title: Synchronous Debugging
                         description: >
-                            Enables Synchronous Debugging mode, where each CUDA call
+                            Enables Synchronous Debugging mode, where each library call
                             is followed by full-device synchronization and error checking.
                         default: false
 

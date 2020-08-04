@@ -1,4 +1,4 @@
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 
 #include <iostream>
 #include <set>
@@ -7,17 +7,17 @@
 
 int main(int argc, char **argv) {
   int count;
-  if (cudaGetDeviceCount(&count) != cudaSuccess) return 1;
+  if (hipGetDeviceCount(&count) != hipSuccess) return 1;
 
   std::set<std::string> architectures;
   // Loop over all GPU architectures
   for (int i = 0; i < count; ++i) {
-    cudaDeviceProp prop;
-    if (cudaGetDeviceProperties(&prop, i) != cudaSuccess ||
+    hipDeviceProp_t prop;
+    if (hipGetDeviceProperties(&prop, i) != hipSuccess ||
         (prop.major == 99 && prop.minor == 99))
       continue;
     std::stringstream ss;
-    ss << prop.major << prop.minor;
+    ss << prop.major * 10 << prop.minor;
     architectures.insert(ss.str());
   }
 
