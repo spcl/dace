@@ -1146,8 +1146,8 @@ class TFSession:
         outputDims = self.get_default_dims(node.outputs[0])
         inputNode, params, dims = self.create_and_add_input_node(node.inputs[0])
         reduction_axes = self._internal_session.run(node.inputs[1])
-        if type(reduction_axes) is not list:
-            reduction_axes = [reduction_axes]
+        if len(reduction_axes.shape) == 0:
+            reduction_axes = np.array([reduction_axes])
         reduction_axes.sort()
         norm = 1
         for i in reduction_axes:
