@@ -23,7 +23,7 @@ namespace dace
         typedef T unaligned;
     };
     
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
     // NOTE: This file is inline and MUST be included here
     #include "cuda/vectype.cuh"
 #else

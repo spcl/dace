@@ -115,7 +115,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
-    CUDA_Events = ()
+    GPU_Events = ()
 
 
 # Maps from ScheduleType to default StorageType
