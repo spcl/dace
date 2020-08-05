@@ -40,9 +40,10 @@ def TEST(A: dace.float64[N,M,O], B: dace.float64[N,M,O], C: dace.float64[N,M,O])
             with dace.tasklet:
                 in1 << A[i,j,z]
                 in2 << B[i,j,z]
+                in3 << C[i,j,0]
                 out >> C[i,j,z]
 
-                out = 2*in1 + 2*in2
+                out = 2*in1 + 2*in2 + in3
 
 def test_qualitatively(sdfg, graph):
     fusion(sdfg, graph)
@@ -56,10 +57,13 @@ def test_quantitatively(sdfg, graph):
     C1 = np.zeros([N.get(), M.get(), O.get()], dtype = np.float64)
     C2 = np.zeros([N.get(), M.get(), O.get()], dtype = np.float64)
 
+    sdfg.view()
+    sdfg.validate()
     csdfg = sdfg.compile()
     csdfg(A=A,B=B,C=C1,N=N,M=M,O=O)
 
     fusion(sdfg, graph)
+    sdfg.view()
     csdfg = sdfg.compile()
     csdfg(A=A,B=B,C=C2,N=N,M=M,O=O)
 
