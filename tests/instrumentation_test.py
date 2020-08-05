@@ -39,7 +39,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
             node.map.instrument = instrumentation
             state.instrument = instrumentation
 
-    if instrumentation == dace.InstrumentationType.CUDA_Events:
+    if instrumentation == dace.InstrumentationType.GPU_Events:
         sdfg.apply_transformations(GPUTransformSDFG)
 
     sdfg(A=A, B=B, C=C, N=N)
@@ -63,12 +63,12 @@ def test_papi():
     onetest(dace.InstrumentationType.PAPI_Counters, 4)
 
 
-def test_cuda_events():
-    onetest(dace.InstrumentationType.CUDA_Events)
+def test_gpu_events():
+    onetest(dace.InstrumentationType.GPU_Events)
 
 
 if __name__ == '__main__':
     test_timer()
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
-        test_cuda_events()
+        test_gpu_events()

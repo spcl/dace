@@ -352,7 +352,7 @@ class TFSession:
             self.graph.apply_gpu_transformations()
 
         # Compile and call the SDFG
-        compiled_sdfg = self.graph.compile(optimizer=False)
+        compiled_sdfg = self.graph.compile()
         compiled_sdfg(**sdfg_args)
         ############################
 
@@ -521,7 +521,7 @@ class TFSession:
             self.graph.apply_transformations(patterns,
                                              validate=validate,
                                              strict=strict)
-        compiled_sdfg = self.graph.compile(optimizer=False)
+        compiled_sdfg = self.graph.compile()
         sdfg_args.update(self.callbackFunctionDict)
 
         ############################
