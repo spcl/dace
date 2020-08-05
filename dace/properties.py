@@ -995,6 +995,8 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
+        elif lang.endswith("RTL"):
+            lang = dace.dtypes.Language.RTL
 
         try:
             cdata = tmp['string_data']
@@ -1044,6 +1046,8 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
+        elif lang.endswith("RTL"):
+            lang = dace.dtypes.Language.RTL
 
         try:
             cdata = tmp['string_data']
