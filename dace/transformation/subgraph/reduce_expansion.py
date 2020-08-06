@@ -12,8 +12,6 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 
 from dace.frontend.operations import detect_reduction_type
 
-from dace.transformation.subgraph.reduce import CUDABlockAllReduce
-
 from copy import deepcopy as dcpy
 from typing import List, Union
 
@@ -51,14 +49,13 @@ class ReduceExpansion(pattern_matching.Transformation):
 
     reduce_implementation = Property(desc = "Reduce implementation of inner reduce",
                                      dtype = str,
-                                     default = 'pure',
-                                     choices = ['pure', 'OpenMP',
-                                                'CUDA (device)', 'CUDA (block)','CUDA (warp)'])
-
-    cuda_expand = Property(desc = "If implementation is of type CUDA (block) or CUDA (warp),"
-                                  "perform necessary additional transformations",
-                           dtype = bool,
-                           default = True)
+                                     default = 'adopt',
+                                     choices = ['adopt',
+                                                'pure', 'OpenMP',
+                                                'CUDA (device)',
+                                                'CUDA (block)', 'CUDA (block allreduce)',
+                                                'CUDA (warp)', 'CUDA (warp allreduce)'],
+                                     allow_none = True)
 
 
     reduction_type_update = {
@@ -124,7 +121,8 @@ class ReduceExpansion(pattern_matching.Transformation):
         identity = reduce_node.identity
         schedule = reduce_node.schedule
         implementation = reduce_node.implementation
-
+        if implementation and 'warp' in implementation:
+            raise NotImplementedError("WIP")
 
         # remove the reduce identity
         # we will reassign it later after expanding
@@ -336,8 +334,10 @@ class ReduceExpansion(pattern_matching.Transformation):
 
         # FORNOW: choose default schedule and implementation
         new_schedule = dtypes.ScheduleType.Default
-        new_implementation = implementation if implementation else self.reduce_implementation
-        new_axes = reduce_node.axes
+        new_implementation = self.reduce_implementation \
+                             if self.reduce_implementation != 'adopt' \
+                             else implementation
+        new_axes = dcpy(reduce_node.axes)
 
         reduce_node_new = graph.add_reduce(wcr = wcr,
                                            axes = new_axes,
@@ -373,22 +373,6 @@ class ReduceExpansion(pattern_matching.Transformation):
         self._new_reduce = reduce_node_new
         self._outer_entry = outer_entry
 
-        # CUDA reduce kernels might need some extra work if they are
-        # not allocated on CUDA (device)
-        if self.cuda_expand:
-            if self.reduce_implementation == 'CUDA (block)':
-                # check whether can be applied
-                candidate = {CUDABlockAllReduce._reduce: graph.nodes().index(reduce_node_new)}
-                applicable = CUDABlockAllReduce.can_be_applied(graph, candidate, 0, sdfg)
-                if not applicable:
-                    print("WARNING: CUDABlockAllReduce::Can_Be_Applied returned False")
-
-                transformation = CUDABlockAllReduce(self.sdfg_id, self.state_id,
-                                                    candidate, 0)
-                transformation.apply(sdfg)
-
-            if self.reduce_implementation == 'CUDA (warp)':
-                raise NotImplementedError('Not implemented yet.')
         return
 
 
