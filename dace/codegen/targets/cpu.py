@@ -1389,12 +1389,10 @@ class CPUCodeGen(TargetCodeGenerator):
         ########################
         # Generate function call
 
-        argvals = ', '.join(argval for _, _, argval in memlet_references)
-        symvals = ', '.join(
-            sym2cpp(symval)
-            for _, symval in sorted(node.symbol_mapping.items()))
-        callsite_stream.write(f'{sdfg_label}({argvals}, {symvals});', sdfg,
-                              state_id, node)
+        args = ', '.join([argval for _, _, argval in memlet_references] + [
+            sym2cpp(symval) for _, symval in sorted(node.symbol_mapping.items())
+        ])
+        callsite_stream.write(f'{sdfg_label}({args});', sdfg, state_id, node)
 
         ###############################################################
         # Write generated code in the proper places (nested SDFG writes
