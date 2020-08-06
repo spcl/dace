@@ -6,7 +6,7 @@ from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
 import unittest
 
-from dace.transformation.heterogeneous.pipeline import fusion
+from dace.transformation.subgraph.pipeline import fusion
 
 
 def mapfission_sdfg():
@@ -141,6 +141,7 @@ def test_inputs_outputs():
     csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
+
 
     fusion(sdfg, sdfg.nodes()[0], None)
 

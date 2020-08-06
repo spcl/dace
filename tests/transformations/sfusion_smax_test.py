@@ -3,14 +3,14 @@ import numpy as np
 import sys
 
 
-from dace.transformation.heterogeneous import ReduceMap
-from dace.transformation.heterogeneous import SubgraphFusion
-from dace.transformation.heterogeneous import MultiExpansion
+from dace.transformation.subgraph import ReduceExpansion
+from dace.transformation.subgraph import SubgraphFusion
+from dace.transformation.subgraph import MultiExpansion
 
 import dace.dtypes as dtypes
 
 from dace.codegen.targets.framecode import set_default_schedule_and_storage_types
-import dace.transformation.heterogeneous.pipeline as pipeline
+import dace.transformation.subgraph.pipeline as pipeline
 from dace.sdfg.graph import SubgraphView
 
 import dace.libraries.standard as stdlib

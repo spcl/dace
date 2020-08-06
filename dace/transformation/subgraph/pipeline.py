@@ -2,7 +2,7 @@ import dace
 import numpy as np
 
 
-from dace.transformation.subgraph import ReduceMap
+from dace.transformation.subgraph import ReduceExpansion
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph import MultiExpansion
 
@@ -19,12 +19,12 @@ TRANSFORMATION_TIMER = True
 
 """
 #################
-An alternative, convenient method to call ReduceMap, MultiExpansion
+An alternative, convenient method to call ReduceExpansion, MultiExpansion
 and SubgraphFusion on a subgraph.
 
 Usual Pipeline:
-    - Expand all desired Reduce Nodes using ReduceMap transformation
-      (source found in reduce_map.py)
+    - Expand all desired Reduce Nodes using ReduceExpansion transformation
+      (source found in reduce_expansion.py)
     - Expand all maps (including previously expanded Reduces)
       into outer and inner maps using MultiExpansion
       (source found in expansion.py)
@@ -40,7 +40,7 @@ def expand_reduce(sdfg: dace.SDFG,
                   subgraph: Union[SubgraphView, List[SubgraphView]] = None,
                   **kwargs):
     """
-    Perform a ReduceMap transformation of all the Reduce Nodes specified in the
+    Perform a ReduceExpansion transformation of all the Reduce Nodes specified in the
     subgraph. If for a reduce node transformation cannot be done, a warning is omitted.
     After a successful transformation and if subgraph(s) is/are specified, the outer map and
     reduce are added back
@@ -51,7 +51,7 @@ def expand_reduce(sdfg: dace.SDFG,
                      If SubgraphView, all the Reduces therein are considered
                      If List of SubgraphViews, all the Reduces in all the
                      SubgraphViews are considered
-    :param kwargs: Property setters for ReduceMap class
+    :param kwargs: Property setters for ReduceExpansion class
 
     """
     subgraph = graph if not subgraph else subgraph
@@ -65,8 +65,8 @@ def expand_reduce(sdfg: dace.SDFG,
         reduce_nodes = []
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
-                if not ReduceMap.can_be_applied(graph = graph,
-                                                candidate = {ReduceMap._reduce: graph.node_id(node)},
+                if not ReduceExpansion.can_be_applied(graph = graph,
+                                                candidate = {ReduceExpansion._reduce: graph.node_id(node)},
                                                 expr_index = 0,
                                                 sdfg = sdfg):
                     print(f"WARNING: Cannot expand reduce node {node}: \
@@ -74,7 +74,7 @@ def expand_reduce(sdfg: dace.SDFG,
                     continue
                 reduce_nodes.append(node)
 
-        trafo_reduce = ReduceMap(0,0,{},0)
+        trafo_reduce = ReduceExpansion(0,0,{},0)
         for (property, val) in kwargs.items():
             setattr(trafo_reduce, property, val)
 

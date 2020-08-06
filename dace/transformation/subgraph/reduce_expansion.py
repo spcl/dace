@@ -24,7 +24,7 @@ import timeit
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class ReduceMap(pattern_matching.Transformation):
+class ReduceExpansion(pattern_matching.Transformation):
     """ Implements the Reduce-Map transformation.
         Expands a Reduce node into inner and outer map components,
         then introduces a transient for its intermediate output,
@@ -78,11 +78,11 @@ class ReduceMap(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return[
-            utils.node_path_graph(ReduceMap._reduce)
+            utils.node_path_graph(ReduceExpansion._reduce)
         ]
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict = False):
-        reduce_node = graph.nodes()[candidate[ReduceMap._reduce]]
+        reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
         input_dims = inedge.data.subset.data_dims()
         axes = reduce_node.axes
@@ -97,7 +97,7 @@ class ReduceMap(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        reduce = candidate[ReduceMap._reduce]
+        reduce = candidate[ReduceExpansion._reduce]
         return str(reduce)
 
     def apply(self, sdfg: SDFG, strict = False):
@@ -108,7 +108,7 @@ class ReduceMap(pattern_matching.Transformation):
         """
 
         graph = sdfg.nodes()[self.state_id]
-        reduce_node = graph.nodes()[self.subgraph[ReduceMap._reduce]]
+        reduce_node = graph.nodes()[self.subgraph[ReduceExpansion._reduce]]
         self.expand(sdfg, graph, reduce_node)
 
     def expand(self, sdfg, graph, reduce_node):
@@ -135,7 +135,7 @@ class ReduceMap(pattern_matching.Transformation):
             nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
         except Exception:
             print(f"Aborting: Could not execute expansion in {reduce_node}")
-            raise TypeError("Exception in ReduceMap::_expand_reduce")
+            raise TypeError("Exception in ReduceExpansion::_expand_reduce")
 
         # find the new nodes in the nested sdfg created
         nstate = nsdfg.sdfg.nodes()[0]
@@ -223,7 +223,7 @@ class ReduceMap(pattern_matching.Transformation):
         if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
                                         or identity is not None:
             if self.debug:
-                print("ReduceMap::Shortcut applied")
+                print("ReduceExpansion::Shortcut applied")
             # we are lucky
             shortcut = True
             if self.create_out_transient:
@@ -234,7 +234,7 @@ class ReduceMap(pattern_matching.Transformation):
 
         else:
             if self.debug:
-                print("ReduceMap::No shortcut, operating with ancestor", array_closest_ancestor)
+                print("ReduceExpansion::No shortcut, operating with ancestor", array_closest_ancestor)
             array_closest_ancestor = nodes.AccessNode(out_storage_node.data,
                                         access = dtypes.AccessType.ReadOnly)
             graph.add_node(array_closest_ancestor)
@@ -256,8 +256,8 @@ class ReduceMap(pattern_matching.Transformation):
         if not shortcut:
 
             deduction_type = detect_reduction_type(wcr)
-            if deduction_type in ReduceMap.reduction_type_update:
-                code = ReduceMap.reduction_type_update[deduction_type]
+            if deduction_type in ReduceExpansion.reduction_type_update:
+                code = ReduceExpansion.reduction_type_update[deduction_type]
             else:
                 raise RuntimeError("Not yet implemented for custom reduction")
 

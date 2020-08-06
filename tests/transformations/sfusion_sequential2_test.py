@@ -1,7 +1,7 @@
 
 import dace
-from dace.transformation.heterogeneous.pipeline import expand_maps, expand_reduce, fusion
-from dace.transformation.heterogeneous.helpers import *
+from dace.transformation.subgraph.pipeline import expand_maps, expand_reduce, fusion
+from dace.transformation.subgraph.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
 

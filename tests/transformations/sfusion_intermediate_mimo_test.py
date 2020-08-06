@@ -8,8 +8,8 @@ import numpy as np
 import unittest
 import sys
 
-from dace.transformation.heterogeneous.pipeline import expand_reduce, expand_maps, fusion
-from dace.transformation.heterogeneous import MultiExpansion, SubgraphFusion
+from dace.transformation.subgraph.pipeline import expand_reduce, expand_maps, fusion
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 N = dace.symbol('N')
 N.set(1000)
