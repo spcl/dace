@@ -12,7 +12,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 
 from dace.frontend.operations import detect_reduction_type
 
-from dace.transformation.heterogeneous.reduce import CUDABlockAllReduce
+from dace.transformation.subgraph.reduce import CUDABlockAllReduce
 
 from copy import deepcopy as dcpy
 from typing import List, Union

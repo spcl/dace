@@ -9,7 +9,7 @@ from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.transformation.heterogeneous import helpers
+from dace.transformation.subgraph import helpers
 
 from copy import deepcopy as dcpy
 from typing import List, Union

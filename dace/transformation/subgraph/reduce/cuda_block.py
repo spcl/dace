@@ -11,7 +11,7 @@ from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
 
 from dace.frontend.operations import detect_reduction_type
-from dace.transformation.heterogeneous import helpers
+from dace.transformation.subgraph import helpers
 
 from dace.transformation.dataflow.local_storage import LocalStorage
 

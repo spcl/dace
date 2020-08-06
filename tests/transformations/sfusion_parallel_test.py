@@ -1,6 +1,6 @@
 import dace
-from dace.transformation.heterogeneous.expansion import MultiExpansion
-from dace.transformation.heterogeneous.helpers import *
+from dace.transformation.subgraph.expansion import MultiExpansion
+from dace.transformation.subgraph.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
 
