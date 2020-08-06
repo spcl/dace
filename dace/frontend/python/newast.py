@@ -913,7 +913,8 @@ class TaskletTransformer(ExtNodeTransformer):
         # If accessing a symbol, add it to the SDFG symbol list
         if (isinstance(node.ctx, ast.Load) and node.id in self.defined
                 and isinstance(self.defined[node.id], symbolic.symbol)):
-            self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+            if node.id not in self.sdfg.symbols:
+                self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
         return self.generic_visit(node)
 
 
@@ -2075,7 +2076,8 @@ class ProgramVisitor(ExtNodeVisitor):
         elif symbolic.issymbolic(operand):
             op_is_scalar = True
             for sym in operand.free_symbols:
-                self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+                if str(sym) not in self.sdfg.symbols:
+                    self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
             operand = symbolic.symstr(operand)
         else:
             op_name = operand
