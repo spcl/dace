@@ -26,17 +26,15 @@ def arraysquarer(outp_array, inp_array):
 M = dace.symbolic.symbol()
 N = dace.symbolic.symbol()
 O = dace.symbolic.symbol()
+giveandtake = dace.symbol('giveandtake', dace.callback(dace.uint32,
+                                                       dace.uint32))
+take = dace.symbol('take', dace.callback(None, dace.uint32))
+give = dace.symbol('give', dace.callback(dace.uint32))
+donothing = dace.symbol('donothing', dace.callback(None))
 
 
-@dace.program(
-    dace.uint32[2],
-    dace.uint32[2],
-    dace.callback(dace.uint32, dace.uint32),
-    dace.callback(None, dace.uint32),
-    dace.callback(dace.uint32),
-    dace.callback(None),
-)
-def callback_test(A, B, giveandtake, take, give, donothing):
+@dace.program
+def callback_test(A: dace.uint32[2], B: dace.uint32[2]):
     @dace.map(_[0:2])
     def index(i):
         a << A[i]
@@ -47,12 +45,16 @@ def callback_test(A, B, giveandtake, take, give, donothing):
             donothing()
 
 
+arrfunc = dace.symbol('arrfunc',
+                      dtype=dace.callback(None, dace.float64[M, N, O],
+                                          dace.float64[M, N, O]))
+
+
 @dace.program(
     dace.float64[M, N, O],
     dace.float64[M, N, O],
-    dace.callback(None, dace.float64[M, N, O], dace.float64[M, N, O]),
 )
-def callback_with_arrays(out_arr, in_arr, arrfunc):
+def callback_with_arrays(out_arr, in_arr):
     with dace.tasklet:
         out << out_arr
         inp << in_arr
@@ -77,13 +79,13 @@ if __name__ == "__main__":
     callback_test(
         A,
         B,
-        mysquarer,
-        consumer,
-        answertolifeuniverseandeverything,
-        failed_test,
+        giveandtake=mysquarer,
+        take=consumer,
+        give=answertolifeuniverseandeverything,
+        donothing=failed_test,
     )
     for b in B:
         if b != 25:
             failed_test()
-    callback_with_arrays(arr_out, arr_in, arraysquarer)
+    callback_with_arrays(arr_out, arr_in, arrfunc=arraysquarer)
     assert numpy.linalg.norm(arr_out - numpy.square(arr_in)) < 1e-10

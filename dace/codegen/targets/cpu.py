@@ -1350,7 +1350,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {aname}' for atype, aname, _ in memlet_references
         ]
         arguments += [
-            f'{node.sdfg.symbols[aname].ctype} {aname}'
+            f'{node.sdfg.symbols[aname].signature(aname)}'
             for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants
         ]

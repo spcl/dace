@@ -316,6 +316,9 @@ class typeclass(object):
     def veclen(self):
         return 1
 
+    def signature(self, name):
+        return self.ctype + ' ' + name
+
 
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
