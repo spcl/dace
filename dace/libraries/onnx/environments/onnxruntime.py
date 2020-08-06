@@ -18,7 +18,7 @@ if os.path.isdir(cand_path):
 else:
     ORT_BUILD_PATH = os.path.join(ORT_PATH, "build", "Linux", "Release")
 
-
+ORT_DLL_PATH = os.path.join(ORT_BUILD_PATH, "libonnxruntime.so")
 
 @dace.library.environment
 class ONNXRuntime:
@@ -49,7 +49,7 @@ class ONNXRuntime:
                      "cuda")
     ]
     cmake_libraries = [
-        os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"),
+        ORT_DLL_PATH
     ]
     cmake_compile_flags = []
     cmake_link_flags = []
@@ -57,15 +57,9 @@ class ONNXRuntime:
 
     headers = [
         "../include/dace_onnx.h",
-        "onnx/onnx_pb.h",
         "onnxruntime_c_api.h",
         "cpu_provider_factory.h",
         "cuda_provider_factory.h",
     ]
     init_code = ""
     finalize_code = ""
-
-def has_cuda():
-    return True
-    ort = CDLL(os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"))
-    return hasattr(ort, "OrtSessionOptionsAppendExecutionProvider_CUDA")

@@ -2,11 +2,12 @@ import os
 import inspect
 import ctypes
 
-import onnx
+import numpy as np
 
 import dace
-from dace.libraries.onnx.converters import dace_type_to_onnx_tensor_type
-from dace.libraries.onnx.environments import has_cuda
+from dace.dtypes import DTYPE_TO_TYPECLASS
+from dace.libraries.onnx.schema import ONNXAttributeType
+from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiler import generate_program_folder, configure_and_compile, get_binary_name
 from dace.codegen.targets import cpu
@@ -23,15 +24,12 @@ def build_checker():
     with open(checker_code_path, "r") as f:
         checker_code = f.read()
 
-    program = CodeObject(
-        "onnx_op_checker",
-        checker_code.replace('// INSERT CUDA',
-            "__ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(session_options, /*device=*/0));"
-            if has_cuda() else ""),
-        "cpp",
-        cpu.CPUCodeGen,
-        "ONNXOpChecker",
-        environments={"ONNXRuntime"})
+    program = CodeObject("onnx_op_checker",
+                         checker_code,
+                         "cpp",
+                         cpu.CPUCodeGen,
+                         "ONNXOpChecker",
+                         environments={"ONNXRuntime"})
 
     BUILD_PATH = os.path.join('.dacecache', "onnx_op_checker")
     generate_program_folder(None, [program], BUILD_PATH)
@@ -45,45 +43,209 @@ def build_checker():
 
 class OpChecker:
     def __init__(self, op_type: str, name: str):
-        self.dll = build_checker()
-        init_fn = self.dll.init_state
-        init_fn.restype = ctypes.c_void_p
-        # the cast is required for some reason
-        self._state = ctypes.c_void_p(
-            init_fn(op_type.encode("ascii"), name.encode("ascii")))
 
-    def try_create(self):
-        try_create = self.dll.try_create
-        try_create.restype = ctypes.c_char_p
-        result = try_create(self._state, 0)
-        if result is not None:
-            # raise an Error with the error message from ORT
-            raise TypeError(result.decode("ascii"))
+        name = name.encode("ascii")
+        op_type = op_type.encode("ascii")
+        self.dll = build_checker()
+
+        self._ReleaseStatus = self._get_function("ReleaseStatus")
+        self._ReleaseEnv = self._get_function("ReleaseEnv")
+        self._ReleaseSessionOptions = self._get_function(
+            "ReleaseSessionOptions")
+        self._ReleaseKernelSession = self._get_function("ReleaseKernelSession")
+        self._ReleaseExecutableKernel = self._get_function(
+            "ReleaseExecutableKernel")
+        self._ReleaseExecutableKernelContext = self._get_function(
+            "ReleaseExecutableKernelContext")
+
+        self._GetErrorMessage = self._get_function("GetErrorMessage",
+                                                   restype=ctypes.c_char_p)
+        self._env = ctypes.c_void_p()
+        _CreateEnv = self._get_function("CreateEnv", restype=ctypes.c_void_p)
+        self._check_status(_CreateEnv(ctypes.byref(self._env)))
+
+        self._session_options = ctypes.c_void_p()
+        _CreateSessionOptions = self._get_function("CreateSessionOptions",
+                                                   restype=ctypes.c_void_p)
+        self._check_status(
+            _CreateSessionOptions(ctypes.byref(self._session_options)))
+
+        append_cpu = self._get_function(
+            "OrtSessionOptionsAppendExecutionProvider_CPU",
+            restype=ctypes.c_void_p)
+        self._check_status(append_cpu(self._session_options, ctypes.c_int(0)))
+        if hasattr(self.dll, "OrtSessionOptionsAppendExecutionProvider_CUDA"):
+            append_cuda = self._get_function(
+                "OrtSessionOptionsAppendExecutionProvider_CUDA",
+                restype=ctypes.c_void_p)
+            self._check_status(append_cuda(self._session_options, ctypes.c_int(0)))
+
+        self._session = ctypes.c_void_p()
+        _CreateKernelSession = self._get_function("CreateKernelSession",
+                                                  restype=ctypes.c_void_p)
+        self._check_status(
+            _CreateKernelSession(self._session_options,
+                                 ctypes.byref(self._session)))
+
+        self._context = ctypes.c_void_p()
+        _CreateExecutableKernelContext = self._get_function(
+            "CreateExecutableKernelContext", restype=ctypes.c_void_p)
+        self._check_status(
+            _CreateExecutableKernelContext(ctypes.c_char_p(name),
+                                           ctypes.c_char_p(op_type),
+                                           ctypes.byref(self._context)))
+
+        self._CreateExecutableKernel = self._get_function(
+            "CreateExecutableKernel", restype=ctypes.c_void_p)
+        self._AddInput = self._get_function("ExecutableKernelContext_AddInput",
+                                            restype=ctypes.c_void_p)
+        self._AddOutput = self._get_function(
+            "ExecutableKernelContext_AddOutput", restype=ctypes.c_void_p)
+
+        self._AddAttribute = {
+            ONNXAttributeType.Int:
+            self._get_function("ExecutableKernelContext_AddAttributeInt",
+                               restype=ctypes.c_void_p),
+            ONNXAttributeType.Ints:
+            self._get_function("ExecutableKernelContext_AddAttributeInts",
+                               restype=ctypes.c_void_p),
+            ONNXAttributeType.Float:
+            self._get_function("ExecutableKernelContext_AddAttributeFloat",
+                               restype=ctypes.c_void_p),
+            ONNXAttributeType.Floats:
+            self._get_function("ExecutableKernelContext_AddAttributeFloats",
+                               restype=ctypes.c_void_p),
+            ONNXAttributeType.String:
+            self._get_function("ExecutableKernelContext_AddAttributeString",
+                               restype=ctypes.c_void_p),
+            ONNXAttributeType.Strings:
+            self._get_function("ExecutableKernelContext_AddAttributeStrings",
+                               restype=ctypes.c_void_p),
+            ONNXAttributeType.Tensor:
+            self._get_function("ExecutableKernelContext_AddAttributeTensor",
+                               restype=ctypes.c_void_p),
+        }
+        self.dt_to_onnx_string = {
+            v: k.upper()
+            for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
+        }
+
+    def try_create(self, cuda=False):
+        kernel = ctypes.c_void_p()
+        self._check_status(
+            self._CreateExecutableKernel(self._session, self._context,
+                                         ctypes.c_size_t(1 if cuda else 0),
+                                         ctypes.byref(kernel)))
+        self._ReleaseExecutableKernel(kernel)
+
+    def _get_function(self, symbol_name, restype=None):
+        func = getattr(self.dll, symbol_name)
+        func.restype = restype
+        if restype is None:
+            return func
+        else:
+            return lambda *args: restype(func(*args))
+
+    def _check_status(self, status: ctypes.c_void_p):
+        if status:
+            error = self._GetErrorMessage(status)
+            self._ReleaseStatus(status)
+            print(error.value.decode("ascii"))
+            raise ValueError("see error printed above")
 
     def __del__(self, *args):
-        if hasattr(self, "dll") and hasattr(self, "_state"):
-            self.dll.free_state(self._state)
+        if not hasattr(self, "dll"):
+            return
 
-    def add_input(self, type: onnx.TensorProto.DataType):
-        self.dll.add_input(self._state, type)
+        if hasattr(self, "_context") and self._context:
+            self._ReleaseExecutableKernelContext(self._context)
 
-    def add_output(self, type: onnx.TensorProto.DataType):
-        self.dll.add_output(self._state, type)
+        if hasattr(self, "_session") and self._session:
+            self._ReleaseKernelSession(self._session)
 
-    def add_attribute(self, attribute: onnx.AttributeProto):
-        self.dll.add_attribute()
+        if hasattr(self, "_session_options") and self._session_options:
+            self._ReleaseSessionOptions(self._session_options)
+
+        if hasattr(self, "_env") and self._env:
+            self._ReleaseEnv(self._env)
+
+    def add_input(self, dtype: dace.typeclass):
+        type = ctypes.c_int(
+            getattr(
+                self.dll, "GetONNX_TENSOR_ELEMENT_DATA_TYPE_{}".format(
+                    self.dt_to_onnx_string[dtype]))())
+        self._AddInput(self._context, type)
+
+    def add_output(self, dtype: dace.typeclass):
+        type = ctypes.c_int(
+            getattr(
+                self.dll, "GetONNX_TENSOR_ELEMENT_DATA_TYPE_{}".format(
+                    self.dt_to_onnx_string[dtype]))())
+        self._AddOutput(self._context, type)
+
+    def add_attribute(self, attr_name, attr_value,
+                      attr_type: ONNXAttributeType):
+        if attr_value is None:
+            return
+        attr_name = attr_name.encode("ascii")
+        add_attr_function = self._AddAttribute[attr_type]
+        if attr_type == ONNXAttributeType.Int or attr_type == ONNXAttributeType.Float or attr_type == ONNXAttributeType.String:
+            to_ctype_value = {
+                ONNXAttributeType.Int:
+                ctypes.c_int64,
+                ONNXAttributeType.Float:
+                ctypes.c_float,
+                ONNXAttributeType.String:
+                lambda x: ctypes.c_char_p(x.encode("ascii"))
+            }
+            self._check_status(
+                add_attr_function(self._context, ctypes.c_char_p(attr_name),
+                                  to_ctype_value[attr_type](attr_value)))
+        elif attr_type == ONNXAttributeType.Ints or attr_type == ONNXAttributeType.Floats or attr_type == ONNXAttributeType.Strings:
+            get_elem_ctype = {
+                ONNXAttributeType.Ints: ctypes.c_int64,
+                ONNXAttributeType.Floats: ctypes.c_float,
+                ONNXAttributeType.Strings: ctypes.c_char_p
+            }
+            elem_ctype = get_elem_ctype[attr_type]
+            array_type = elem_ctype * len(attr_value)
+            data_p = array_type(*attr_value)
+            self._check_status(
+                add_attr_function(self._context, ctypes.c_char_p(attr_name),
+                                  data_p, ctypes.c_size_t(len(attr_value))))
+        elif attr_type == ONNXAttributeType.Tensor:
+
+            data = [data_val.item() for data_val in np.nditer(attr_value)]
+            ctype = np.ctypeslib.as_ctypes_type(attr_value.dtype)
+            type_str = self.dt_to_onnx_string[DTYPE_TO_TYPECLASS[
+                attr_value.dtype]]
+            type = ctypes.c_int(
+                getattr(
+                    self.dll,
+                    "GetONNX_TENSOR_ELEMENT_DATA_TYPE_{}".format(type_str))())
+            p_data = (ctype * len(data))(*data)
+            p_data = ctypes.cast(p_data, ctypes.c_void_p)
+            shape = (ctypes.c_int64 * len(attr_value.shape))(*attr_value.shape)
+            self._check_status(
+                add_attr_function(self._context, ctypes.c_char_p(attr_name),
+                                  p_data, ctypes.c_size_t(len(data)), shape,
+                                  ctypes.c_size_t(len(attr_value.shape)), type))
 
 
 def check_op(sdfg, state, node):
     """ Check whether a ONNXOp node has an implementation in ORT """
     checker = OpChecker(node.schema.name, node.name)
+    for attribute, onnx_attribute in node.schema.attributes.items():
+        if hasattr(node, attribute):
+            checker.add_attribute(attribute, getattr(node, attribute),
+                                  onnx_attribute.type)
+
     for edge, is_input in node.iter_edges(state):
         edge_data = edge.data.data
         edge_dtype = sdfg.arrays[edge_data].dtype
-        edge_dtype_onnx_type = dace_type_to_onnx_tensor_type(edge_dtype)
         if is_input:
-            checker.add_input(edge_dtype_onnx_type)
+            checker.add_input(edge_dtype)
         else:
-            checker.add_output(edge_dtype_onnx_type)
+            checker.add_output(edge_dtype)
 
     checker.try_create()

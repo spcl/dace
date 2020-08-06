@@ -35,7 +35,7 @@ def test_add():
     Z_t = X + W
 
     assert np.allclose(Z, Z_t)
-    #check_op(sdfg, state, c)
+    check_op(sdfg, state, c)
 
 def test_expansion():
     sdfg = dace.SDFG("test_expansion2")
@@ -64,10 +64,10 @@ def test_expansion():
     Z_t = torch.nn.functional.conv2d(torch.tensor(X), torch.tensor(W), stride=2)
 
     assert np.allclose(Z, Z_t)
-    #check_impl(sdfg, state, c)
+    check_op(sdfg, state, c)
 
 
 if __name__ == '__main__':
-    #test_add()
+    test_add()
     test_expansion()
 

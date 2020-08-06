@@ -1,122 +1,179 @@
-#include <google/protobuf/text_format.h>
 #include <unordered_map>
 #include <string>
 #include <iostream>
 #include <sstream>
 #include "onnxruntime_c_api.h"
-#include "onnx/onnx_pb.h"
 #include "cpu_provider_factory.h"
 #include "cuda_provider_factory.h"
+
+#include <dlfcn.h>
+#define DACE_EXPORTED extern "C"
 
 // Start global ORT setup
 const OrtApi* ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
 
-// helper function to check for status
-void __ort_check_status(OrtStatus* status)
-{
-    if (status != NULL) {
-        const char* msg = ort_api->GetErrorMessage(status);
-        fprintf(stderr, "%s\n", msg);
-        ort_api->ReleaseStatus(status);
-        exit(1);
-    }
+// Do not free the returned value
+DACE_EXPORTED const char* GetErrorMessage(const OrtStatus* status) {
+	return ort_api->GetErrorMessage(status);
 }
 
-struct State {
-    int num_params = 0;
-    onnx::NodeProto proto;
-    std::unordered_map<std::string, onnx::TypeProto> type_map;
-};
+DACE_EXPORTED OrtStatus* CreateEnv(OrtEnv** ort_env) {
+    return ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "op_checker_env", ort_env);
+}
 
-extern "C" {
-
-    void* init_state(const char* op_type, const char* name) {
-        auto *state = new State();
-        state->proto.set_op_type(op_type);
-        state->proto.set_name(name);
-
-        return state;
-    }
-
-    void free_state(void* state_) {
-        State *state = static_cast<State *>(state_);
-        delete state;
-    }
-
-    void add_input(void* state_, int type) {
-        State *state = static_cast<State *>(state_);
-        std::ostringstream string_stream;
-        string_stream << "Arg_In_";
-        string_stream << state->num_params++;
-        std::string name = string_stream.str();
-
-        onnx::TypeProto type_proto;
-        onnx::TypeProto::Tensor *tensor_type = type_proto.mutable_tensor_type();
-        tensor_type->set_elem_type(type);
-
-        state->type_map[name] = type_proto;
-        state->proto.add_input()->assign(name);
-    }
-
-    void add_output(void* state_, int type) {
-        State *state = static_cast<State *>(state_);
-        std::ostringstream string_stream;
-        string_stream << "Arg_Out_";
-        string_stream << state->num_params++;
-        std::string name = string_stream.str();
-
-        onnx::TypeProto type_proto;
-        onnx::TypeProto::Tensor *tensor_type = type_proto.mutable_tensor_type();
-        tensor_type->set_elem_type(type);
-
-        state->type_map[name] = type_proto;
-        state->proto.add_output()->assign(name);
-    }
-
-    int add_attribute(void* state_, const char* serialized_attr_proto) {
-        State *state = static_cast<State *>(state_);
-        onnx::AttributeProto* attribute = state->proto.add_attribute();
-        return (attribute->ParseFromString(serialized_attr_proto));
-    }
-
-    char* try_create(void* state_, int provider_index) {
-        State *state = static_cast<State *>(state_);
-
-        OrtEnv* ort_env;
-        OrtKernelSession* ort_session;
-        OrtSessionOptions* session_options;
-        OrtMemoryInfo* mem_info;
-
-        __ort_check_status(ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &mem_info));
-        __ort_check_status(ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dace_graph", &ort_env));
-        __ort_check_status(ort_api->CreateSessionOptions(&session_options));
-        __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(session_options, /*use_arena=*/0));
-
-        // INSERT_CUDA
-
-        __ort_check_status(ort_api->CreateKernelSession(session_options, &ort_session));
-
-        OrtExecutableKernelContext *context;
-        auto status = ort_api->CreateExecutableKernelContext(ort_session, /*provider_index*/provider_index, &state->proto, &state->type_map, &context);
-
-        if (!status)
-            ort_api->ReleaseExecutableKernelContext(context);
-
-        ort_api->ReleaseKernelSession(ort_session);
-        ort_api->ReleaseMemoryInfo(mem_info);
-        ort_api->ReleaseSessionOptions(session_options);
-        ort_api->ReleaseEnv(ort_env);
-
-        if (!status)
-            return NULL;
-
-        const char* msg = ort_api->GetErrorMessage(status);
-        char* ret_message = new char[2000];
-        strncpy(ret_message, msg, 1999);
-        ret_message[1999] = '\0';
-        ort_api->ReleaseStatus(status);
+DACE_EXPORTED OrtStatus* CreateSessionOptions(OrtSessionOptions** options) {
+    return ort_api->CreateSessionOptions(options);
+}
 
 
-        return ret_message;
-    }
+DACE_EXPORTED OrtStatus* CreateKernelSession(const OrtSessionOptions* options, OrtKernelSession** session) {
+	return ort_api->CreateKernelSession(options, session);
+}
+
+DACE_EXPORTED OrtStatus* CreateExecutableKernelContext(const char* name, const char* op_type, OrtExecutableKernelContext** kernel) {
+	return ort_api->CreateExecutableKernelContext(name, op_type, kernel);
+}
+
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddInput(OrtExecutableKernelContext* context, ONNXTensorElementDataType type) {
+	return ort_api->ExecutableKernelContext_AddInput(context, type);
+}
+
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddOutput(OrtExecutableKernelContext* context, ONNXTensorElementDataType type) {
+	return ort_api->ExecutableKernelContext_AddOutput(context, type);
+}
+
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeString(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		const char* value) {
+	return ort_api->ExecutableKernelContext_AddAttributeString(context, name, value);
+
+}
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeStrings(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		const char** values,
+		size_t num_values) {
+	return ort_api->ExecutableKernelContext_AddAttributeStrings(context, name, values, num_values);
+}
+
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeFloat(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		float value) {
+	return ort_api->ExecutableKernelContext_AddAttributeFloat(context, name, value);
+}
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeFloats(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		float* values,
+		size_t num_values) {
+	return ort_api->ExecutableKernelContext_AddAttributeFloats(context, name, values, num_values);
+}
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeInt(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		int64_t value) {
+	return ort_api->ExecutableKernelContext_AddAttributeInt(context, name, value);
+}
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeInts(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		int64_t* values,
+		size_t num_values) {
+	return ort_api->ExecutableKernelContext_AddAttributeInts(context, name, values, num_values);
+}
+DACE_EXPORTED OrtStatus* ExecutableKernelContext_AddAttributeTensor(
+		OrtExecutableKernelContext* context,
+		const char* name,
+		void* p_data,
+		size_t p_data_len,
+		const int64_t* shape,
+		size_t shape_len,
+		ONNXTensorElementDataType type) {
+	return ort_api->ExecutableKernelContext_AddAttributeTensor(context, name, p_data, p_data_len, shape, shape_len, type);
+}
+
+DACE_EXPORTED OrtStatus* CreateExecutableKernel(
+		OrtKernelSession* session,
+		OrtExecutableKernelContext* context,
+		size_t provider_id,
+		OrtExecutableKernel** kernel) {
+	return ort_api->CreateExecutableKernel(session, context, provider_id, kernel);
+}
+
+DACE_EXPORTED void ReleaseExecutableKernel (OrtExecutableKernel* input) {
+	ort_api->ReleaseExecutableKernel(input);
+}
+
+DACE_EXPORTED void ReleaseExecutableKernelContext (OrtExecutableKernelContext* input) {
+	ort_api->ReleaseExecutableKernelContext(input);
+}
+
+DACE_EXPORTED void ReleaseKernelSession (OrtKernelSession* input) {
+	ort_api->ReleaseKernelSession(input);
+}
+
+DACE_EXPORTED void ReleaseSessionOptions (OrtSessionOptions* input) {
+	ort_api->ReleaseSessionOptions(input);
+}
+
+DACE_EXPORTED void ReleaseStatus (OrtStatus* input) {
+	ort_api->ReleaseStatus(input);
+}
+
+DACE_EXPORTED void ReleaseEnv (OrtEnv* input) {
+	ort_api->ReleaseEnv(input);
+}
+
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED(){
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_INT8() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_INT16() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_INT32() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_INT64() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_STRING() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128;
+}
+DACE_EXPORTED ONNXTensorElementDataType GetONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16() {
+    return ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16;
 }
