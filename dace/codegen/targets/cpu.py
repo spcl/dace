@@ -1351,7 +1351,8 @@ class CPUCodeGen(TargetCodeGenerator):
         ]
         arguments += [
             f'{node.sdfg.symbols[aname].ctype} {aname}'
-            for aname in node.symbol_mapping.keys()
+            for aname in sorted(node.symbol_mapping.keys())
+            if aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         nested_stream.write(f'{header}void {sdfg_label}({arguments}) {{', sdfg,
@@ -1390,7 +1391,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Generate function call
 
         args = ', '.join([argval for _, _, argval in memlet_references] + [
-            sym2cpp(symval) for _, symval in sorted(node.symbol_mapping.items())
+            sym2cpp(symval)
+            for symname, symval in sorted(node.symbol_mapping.items())
+            if symname not in sdfg.constants
         ])
         callsite_stream.write(f'{sdfg_label}({args});', sdfg, state_id, node)
 
