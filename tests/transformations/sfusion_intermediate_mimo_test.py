@@ -73,7 +73,7 @@ def test_quantitatively(sdfg):
 if __name__ == '__main__':
     sdfg = TEST.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
-    sdfg.apply_transformations(StateFusion)
+    sdfg.apply_transformations_repeated(StateFusion)
     # merge the C array
     C1 = None; C2 = None
     for node in sdfg.nodes()[0].nodes():

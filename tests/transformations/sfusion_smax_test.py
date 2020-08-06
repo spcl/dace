@@ -53,6 +53,7 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
 
 
 sdfg = softmax.to_sdfg()
+sdfg.apply_strict_transformations()
 H.set(10); B.set(10); SN.set(20); SM.set(20)
 A = np.ndarray((H.get(), B.get(), SN.get(), SM.get()), dtype = np.float32)
 

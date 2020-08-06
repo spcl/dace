@@ -142,4 +142,5 @@ def test_quantitatively(sdfg, graph):
 if __name__ == "__main__":
 
     sdfg = TEST.to_sdfg()
+    sdfg.apply_strict_transformations()
     test_quantitatively(sdfg, sdfg.nodes()[0])
