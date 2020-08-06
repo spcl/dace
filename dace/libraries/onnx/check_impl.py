@@ -232,7 +232,7 @@ class OpChecker:
                                   ctypes.c_size_t(len(attr_value.shape)), type))
 
 
-def check_op(sdfg, state, node):
+def check_op(sdfg, state, node, cuda=False):
     """ Check whether a ONNXOp node has an implementation in ORT """
     checker = OpChecker(node.schema.name, node.name)
     for attribute, onnx_attribute in node.schema.attributes.items():
@@ -248,4 +248,4 @@ def check_op(sdfg, state, node):
         else:
             checker.add_output(edge_dtype)
 
-    checker.try_create()
+    checker.try_create(cuda=cuda)

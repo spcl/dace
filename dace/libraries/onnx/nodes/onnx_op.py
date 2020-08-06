@@ -662,7 +662,7 @@ class ONNXOp(nd.LibraryNode):
         elif node.schedule == ScheduleType.GPU_Device:
             provider_index = 1
             try:
-                check_op(sdfg, state, node)
+                check_op(sdfg, state, node, cuda=True)
             except Exception as e:
                 # fallback to CPU
                 print("Falling back to CPU for node {}. Reason:\n{}".format(node.name, str(e)))
