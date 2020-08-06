@@ -22,21 +22,25 @@ from collections import defaultdict
 from itertools import chain
 
 '''
-TODO:
+Current State:
 
 - revamp                                [OK]
-- other_subset                          [OK]
-- can_be_applied()                      [OK]
+- other_subset fix                      [OK]
+- match()                               [OK]
 - StorageType Inference                 [OK]   cancelled
-- cover intermediate nodes with
+- cover special case:
+  intermediate nodes with
   incoming edges from outside           (*) (TODO)
-- counter fix                           [OK]
-- subset in_dict fix                    [OK]
-- maybe: one intermediate data
-         counter with out-conn:
-         -> direct connection           (**) (TODO)
-- rewrite tests                         TODO (pull branch)
-- maybe add more tests                  TODO (pull branch)
+  the subgraph
+- counter / subset in_dict fix          [OK]
+- maybe implement: for nodes that are
+  in intermediate_nodes and out_nodes,
+  don't create new out_transient based  (**) (TODO)
+  on the order of the access nodes
+  to that data in the fused subgraph
+- rewrite tests                         [OK]
+- add more (+GPU) tests                 [OK]
+- fix ugly subset check mess in match   ![TODO]
 - stencils                              next
 
 '''
@@ -787,7 +791,6 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 transient_to_transform.strides = new_data_strides
                 transient_to_transform.total_size = new_data_totalsize
                 transient_to_transform.offset  = new_data_offset
-                transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
 
                 if schedule == dtypes.ScheduleType.GPU_Device:
                     print("Global Schedule: GPU")
