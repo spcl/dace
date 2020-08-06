@@ -272,6 +272,13 @@ class ExpandTransformation(Transformation):
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
             expansion.debuginfo = node.debuginfo
+            if isinstance(expansion, dace.sdfg.nodes.NestedSDFG):
+                # Fix parent references
+                nsdfg = expansion.sdfg
+                nsdfg.parent = state
+                nsdfg.parent_sdfg = sdfg
+                nsdfg.update_sdfg_list([])
+                nsdfg.parent_nsdfg_node = expansion
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(
