@@ -213,7 +213,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data)
+    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data, 1)
     if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts

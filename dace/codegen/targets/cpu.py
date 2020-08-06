@@ -1306,7 +1306,7 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ):
-        self._dispatcher.defined_vars.enter_scope(sdfg)
+        self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=False)
         state_dfg = sdfg.nodes()[state_id]
 
         # Connectors that are both input and output share the same name
