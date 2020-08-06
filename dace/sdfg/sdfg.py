@@ -486,8 +486,8 @@ class SDFG(OrderedDiGraph):
         initial state of the SDFG to return to and play back the history.
         :param transformation: The transformation to append.
         """
-        if not self.transformation_hist:
-            clone = copy.copy(self)
+        if not self.orig_sdfg:
+            clone = copy.deepcopy(self)
             clone.transformation_hist = []
             clone.orig_sdfg = None
             self.orig_sdfg = clone
