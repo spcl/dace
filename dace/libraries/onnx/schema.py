@@ -140,7 +140,6 @@ class ONNXAttributeType(aenum.AutoNumberEnum):
     Tensor = ()
     Unsupported = ()
 
-
 _ATTR_TYPE_TO_PYTHON_TYPE = {
     ONNXAttributeType.Int: int,
     ONNXAttributeType.Ints: int,

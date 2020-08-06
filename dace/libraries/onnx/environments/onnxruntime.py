@@ -50,10 +50,8 @@ class ONNXRuntime:
     ]
     cmake_libraries = [
         os.path.join(ORT_BUILD_PATH, "libonnxruntime.so"),
-        os.path.join(ORT_BUILD_PATH, "onnx", "libonnx_proto.a"),
-        os.path.join(ORT_PATH, "build-protobuf", "libprotobuf.so"),
     ]
-    cmake_compile_flags = ["-DONNX_ML=1"]
+    cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []
 

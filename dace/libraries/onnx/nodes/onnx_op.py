@@ -99,10 +99,9 @@ def parse_variadic_param(param):
             .format(number))
     return name, number
 
-
-def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
+def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
     """ Get the code to setup an attribute on an onnx::NodeProto
-        :param node_proto: the variable name of the node protobuf
+        :param kernel_context: the variable name of the kernel context
         :param attr: the attribute to setup
     """
     if value is None:
@@ -116,60 +115,87 @@ def _gen_attr_init_code(node_proto: str, attr: ONNXAttribute, value) -> str:
 
     init_code = """{{
     // Setup attribute {name}
-    onnx::AttributeProto* attribute = {node_proto}.add_attribute();
-    attribute->set_name("{name}");
-    """.format(name=attr.name, node_proto=node_proto)
+    """.format(name=attr.name)
 
-    type_to_str = {
-        ONNXAttributeType.Int: "int",
-        ONNXAttributeType.Float: "float",
-        ONNXAttributeType.String: "string",
-        ONNXAttributeType.Ints: "int",
-        ONNXAttributeType.Floats: "float",
-        ONNXAttributeType.Strings: "string",
-    }
+    def value_to_str(value):
+        return '"{}"'.format(value) if attr.type == ONNXAttributeType.String else str(value)
+
 
     if attr.type in [
             ONNXAttributeType.Int, ONNXAttributeType.Float,
             ONNXAttributeType.String
     ]:
         assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
+
         init_code += """
-        attribute->set_type(onnx::AttributeProto::{type_str});
-        attribute->set_{short_type}({value});
-        """.format(type_str=type_to_str[attr.type].upper(),
-                   short_type=type_to_str[attr.type][0],
-                   value='"{}"'.format(value)
-                   if attr.type == ONNXAttributeType.String else value)
+        __ort_check_status(__ort_api->ExecutableKernelContext_AddAttribute{type_str}({kernel_context}, "{name}", {value}));
+        """.format(type_str=attr.type.name,
+                   kernel_context=kernel_context,
+                   name=attr.name,
+                   value=value_to_str(value))
     elif attr.type in [
             ONNXAttributeType.Ints, ONNXAttributeType.Floats,
             ONNXAttributeType.Strings
     ]:
-        init_code += "attribute->set_type(onnx::AttributeProto::{}S);\n".format(
-            type_to_str[attr.type].upper())
-
         if not isinstance(value, Iterable):
             raise ValueError(
                 "Expected iterable value for attribute '{}', got {}".format(
                     attr.name, value))
 
-        for i in value:
+        values = list(value)
+        if attr.type == ONNXAttributeType.Ints:
+            c_type = "int64_t"
+        elif attr.type == ONNXAttributeType.Floats:
+            c_type = "float"
+        elif attr.type == ONNXAttributeType.String:
+            c_type = "char*"
+
+        init_code += "{type} values[{length}];\n".format(
+            type=c_type,
+            length=len(values)
+        )
+
+        for i, values_elem in enumerate(values):
             assert_type(i, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
-            init_code += "attribute->add_{type_str}s({value});\n".format(
-                type_str_decl='std::string' if attr.type
-                == ONNXAttributeType.String else type_to_str[attr.type],
-                type_str=type_to_str[attr.type],
-                value='"{}"'.format(i)
-                if attr.type == ONNXAttributeType.String else i)
+            init_code += "values[{i}] = {value};\n".format(i=i, value=value_to_str(values_elem))
+
+        init_code += """
+        __ort_check_status(__ort_api->ExecutableKernelContext_AddAttribute{type_str}({kernel_context}, "{name}", values, {length}));
+        """.format(type_str=attr.type.name,
+                   kernel_context=kernel_context,
+                   name=attr.name,
+                   length=len(values))
+
     elif attr.type == ONNXAttributeType.Tensor:
         assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
+
         init_code += """
-        attribute->set_type(onnx::AttributeProto::TENSOR);
-        onnx::TensorProto* t = attribute->mutable_t();
-        t->ParseFromString(base64_decode("{}"));
-        """.format(
-            base64.b64encode(
-                from_array(value).SerializeToString()).decode('ascii'))
+        ONNXTensorElementDataType element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_{};
+        """.format(dace.typeclass(value.dtype).ctype.upper())
+
+        init_code += "int64_t shape[{}];\n".format(len(value.shape))
+        for i, dim in value.shape:
+            init_code += "shape[{}] = {};\n".format(i, dim)
+
+        if attr.type == ONNXAttributeType.Ints:
+            c_type = "uint64_t"
+        elif attr.type == ONNXAttributeType.Floats:
+            c_type = "float"
+        elif attr.type == ONNXAttributeType.String:
+            c_type = "char*"
+
+        init_code += "{} p_data[{}];\n".format(c_type, value.size)
+        for i, data_val in enumerate(np.nditer(value)):
+            data_val = data_val.item()
+            init_code += "p_data[{}] = {};\n".format(i, data_val)
+
+        init_code += """
+        __ort_check_status(__ort_api->ExecutableKernelContext_AddAttributeTensor({kernel_context}, "{name}", static_cast<void*>(p_data), {data_length}, shape, {shape_length}, element_type));
+        """.format(kernel_context=kernel_context,
+                   name=attr.name,
+                   data_length=value.size,
+                   shape_length=len(value.shape))
+
     else:
         raise NotImplementedError(
             "Got unsupported attribute type {} for '{}'".format(
@@ -213,7 +239,8 @@ class ONNXOp(nd.LibraryNode):
             ]
 
             # since validation passed, we know there will only be one
-            assert len(matched) == 1
+            if len(matched) != 1:
+                raise ValueError("Found {} connectors with name '{}', expected to find exactly one".format(len(matched), name))
 
             parameter_idx = matched[0]
 
@@ -503,16 +530,15 @@ class ONNXOp(nd.LibraryNode):
             sdfg.prepend_exit_code(session_cleanup_code)
 
         sdfg.append_global_code(
+            "OrtExecutableKernel *__ort_kernel_{};\n".format(unique_id))
+        sdfg.append_global_code(
             "OrtExecutableKernelContext *__ort_context_{};\n".format(unique_id))
 
         sdfg.append_init_code("""
         {{
-        // Setup for context_{id}
-        onnx::NodeProto proto;
-        proto.set_op_type("{name}");
-        proto.set_name("{id}");
-        std::unordered_map<std::string, onnx::TypeProto> type_map;
-        """.format(id=unique_id, name=node.schema.name))
+        // Setup for {name}
+        __ort_check_status(__ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__ort_context_{name}));
+        """.format(name=unique_id, op_type=node.schema.name))
 
         tasklet_setup_code = ""
         tasklet_code = ""
@@ -529,20 +555,12 @@ class ONNXOp(nd.LibraryNode):
             memlet = edge.data
             arr = sdfg.arrays[memlet.data]
             sdfg.append_init_code("""
-            {{
-                // Add parameter {parameter_name}
-                onnx::TypeProto type_proto;
-                onnx::TypeProto::Tensor *tensor_type = type_proto.mutable_tensor_type();
-                tensor_type->set_elem_type(onnx::TensorProto::{type_string});
-                type_map["{unique_id}_{parameter_name}"] = type_proto;
-
-                std::string* {input_output_string} = proto.add_{input_output_string}();
-                *{input_output_string} = "{unique_id}_{parameter_name}";
-            }}
-            """.format(unique_id=unique_id,
+            // Add parameter {parameter_name}
+            __ort_check_status(__ort_api->ExecutableKernelContext_Add{input_output_string}(__ort_context_{id}, ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_string}));
+            """.format(id=unique_id,
                        type_string=reversed_onnx_dtype_map[arr.dtype].upper(),
                        parameter_name=parameter_name,
-                       input_output_string=input_output_string))
+                       input_output_string=input_output_string.capitalize()))
 
             ort_value_name = "ort_value_{input_output_string}_{parameter_name}".format(
                 input_output_string=input_output_string,
@@ -606,8 +624,8 @@ class ONNXOp(nd.LibraryNode):
                     format(type(arr)))
 
 
-            tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Set{input_output_string_capital}(" \
-                            "__ort_context_{unique_id}, {position}, {ort_value_name}));\n".format(
+            tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Set{input_output_string_capital}(" \
+                            "__ort_kernel_{unique_id}, {position}, {ort_value_name}));\n".format(
                 input_output_string_capital=input_output_string.
                     capitalize(),
                 ort_value_name=ort_value_name,
@@ -624,14 +642,17 @@ class ONNXOp(nd.LibraryNode):
         for name, attr in node.schema.attributes.items():
             if hasattr(node, name):
                 sdfg.append_init_code(
-                    _gen_attr_init_code("proto", node.schema.attributes[name],
+                    _gen_attr_init_code("__ort_context_{}".format(unique_id), node.schema.attributes[name],
                                         getattr(node, name)))
 
         sdfg.prepend_exit_code(
             "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n".
+                format(unique_id))
+        sdfg.prepend_exit_code(
+            "__ort_api->ReleaseExecutableKernel(__ort_kernel_{});\n".
             format(unique_id))
 
-        tasklet_code += "__ort_check_status(__ort_api->ExecutableKernelContext_Compute(__ort_context_{}));\n".format(
+        tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Compute(__ort_kernel_{}));\n".format(
             unique_id)
 
         cpu_fallback = False
@@ -653,8 +674,8 @@ class ONNXOp(nd.LibraryNode):
                     node.schedule))
 
         sdfg.append_init_code(
-            "__ort_check_status(__ort_api->CreateExecutableKernelContext("
-            "__ort_session, /*provider_index=*/{provider_index}, &proto, &type_map, &__ort_context_{id}));\n"
+            "__ort_check_status(__ort_api->CreateExecutableKernel("
+            "__ort_session, __ort_context_{id}, /*provider_index=*/{provider_index}, &__ort_kernel_{id}));\n"
             .format(provider_index=provider_index, id=unique_id))
         sdfg.append_init_code(
             "}} // end setup for context_{}".format(unique_id))

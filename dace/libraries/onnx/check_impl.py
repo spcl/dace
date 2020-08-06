@@ -76,10 +76,6 @@ class OpChecker:
 
 def check_op(sdfg, state, node):
     """ Check whether a ONNXOp node has an implementation in ORT """
-
-    for attr_name in node.schema.attributes.keys():
-        if hasattr(node, attr_name):
-            checker.
     checker = OpChecker(node.schema.name, node.name)
     for edge, is_input in node.iter_edges(state):
         edge_data = edge.data.data
