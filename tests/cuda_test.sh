@@ -7,6 +7,7 @@ PYTHONPATH=$SCRIPTPATH/..
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
+DACE_optimizer_transform_on_call=${DACE_optimizer_transform_on_call:-1}
 DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
 ERRORS=0
 FAILED_TESTS=""
@@ -182,6 +183,7 @@ runall() {
     runtestopt wcr_cudatest.py $1
     
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
+    runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
     
     runtestargs instrumentation_test.py gpu
     runtestargs library/matmul_cudatest.py

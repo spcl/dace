@@ -31,6 +31,7 @@ set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
 # Target detection
 set(DACE_ENABLE_MPI OFF)
 set(DACE_ENABLE_CUDA OFF)
+set(DACE_ENABLE_HIP OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
 
@@ -52,8 +53,13 @@ foreach(DACE_FILE ${DACE_FILES})
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
   if(${DACE_FILE_TARGET} STREQUAL "cuda")
-    set(DACE_ENABLE_CUDA ON)
-    set(DACE_CUDA_FILES ${DACE_CUDA_FILES} ${DACE_FILE})
+    if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
+      set(DACE_ENABLE_HIP ON)
+      set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
+    else()
+      set(DACE_ENABLE_CUDA ON)
+      set(DACE_CUDA_FILES ${DACE_CUDA_FILES} ${DACE_FILE})
+    endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "xilinx")
     set(DACE_ENABLE_XILINX ON)
     if(DACE_FILE_TARGET_TYPE MATCHES "host") 
@@ -109,6 +115,21 @@ if(DACE_ENABLE_CUDA)
     endif()
     cmake_policy(SET CMP0091 NEW)
   endif()
+endif()
+
+if(DACE_ENABLE_HIP)
+  add_definitions(-DWITH_CUDA)
+  add_definitions(-DWITH_HIP)
+
+  # Load once to find HIP path... (due to some issue in FindHIP.cmake)
+  find_package(HIP REQUIRED)
+  get_filename_component(HIP_PATH "${HIP_HIPCC_EXECUTABLE}" DIRECTORY)
+  set(HIP_PATH "${HIP_PATH}/..")
+  get_filename_component(HIP_PATH "${HIP_PATH}" ABSOLUTE)
+  set(CMAKE_MODULE_PATH "${HIP_PATH}/cmake" ${CMAKE_MODULE_PATH})
+  # ...Then load again to get the macros
+  find_package(HIP REQUIRED)
+
 endif()
 
 # Function for performing deferred variable expansion
@@ -196,7 +217,6 @@ endif()
 
 # Create CUDA object files
 if(DACE_ENABLE_CUDA)
-
   # Get local CUDA architectures
   if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
       execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "-ccbin" "${CMAKE_CXX_COMPILER}" "--run"
@@ -209,10 +229,10 @@ if(DACE_ENABLE_CUDA)
         list(GET _arch_out -1 _local_arch)
         string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
         set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
-        message("-- Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
+        message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
       else()
         set(LOCAL_CUDA_ARCHITECTURES "" CACHE STRING "Detected local GPUs for compilation")
-        message("-- No local CUDA-capable GPUs found")
+        message(STATUS "No local CUDA-capable GPUs found")
       endif()
   endif()
 
@@ -225,6 +245,52 @@ if(DACE_ENABLE_CUDA)
   cuda_compile(DACE_CUDA_OBJECTS ${DACE_CUDA_FILES})
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_CUDA_OBJECTS})
 endif() # DACE_ENABLE_CUDA
+
+# Create HIP object files
+if(DACE_ENABLE_HIP)
+  # Get local AMD architectures
+  if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
+    # Compile and run a test program
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o 
+      "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+      OUTPUT_VARIABLE _arch_compout
+      RESULT_VARIABLE _arch_res)
+    if(_arch_res EQUAL 0)
+      execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+	OUTPUT_VARIABLE _arch_out
+	RESULT_VARIABLE _arch_runres)
+    endif()
+
+    if((_arch_res EQUAL 0) AND (_arch_runres EQUAL 0))
+      string(REGEX REPLACE "\n" ";" _arch_out "${_arch_out}")
+      list(GET _arch_out -1 _local_arch)
+      string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
+      set(LOCAL_HIP_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local AMD GPUs for compilation")
+      message(STATUS "Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
+    else()
+      if(_arch_res EQUAL 0)
+	set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
+      endif()
+      message(STATUS "No local HIP-capable GPUs found")
+    endif()
+  endif()
+
+  # Add flags to compile for local AMD architectures
+  foreach(var ${LOCAL_HIP_ARCHITECTURES})
+    list(APPEND HIP_HIPCC_FLAGS --offload-arch=gfx${var})
+  endforeach()
+
+  # Add flags from dace config
+  list(APPEND HIP_HIPCC_FLAGS ${EXTRA_HIP_FLAGS})
+
+  # Add include directories for other files
+  set(DACE_LIBS ${DACE_LIBS} hip::host)
+  
+  set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
+  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
+  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
+endif() # DACE_ENABLE_HIP
+
 
 # Create Xilinx object files
 if(DACE_ENABLE_XILINX)
