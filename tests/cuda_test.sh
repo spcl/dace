@@ -33,7 +33,7 @@ get_latest_file() {
 
 join_by_newline() {
     for a in $*; do
-        echo $a        
+        echo $a
     done
     echo 9999
 }
@@ -107,7 +107,7 @@ runtestopt() {
         bail "$PYTHON_BINARY $1 ($2, optimized)"
         return 1
     fi
-    
+
     checkoutput # Check for spills in the assembly
     if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $1 ($2, assembly)"; return 1; fi
     return 0
@@ -120,7 +120,7 @@ runtestargs() {
         bail "$PYTHON_BINARY $*"
         return 1
     fi
-    
+
     checkoutput # Check for spills in the assembly
     if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $* (assembly)"; return 1; fi
     return 0
@@ -134,7 +134,7 @@ runopt() {
         bail "$PYTHON_BINARY $1 ($2, optimized)"
         return 1
     fi
-    
+
     checkoutput # Check for spills in the assembly
     if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $1 ($2, assembly)"; return 1; fi
     return 0
@@ -147,10 +147,10 @@ runall() {
 
     runtestopt cuda_grid2d_test.py $1
     runtestopt cuda_grid2d_test.py $1 'GPUTransformMap$0'
-    
+
     runtestopt cuda_grid_test.py $1 'GPUTransformMap$0' 'Vectorization$0'
     # Check that output was vectorized
-    if [ $? -eq 0 ] && [ $DACE_optimizer_automatic_strict_transformations -ne 0 ]; then 
+    if [ $? -eq 0 ] && [ $DACE_optimizer_automatic_strict_transformations -ne 0 ]; then
         check_vectorization
         if [ $? -ne 0 ]; then bail "$PYTHON_BINARY cuda_grid_test.py ($1, wideload)"; fi
     fi
@@ -161,18 +161,18 @@ runall() {
     runtestopt cuda_smem_test.py $1
     runtestopt cuda_smem_test.py $1 'GPUTransformMap$0'
     runtestopt cuda_smem_test.py $1 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_A")'
-    
+
     runtestopt cuda_smem2d_test.py $1
     runtestopt cuda_smem2d_test.py $1 'GPUTransformMap$0'
     runtestopt cuda_smem2d_test.py $1 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_V")'
-    
+
     runopt samples/simple/sum.py $1
     runopt samples/simple/sum.py $1 'GPUTransformMap$0'
-    
+
     runtestopt blockreduce_cudatest.py $1
 
     runtestopt cuda_highdim_kernel_test.py $1 'GPUTransformMap$0(fullcopy=True)'
-    
+
     runtestopt multistream_copy_cudatest.py $1
     runtestopt multistream_kernel_cudatest.py $1
     runtestopt multistream_custom_cudatest.py $1
@@ -180,10 +180,10 @@ runall() {
     runtestopt multiprogram_cudatest.py $1
 
     runtestopt wcr_cudatest.py $1
-    
+
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
     runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
-    
+
     runtestargs instrumentation_test.py gpu
     runtestargs library/matmul_cudatest.py
 
@@ -193,6 +193,11 @@ runall() {
     runtestargs persistent_map_cudatest.py
     runtestargs persistent_tb_map_cudatest.py
     runtestargs persistent_fusion_cudatest.py
+
+    runtestargs transformations/sfusion_block_allreduce_cudatest.py
+    runtestargs transformations/sfusion_sequential1_cudatest.py
+    runtestargs transformations/sfusion_sequential2_cudatest.py
+
 }
 
 
