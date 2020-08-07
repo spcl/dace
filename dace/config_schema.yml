@@ -448,6 +448,9 @@ required:
                         # FPGA programs fail to find certain libraries at
                         # runtime with runpath.
                         default: '-Wl,--disable-new-dtags'
+                        default_Darwin: ''
+                        default_Windows: ''
+
 
     execution:
         type: dict
