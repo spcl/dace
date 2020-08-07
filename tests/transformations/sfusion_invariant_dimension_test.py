@@ -47,7 +47,6 @@ def TEST(A: dace.float64[N,M,O], B: dace.float64[N,M,O], C: dace.float64[N,M,O])
 
 def test_qualitatively(sdfg, graph):
     fusion(sdfg, graph)
-    sdfg.view()
     sdfg.validate()
     print("PASS")
 
@@ -57,13 +56,11 @@ def test_quantitatively(sdfg, graph):
     C1 = np.zeros([N.get(), M.get(), O.get()], dtype = np.float64)
     C2 = np.zeros([N.get(), M.get(), O.get()], dtype = np.float64)
 
-    sdfg.view()
     sdfg.validate()
     csdfg = sdfg.compile()
     csdfg(A=A,B=B,C=C1,N=N,M=M,O=O)
 
     fusion(sdfg, graph)
-    sdfg.view()
     csdfg = sdfg.compile()
     csdfg(A=A,B=B,C=C2,N=N,M=M,O=O)
 

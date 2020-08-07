@@ -54,7 +54,6 @@ def test_quantitatively(sdfg, graph):
     csdfg = sdfg.compile()
     csdfg(A=A,B=B1,C=C1,N=N,M=M)
     fusion(sdfg, graph)
-    #sdfg.view()
     csdfg = sdfg.compile()
     csdfg(A=A,B=B2,C=C2,N=N,M=M)
     assert np.allclose(B1,B2)

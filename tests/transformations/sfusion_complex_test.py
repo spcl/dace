@@ -104,7 +104,6 @@ def test_qualitatively(sdfg, graph):
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
     fusion(sdfg, graph)
-    sdfg.view()
     sdfg.validate()
     print("PASS")
 
