@@ -43,8 +43,8 @@ Current State:
 - fix ugly subset check mess in match   ![TODO]
 - print warning fornow if subset
   check is ambiguous                    TODO
-- docstrings                            TODO
-- fix unittests                         TODO
+- docstrings                            [OK]
+- fix unittests                         [OK]
 - stencils                              next
 
 '''
@@ -254,6 +254,16 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
             except TypeError:
                 #return False
             '''
+            # FORNOW: just omit warning if unsure
+            for lower_subset in lower_subsets:
+                covers = False
+                for upper_subset in upper_subsets:
+                    if upper_subset.covers(lower_subset):
+                        covers = True
+                        break
+                if not covers:
+                    print(f"WARNING: For node {node}, please check assure that"
+                           "incoming memlets cover outgoing ones. Ambiguous check (WIP).")
 
             # now take union of upper subsets
             for subs in upper_iter:
