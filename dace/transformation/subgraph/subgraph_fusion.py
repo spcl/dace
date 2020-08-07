@@ -42,7 +42,7 @@ Current State:
 - add more (+GPU) tests                 [OK]
 - fix ugly subset check mess in match   ![TODO]
 - print warning fornow if subset
-  check is ambiguous                    TODO
+  check is ambiguous                    [OK]
 - docstrings                            [OK]
 - fix unittests                         [OK]
 - stencils                              next
@@ -665,18 +665,25 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                         # dst to dst_transient that was created
                         dst_transient = transients_created[dst]
                         next_conn = global_map_exit.next_connector()
-                        in_conn= 'IN_' + next_conn
+                        in_conn = 'IN_' + next_conn
                         out_conn = 'OUT_' + next_conn
                         global_map_exit.add_in_connector(in_conn)
                         global_map_exit.add_out_connector(out_conn)
 
-                        e = graph.add_edge(dst, None,
-                                           global_map_exit, in_conn,
-                                           dcpy(edge.data))
+                        inner_memlet = Memlet(data = dcpy(edge.data.data),
+                                              subset = dcpy(edge.data.subset),
+                                              other_subset = dcpy(edge.data.subset),
+                                              volume = dcpy(edge.data.volume))
 
-                        e = graph.add_edge(global_map_exit, out_conn,
-                                           dst_transient, None,
-                                           dcpy(out_edge.data))
+                        e_inner = graph.add_edge(dst, None,
+                                                 global_map_exit, in_conn,
+                                                 inner_memlet)
+                        mm_outer = propagate_memlet(graph, inner_memlet, global_map_entry, \
+                                                    union_inner_edges = False)
+
+                        e_outer = graph.add_edge(global_map_exit, out_conn,
+                                                 dst_transient, None,
+                                                 mm_outer)
 
                         # remove edge from dst to dst_transient that was created
                         # in intermediate preparation.
