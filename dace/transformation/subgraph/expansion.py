@@ -20,6 +20,13 @@ import dace.libraries.standard as stdlib
 
 @make_properties
 class MultiExpansion(pattern_matching.SubgraphTransformation):
+    ''' Implements the MultiExpansion transformation.
+    Takes all the lowest scope maps in a given subgraph,
+    for each of these maps splits it into an outer and inner map,
+    where the outer map contains the common ranges of all maps,
+    and the inner map the rest.
+    Map access variables and memlets are changed accordingly
+    '''
 
     debug = Property(dtype = bool,
                      desc = "Debug Mode",
@@ -65,7 +72,6 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
         self.expand(sdfg, graph, maps, map_base_variables = map_base_variables)
 
     def expand(self, sdfg, graph, map_entries, map_base_variables = None):
-
         """
         Expansion into outer and inner maps for each map in a specified set.
         The resulting outer maps all have same range and indices, corresponding

@@ -41,6 +41,10 @@ Current State:
 - rewrite tests                         [OK]
 - add more (+GPU) tests                 [OK]
 - fix ugly subset check mess in match   ![TODO]
+- print warning fornow if subset
+  check is ambiguous                    TODO
+- docstrings                            TODO
+- fix unittests                         TODO
 - stencils                              next
 
 '''
@@ -48,14 +52,15 @@ Current State:
 @make_properties
 class SubgraphFusion(pattern_matching.SubgraphTransformation):
     """ Implements the SubgraphFusion transformation.
-        Fuses the maps specified together with their outer maps
-        as a global outer map, creating transients and new connections
+        Fuses together the maps contained in the subgraph and pushes inner nodes
+        into a global outer map, creating transients and new connections
         where necessary.
-        Use MultiExpansion first before fusing a graph with SubgraphFusion
-        Applicability checks have not been implemented yet.
 
-        This is currently not implemented as a transformation template,
-        as we want to input an arbitrary subgraph / collection of maps.
+        SubgraphFusion requires all lowest scope level maps in the subgraph
+        to have the same indices and parameter range in every dimension.
+        This can be achieved using the MultiExpansion transformation first.
+        Reductions can also be expanded using ReduceExpansion as a
+        preprocessing step.
 
     """
 
@@ -76,15 +81,15 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                                          choices = ["auto", "shared", "local", "default"])
     @staticmethod
     def match(sdfg, subgraph):
-
-        # Fusable if
-        # 1. Maps have the same access sets and ranges in order
-        # 2. Any nodes in between two maps are AccessNodes only, without WCR
-        #    There is at most one AccessNode only on a path between two maps,
-        #    no other nodes are allowed
-        # 3. The exiting memlets' subsets to an intermediate edge must cover
-        #    the respective incoming memlets' subset into the next map
-
+        '''
+        Fusable if
+        1. Maps have the same access sets and ranges in order
+        2. Any nodes in between two maps are AccessNodes only, without WCR
+           There is at most one AccessNode only on a path between two maps,
+           no other nodes are allowed
+        3. The exiting memlets' subsets to an intermediate edge must cover
+           the respective incoming memlets' subset into the next map
+        '''
         # get graph
         graph = subgraph.graph
         for node in subgraph.nodes():
@@ -337,6 +342,10 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
     def prepare_intermediate_nodes(self, sdfg, graph, in_nodes, out_nodes,
                                     intermediate_nodes, map_entries, map_exits,
                                     do_not_override = []):
+        ''' For every interemediate node, determines whether
+        it is fully contained in the subgraph and whether it has
+        any out connections and thus transients need to be created
+        '''
 
         def redirect(redirect_node, original_node):
             # redirect all outgoing traffic which
@@ -443,22 +452,14 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
             For every output respective connections are crated automatically.
 
-            See can_be_applied for requirements.
-
-            [Work in Progress] Features and corner cases not supported yet:
-            - border memlets with subset changes (memlet.other_subset)
-              are not supported currently
-            - Transients that get pushed into the global map
-              always persist, even if they have size one (unlike MapFusion)
-
             :param sdfg: SDFG
             :param graph: State
             :param map_entries: Map Entries (class MapEntry) of the outer maps
                                 which we want to fuse
             :param do_not_override: List of AccessNodes that are transient but
                                   should not be directly modified when pushed
-                                  into the global map. Instead a transient copy
-                                  is created and linked to it.
+                                  into the global map. Instead the array
+                                  is taken itself.
         """
 
         # if there are no maps, return immediately

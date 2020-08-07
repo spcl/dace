@@ -23,11 +23,13 @@ import timeit
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class ReduceExpansion(pattern_matching.Transformation):
-    """ Implements the Reduce-Map transformation.
+    """ Implements the ReduceExpansion transformation.
         Expands a Reduce node into inner and outer map components,
-        then introduces a transient for its intermediate output,
-        deletes the WCR on the outer map exit
-        and transforms the inner map back into a reduction.
+        where the outer map consists of the axes not being reduced.
+        A new reduce node is created inside the inner map.
+        Special cases where e.g reduction identities are not defined 
+        and arrays being reduced to already exist are handled
+        on the fly.
     """
 
     _reduce = stdlib.Reduce()
@@ -113,6 +115,7 @@ class ReduceExpansion(pattern_matching.Transformation):
             where the inner dimension are the reduction axes and the
             outer axes the complement. Pushes the reduce inside a new
             map consisting of the complement axes.
+
         """
 
         out_storage_node = graph.out_edges(reduce_node)[0].dst
