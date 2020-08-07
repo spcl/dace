@@ -34,7 +34,7 @@ from dace.codegen.targets.cpp import unparse_cr_split, cpp_array_expr
 @dace.library.expansion
 class ExpandReducePure(pm.ExpandTransformation):
     """
-        Pure SDFG Reduce expansion replaces a reduce node with nested maps and 
+        Pure SDFG Reduce expansion replaces a reduce node with nested maps and
         edges with WCR.
     """
     environments = []
@@ -632,6 +632,159 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         return tnode
 
 
+@dace.library.expansion
+class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
+    """ Implements the ExpandReduceCUDABlockAll transformation.
+        Takes a cuda block reduce node, transforms it to a block reduce node,
+        warps it in outer maps and creates an if-output of thread0
+        to a newly created shared memory container
+    """
+
+    environments = [CUDA]
+
+    collapse = Property(desc = "Collapse Reduction for better viewability",
+                        dtype = bool,
+                        default = False)
+
+    @staticmethod
+    def redirect_edge(graph, edge, new_src = None, new_src_conn = None ,
+                                         new_dst = None, new_dst_conn = None, new_data = None ):
+
+        data = new_data if new_data else edge.data
+        if new_src and new_dst:
+            ret = graph.add_edge(new_src, new_src_conn, new_dst, new_dst_conn, data)
+            graph.remove_edge(edge)
+        elif new_src:
+            ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn, data)
+            graph.remove_edge(edge)
+        elif new_dst:
+            ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn, data)
+            graph.remove_edge(edge)
+        else:
+            pass
+        return ret
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        """ Create a map around the BlockReduce node
+            with in and out transients in registers
+            and an if tasklet that redirects the output
+            of thread 0 to a shared memory transient
+        """
+        ### define some useful vars
+        graph = state
+        reduce_node = node
+        in_edge = graph.in_edges(reduce_node)[0]
+        out_edge = graph.out_edges(reduce_node)[0]
+
+        axes = reduce_node.axes
+        ### add a map that encloses the reduce node
+        (new_entry, new_exit) = graph.add_map(
+                      name = 'inner_reduce_block',
+                      ndrange = {'i'+str(i): f'{rng[0]}:{rng[1]+1}:{rng[2]}'  \
+                                for (i,rng) in enumerate(in_edge.data.subset) \
+                                if i in axes},
+                      schedule = dtypes.ScheduleType.Default)
+
+        map = new_entry.map
+        ExpandReduceCUDABlockAll.redirect_edge(graph, in_edge, new_dst = new_entry)
+        ExpandReduceCUDABlockAll.redirect_edge(graph, out_edge, new_src = new_exit)
+
+
+        subset_in = subsets.Range([in_edge.data.subset[i] if i not in axes
+                                   else (new_entry.map.params[0],new_entry.map.params[0],1)
+                                   for i in range(len(in_edge.data.subset))])
+        memlet_in = dace.Memlet(data = in_edge.data.data,
+                           volume = 1,
+                           subset = subset_in)
+        memlet_out = dcpy(out_edge.data)
+        graph.add_edge(u = new_entry, u_connector = None,
+                       v = reduce_node,v_connector = None,
+                       memlet = memlet_in)
+        graph.add_edge(u = reduce_node, u_connector = None,
+                       v = new_exit, v_connector = None,
+                       memlet = memlet_out)
+
+        ### add in and out local storage
+        from dace.transformation.dataflow.local_storage import LocalStorage
+
+        in_local_storage_subgraph = {
+            LocalStorage._node_a: graph.nodes().index(new_entry),
+            LocalStorage._node_b: graph.nodes().index(reduce_node)
+        }
+        out_local_storage_subgraph = {
+            LocalStorage._node_a: graph.nodes().index(reduce_node),
+            LocalStorage._node_b: graph.nodes().index(new_exit)
+        }
+
+        local_storage = LocalStorage(sdfg.sdfg_id,
+                                     sdfg.nodes().index(state),
+                                     in_local_storage_subgraph,
+                                     0)
+
+        local_storage.array = in_edge.data.data
+        local_storage.apply(sdfg)
+        in_transient = local_storage._data_node
+        sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
+
+        local_storage = LocalStorage(sdfg.sdfg_id,
+                                     sdfg.nodes().index(state),
+                                     out_local_storage_subgraph,
+                                     0)
+        local_storage.array = out_edge.data.data
+        local_storage.apply(sdfg)
+        out_transient = local_storage._data_node
+        sdfg.data(out_transient.data).storage = dtypes.StorageType.Register
+
+        # hack: swap edges as local_storage does not work correctly here
+        # TODO: NOTE: If local_storage ever changes, this will not work any more
+        e1 = graph.in_edges(out_transient)[0]
+        e2 = graph.out_edges(out_transient)[0]
+        e1.data.data = dcpy(e2.data.data)
+        e1.data.subset = dcpy(e2.data.subset)
+
+        ### add an if tasket and diverge
+        code = 'if '
+        for (i,param) in enumerate(new_entry.map.params):
+            code += (param + '==0')
+            if i < len(axes) - 1:
+                code += ' and '
+        code += ':\n'
+        code += '\tout=inp'
+
+        tasklet_node = graph.add_tasklet(name = 'block_reduce_write',
+                                         inputs = ['inp'],
+                                         outputs = ['out'],
+                                         code = code)
+
+        edge_out_outtrans = graph.out_edges(out_transient)[0]
+        edge_out_innerexit = graph.out_edges(new_exit)[0]
+        ExpandReduceCUDABlockAll.redirect_edge(graph, edge_out_outtrans,
+                           new_dst = tasklet_node, new_dst_conn = 'inp')
+        e = graph.add_edge(u = tasklet_node, u_connector = 'out',
+                           v = new_exit, v_connector = None,
+                           memlet = dcpy(edge_out_innerexit.data))
+        # set dynamic with volume 0 FORNOW
+        e.data.volume = 0
+        e.data.dynamic = True
+
+        ### set reduce_node axes to all (needed)
+        reduce_node.axes = None
+
+        if ExpandReduceCUDABlockAll.collapse:
+            #new_entry.is_collapsed = True
+            pass
+        # fill scope connectors, done.
+        sdfg.fill_scope_connectors()
+
+        # finally, change the implementation to cuda (block)
+        # itself and expand again.
+        reduce_node.implementation = 'CUDA (block)'
+        sub_expansion = ExpandReduceCUDABlock(0, 0, {}, 0)
+        return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
+        #return reduce_node.expand(sdfg, state)
+
+
 @dace.library.node
 class Reduce(dace.sdfg.nodes.LibraryNode):
     """ An SDFG node that reduces an N-dimensional array to an
@@ -644,8 +797,9 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         'OpenMP': ExpandReduceOpenMP,
         'CUDA (device)': ExpandReduceCUDADevice,
         'CUDA (block)': ExpandReduceCUDABlock,
+        'CUDA (block allreduce)': ExpandReduceCUDABlockAll
         # 'CUDA (warp)': ExpandReduceCUDAWarp,
-        # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAllreduce
+        # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
     default_implementation = 'pure'
