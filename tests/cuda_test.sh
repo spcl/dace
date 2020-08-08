@@ -195,7 +195,7 @@ runall() {
     runtestargs persistent_fusion_cudatest.py
 
     runtestargs transformations/sfusion_block_allreduce_cudatest.py
-    runtestargs transformations/sfusion_sequential1_cudatest.py
+    #runtestargs transformations/sfusion_sequential1_cudatest.py
     runtestargs transformations/sfusion_sequential2_cudatest.py
 
 }
