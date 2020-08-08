@@ -809,6 +809,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 transient_to_transform.strides = new_data_strides
                 transient_to_transform.total_size = new_data_totalsize
                 transient_to_transform.offset  = new_data_offset
+                transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
 
                 if schedule == dtypes.ScheduleType.GPU_Device:
                     print("Global Schedule: GPU")
