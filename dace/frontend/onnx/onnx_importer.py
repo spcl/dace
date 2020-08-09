@@ -10,7 +10,7 @@ from onnx import numpy_helper
 import dace
 from dace.frontend.python.parser import infer_symbols_from_shapes
 from dace.sdfg import SDFG, SDFGState
-from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_dace_type
+from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx import get_onnx_node, has_onnx_node, ONNXParameterType
 from dace.dtypes import AccessType, StorageType, AllocationLifetime
 import dace.sdfg.nodes as nd
@@ -189,7 +189,7 @@ class ONNXModel:
 
         name = self._clean_array_name(tensor.name)
 
-        dtype = onnx_tensor_type_to_dace_type(tensor.data_type)
+        dtype = onnx_tensor_type_to_typeclass(tensor.data_type)
 
         if len(tensor.dims) == 0:
             # this is a scalar
@@ -253,13 +253,13 @@ class ONNXModel:
         transient = name not in self.inputs and name not in self.outputs
         if len(shape) == 0:
             self.sdfg.add_scalar(self._clean_array_name(name),
-                                 dtype=onnx_tensor_type_to_dace_type(
+                                 dtype=onnx_tensor_type_to_typeclass(
                                      tensor_type.elem_type),
                                  transient=transient)
         else:
             self.sdfg.add_array(self._clean_array_name(name),
                                 shape=shape,
-                                dtype=onnx_tensor_type_to_dace_type(
+                                dtype=onnx_tensor_type_to_typeclass(
                                     tensor_type.elem_type),
                                 transient=transient)
 

@@ -1,19 +1,17 @@
 # TODO do checking on if type exists for non required fields (maybe automate this?)
-import base64
-import traceback
 from collections import Iterable
-from itertools import chain, repeat, count
+from itertools import chain, repeat
 from functools import reduce
 from typing import Iterator, Tuple, List
 from copy import deepcopy
 
 import numpy as np
 import onnx
-from onnx.numpy_helper import from_array
 
 import dace
 import dace.sdfg.nodes as nd
 import dace.data as dt
+from dace.dtypes import DTYPE_TO_TYPECLASS
 from dace import SDFG, SDFGState, ScheduleType
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.properties import make_properties, Property, ListProperty
@@ -21,9 +19,8 @@ from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.standard.nodes.code import _get_inputs_and_outputs
 from dace.libraries.onnx.environments import ONNXRuntime
 from dace.libraries.onnx.check_impl import check_op, ONNXOpExpansionError
-from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS
+from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS, dace_type_to_onnx_tensor_type
 from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute
-from dace.sdfg import InvalidSDFGNodeError
 
 
 def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
@@ -169,22 +166,36 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
     elif attr.type == ONNXAttributeType.Tensor:
         assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
 
+        dace_typeclass = DTYPE_TO_TYPECLASS[value.dtype.type]
+
+        supported_types = {
+            dace.float16: dace.float32,
+            dace.float32: dace.float32,
+            dace.float64:dace.float64,
+            dace.int8: dace.int8,
+            dace.int16:dace.int16,
+            dace.int32:dace.int32,
+            dace.int64:dace.int64,
+            dace.uint8:dace.uint8,
+            dace.uint16:dace.uint16,
+            dace.uint32:dace.uint32,
+            dace.uint64: dace.uint64
+        }
+
+        if dace_typeclass not in supported_types:
+            raise NotImplementedError("ONNX support for type {} has not been implemented for ONNX Tensor attributes (at attribute with name {})".format(value.dtype.type, attr.name))
+
+        type_to_generate = supported_types[dace_typeclass]
+
         init_code += """
         ONNXTensorElementDataType element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_{};
-        """.format(dace.typeclass(value.dtype).ctype.upper())
+        """.format(dace_type_to_onnx_tensor_type(type_to_generate))
 
         init_code += "int64_t shape[{}];\n".format(len(value.shape))
-        for i, dim in value.shape:
+        for i, dim in enumerate(value.shape):
             init_code += "shape[{}] = {};\n".format(i, dim)
 
-        if attr.type == ONNXAttributeType.Ints:
-            c_type = "uint64_t"
-        elif attr.type == ONNXAttributeType.Floats:
-            c_type = "float"
-        elif attr.type == ONNXAttributeType.String:
-            c_type = "char*"
-
-        init_code += "{} p_data[{}];\n".format(c_type, value.size)
+        init_code += "{} p_data[{}];\n".format(type_to_generate.ctype, value.size)
         for i, data_val in enumerate(np.nditer(value)):
             data_val = data_val.item()
             init_code += "p_data[{}] = {};\n".format(i, data_val)

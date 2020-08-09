@@ -156,10 +156,10 @@ def dace_type_to_onnx_tensor_type(dtype: typeclass) -> int:
     return dace_type_to_onnx_tensor_type.inv_map[dtype]
 
 
-def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
+def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
     #  we cache the reverse map as an attribute of the method
-    if hasattr(onnx_tensor_type_to_dace_type, "inv_map"):
-        inv_map = onnx_tensor_type_to_dace_type.inv_map
+    if hasattr(onnx_tensor_type_to_typeclass, "inv_map"):
+        inv_map = onnx_tensor_type_to_typeclass.inv_map
     else:
         k: str
         v: int
@@ -168,7 +168,7 @@ def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
             if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS:
                 inv_map[v] = ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
 
-        onnx_tensor_type_to_dace_type.inv_map = inv_map
+        onnx_tensor_type_to_typeclass.inv_map = inv_map
 
     if elem_type not in inv_map:
         raise ValueError("Got unsupported ONNX tensor type: {}".format(
@@ -176,6 +176,18 @@ def onnx_tensor_type_to_dace_type(elem_type: int) -> typeclass:
              for k, v in onnx.TensorProto.DataType.items()}[elem_type]))
 
     return inv_map[elem_type]
+
+def typeclass_to_onnx_str(dtype: typeclass) -> str:
+    #  we cache the reverse map as an attribute of the method
+    if hasattr(typeclass_to_onnx_str, "inv_map"):
+        inv_map = typeclass_to_onnx_str.inv_map
+    else:
+        inv_map = {v: k for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
+
+    if dtype not in inv_map:
+        raise ValueError("Attempted to convert unsupported dace type to ONNX type: {}".format(dtype))
+
+    return inv_map[dtype]
 
 
 def onnx_type_str_onnx_type_str_to_dace_type(

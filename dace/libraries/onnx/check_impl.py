@@ -220,7 +220,7 @@ class OpChecker:
             data = [data_val.item() for data_val in np.nditer(attr_value)]
             ctype = np.ctypeslib.as_ctypes_type(attr_value.dtype)
             type_str = self.dt_to_onnx_string[DTYPE_TO_TYPECLASS[
-                attr_value.dtype]]
+                attr_value.dtype.type]]
             type = ctypes.c_int(
                 getattr(
                     self.dll,
