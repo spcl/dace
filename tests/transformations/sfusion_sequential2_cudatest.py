@@ -27,7 +27,7 @@ def TEST(A: dace.float64[N], C: dace.float64[N]):
 
 
 if __name__ == "__main__":
-    N.set(1000)
+    N.set(50)
 
     sdfg = TEST.to_sdfg()
     sdfg.apply_gpu_transformations()
