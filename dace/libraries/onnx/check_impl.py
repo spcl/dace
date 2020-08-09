@@ -1,6 +1,7 @@
 import os
 import inspect
 import ctypes
+from typing import Optional, List
 
 import numpy as np
 
@@ -13,7 +14,7 @@ from dace.codegen.compiler import generate_program_folder, configure_and_compile
 from dace.codegen.targets import cpu
 
 
-class ONNXOpExpansionError(Exception):
+class ONNXOpValidationError(Exception):
     pass
 
 
@@ -46,12 +47,16 @@ def build_checker():
 
 
 class OpChecker:
-    def __init__(self, op_type: str, name: str):
+    def __init__(self, op_type: str, name: str, check_output_locations=False):
 
-        name = name.encode("ascii")
-        op_type = op_type.encode("ascii")
+        self.n_outputs = 0
+        self.check_output_locations = check_output_locations
+        self.name = name.encode("ascii")
+        self.op_type = op_type.encode("ascii")
         self.dll = build_checker()
 
+
+    def __enter__(self):
         self._ReleaseStatus = self._get_function("ReleaseStatus")
         self._ReleaseEnv = self._get_function("ReleaseEnv")
         self._ReleaseSessionOptions = self._get_function(
@@ -96,8 +101,8 @@ class OpChecker:
         _CreateExecutableKernelContext = self._get_function(
             "CreateExecutableKernelContext", restype=ctypes.c_void_p)
         self._check_status(
-            _CreateExecutableKernelContext(ctypes.c_char_p(name),
-                                           ctypes.c_char_p(op_type),
+            _CreateExecutableKernelContext(ctypes.c_char_p(self.name),
+                                           ctypes.c_char_p(self.op_type),
                                            ctypes.byref(self._context)))
 
         self._CreateExecutableKernel = self._get_function(
@@ -106,6 +111,8 @@ class OpChecker:
                                             restype=ctypes.c_void_p)
         self._AddOutput = self._get_function(
             "ExecutableKernelContext_AddOutput", restype=ctypes.c_void_p)
+        self._ExecutableKernelContext_IsOutputOnCpu = self._get_function(
+            "ExecutableKernel_IsOutputOnCpu", restype=ctypes.c_void_p)
 
         self._AddAttribute = {
             ONNXAttributeType.Int:
@@ -134,14 +141,28 @@ class OpChecker:
             v: k.upper()
             for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
         }
+        return self
 
-    def try_create(self, cuda=False):
+    def try_create(self, cuda=False) -> Optional[List[bool]]:
         kernel = ctypes.c_void_p()
         self._check_status(
             self._CreateExecutableKernel(self._session, self._context,
                                          ctypes.c_size_t(1 if cuda else 0),
                                          ctypes.byref(kernel)))
-        self._ReleaseExecutableKernel(kernel)
+
+        if self.check_output_locations:
+            outputs_on_cpu = []
+            for i in range(self.n_outputs):
+                result = ctypes.c_int(-1)
+                self._ExecutableKernelContext_IsOutputOnCpu(kernel, ctypes.c_int(i), ctypes.byref(result))
+                if result == -1:
+                    raise ONNXOpValidationError("Could not determine output storage of op")
+                outputs_on_cpu.append(bool(result))
+
+            self._ReleaseExecutableKernel(kernel)
+            return outputs_on_cpu
+        else:
+            self._ReleaseExecutableKernel(kernel)
 
     def _get_function(self, symbol_name, restype=None):
         func = getattr(self.dll, symbol_name)
@@ -156,9 +177,9 @@ class OpChecker:
             error = self._GetErrorMessage(status)
             self._ReleaseStatus(status)
             print(error.value.decode("ascii"))
-            raise ONNXOpExpansionError("see error printed above")
+            raise ONNXOpValidationError("see error printed above")
 
-    def __del__(self, *args):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         if not hasattr(self, "dll"):
             return
 
@@ -182,6 +203,7 @@ class OpChecker:
         self._AddInput(self._context, type)
 
     def add_output(self, dtype: dace.typeclass):
+        self.n_outputs += 1
         type = ctypes.c_int(
             getattr(
                 self.dll, "GetONNX_TENSOR_ELEMENT_DATA_TYPE_{}".format(
@@ -237,20 +259,20 @@ class OpChecker:
                                   ctypes.c_size_t(len(attr_value.shape)), type))
 
 
-def check_op(sdfg, state, node, cuda=False):
+def check_op(sdfg, state, node, cuda=False) -> List[bool]:
     """ Check whether a ONNXOp node has an implementation in ORT """
-    checker = OpChecker(node.schema.name, node.name)
-    for attribute, onnx_attribute in node.schema.attributes.items():
-        if hasattr(node, attribute):
-            checker.add_attribute(attribute, getattr(node, attribute),
-                                  onnx_attribute.type)
+    with OpChecker(node.schema.name, node.name, check_output_locations=True) as checker:
+        for attribute, onnx_attribute in node.schema.attributes.items():
+            if hasattr(node, attribute):
+                checker.add_attribute(attribute, getattr(node, attribute),
+                                      onnx_attribute.type)
 
-    for edge, is_input in node.iter_edges(state):
-        edge_data = edge.data.data
-        edge_dtype = sdfg.arrays[edge_data].dtype
-        if is_input:
-            checker.add_input(edge_dtype)
-        else:
-            checker.add_output(edge_dtype)
+        for edge, is_input in node.iter_edges(state):
+            edge_data = edge.data.data
+            edge_dtype = sdfg.arrays[edge_data].dtype
+            if is_input:
+                checker.add_input(edge_dtype)
+            else:
+                checker.add_output(edge_dtype)
 
-    checker.try_create(cuda=cuda)
+        return checker.try_create(cuda=cuda)

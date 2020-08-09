@@ -102,6 +102,11 @@ DACE_EXPORTED OrtStatus* CreateExecutableKernel(
 	return ort_api->CreateExecutableKernel(session, context, provider_id, kernel);
 }
 
+DACE_EXPORTED OrtStatus* ExecutableKernel_IsOutputOnCpu(
+		OrtExecutableKernel* kernel, int index, int* is_output_on_cpu) {
+	return ort_api->ExecutableKernel_IsOutputOnCpu(kernel, index, is_output_on_cpu);
+}
+
 DACE_EXPORTED void ReleaseExecutableKernel (OrtExecutableKernel* input) {
 	ort_api->ReleaseExecutableKernel(input);
 }

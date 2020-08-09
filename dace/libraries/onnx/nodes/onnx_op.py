@@ -2,7 +2,7 @@
 from collections import Iterable
 from copy import deepcopy
 from functools import reduce
-from itertools import chain, repeat
+import itertools
 from typing import Iterator, Tuple, List
 
 import numpy as np
@@ -11,9 +11,9 @@ import onnx
 import dace
 import dace.data as dt
 import dace.sdfg.nodes as nd
-from dace import SDFG, SDFGState, ScheduleType
-from dace.dtypes import DTYPE_TO_TYPECLASS
-from dace.libraries.onnx.check_impl import check_op, ONNXOpExpansionError
+from dace import SDFG, SDFGState, ScheduleType, StorageType
+from dace.dtypes import DTYPE_TO_TYPECLASS, can_access
+from dace.libraries.onnx.check_impl import check_op, ONNXOpValidationError
 from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS, clean_onnx_name, typeclass_to_onnx_str
 from dace.libraries.onnx.environments import ONNXRuntime
 from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, \
@@ -193,7 +193,6 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
         init_code += """
         ONNXTensorElementDataType element_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_{};
         """.format(typeclass_to_onnx_str(type_to_generate).upper())
-
         init_code += "int64_t shape[{}];\n".format(len(value.shape))
         for i, dim in enumerate(value.shape):
             init_code += "shape[{}] = {};\n".format(i, dim)
@@ -231,6 +230,21 @@ class ONNXOp(nd.LibraryNode):
     schema = Property(dtype=ONNXSchema,
                       desc="The operator's ONNX OpSchema",
                       allow_none=True)
+
+    def iter_outputs_in_onnx_order(self, state):
+        """ Iterate through the output edges in the same order as they would appear in in an ONNX node proto.
+            This assumes that the node has been validated!
+        """
+        outputs = list(self.schema.outputs)
+        if outputs[-1].param_type == ONNXParameterType.Variadic:
+            name = outputs[-1].name
+            outputs = itertools.chain(outputs[:-1], (name + "__" + str(i) for i in itertools.count()))
+
+        edges = state.out_edges(self)
+        outputs = list(itertools.islice(outputs, len(edges)))
+        src_conn_to_edge = {edge.src_conn: edge for edge in edges}
+
+        return [src_conn_to_edge[name] for name in outputs]
 
     def iter_edges(
             self,
@@ -273,8 +287,8 @@ class ONNXOp(nd.LibraryNode):
             out_edges,
             key=lambda edge: get_idx(self.schema.outputs, edge.src_conn))
 
-        return chain(zip(sorted_in, repeat(True)), zip(sorted_out,
-                                                       repeat(False)))
+        return itertools.chain(zip(sorted_in, itertools.repeat(True)), zip(sorted_out,
+                                                                           itertools.repeat(False)))
 
     def validate(self, sdfg: SDFG, state: SDFGState):
         in_edges = state.in_edges(self)
@@ -676,20 +690,31 @@ class ONNXOp(nd.LibraryNode):
         tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Compute(__ort_kernel_{}));\n".format(
             unique_id)
 
-        cpu_fallback = False
         # check if ORT supports CUDA for this node
         if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
             provider_index = 0
+
+            # all outputs are on CPU if we execute using cpu
+            outputs_on_host = [True for _ in range(len(outputs))]
+            inputs_on_host = True
+
         elif node.schedule == ScheduleType.GPU_Device:
             provider_index = 1
             try:
-                check_op(sdfg, state, node, cuda=True)
-            except ONNXOpExpansionError as e:
+
+                # the ith position indicates whether the ith output is in host memory
+                outputs_on_host = check_op(sdfg, state, node, cuda=True)
+                inputs_on_host = False
+
+            except ONNXOpValidationError as e:
                 # fallback to CPU
                 print("Falling back to CPU for node {}. Reason:\n{}".format(
                     node.name, str(e)))
-                cpu_fallback = True
                 provider_index = 0
+
+                # all outputs are on host if we execute using cpu
+                outputs_on_host = [True for _ in range(len(outputs))]
+                inputs_on_host = True
         else:
             raise NotImplementedError(
                 "ORT expansion for schedule '{}' is not implemented".format(
@@ -710,7 +735,33 @@ class ONNXOp(nd.LibraryNode):
                              language=dace.dtypes.Language.CPP)
         tasklet.environments = {"ONNXRuntime"}
 
-        if cpu_fallback:
+        # check if we need to insert device copies
+        # maps the connectors for which a copy will be required to the storage type required to be connected to the tasklet
+        input_copy_required = {}
+        output_copy_required = {}
+
+        # check outputs
+        for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state), outputs_on_host):
+            # get the memlet for this output
+            array_storage = sdfg.arrays[edge.data.data].storage
+
+            if output_on_host:
+                is_device_mismatch = can_access(ScheduleType.Default, array_storage)
+            else:
+                is_device_mismatch = can_access(ScheduleType.GPU_Device, array_storage)
+
+            if is_device_mismatch:
+                # we need to insert a copy
+                output_copy_required[edge.src_conn] = StorageType.Default if output_on_host else StorageType.GPU_Global
+
+        # check inputs
+        for edge in state.in_edges(node):
+            array_storage = sdfg.arrays[edge.data.data].storage
+
+            if not can_access(node.schedule, array_storage):
+                input_copy_required[edge.dst_conn] = StorageType.GPU_Global if node.schedule == ScheduleType.GPU_Device else StorageType.Default
+
+        if len(output_copy_required) != 0 or len(input_copy_required) != 0:
             nsdfg = dace.SDFG("nested_{}".format(unique_id))
             nstate = nsdfg.add_state()
             ntasklet = deepcopy(tasklet)
@@ -718,10 +769,14 @@ class ONNXOp(nd.LibraryNode):
 
             for edge, is_input in node.iter_edges(state):
                 parameter_name = edge.dst_conn if is_input else edge.src_conn
+                if parameter_name not in (input_copy_required if is_input else output_copy_required):
+                    continue
+                copy_storage_type = input_copy_required[parameter_name] if is_input else output_copy_required[parameter_name]
+
                 memlet = edge.data
                 arr = sdfg.arrays[memlet.data]
 
-                # add the original gpu array
+                # add the original array
                 nsdfg.add_array(parameter_name,
                                 arr.shape,
                                 arr.dtype,
@@ -734,11 +789,11 @@ class ONNXOp(nd.LibraryNode):
                                 total_size=arr.total_size,
                                 alignment=arr.alignment)
 
-                # add the copy of the gpu array
-                nsdfg.add_transient("cpu_" + memlet.data,
+                # add the copy of the array
+                nsdfg.add_transient("copy_" + memlet.data,
                                     arr.shape,
                                     arr.dtype,
-                                    storage=dace.StorageType.Default,
+                                    storage=copy_storage_type,
                                     strides=arr.strides,
                                     offset=arr.offset,
                                     lifetime=arr.lifetime,
@@ -747,23 +802,23 @@ class ONNXOp(nd.LibraryNode):
                                     alignment=arr.alignment)
 
                 nmemlet = deepcopy(memlet)
-                nmemlet.data = "cpu_" + nmemlet.data
+                nmemlet.data = "copy_" + nmemlet.data
                 if is_input:
                     access = nstate.add_read(parameter_name)
-                    access_cpu = nstate.add_access("cpu_" + memlet.data)
+                    access_copy = nstate.add_access("copy_" + memlet.data)
                     nstate.add_edge(
-                        access, None, access_cpu, None,
-                        nsdfg.get_array_memlet("cpu_" + memlet.data))
-                    nstate.add_edge(access_cpu, None, ntasklet, parameter_name,
+                        access, None, access_copy, None,
+                        nsdfg.get_array_memlet("copy_" + memlet.data))
+                    nstate.add_edge(access_copy, None, ntasklet, parameter_name,
                                     nmemlet)
                 else:
                     access = nstate.add_write(parameter_name)
-                    access_cpu = nstate.add_access("cpu_" + memlet.data)
-                    nstate.add_edge(ntasklet, parameter_name, access_cpu, None,
+                    access_copy = nstate.add_access("copy_" + memlet.data)
+                    nstate.add_edge(ntasklet, parameter_name, access_copy, None,
                                     nmemlet)
                     nstate.add_edge(
-                        access_cpu, None, access, None,
-                        nsdfg.get_array_memlet("cpu_" + memlet.data))
+                        access_copy, None, access, None,
+                        nsdfg.get_array_memlet("copy_" + memlet.data))
 
             return nd.NestedSDFG(
                 label="nested_{}".format(unique_id),
