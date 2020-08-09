@@ -20,7 +20,7 @@ from dace.properties import make_properties, Property, ListProperty
 from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.standard.nodes.code import _get_inputs_and_outputs
 from dace.libraries.onnx.environments import ONNXRuntime
-from dace.libraries.onnx.check_impl import check_op
+from dace.libraries.onnx.check_impl import check_op, ONNXOpExpansionError
 from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS
 from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute
 from dace.sdfg import InvalidSDFGNodeError
@@ -663,7 +663,7 @@ class ONNXOp(nd.LibraryNode):
             provider_index = 1
             try:
                 check_op(sdfg, state, node, cuda=True)
-            except Exception as e:
+            except ONNXOpExpansionError as e:
                 # fallback to CPU
                 print("Falling back to CPU for node {}. Reason:\n{}".format(node.name, str(e)))
                 cpu_fallback = True

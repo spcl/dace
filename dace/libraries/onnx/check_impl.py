@@ -12,6 +12,8 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiler import generate_program_folder, configure_and_compile, get_binary_name
 from dace.codegen.targets import cpu
 
+class ONNXOpExpansionError(Exception):
+    pass
 
 def build_checker():
     if hasattr(build_checker, "dll"):
@@ -151,7 +153,7 @@ class OpChecker:
             error = self._GetErrorMessage(status)
             self._ReleaseStatus(status)
             print(error.value.decode("ascii"))
-            raise ValueError("see error printed above")
+            raise ONNXOpExpansionError("see error printed above")
 
     def __del__(self, *args):
         if not hasattr(self, "dll"):
