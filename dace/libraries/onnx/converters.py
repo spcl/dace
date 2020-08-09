@@ -200,3 +200,10 @@ def onnx_type_str_onnx_type_str_to_dace_type(
         return None
 
     return ONNX_DTYPES_TO_DACE_TYPE_CLASS[str(results[0])]
+
+
+def clean_onnx_name(name: str) -> str:
+    """Modifies a onnx name that is potentially invalid in dace
+       to make it valid"""
+    return "ONNX_" + name.replace(".", "DOT").replace(":", "COLON").replace(
+        "/", "SLASH")

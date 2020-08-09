@@ -12,8 +12,10 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.compiler import generate_program_folder, configure_and_compile, get_binary_name
 from dace.codegen.targets import cpu
 
+
 class ONNXOpExpansionError(Exception):
     pass
+
 
 def build_checker():
     if hasattr(build_checker, "dll"):
@@ -80,7 +82,8 @@ class OpChecker:
             append_cuda = self._get_function(
                 "OrtSessionOptionsAppendExecutionProvider_CUDA",
                 restype=ctypes.c_void_p)
-            self._check_status(append_cuda(self._session_options, ctypes.c_int(0)))
+            self._check_status(
+                append_cuda(self._session_options, ctypes.c_int(0)))
 
         self._session = ctypes.c_void_p()
         _CreateKernelSession = self._get_function("CreateKernelSession",

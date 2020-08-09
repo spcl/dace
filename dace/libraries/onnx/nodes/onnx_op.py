@@ -19,7 +19,8 @@ from dace.transformation.pattern_matching import ExpandTransformation
 from dace.libraries.standard.nodes.code import _get_inputs_and_outputs
 from dace.libraries.onnx.environments import ONNXRuntime
 from dace.libraries.onnx.check_impl import check_op, ONNXOpExpansionError
-from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS, dace_type_to_onnx_tensor_type
+from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS, dace_type_to_onnx_tensor_type, \
+    clean_onnx_name
 from dace.libraries.onnx.schema import ONNXSchema, ONNXAttributeType, _ATTR_TYPE_TO_PYTHON_TYPE, ONNXParameterType, ONNXAttribute
 
 
@@ -96,6 +97,7 @@ def parse_variadic_param(param):
             .format(number))
     return name, number
 
+
 def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
     """ Get the code to setup an attribute on an onnx::NodeProto
         :param kernel_context: the variable name of the kernel context
@@ -115,8 +117,8 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
     """.format(name=attr.name)
 
     def value_to_str(value):
-        return '"{}"'.format(value) if attr.type == ONNXAttributeType.String else str(value)
-
+        return '"{}"'.format(
+            value) if attr.type == ONNXAttributeType.String else str(value)
 
     if attr.type in [
             ONNXAttributeType.Int, ONNXAttributeType.Float,
@@ -147,14 +149,13 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
         elif attr.type == ONNXAttributeType.String:
             c_type = "char*"
 
-        init_code += "{type} values[{length}];\n".format(
-            type=c_type,
-            length=len(values)
-        )
+        init_code += "{type} values[{length}];\n".format(type=c_type,
+                                                         length=len(values))
 
         for i, values_elem in enumerate(values):
             assert_type(i, _ATTR_TYPE_TO_PYTHON_TYPE[attr.type])
-            init_code += "values[{i}] = {value};\n".format(i=i, value=value_to_str(values_elem))
+            init_code += "values[{i}] = {value};\n".format(
+                i=i, value=value_to_str(values_elem))
 
         init_code += """
         __ort_check_status(__ort_api->ExecutableKernelContext_AddAttribute{type_str}({kernel_context}, "{name}", values, {length}));
@@ -171,19 +172,21 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
         supported_types = {
             dace.float16: dace.float32,
             dace.float32: dace.float32,
-            dace.float64:dace.float64,
+            dace.float64: dace.float64,
             dace.int8: dace.int8,
-            dace.int16:dace.int16,
-            dace.int32:dace.int32,
-            dace.int64:dace.int64,
-            dace.uint8:dace.uint8,
-            dace.uint16:dace.uint16,
-            dace.uint32:dace.uint32,
+            dace.int16: dace.int16,
+            dace.int32: dace.int32,
+            dace.int64: dace.int64,
+            dace.uint8: dace.uint8,
+            dace.uint16: dace.uint16,
+            dace.uint32: dace.uint32,
             dace.uint64: dace.uint64
         }
 
         if dace_typeclass not in supported_types:
-            raise NotImplementedError("ONNX support for type {} has not been implemented for ONNX Tensor attributes (at attribute with name {})".format(value.dtype.type, attr.name))
+            raise NotImplementedError(
+                "ONNX support for type {} has not been implemented for ONNX Tensor attributes (at attribute with name {})"
+                .format(value.dtype.type, attr.name))
 
         type_to_generate = supported_types[dace_typeclass]
 
@@ -195,7 +198,8 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
         for i, dim in enumerate(value.shape):
             init_code += "shape[{}] = {};\n".format(i, dim)
 
-        init_code += "{} p_data[{}];\n".format(type_to_generate.ctype, value.size)
+        init_code += "{} p_data[{}];\n".format(type_to_generate.ctype,
+                                               value.size)
         for i, data_val in enumerate(np.nditer(value)):
             data_val = data_val.item()
             init_code += "p_data[{}] = {};\n".format(i, data_val)
@@ -251,7 +255,9 @@ class ONNXOp(nd.LibraryNode):
 
             # since validation passed, we know there will only be one
             if len(matched) != 1:
-                raise ValueError("Found {} connectors with name '{}', expected to find exactly one".format(len(matched), name))
+                raise ValueError(
+                    "Found {} connectors with name '{}', expected to find exactly one"
+                    .format(len(matched), name))
 
             parameter_idx = matched[0]
 
@@ -287,12 +293,15 @@ class ONNXOp(nd.LibraryNode):
             if is_input:
                 conn_name = edge.dst_conn
                 if conn_name not in self.in_connectors:
-                    raise ValueError("Memlet {} leading to nonexistent input connector '{}'".format(edge.data, conn_name))
+                    raise ValueError(
+                        "Memlet {} leading to nonexistent input connector '{}'".
+                        format(edge.data, conn_name))
             else:
                 conn_name = edge.src_conn
                 if conn_name not in self.out_connectors:
-                    raise ValueError("Memlet {} leading to nonexistent output connector '{}'".format(edge.data, conn_name))
-
+                    raise ValueError(
+                        "Memlet {} leading to nonexistent output connector '{}'"
+                        .format(edge.data, conn_name))
 
         # check that we have all required in_edges
         ##########################################
@@ -485,8 +494,8 @@ class ONNXOp(nd.LibraryNode):
         # Extract input and output array views (as generated by memlets)
         inputs, outputs = _get_inputs_and_outputs(sdfg, state, node)
 
-        unique_id = "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id,
-                                         sdfg.node_id(state),
+        unique_id = "{}_{}_{}_{}".format(clean_onnx_name(node.name),
+                                         sdfg.sdfg_id, sdfg.node_id(state),
                                          state.node_id(node))
 
         if "OrtKernelSession" not in sdfg.global_code['frame'].as_string:
@@ -653,15 +662,16 @@ class ONNXOp(nd.LibraryNode):
         for name, attr in node.schema.attributes.items():
             if hasattr(node, name):
                 sdfg.append_init_code(
-                    _gen_attr_init_code("__ort_context_{}".format(unique_id), node.schema.attributes[name],
+                    _gen_attr_init_code("__ort_context_{}".format(unique_id),
+                                        node.schema.attributes[name],
                                         getattr(node, name)))
 
         sdfg.prepend_exit_code(
             "__ort_api->ReleaseExecutableKernelContext(__ort_context_{});\n".
-                format(unique_id))
-        sdfg.prepend_exit_code(
-            "__ort_api->ReleaseExecutableKernel(__ort_kernel_{});\n".
             format(unique_id))
+        sdfg.prepend_exit_code(
+            "__ort_api->ReleaseExecutableKernel(__ort_kernel_{});\n".format(
+                unique_id))
 
         tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Compute(__ort_kernel_{}));\n".format(
             unique_id)
@@ -676,7 +686,8 @@ class ONNXOp(nd.LibraryNode):
                 check_op(sdfg, state, node, cuda=True)
             except ONNXOpExpansionError as e:
                 # fallback to CPU
-                print("Falling back to CPU for node {}. Reason:\n{}".format(node.name, str(e)))
+                print("Falling back to CPU for node {}. Reason:\n{}".format(
+                    node.name, str(e)))
                 cpu_fallback = True
                 provider_index = 0
         else:
@@ -740,8 +751,9 @@ class ONNXOp(nd.LibraryNode):
                 if is_input:
                     access = nstate.add_read(parameter_name)
                     access_cpu = nstate.add_access("cpu_" + memlet.data)
-                    nstate.add_edge(access, None, access_cpu, None,
-                                    nsdfg.get_array_memlet("cpu_" + memlet.data))
+                    nstate.add_edge(
+                        access, None, access_cpu, None,
+                        nsdfg.get_array_memlet("cpu_" + memlet.data))
                     nstate.add_edge(access_cpu, None, ntasklet, parameter_name,
                                     nmemlet)
                 else:
@@ -749,8 +761,9 @@ class ONNXOp(nd.LibraryNode):
                     access_cpu = nstate.add_access("cpu_" + memlet.data)
                     nstate.add_edge(ntasklet, parameter_name, access_cpu, None,
                                     nmemlet)
-                    nstate.add_edge(access_cpu, None, access, None,
-                                    nsdfg.get_array_memlet("cpu_" + memlet.data))
+                    nstate.add_edge(
+                        access_cpu, None, access, None,
+                        nsdfg.get_array_memlet("cpu_" + memlet.data))
 
             return nd.NestedSDFG(
                 label="nested_{}".format(unique_id),
@@ -857,8 +870,8 @@ for schema in onnx.defs.get_all_schemas():
                     node.validate(sdfg, state)
                 except Exception as ex:
                     raise ValueError(
-                        "Node validation failed: {} (at state {}, node {}, which is an ONNX Operator of type {})".
-                        format(str(ex), state, node, self.schema.name)) from ex
+                        "Node validation failed: {} (at state {}, node {}, which is an ONNX Operator of type {})"
+                        .format(str(ex), state, node, self.schema.name)) from ex
 
                 return self.expansion(node, state, sdfg)
 

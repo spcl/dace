@@ -10,14 +10,11 @@ from onnx import numpy_helper
 import dace
 from dace.frontend.python.parser import infer_symbols_from_shapes
 from dace.sdfg import SDFG, SDFGState
-from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_typeclass
+from dace.libraries.onnx.converters import convert_attribute_proto, onnx_tensor_type_to_typeclass, clean_onnx_name
 from dace.libraries.onnx import get_onnx_node, has_onnx_node, ONNXParameterType
 from dace.dtypes import AccessType, StorageType, AllocationLifetime
 import dace.sdfg.nodes as nd
 from dace.symbolic import pystr_to_symbolic
-
-from dace.transformation import optimizer
-from dace.transformation.interstate import GPUTransformSDFG
 
 
 def _nested_HasField(obj, full_attr):
@@ -105,7 +102,7 @@ class ONNXModel:
             for param_idx, (name, is_input) in chain(
                     enumerate(zip(node.input, repeat(True))),
                     enumerate(zip(node.output, repeat(False)))):
-                if self._clean_array_name(name) not in self.sdfg.arrays:
+                if clean_onnx_name(name) not in self.sdfg.arrays:
                     if name not in self.value_infos:
                         raise ValueError(
                             "Could not find array with name '{}'".format(name))
@@ -117,7 +114,7 @@ class ONNXModel:
                     self._update_access_type(access, is_input)
                 else:
                     access = nd.AccessNode(
-                        self._clean_array_name(name), AccessType.ReadOnly
+                        clean_onnx_name(name), AccessType.ReadOnly
                         if is_input else AccessType.WriteOnly)
                     self.state.add_node(access)
                     access_nodes[name] = access
@@ -143,7 +140,7 @@ class ONNXModel:
                 else:
                     conn_name = params[param_idx].name
 
-                data_desc = self.sdfg.arrays[self._clean_array_name(name)]
+                data_desc = self.sdfg.arrays[clean_onnx_name(name)]
 
                 # add the connector if required, and add an edge
                 if is_input:
@@ -151,7 +148,7 @@ class ONNXModel:
                         op_node.add_in_connector(conn_name)
                     self.state.add_edge(
                         access, None, op_node, conn_name,
-                        dace.Memlet.from_array(self._clean_array_name(name),
+                        dace.Memlet.from_array(clean_onnx_name(name),
                                                data_desc))
                 else:
                     if conn_name not in op_node.out_connectors:
@@ -159,7 +156,7 @@ class ONNXModel:
 
                     self.state.add_edge(
                         op_node, conn_name, access, None,
-                        dace.Memlet.from_array(self._clean_array_name(name),
+                        dace.Memlet.from_array(clean_onnx_name(name),
                                                data_desc))
 
         if self.cuda:
@@ -187,7 +184,7 @@ class ONNXModel:
             raise ValueError("Initializer tensor '{}' has no type".format(
                 tensor.name))
 
-        name = self._clean_array_name(tensor.name)
+        name = clean_onnx_name(tensor.name)
 
         dtype = onnx_tensor_type_to_typeclass(tensor.data_type)
 
@@ -237,12 +234,11 @@ class ONNXModel:
                 parsed = pystr_to_symbolic(d.dim_param)
 
                 for sym in parsed.free_symbols:
-                    if self._clean_array_name(
-                            str(sym)) not in self.sdfg.symbols:
-                        self.sdfg.add_symbol(self._clean_array_name(str(sym)),
+                    if clean_onnx_name(str(sym)) not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(clean_onnx_name(str(sym)),
                                              stype=int)
-                    parsed = parsed.subs(
-                        sym, dace.symbol(self._clean_array_name(str(sym))))
+                    parsed = parsed.subs(sym,
+                                         dace.symbol(clean_onnx_name(str(sym))))
 
                 shape.append(parsed)
             else:
@@ -252,12 +248,12 @@ class ONNXModel:
                         name))
         transient = name not in self.inputs and name not in self.outputs
         if len(shape) == 0:
-            self.sdfg.add_scalar(self._clean_array_name(name),
+            self.sdfg.add_scalar(clean_onnx_name(name),
                                  dtype=onnx_tensor_type_to_typeclass(
                                      tensor_type.elem_type),
                                  transient=transient)
         else:
-            self.sdfg.add_array(self._clean_array_name(name),
+            self.sdfg.add_array(clean_onnx_name(name),
                                 shape=shape,
                                 dtype=onnx_tensor_type_to_typeclass(
                                     tensor_type.elem_type),
@@ -291,21 +287,20 @@ class ONNXModel:
             if input in sdfg.free_symbols:
                 clean_inputs[input] = arr
             else:
-                clean_inputs[self._clean_array_name(input)] = arr
+                clean_inputs[clean_onnx_name(input)] = arr
 
         # add the weights
         params = {}
         for name, arr in self.weights.items():
             if len(arr.shape) == 0:
-                params[self._clean_array_name(name)] = arr[()]
+                params[clean_onnx_name(name)] = arr[()]
             else:
                 if self.cuda:
-                    clean_name = self._clean_array_name(name)
-                    sdfg.arrays[
-                        clean_name].storage = StorageType.GPU_Global
+                    clean_name = clean_onnx_name(name)
+                    sdfg.arrays[clean_name].storage = StorageType.GPU_Global
                     params[clean_name] = numba.cuda.to_device(arr)
                 else:
-                    params[self._clean_array_name(name)] = arr.copy()
+                    params[clean_onnx_name(name)] = arr.copy()
 
         inferred_symbols = infer_symbols_from_shapes(sdfg, {
             **clean_inputs,
@@ -324,7 +319,7 @@ class ONNXModel:
         outputs = OrderedDict()
         # create numpy arrays for the outputs
         for output in self.outputs:
-            clean_name = self._clean_array_name(output)
+            clean_name = clean_onnx_name(output)
             arr = sdfg.arrays[clean_name]
 
             # TODO @orausch add error handling for evalf
@@ -339,15 +334,7 @@ class ONNXModel:
 
         sdfg(**clean_inputs, **params, **outputs, **inferred_symbols)
 
-
         if len(outputs) == 1:
             return next(iter(outputs.values()))
 
         return tuple(outputs.values())
-
-    @staticmethod
-    def _clean_array_name(name: str) -> str:
-        """Modifies a onnx array name that is potentially invalid in dace
-           to make it valid"""
-        return "ONNX_" + name.replace(".", "DOT").replace(":", "COLON").replace(
-            "/", "SLASH")
