@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 
 def reapply_history_until(sdfg_json, index):
     """
-    Rewind a given sdfg back to a specific point in its history by reapplying
+    Rewind a given SDFG back to a specific point in its history by reapplying
     all transformations until a given index in its history to its original
     state.
     :param sdfg_json:  The SDFG to rewind.
