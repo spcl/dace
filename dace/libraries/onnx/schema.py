@@ -9,7 +9,7 @@ import numpy as np
 import dace
 from dace.dtypes import typeclass
 from dace.properties import make_properties, Property, DictProperty, ListProperty, SetProperty
-from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_onnx_type_str_to_dace_type, get_proto_attr
+from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_to_typeclass, get_proto_attr
 
 _KNOWN_ONNX_PROTOS = {}
 
@@ -181,7 +181,7 @@ class ONNXAttribute:
                      types=lambda proto: list(
                          filter(
                              lambda x: x is not None,
-                             map(onnx_type_str_onnx_type_str_to_dace_type,
+                             map(onnx_type_str_to_typeclass,
                                  get_proto_attr(proto, "allowed_type_strs")))))
 class ONNXTypeConstraint:
     """ Python representation of an ONNX type constraint. """
@@ -243,7 +243,7 @@ class ONNXSchema:
                     raise ValueError(
                         "Attempted to insert new type constraint, but the name already existed. Please open an issue."
                     )
-                parsed_typeclass = onnx_type_str_onnx_type_str_to_dace_type(
+                parsed_typeclass = onnx_type_str_to_typeclass(
                     param.type_str)
 
                 if parsed_typeclass is None:
