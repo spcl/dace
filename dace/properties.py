@@ -582,9 +582,7 @@ class TransformationHistProperty(Property):
             raise TypeError(
                 'TransformationHistProperty expects a list input, got %s' % data
             )
-        # This is imported here to avoid an import loop.
-        from dace.transformation.pattern_matching import Transformation
-        return [Transformation.from_json(elem) for elem in data]
+        return [dace.serialize.from_json(elem) for elem in data]
 
 
 class DictProperty(Property):
