@@ -7,7 +7,7 @@ from dace.libraries.standard.nodes.reduce import Reduce
 
 N = dace.symbol('N')
 M = dace.symbol('M')
-N.set(300); M.set(300)
+N.set(30); M.set(30)
 
 @dace.program
 def TEST(A: dace.float32[M,N]):
@@ -37,7 +37,9 @@ def test():
     transform.apply(sdfg)
     csdfg = sdfg.compile()
     result2 = csdfg(A=A,M=M,N=N)
-
+    
+    print(np.linalg.norm(result1))
+    print(np.linalg.norm(result2))
     assert np.allclose(result1, result2)
 
     print("PASS")
