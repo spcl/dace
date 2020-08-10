@@ -1,4 +1,5 @@
-from dace.properties import Property, SetProperty, make_properties
+from dace.properties import (Property, DictProperty, SetProperty,
+                             make_properties)
 
 
 @make_properties
@@ -7,7 +8,7 @@ class CodeObject(object):
     code = Property(dtype=str, desc="The code attached to this object")
     language = Property(dtype=str,
                         desc="Language used for this code (same " +
-                        "as its file extension)")  # dtype=dtypes.Language?
+                        "as its file extension)")
     target = Property(dtype=type,
                       desc="Target to use for compilation",
                       allow_none=True)
@@ -16,9 +17,10 @@ class CodeObject(object):
         desc="Sub-target within target (e.g., host or device code)",
         default="")
     title = Property(dtype=str, desc="Title of code for GUI")
-    extra_compiler_kwargs = Property(dtype=dict,
-                                     desc="Additional compiler argument "
-                                     "variables to add to template")
+    extra_compiler_kwargs = DictProperty(key_type=str,
+                                         value_type=str,
+                                         desc="Additional compiler argument "
+                                         "variables to add to template")
     linkable = Property(dtype=bool,
                         desc='Should this file participate in '
                         'overall linkage?')
@@ -36,7 +38,7 @@ class CodeObject(object):
                  target_type="",
                  additional_compiler_kwargs=None,
                  linkable=True,
-                 environments=set()):
+                 environments=None):
         super(CodeObject, self).__init__()
 
         self.name = name
@@ -47,4 +49,4 @@ class CodeObject(object):
         self.title = title
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
-        self.environments = environments
+        self.environments = environments or set()

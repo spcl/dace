@@ -28,14 +28,6 @@ dace.codegen.targets.framecode module
    :undoc-members:
    :show-inheritance:
 
-dace.codegen.targets.immaterial module
---------------------------------------
-
-.. automodule:: dace.codegen.targets.immaterial
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.codegen.targets.mpi module
 -------------------------------
 

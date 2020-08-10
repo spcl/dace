@@ -22,228 +22,191 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-// Adapted from "Groute: An Asynchronous Multi-GPU Programming Framework"
-// http://www.github.com/groute/groute
-
-
 #ifndef __DACE_DYNMAP_CUH
 #define __DACE_DYNMAP_CUH
 
-#include <initializer_list>
-#include <vector>
-#include <map>
-#include <memory>
-#include <cuda_runtime.h>
-#include <mutex>
+#ifdef __CUDACC__
+#include <cooperative_groups.h>
 
-#include "../../../../external/cub/cub/util_ptx.cuh"
+// HIP does not yet support features in cooperative groups used here.
+/*#elif defined(__HIPCC__)
+#include <hip/hip_cooperative_groups.h>
+#endif*/
 
-#define __FULL_MASK 0xffffffff
+namespace dace {
 
-namespace dace {   
-    /**
-     * A map (usually dynamically sized) that can be rescheduled across a 
-     * threadblock
-     **/
-    template<int BLOCK_SIZE, typename index_type = int32_t, bool WARP_INTRINSICS = true>
-    struct DynamicMap
-    {
-        template<const int WARPS_PER_TB> struct warp_np {
-            volatile index_type owner[WARPS_PER_TB];
-            volatile index_type start[WARPS_PER_TB];
-            volatile index_type size[WARPS_PER_TB];
-            volatile index_type src[WARPS_PER_TB];
+    namespace cg = cooperative_groups;
+
+    template<bool FINE_GRAINED, int BLOCK_SIZE, int WARP_SIZE = 32, typename index_type = int32_t>
+    struct DynamicMap {
+
+        // empty field so the compiler doesn't get confused when empty_type is used instead of fg_type
+        struct empty_type {
+            index_type src[1];  // outer map index
+            index_type data[1]; // inner map index
         };
 
-        struct tb_np {
+        struct tb_type {
             index_type owner;
+            index_type src;
             index_type start;
             index_type size;
-            index_type src;
         };
 
-        struct empty_np {
+        // fine grained needs space to accommodate all thread in the warp having the most possible jobs
+        struct fg_type {
+            index_type src[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE];  // outer map index
+            index_type data[(BLOCK_SIZE / WARP_SIZE) * WARP_SIZE * WARP_SIZE]; // inner map index
         };
 
-
-        template <typename ts_type, typename TTB, typename TWP>
-        union np_shared {
-            // for scans
-            ts_type temp_storage;
-
-            // for tb-level np
-            TTB tb;
-
-            // for warp-level np
-            TWP warp;
-
-            // fine-grained schedule (unused)
-            //TFG fg;
+        // depending on configuration of scheduler generate smaller union to save space
+        template <typename tb_type, typename fg_type>
+        union shared_type_temp {
+            tb_type tb; // for tb-level np
+            fg_type fg; // fine-grained schedule
         };
 
-        /*
-        * @brief A structure representing a scheduled chunk of work
-        */
-        struct np_local
-        {
-            index_type size; // work size
-            index_type start; // work start
-            index_type src; // work source thread / metadata
-        };
+        typedef union std::conditional<FINE_GRAINED,
+            shared_type_temp<tb_type, fg_type>,
+            shared_type_temp<tb_type, empty_type>
+        >::type shared_type;
 
 
-        template <typename Functor>
-        __device__ __forceinline__ static void schedule(index_type local_start, index_type local_end, index_type local_src, Functor&& work)
-        {
-            const int WP_SIZE = CUB_PTX_WARP_THREADS;
-            const int TB_SIZE = BLOCK_SIZE;
+        template<typename Functor>
+        __device__ static void schedule(shared_type& s, index_type localStart, index_type localEnd, index_type localSrc, Functor&& work) {
 
-            const int NP_WP_CROSSOVER = CUB_PTX_WARP_THREADS;
-            const int NP_TB_CROSSOVER = blockDim.x;
+            // defining other local variables
+            index_type localSize = localEnd - localStart;
 
-            typedef union std::conditional<WARP_INTRINSICS,
-                np_shared<empty_np, tb_np, empty_np>,
-                np_shared<empty_np, tb_np, warp_np<BLOCK_SIZE / CUB_PTX_WARP_THREADS>>>::type np_shared_type;
+            cg::thread_block block = cg::this_thread_block();
+            unsigned int threadRank = block.thread_rank();
+            int blockSize = BLOCK_SIZE;
 
-            __shared__ np_shared_type np_shared;
-
-            index_type local_size = local_end - local_start;
-
-            if (threadIdx.x == 0)
-            {
-                np_shared.tb.owner = TB_SIZE + 1;
+            // highest thread id is size - 1 thus no thread has this id
+            if (threadRank == 0) {
+                s.tb.owner = blockSize;
             }
 
-            __syncthreads();
+            block.sync();
 
-            //
-            // First scheduler: processing high-degree work items using the entire block
-            //
-            while (true)
-            {
-                if (local_size >= NP_TB_CROSSOVER)
-                {
-                    // 'Elect' one owner for the entire thread block 
-                    np_shared.tb.owner = threadIdx.x;
+            // Thread block level scheduler
+            while (true) {
+
+                // every thread that has enough workload will compete for the memory, one thread will win the race condition
+                if (localSize >= blockSize) {
+                    s.tb.owner = threadIdx.x;
                 }
 
-                __syncthreads();
+                block.sync();
 
-                if (np_shared.tb.owner == TB_SIZE + 1)
-                {
-                    // No owner was elected, i.e. no high-degree work items remain 
-
-                    // No need to sync threads before moving on to WP scheduler  
-                    // because it does not use shared memory
-                    if (!WARP_INTRINSICS)
-                        __syncthreads(); // Necessary do to the shared memory union used by both TB and WP schedulers
+                // if no thread has the enough work, go to next granularity (e.g. warp or next lower group size)
+                if (s.tb.owner == blockSize) {
                     break;
                 }
 
-                if (np_shared.tb.owner == threadIdx.x)
-                {
-                    // This thread is the owner
-                    np_shared.tb.start = local_start;
-                    np_shared.tb.size = local_size;
-                    np_shared.tb.src = local_src;
-
-                    // Mark this work-item as processed for future schedulers 
-                    local_start = 0;
-                    local_size = 0;
+                // The winner writes their name into the struct
+                if (s.tb.owner == threadRank) {
+                    s.tb.src = localSrc;
+                    s.tb.start = localStart;
+                    s.tb.size = localSize;
+                    localSize = 0; // mark as processed
                 }
 
-                __syncthreads();
+                block.sync();
 
-                index_type start = np_shared.tb.start;
-                index_type size = np_shared.tb.size;
-                index_type src = np_shared.tb.src;
+                // get winning values and reset owner for next round
+                index_type src = s.tb.src;
+                index_type start = s.tb.start;
+                index_type size = s.tb.size;
 
-                if (np_shared.tb.owner == threadIdx.x)
-                {
-                    np_shared.tb.owner = TB_SIZE + 1;
+                if (s.tb.owner == threadRank) {
+                    s.tb.owner = blockSize;
                 }
 
-                // Use all threads in thread block to execute individual work  
-                for (int ii = threadIdx.x; ii < size; ii += TB_SIZE)
-                {
-                    work(start + ii, src);
+                block.sync();
+
+                // do work
+                for (unsigned int j = threadRank; j < size; j += blockSize) {
+                    work(src, start + j);
                 }
 
-                __syncthreads();
+                block.sync();
+
             }
 
-            //
-            // Second scheduler: tackle medium-degree work items using the warp 
-            //
-            const int warp_id = cub::WarpId();
-            const int lane_id = cub::LaneId();
+            cg::thread_block_tile<WARP_SIZE> warp = cg::tiled_partition<WARP_SIZE>(block);
+            unsigned int warpId = threadRank / WARP_SIZE;
+            unsigned int warpThreadRank = warp.thread_rank();
+            unsigned int warpSize = warp.size();
 
-            while (__any_sync(__FULL_MASK, local_size >= NP_WP_CROSSOVER))
-            {
-                index_type start, size, src;
-                if (WARP_INTRINSICS)
-                {
-                    // Compete for work scheduling  
-                    unsigned int mask = __ballot_sync(__FULL_MASK, local_size >= NP_WP_CROSSOVER ? 1 : 0);
-                    // Select a deterministic winner  
-                    int leader = __ffs(mask) - 1;
+            // warp level scheduler, as long as there is any thread with >= warpSize tasks
+            while (warp.any(localSize >= warpSize)) {
 
-                    // Broadcast data from the leader  
-                    start = cub::ShuffleIndex<WP_SIZE>(local_start, leader, mask);
-                    size = cub::ShuffleIndex<WP_SIZE>(local_size, leader, mask);
-                    src = cub::ShuffleIndex<WP_SIZE>(local_src, leader, mask);
+                // find a thread that has >= 32 jobs
+                unsigned int mask = warp.ballot(localSize >= warpSize);
+                int owner = __ffs(mask) - 1;
 
-                    if (leader == lane_id)
-                    {
-                        // Mark this work-item as processed   
-                        local_start = 0;
-                        local_size = 0;
-                    }
-                }
-                else
-                {
-                    // In order for this to compile, it should be refactored to another function
-                    /*
-                    if (local_size >= NP_WP_CROSSOVER)
-                    {
-                        // Again, race to select an owner for warp 
-                        np_shared.warp.owner[warp_id] = lane_id;
-                    }
-                    if (np_shared.warp.owner[warp_id] == lane_id)
-                    {
-                        // This thread is owner 
-                        np_shared.warp.start[warp_id] = local_start;
-                        np_shared.warp.size[warp_id] = local_size;
+                // share value across warp
+                index_type src = warp.shfl(localSrc, owner);
+                index_type start = warp.shfl(localStart, owner);
+                index_type size = warp.shfl(localSize, owner);
 
-                        // Mark this work-item as processed   
-                        local_start = 0;
-                        local_size = 0;
-                    }
-                    start = np_shared.warp.start[warp_id];
-                    size = np_shared.warp.size[warp_id];
-                    */
+                // mark as processed
+                if (owner == warpThreadRank) {
+                    localSize = 0;
                 }
 
-                for (int ii = lane_id; ii < size; ii += WP_SIZE)
-                {
-                    work(start + ii, src);
+                // do work
+                for (unsigned int j = warpThreadRank; j < size; j += warpSize) {
+                    work(src, start + j);
                 }
+
             }
 
-            __syncthreads();
+            // fine grained warp level load balancing
+            if (FINE_GRAINED) {
 
-            //
-            // Third scheduler: tackle all work-items with size < 32 serially   
-            //
-            // It is possible to disable this scheduler by setting NP_WP_CROSSOVER to 0 
+                // prefix sum (after execution the prefix sum will include the value of the current thread)
+                index_type prefix = localSize;
+                for (int delta = 1; delta < warpSize; delta *= 2) {
+                    index_type tmp = warp.shfl_up(prefix, delta);
+                    prefix += (warpThreadRank >= delta) ? tmp : 0;
+                }
 
-            for (int ii = 0; ii < local_size; ii++)
-            {
-                work(local_start + ii, local_src);
-            }
-        }
-    };
+                // total number and local start index (need to subtract localSize, because it is including the
+                // local element)
+                index_type total = warp.shfl(prefix, warpSize - 1);
+                index_type warp_offset = warpId * WARP_SIZE*WARP_SIZE;
+                index_type thread_offset = prefix - localSize;
+                index_type offset = warp_offset + thread_offset;
 
+                // write element range and owner to shared memory
+                for (int i = 0; i < localSize; i++) {
+                    s.fg.src[offset + i] = localSrc;
+                    s.fg.data[offset + i] = localStart + i;
+                }
+
+                warp.sync(); // necessary because warps may diverge more since volta
+
+                // do work
+                for (unsigned int j = warp_offset + warpThreadRank; j < warp_offset + total; j += warpSize) {
+                    work(s.fg.src[j], s.fg.data[j]);
+                }
+
+            } else {  // if (FINE_GRAINED)
+
+                // do work
+                if (localSize > 0) {
+                    for (int j = localStart; j < localEnd; j++) {
+                        work(localSrc, j);
+                    }
+                }
+
+            }  // if (FINE_GRAINED)
+        }  // __device__ static void schedule()
+    };  // struct DynamicMap
 }  // namespace dace
+
+#endif // __CUDACC__
 
 #endif // __DACE_DYNMAP_CUH

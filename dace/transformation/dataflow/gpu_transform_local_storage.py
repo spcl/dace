@@ -4,7 +4,8 @@
 import copy
 
 from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import Property, make_properties
 from dace.config import Config
@@ -36,7 +37,7 @@ def in_path(path, edge, nodetype, forward=True):
 class GPUTransformLocalStorage(pattern_matching.Transformation):
     """Implements the GPUTransformLocalStorage transformation.
 
-        Similar to GPUTransformMap, but takes multiple maps leading from the 
+        Similar to GPUTransformMap, but takes multiple maps leading from the
         same data node into account, creating a local storage for each range.
 
         @see: GPUTransformMap
@@ -58,13 +59,15 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
     )
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _reduce = nodes.Reduce("lambda: None", None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce("lambda: None", None)
 
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(GPUTransformLocalStorage._map_entry),
-            nxutil.node_path_graph(GPUTransformLocalStorage._reduce),
+            sdutil.node_path_graph(GPUTransformLocalStorage._map_entry),
+            sdutil.node_path_graph(GPUTransformLocalStorage._reduce),
         ]
 
     @staticmethod
@@ -112,7 +115,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                     return False
 
             # If one of the outputs is a stream, do not match
-            map_exit = graph.exit_nodes(map_entry)[0]
+            map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
                 if (isinstance(dst, nodes.AccessNode)
@@ -122,12 +125,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             return True
         elif expr_index == 1:
             reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
-
-            # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule == dtypes.ScheduleType.MPI
-                    or reduce.schedule == dtypes.ScheduleType.GPU_Device
-                    or reduce.schedule == dtypes.ScheduleType.GPU_ThreadBlock):
-                return False
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
@@ -157,12 +154,12 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             cnode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._map_entry]]
             node_schedprop = cnode.map
-            exit_nodes = graph.exit_nodes(cnode)
+            exit_node = graph.exit_node(cnode)
         else:
             cnode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._reduce]]
             node_schedprop = cnode
-            exit_nodes = [cnode]
+            exit_node = cnode
 
         # Change schedule
         node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
@@ -183,7 +180,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
         gpu_storage_types = [
             dtypes.StorageType.GPU_Global,
             dtypes.StorageType.GPU_Shared,
-            dtypes.StorageType.GPU_Stack,
         ]
 
         #######################################################
@@ -191,8 +187,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
 
         # First, understand which arrays to clone
         all_out_edges = []
-        for enode in exit_nodes:
-            all_out_edges.extend(list(graph.out_edges(enode)))
+        all_out_edges.extend(list(graph.out_edges(exit_node)))
         in_arrays_to_clone = set()
         out_arrays_to_clone = set()
         for e in graph.in_edges(cnode):
@@ -274,7 +269,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
-                        materialize_func=array.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
@@ -346,7 +340,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
-                        materialize_func=array.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,

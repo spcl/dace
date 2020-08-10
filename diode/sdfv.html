@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SDFG Viewer</title>
+    <title>SDFV: SDFG Viewer</title>
     <link rel="stylesheet" type="text/css" href="./webclient/external_lib/material/material-icons.css">
     <link rel="stylesheet" type="text/css" href="./webclient/sdfv.css">
 
@@ -12,6 +12,7 @@
     <script src="./webclient/external_lib/pdfkit.standalone.js"></script>
     <script src="./webclient/external_lib/blob-stream.js"></script>
     <script src="./webclient/external_lib/canvas2pdf.js"></script>
+    <script src="./webclient/external_lib/math.min.js"></script>
 
     <script src="./webclient/renderer_dir/global_vars.js"></script>
     <script src="./webclient/renderer_elements.js"></script>
@@ -23,7 +24,7 @@
 <body>
 <div class="w3-sidebar w3-bar-block w3-card w3-animate-right" style="display:none;right:0;" id="sidebar">
     <div class="dragbar" id="dragbar"></div>
-    <div style="display: block">
+    <div class="sidebar-inner">
         <button onclick="close_menu()" class="w3-bar-item w3-button w3-large">Close &times;</button>
         <h3 id="sidebar-header">Nothing selected</h3>
         <div id="sidebar-contents"></div>
@@ -42,7 +43,11 @@
 <script src="./webclient/sdfv.js"></script>
 <script>
 $(document).ready(function(){
-    init_sdfv(null);
+    let url = getParameterByName('url');
+    if (url)
+        load_sdfg_from_url(url);
+    else
+        init_sdfv(null);
 });
 </script>
 </body>

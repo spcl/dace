@@ -10,13 +10,15 @@ from dace.frontend.python import parser
 
 
 @paramdec
-def program(f, *args, **kwargs):
+def program(f, *args, **kwargs) -> parser.DaceProgram:
     """ DaCe program, entry point to a data-centric program. """
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
     return parser.DaceProgram(f, args, kwargs)
 
+
+function = program
 
 # Internal DaCe decorators, these are not actually run, but rewritten
 

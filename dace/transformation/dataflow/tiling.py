@@ -3,7 +3,8 @@
 
 from dace import registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -39,7 +40,7 @@ class MapTiling(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapTiling._map_entry)]
+        return [sdutil.node_path_graph(MapTiling._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -64,9 +65,12 @@ class MapTiling(pattern_matching.Transformation):
         stripmine_subgraph = {
             StripMining._map_entry: self.subgraph[MapTiling._map_entry]
         }
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         last_map_entry = None
         removed_maps = 0
+
+        original_schedule = map_entry.schedule
+
         for dim_idx in range(len(map_entry.map.params)):
             if dim_idx >= len(self.tile_sizes):
                 tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[-1])
@@ -100,6 +104,9 @@ class MapTiling(pattern_matching.Transformation):
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
                 stripmine.apply(sdfg)
+
+            # apply to the new map the schedule of the original one
+            map_entry.schedule = original_schedule
 
             if last_map_entry:
                 new_map_entry = graph.in_edges(map_entry)[0].src

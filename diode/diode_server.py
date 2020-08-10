@@ -7,7 +7,8 @@ import dace.frontend.octave.parse as octave_frontend
 from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
-from dace.graph.nodes import LibraryNode
+from dace.transformation.pattern_matching import Transformation
+from dace.sdfg.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
 import json
@@ -498,9 +499,10 @@ def expand_node_or_sdfg():
         sdfg.expand_library_nodes()
     else:
         context_sdfg = sdfg.sdfg_list[sdfg_id]
-        node = sdfg.sdfg_list[sdfg_id].node(state_id).node(node_id)
+        state = context_sdfg.node(state_id)
+        node = state.node(node_id)
         if isinstance(node, LibraryNode):
-            node.expand(context_sdfg)
+            node.expand(context_sdfg, state)
         else:
             return jsonify({'error': 'The given node is not a library node'})
 
@@ -593,7 +595,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
 
     sid = int(property_element['state_id'])
     nid = int(property_element['node_id'])
-    node = sdfg.find_node(sid, nid)
+    node = sdfg.node(sid).node(nid)
 
     for prop in property_element['params']:
         dace.serialize.set_properties_from_json(node, prop, context=sdfg)
@@ -609,20 +611,27 @@ def applySDFGProperties(sdfg, properties, step=None):
     return sdfg
 
 
-def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
+def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
     # Iterate over the path, applying the transformations
     global_counter = {}
-    if sdfg_props is None: sdfg_props = []
+    sdfg_props = sdfg_props or []
     step = 0
     for x in optpath:
         optimizer = SDFGOptimizer(sdfg, inplace=True)
-        matching = optimizer.get_pattern_matches()
+
+        name = x['name']
+        classname = name[:name.index('$')] if name.find('$') >= 0 else name
+
+        transformation = next(t for t in Transformation.extensions().keys()
+                              if t.__name__ == classname)
+        matching = optimizer.get_pattern_matches(patterns=[transformation])
 
         # Apply properties (will automatically apply by step-matching)
         sdfg = applySDFGProperties(sdfg, sdfg_props, step)
 
         for pattern in matching:
             name = type(pattern).__name__
+            tsdfg = sdfg.sdfg_list[pattern.sdfg_id]
 
             if useGlobalSuffix:
                 if name in global_counter:
@@ -642,7 +651,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=[]):
                 dace.serialize.set_properties_from_json(pattern,
                                                         x['params']['props'],
                                                         context=sdfg)
-                pattern.apply_pattern(sdfg)
+                pattern.apply_pattern(tsdfg)
 
                 if not useGlobalSuffix:
                     break
@@ -877,10 +886,11 @@ def get_transformations(sdfgs):
             nodeids = []
             properties = []
             if p is not None:
+                sdfg_id = p.sdfg_id
                 sid = p.state_id
                 nodes = list(p.subgraph.values())
                 for n in nodes:
-                    nodeids.append([sid, n])
+                    nodeids.append([sdfg_id, sid, n])
 
                 properties = dace.serialize.all_properties_to_json(p)
             optimizations.append({
@@ -1183,8 +1193,7 @@ def status():
     return "OK"
 
 
-if __name__ == '__main__':
-
+def main():
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -1242,3 +1251,7 @@ if __name__ == '__main__':
         # Wait for an event that will never arrive (passive wait)
         event = threading.Event()
         event.wait()
+
+
+if __name__ == '__main__':
+    main()

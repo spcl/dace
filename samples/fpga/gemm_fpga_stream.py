@@ -78,34 +78,34 @@ def make_read_A_sdfg():
     loop_body = sdfg.add_state("read_memory")
 
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(k_begin, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
 
     sdfg.add_edge(
         n_entry, k_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k < K", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(k_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
     sdfg.add_edge(loop_body, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": "k + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
 
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, k_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k >= K", language=dace.dtypes.Language.Python)))
 
@@ -117,15 +117,10 @@ def make_read_A_sdfg():
                                 dace.float32,
                                 storage=dace.dtypes.StorageType.FPGA_Local)
 
-    loop_body.add_memlet_path(
-        mem,
-        pipe,
-        memlet=dace.memlet.Memlet(
-            pipe,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("n, k")))
+    loop_body.add_memlet_path(mem,
+                              pipe,
+                              memlet=dace.memlet.Memlet.simple(
+                                  pipe, '0', other_subset_str="n, k"))
 
     return sdfg
 
@@ -149,48 +144,48 @@ def make_read_B_sdfg():
     loop_body = sdfg.add_state("read_memory")
 
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(k_begin, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
     sdfg.add_edge(m_begin, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
 
     sdfg.add_edge(
         n_entry, k_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, m_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k < K", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(k_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
     sdfg.add_edge(m_end, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": "k + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
     sdfg.add_edge(loop_body, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
 
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, k_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k >= K", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, m_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
@@ -202,15 +197,10 @@ def make_read_B_sdfg():
                                 dace.float32,
                                 storage=dace.dtypes.StorageType.FPGA_Local)
 
-    loop_body.add_memlet_path(
-        mem,
-        pipe,
-        memlet=dace.memlet.Memlet(
-            pipe,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("k, m")))
+    loop_body.add_memlet_path(mem,
+                              pipe,
+                              memlet=dace.memlet.Memlet.simple(
+                                  pipe, '0', other_subset_str="k, m"))
 
     return sdfg
 
@@ -230,34 +220,34 @@ def make_write_C_sdfg():
     loop_body = sdfg.add_state("write_memory")
 
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(m_begin, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
 
     sdfg.add_edge(
         n_entry, m_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(m_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
     sdfg.add_edge(loop_body, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
 
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, m_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
@@ -269,15 +259,10 @@ def make_write_C_sdfg():
                                 dace.float32,
                                 storage=dace.dtypes.StorageType.FPGA_Local)
 
-    loop_body.add_memlet_path(
-        pipe,
-        mem,
-        memlet=dace.memlet.Memlet(
-            mem,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("n, m"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("0")))
+    loop_body.add_memlet_path(pipe,
+                              mem,
+                              memlet=dace.memlet.Memlet.simple(
+                                  mem, "n, m", other_subset_str="0"))
 
     return sdfg
 
@@ -320,76 +305,76 @@ def make_compute_sdfg():
 
     # N-loop
     sdfg.add_edge(n_begin, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
     sdfg.add_edge(
         n_entry, k_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n < N", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         n_entry, n_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "n >= N", language=dace.dtypes.Language.Python)))
 
     # K-loop
     sdfg.add_edge(k_begin, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
     sdfg.add_edge(
         k_entry, m_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k < K", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         k_entry, k_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k >= K", language=dace.dtypes.Language.Python)))
 
     # Inner M-loop
     sdfg.add_edge(m_begin, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
     sdfg.add_edge(
         m_entry, state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         m_entry, m_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
     # Backtrack two loops
     sdfg.add_edge(state, m_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
     sdfg.add_edge(m_end, k_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"k": "k + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
 
     # Continue to next sequential loop
-    sdfg.add_edge(k_end, c_begin, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(k_end, c_begin, dace.sdfg.InterstateEdge())
 
     # Tight C-loop
     sdfg.add_edge(c_begin, c_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
     sdfg.add_edge(
         c_entry, write_c_state,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m < M", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         c_entry, c_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m >= M", language=dace.dtypes.Language.Python)))
 
     # End inner loop
     sdfg.add_edge(write_c_state, c_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"m": "m + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
 
     # Backtrack
     sdfg.add_edge(c_end, n_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"n": "n + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
 
     C_buffer_in = state.add_array("C_buffer", [M],
                                   dtype=dace.float32,
@@ -421,32 +406,30 @@ def make_compute_sdfg():
     compute_state = nested_sdfg.add_state("compute_state")
     nested_sdfg.add_edge(
         if_state_c, then_state_c,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state_c, else_state_c,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "k != 0", language=dace.dtypes.Language.Python)))
-    nested_sdfg.add_edge(then_state_c, if_state_a,
-                         dace.graph.edges.InterstateEdge())
-    nested_sdfg.add_edge(else_state_c, if_state_a,
-                         dace.graph.edges.InterstateEdge())
+    nested_sdfg.add_edge(then_state_c, if_state_a, dace.sdfg.InterstateEdge())
+    nested_sdfg.add_edge(else_state_c, if_state_a, dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(
         if_state_a, then_state_a,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state_a, else_state_a,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "m != 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(then_state_a, compute_state,
-                         dace.graph.edges.InterstateEdge())
+                         dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(else_state_a, compute_state,
-                         dace.graph.edges.InterstateEdge())
+                         dace.sdfg.InterstateEdge())
 
     compute_tasklet = compute_state.add_tasklet("multiply_add",
                                                 {"a", "b", "c_in"}, {"c_out"},
@@ -489,12 +472,10 @@ def make_compute_sdfg():
         "A_val_out",
         dtype=dace.float32,
         storage=dace.dtypes.StorageType.FPGA_Registers)
-    then_state_a.add_memlet_path(
-        A_in,
-        A_val_out,
-        memlet=dace.memlet.Memlet(
-            A_val_out, dace.symbolic.pystr_to_symbolic("-1"),
-            dace.properties.SubsetProperty.from_string("0"), 1))
+    then_state_a.add_memlet_path(A_in,
+                                 A_val_out,
+                                 memlet=dace.memlet.Memlet.simple(
+                                     A_val_out, "0", num_accesses=-1))
 
     # Compute state
     A_val_in = compute_state.add_scalar(
@@ -544,21 +525,19 @@ def make_compute_sdfg():
     A_reg_in = state.add_scalar("A_reg",
                                 dtype=dace.float32,
                                 transient=True,
-                                toplevel=True,
+                                lifetime=dace.dtypes.AllocationLifetime.SDFG,
                                 storage=dace.dtypes.StorageType.FPGA_Registers)
-    A_reg_out = state.add_scalar(
-        "A_reg",
-        dtype=dace.float32,
-        transient=True,
-        toplevel=True,
-        storage=dace.dtypes.StorageType.FPGA_Registers)
+    A_reg_out = state.add_scalar("A_reg",
+                                 dtype=dace.float32,
+                                 transient=True,
+                                 lifetime=dace.dtypes.AllocationLifetime.SDFG,
+                                 storage=dace.dtypes.StorageType.FPGA_Registers)
 
     state.add_memlet_path(A_pipe,
                           tasklet,
-                          memlet=dace.memlet.Memlet(
-                              A_pipe, dace.symbolic.pystr_to_symbolic("-1"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(A_pipe,
+                                                           "0",
+                                                           num_accesses=-1),
                           dst_conn="A_in")
     state.add_memlet_path(B_pipe,
                           tasklet,
@@ -566,11 +545,7 @@ def make_compute_sdfg():
                           dst_conn="B_in")
     state.add_memlet_path(C_buffer_in,
                           tasklet,
-                          memlet=dace.memlet.Memlet(
-                              C_buffer_in,
-                              dace.symbolic.pystr_to_symbolic("1"),
-                              dace.properties.SubsetProperty.from_string("m"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(C_buffer_in, "m"),
                           dst_conn="C_in")
     state.add_memlet_path(tasklet,
                           C_buffer_out,
@@ -578,31 +553,24 @@ def make_compute_sdfg():
                           src_conn="C_out")
     state.add_memlet_path(A_reg_in,
                           tasklet,
-                          memlet=dace.memlet.Memlet(
-                              A_reg_in, dace.symbolic.pystr_to_symbolic("-1"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(A_reg_in,
+                                                           "0",
+                                                           num_accesses=-1),
                           dst_conn="A_val_in")
     state.add_memlet_path(tasklet,
                           A_reg_out,
-                          memlet=dace.memlet.Memlet(
-                              A_reg_out, dace.symbolic.pystr_to_symbolic("-1"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1),
+                          memlet=dace.memlet.Memlet.simple(A_reg_out,
+                                                           "0",
+                                                           num_accesses=-1),
                           src_conn="A_val_out")
 
     ###########################################################################
     # Write back state
 
-    write_c_state.add_memlet_path(
-        C_buffer_write,
-        C_pipe,
-        memlet=dace.memlet.Memlet(
-            C_pipe,
-            dace.symbolic.pystr_to_symbolic("1"),
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("m")))
+    write_c_state.add_memlet_path(C_buffer_write,
+                                  C_pipe,
+                                  memlet=dace.memlet.Memlet.simple(
+                                      C_pipe, "0", other_subset_str="m"))
 
     return sdfg
 
@@ -666,77 +634,72 @@ def make_fpga_state(sdfg):
                                   transient=True,
                                   storage=dace.dtypes.StorageType.FPGA_Local)
 
+    state.add_memlet_path(A,
+                          read_A_sdfg_node,
+                          dst_conn="mem",
+                          memlet=dace.memlet.Memlet.simple(A, "0:N, 0:K"))
     state.add_memlet_path(
-        A,
         read_A_sdfg_node,
-        dst_conn="mem",
-        memlet=dace.memlet.Memlet(
-            A, dace.symbolic.pystr_to_symbolic("N * K"),
-            dace.properties.SubsetProperty.from_string("0:N, 0:K"), 1))
-    state.add_memlet_path(read_A_sdfg_node,
-                          A_pipe_out,
-                          src_conn="pipe",
-                          memlet=dace.memlet.Memlet(
-                              A_pipe_out,
-                              dace.symbolic.pystr_to_symbolic("N * K"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-    state.add_memlet_path(A_pipe_in,
-                          compute_sdfg_node,
-                          dst_conn="A_stream_in",
-                          memlet=dace.memlet.Memlet(
-                              A_pipe_in,
-                              dace.symbolic.pystr_to_symbolic("N * K"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+        A_pipe_out,
+        src_conn="pipe",
+        memlet=dace.memlet.Memlet.simple(
+            A_pipe_out,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K")))
+    state.add_memlet_path(
+        A_pipe_in,
+        compute_sdfg_node,
+        dst_conn="A_stream_in",
+        memlet=dace.memlet.Memlet.simple(
+            A_pipe_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K")))
 
     state.add_memlet_path(
         B,
         read_B_sdfg_node,
         dst_conn="mem",
-        memlet=dace.memlet.Memlet(
-            B, dace.symbolic.pystr_to_symbolic("N * K * M"),
-            dace.properties.SubsetProperty.from_string("0:K, 0:M"), 1))
-    state.add_memlet_path(read_B_sdfg_node,
-                          B_pipe_out,
-                          src_conn="pipe",
-                          memlet=dace.memlet.Memlet(
-                              B_pipe_out,
-                              dace.symbolic.pystr_to_symbolic("N * K * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-    state.add_memlet_path(B_pipe_in,
-                          compute_sdfg_node,
-                          dst_conn="B_stream_in",
-                          memlet=dace.memlet.Memlet(
-                              B_pipe_in,
-                              dace.symbolic.pystr_to_symbolic("N * K * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-
+        memlet=dace.memlet.Memlet.simple(
+            B,
+            "0:K, 0:M",
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
     state.add_memlet_path(
+        read_B_sdfg_node,
+        B_pipe_out,
+        src_conn="pipe",
+        memlet=dace.memlet.Memlet.simple(
+            B_pipe_out,
+            "0",
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
+    state.add_memlet_path(
+        B_pipe_in,
+        compute_sdfg_node,
+        dst_conn="B_stream_in",
+        memlet=dace.memlet.Memlet.simple(
+            B_pipe_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
+
+    state.add_memlet_path(write_C_sdfg_node,
+                          C,
+                          src_conn="mem",
+                          memlet=dace.memlet.Memlet.simple(C, "0:N, 0:M"))
+    state.add_memlet_path(
+        C_pipe_in,
         write_C_sdfg_node,
-        C,
-        src_conn="mem",
-        memlet=dace.memlet.Memlet(
-            C, dace.symbolic.pystr_to_symbolic("N * M"),
-            dace.properties.SubsetProperty.from_string("0:N, 0:M"), 1))
-    state.add_memlet_path(C_pipe_in,
-                          write_C_sdfg_node,
-                          dst_conn="pipe",
-                          memlet=dace.memlet.Memlet(
-                              C_pipe_in,
-                              dace.symbolic.pystr_to_symbolic("N * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
-    state.add_memlet_path(compute_sdfg_node,
-                          C_pipe_out,
-                          src_conn="C_stream_out",
-                          memlet=dace.memlet.Memlet(
-                              C_pipe_out,
-                              dace.symbolic.pystr_to_symbolic("N * M"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+        dst_conn="pipe",
+        memlet=dace.memlet.Memlet.simple(
+            C_pipe_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * M")))
+    state.add_memlet_path(
+        compute_sdfg_node,
+        C_pipe_out,
+        src_conn="C_stream_out",
+        memlet=dace.memlet.Memlet.simple(
+            C_pipe_out,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("N * M")))
 
     return state
 
@@ -753,8 +716,8 @@ def make_sdfg(specialized):
     compute_state = make_fpga_state(sdfg)
     post_state = make_copy_to_host_state(sdfg)
 
-    sdfg.add_edge(pre_state, compute_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(compute_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
@@ -804,7 +767,6 @@ if __name__ == "__main__":
     B_regression[:] = B[:]
     C_regression[:] = C[:]
 
-    sdfg.draw_to_file()
     if args["specialize"]:
         sdfg(A=A, B=B, C=C)
     else:

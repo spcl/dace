@@ -3,7 +3,8 @@ from dace import data, symbolic, dtypes
 import re
 import sympy as sp
 from functools import reduce
-from sympy.core.sympify import SympifyError
+import sympy.core.sympify
+from typing import Set
 import warnings
 
 
@@ -12,12 +13,21 @@ class Subset(object):
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
+        def nng(expr):
+            # When dealing with set sizes, assume symbols are non-negative
+            # TODO: Fix in symbol definition, not here
+            for sym in list(expr.free_symbols):
+                expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+            return expr
+
         try:
-            return all([
-                rb <= orb and re >= ore for rb, re, orb, ore in zip(
-                    self.min_element(), self.max_element(),
-                    other.min_element(), other.max_element())
-            ])
+            return all([(symbolic.simplify_ext(nng(rb)) <=
+                         symbolic.simplify_ext(nng(orb))) == True
+                        and (symbolic.simplify_ext(nng(re)) >=
+                             symbolic.simplify_ext(nng(ore))) == True
+                        for rb, re, orb, ore in zip(
+                            self.min_element(), self.max_element_approx(),
+                            other.min_element(), other.max_element_approx())])
         except TypeError:
             return False
 
@@ -53,6 +63,12 @@ class Subset(object):
         """
         raise NotImplementedError
 
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of undefined symbols in this subset. """
+        raise NotImplementedError('free_symbols not implemented by "%s"' %
+                                  type(self).__name__)
+
 
 def _simplified_str(val):
     val = _expr(val)
@@ -65,6 +81,12 @@ def _simplified_str(val):
 def _expr(val):
     if isinstance(val, symbolic.SymExpr):
         return val.expr
+    return val
+
+
+def _approx(val):
+    if isinstance(val, symbolic.SymExpr):
+        return val.approx
     return val
 
 
@@ -137,9 +159,8 @@ class Range(Subset):
         return Range(tuples)
 
     @staticmethod
-    def from_array(array):
-        """ Constructs a range that covers the full array given as input.
-            @type array: dace.data.Data """
+    def from_array(array: 'dace.data.Data'):
+        """ Constructs a range that covers the full array given as input. """
         return Range([(0, s - 1, 1) for s in array.shape])
 
     def __hash__(self):
@@ -202,8 +223,9 @@ class Range(Subset):
 
     def max_element(self):
         return [_expr(x[1]) for x in self.ranges]
-        # return [(sp.floor((iMax - iMin) / step) - 1) * step
-        #        for iMin, iMax, step in self.ranges]
+
+    def max_element_approx(self):
+        return [_approx(x[1]) for x in self.ranges]
 
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
@@ -294,11 +316,11 @@ class Range(Subset):
         return "[" + ", ".join(map(Range._range_pystr, self.ranges)) + "]"
 
     @property
-    def free_symbols(self):
-        result = {}
+    def free_symbols(self) -> Set[str]:
+        result = set()
         for dim in self.ranges:
             for d in dim:
-                result.update(symbolic.symlist(d))
+                result |= symbolic.symlist(d).keys()
         return result
 
     def reorder(self, order):
@@ -441,7 +463,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except SympifyError:
+            except sympy.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -494,24 +516,50 @@ class Range(Subset):
     def compose(self, other):
         if not isinstance(other, Subset):
             raise TypeError("Cannot compose ranges with non-subsets")
-        if self.data_dims() != other.dims():
-            raise ValueError("Dimension mismatch in composition")
+
         new_subset = []
-        idx = 0
-        for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
-            if re - rb == 0:
-                if isinstance(other, Indices):
-                    new_subset.append(rb)
+        if self.data_dims() == other.dims():
+            # case 1: subsets may differ in dimensions, but data_dims correspond
+            #         to other dims -> all non-data dims are cut out
+            idx = 0
+            for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
+                if re - rb == 0:
+                    if isinstance(other, Indices):
+                        new_subset.append(rb)
+                    else:
+                        new_subset.append((rb, re, rs, rt))
                 else:
-                    new_subset.append((rb, re, rs, rt))
-            else:
-                if isinstance(other[idx], tuple):
-                    new_subset.append(
-                        (rb + rs * other[idx][0], rb + rs * other[idx][1],
-                         rs * other[idx][2], rt))
+                    if isinstance(other[idx], tuple):
+                        new_subset.append(
+                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
+                             rs * other[idx][2], rt))
+                    else:
+                        new_subset.append(rb + rs * other[idx])
+                    idx += 1
+        elif self.dims() == other.dims():
+            # case 2: subsets have the same dimensions (but possibly different
+            # data_dims) -> all non-data dims remain
+            for idx, ((rb, re, rs),
+                      rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+                if re - rb == 0:
+                    if isinstance(other, Indices):
+                        new_subset.append(rb)
+                    else:
+                        new_subset.append((rb, re, rs, rt))
                 else:
-                    new_subset.append(rb + rs * other[idx])
-                idx += 1
+                    if isinstance(other[idx], tuple):
+                        new_subset.append(
+                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
+                             rs * other[idx][2], rt))
+                    else:
+                        new_subset.append(rb + rs * other[idx])
+
+        else:
+            raise ValueError("Dimension mismatch in composition:"
+                             "Subset composed must be either completely"
+                             "stripped of all non-data dimensions"
+                             "or be not stripped of latter at all.")
+
         if isinstance(other, Range):
             return Range(new_subset)
         elif isinstance(other, Indices):
@@ -552,6 +600,16 @@ class Range(Subset):
 
     def string_list(self):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
+
+    def replace(self, repl_dict):
+        for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges,
+                                                   self.tile_sizes)):
+            self.ranges[i] = (
+                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
+                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
+                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
+            self.tile_sizes[i] = (ts.subs(repl_dict)
+                                  if symbolic.issymbolic(ts) else ts)
 
 
 @dace.serialize.serializable
@@ -611,6 +669,9 @@ class Indices(Subset):
     def max_element(self):
         return self.indices
 
+    def max_element_approx(self):
+        return [_approx(ind) for ind in self.indices]
+
     def data_dims(self):
         return 0
 
@@ -668,10 +729,10 @@ class Indices(Subset):
         return ", ".join(map(str, self.indices))
 
     @property
-    def free_symbols(self):
-        result = {}
+    def free_symbols(self) -> Set[str]:
+        result = set()
         for dim in self.indices:
-            result.update(symbolic.symlist(dim))
+            result |= symbolic.symlist(dim).keys()
         return result
 
     @staticmethod
@@ -725,6 +786,11 @@ class Indices(Subset):
     def unsqueeze(self, axes):
         for axis in sorted(axes):
             self.indices.insert(axis, 0)
+
+    def replace(self, repl_dict):
+        for i, ind in enumerate(self.indices):
+            self.indices[i] = (ind.subs(repl_dict)
+                               if symbolic.issymbolic(ind) else ind)
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:

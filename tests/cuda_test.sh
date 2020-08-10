@@ -7,12 +7,13 @@ PYTHONPATH=$SCRIPTPATH/..
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
+DACE_optimizer_transform_on_call=${DACE_optimizer_transform_on_call:-1}
 DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0
 
-TEST_TIMEOUT=60
+TEST_TIMEOUT=600
 
 RED='\033[0;31m'
 NC='\033[0m'
@@ -169,7 +170,7 @@ runall() {
     runopt samples/simple/sum.py $1
     runopt samples/simple/sum.py $1 'GPUTransformMap$0'
     
-    runtestopt cuda_blockreduce.py $1 'GPUTransformMap$0'
+    runtestopt blockreduce_cudatest.py $1
 
     runtestopt cuda_highdim_kernel_test.py $1 'GPUTransformMap$0(fullcopy=True)'
     
@@ -182,8 +183,17 @@ runall() {
     runtestopt wcr_cudatest.py $1
     
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
+    runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
     
     runtestargs instrumentation_test.py gpu
+    runtestargs library/matmul_cudatest.py
+
+    runtestargs dynamic_tb_map_cudatest.py
+    runtestargs kernel_fusion_cudatest.py
+
+    runtestargs persistent_map_cudatest.py
+    runtestargs persistent_tb_map_cudatest.py
+    runtestargs persistent_fusion_cudatest.py
 }
 
 

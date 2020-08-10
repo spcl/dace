@@ -20,16 +20,16 @@ class cuBLAS:
     @staticmethod
     def handle_setup_code(node):
         location = node.location
-        if not location:
+        if not location or "cuda_device" not in node.location:
             location = 0
         else:
             try:
-                location = int(location)
+                location = int(location["cuda_device"])
             except ValueError:
                 raise ValueError("Invalid GPU identifier: {}".format(location))
 
         code = """\
-const auto __dace_cuda_device = {location};
+const int __dace_cuda_device = {location};
 auto &__dace_cublas_handle = dace::blas::CublasHandle::Get(__dace_cuda_device);
 cublasSetStream(__dace_cublas_handle, __dace_current_stream);\n"""
 

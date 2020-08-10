@@ -10,11 +10,10 @@
 
 #include "vector.h"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/stream.cuh"
 #else
 #include "cudainterop.h"
-#include "cuda/cudacommon.cuh"
 
 namespace dace {
     // Forward/mirror declaration of GPU classes
@@ -39,16 +38,16 @@ namespace dace {
     template<typename T, bool IS_POW2>
     void FreeGPUArrayStreamView(GPUStream<T, IS_POW2>& stream)
     {
-        DACE_CUDA_CHECK(cudaFree(stream.m_start));
-        DACE_CUDA_CHECK(cudaFree(stream.m_end));
-        DACE_CUDA_CHECK(cudaFree(stream.m_pending));
+        DACE_CUDA_CHECK(gpuFree(stream.m_start));
+        DACE_CUDA_CHECK(gpuFree(stream.m_end));
+        DACE_CUDA_CHECK(gpuFree(stream.m_pending));
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         FreeGPUArrayStreamView(stream);
-        DACE_CUDA_CHECK(cudaFree(stream.m_data));
+        DACE_CUDA_CHECK(gpuFree(stream.m_data));
     }
 }  // namespace dace
 #endif
@@ -69,24 +68,6 @@ namespace dace {
     template <typename T, bool ALIGNED = false>
     class Stream;
 
-    template <typename T, int DIMS, bool ALIGNED = false>
-    class StreamArray : public ArrayViewOut<Stream<T, ALIGNED>, DIMS, 1, 0, ALIGNED> {
-        template <typename... Dim>
-        explicit DACE_HDFI StreamArray(const Dim&... strides) {
-            static_assert(sizeof...(strides) == static_cast<int>(DIMS),
-                          "Dimension mismatch");
-            int stridearr[] = { static_cast<int>(strides)... };
-            for (int i = 0; i < DIMS; ++i)
-                this->m_stride[i] = stridearr[i];
-            this->m_ptr = new Stream<T, ALIGNED>[this->m_stride[DIMS - 1]];
-        }
-
-        virtual ~StreamArray() {
-            delete[] this->m_ptr;
-        }
-    };
-
-
     // Performance can be increased by removing qsize, but this is necessary for
     // consume to work for now.
     template <typename T, bool ALIGNED>
@@ -103,6 +84,11 @@ namespace dace {
             m_queue.wait_dequeue(item);
             if (!noupdate)
                 m_elements--;
+        }
+        inline T pop(bool noupdate = false) {
+            T item;
+            pop(item, noupdate);
+            return item;
         }
         inline size_t pop(T *valarr, int max_size, bool noupdate = false) {
             size_t result = m_queue.wait_dequeue_bulk(valarr, max_size);
@@ -169,52 +155,6 @@ namespace dace {
 
     };
 
-    // DataView interface for streams
-    template <template <typename, bool> typename StreamT, typename T, bool ALIGNED>
-    class StreamView {
-        StreamT<T, ALIGNED>& m_stream;
-    public:
-        DACE_HDFI StreamView(StreamT<T, ALIGNED>& stream) : m_stream(stream)
-        { }
-
-        template <typename U>
-        DACE_HDFI void write(U&& val) {
-            m_stream.push(std::forward<U>(val));
-        }
-
-        template <typename U>
-        DACE_HDFI void operator=(U&& val) {
-            m_stream.push(std::forward<U>(val));
-        }
-
-        DACE_HDFI operator T() {
-            T item;
-            m_stream.pop(item);
-            return item;
-        }
-
-        DACE_HDFI T pop() {
-            return T(*this);
-        }
-
-        #define __DACE_VECPUSHIF(N)                                 \
-        DACE_HDFI void push_if(const dace::vec<T, N>& element,      \
-                               const dace::vec<int, N>& mask) {     \
-            m_stream.push_if(element, mask);                        \
-        }
-        __DACE_VECPUSHIF(1)
-        /*__DACE_VECPUSHIF(2)
-        __DACE_VECPUSHIF(4)*/
-        //__DACE_VECPUSHIF(8)
-        #undef __DACE_VECPUSHIF
-    };
-
-    template <template <typename, bool> typename StreamT, typename T, bool ALIGNED>
-    DACE_HDFI StreamView<StreamT, T, ALIGNED> make_streamview(StreamT<T, ALIGNED>& stream)
-    {
-        return StreamView<StreamT, T, ALIGNED>(stream);
-    }
-
     // Stream implementation with a direct array connection
     template <typename T, bool ALIGNED>
     class ArrayStreamView {
@@ -268,32 +208,6 @@ namespace dace {
                 }
             }
         }
-
-/*
-        void push_if(const dace::vec<T, 4>& element, const dace::vec<int, 4>& mask) {
-            int ppcnt = 0;
-            for (int v = 0; v < 4; ++v) ppcnt += (mask[v] ? 1 : 0);
-            const unsigned int off = m_elements.fetch_add(ppcnt);
-            T* ptr = m_array + off;
-            for (int v = 0; v < 4; ++v) {
-                if (mask[v]) {
-                    *ptr++ = element[v];
-                }
-            }
-        }
-
-        void push_if(const dace::vec<T, 8>& element, const dace::vec<int, 8>& mask) {
-            int ppcnt = 0;
-            for (int v = 0; v < 8; ++v) ppcnt += (mask[v] ? 1 : 0);
-            const unsigned int off = m_elements.fetch_add(ppcnt);
-            T* ptr = m_array + off;
-            for (int v = 0; v < 8; ++v) {
-                if (mask[v]) {
-                    *ptr++ = element[v];
-                }
-            }
-        }
-*/
 
         void push(const T* elements, unsigned int num_elements) {
             const unsigned int offset = m_elements.fetch_add(num_elements);

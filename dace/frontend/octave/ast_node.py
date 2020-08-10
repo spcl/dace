@@ -51,7 +51,7 @@ class AST_Node():
             nodename = self.get_name_in_sdfg(sdfg)
         sdfg_state = sdfg.nodes()[state]
         for node in sdfg_state.nodes():
-            if isinstance(node, dace.graph.nodes.AccessNode):
+            if isinstance(node, dace.sdfg.nodes.AccessNode):
                 if node.label == nodename:
                     return node
 
@@ -124,7 +124,7 @@ class AST_Node():
         for state in range(0, len(sdfg.nodes())):
             sdfg_state = sdfg.nodes()[state]
             for node in sdfg_state.nodes():
-                if isinstance(node, dace.graph.nodes.AccessNode):
+                if isinstance(node, dace.sdfg.nodes.AccessNode):
                     m = re.match(TEMPVARS_PREFIX + "(\d+)", node.label)
                     if m is not None:
                         if maxvar < int(m.group(1)):
@@ -294,7 +294,7 @@ class AST_Statements(AST_Node):
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
                 if prevstate is not None:
-                    edge = dace.graph.edges.InterstateEdge()
+                    edge = dace.sdfg.InterstateEdge()
                     sdfg.add_edge(prevstate, newstate, edge)
                 if last_state is None:
                     prevstate = newstate

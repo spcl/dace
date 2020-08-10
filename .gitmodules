@@ -8,3 +8,6 @@
 [submodule "dace/external/hlslib"]
 	path = dace/external/hlslib
 	url = https://github.com/definelicht/hlslib.git
+[submodule "diode/webclient"]
+	path = diode/webclient
+	url = https://github.com/spcl/dace-webclient.git

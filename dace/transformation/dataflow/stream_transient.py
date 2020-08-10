@@ -6,7 +6,9 @@ import warnings
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import make_properties, Property
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import SDFG
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 
 
@@ -46,9 +48,13 @@ def calc_set_image(map_idx, map_set, array_set):
 @make_properties
 class StreamTransient(pattern_matching.Transformation):
     """ Implements the StreamTransient transformation, which adds a transient
-        stream node between nested maps that lead to a stream. The transient
-        then acts as a local buffer.
+        and stream nodes between nested maps that lead to a stream. The
+        transient then acts as a local buffer.
     """
+
+    with_buffer = Property(dtype=bool,
+                           default=True,
+                           desc="Use an intermediate buffer for accumulation")
 
     _tasklet = nodes.Tasklet('_')
     _map_exit = nodes.MapExit(nodes.Map("", [], []))
@@ -57,7 +63,7 @@ class StreamTransient(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(StreamTransient._tasklet,
+            sdutil.node_path_graph(StreamTransient._tasklet,
                                    StreamTransient._map_exit,
                                    StreamTransient._outer_map_exit)
         ]
@@ -85,7 +91,7 @@ class StreamTransient(pattern_matching.Transformation):
         return ' -> '.join(
             str(node) for node in [tasklet, map_exit, outer_map_exit])
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG):
         graph = sdfg.nodes()[self.state_id]
         tasklet = graph.nodes()[self.subgraph[StreamTransient._tasklet]]
         map_exit = graph.nodes()[self.subgraph[StreamTransient._map_exit]]
@@ -111,22 +117,34 @@ class StreamTransient(pattern_matching.Transformation):
         dataname = memlet.data
 
         # Create the new node: Temporary stream and an access node
-        newname, _ = sdfg.add_stream('tile_' + dataname,
+        newname, _ = sdfg.add_stream('trans_' + dataname,
                                      sdfg.arrays[memlet.data].dtype,
                                      1,
                                      bbox_approx[0], [1],
                                      transient=True,
                                      find_new_name=True)
-        snode = nodes.AccessNode(newname)
+        snode = graph.add_access(newname)
 
         to_stream_mm = copy.deepcopy(memlet)
         to_stream_mm.data = snode.data
         tasklet_memlet.data = snode.data
 
+        if self.with_buffer:
+            newname_arr, _ = sdfg.add_transient('strans_' + dataname,
+                                                [bbox_approx[0]],
+                                                sdfg.arrays[memlet.data].dtype,
+                                                find_new_name=True)
+            anode = graph.add_access(newname_arr)
+            to_array_mm = copy.deepcopy(memlet)
+            to_array_mm.data = anode.data
+            graph.add_edge(snode, None, anode, None, to_array_mm)
+        else:
+            anode = snode
+
         # Reconnect, assuming one edge to the stream
         graph.remove_edge(edge)
-        graph.add_edge(map_exit, None, snode, None, to_stream_mm)
-        graph.add_edge(snode, None, outer_map_exit, None, memlet)
+        graph.add_edge(map_exit, edge.src_conn, snode, None, to_stream_mm)
+        graph.add_edge(anode, None, outer_map_exit, edge.dst_conn, memlet)
 
         return
 
@@ -155,7 +173,7 @@ class AccumulateTransient(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(AccumulateTransient._tasklet,
+            sdutil.node_path_graph(AccumulateTransient._tasklet,
                                    AccumulateTransient._map_exit,
                                    AccumulateTransient._outer_map_exit)
         ]
@@ -203,7 +221,7 @@ class AccumulateTransient(pattern_matching.Transformation):
             LocalStorage._node_b:
             self.subgraph[AccumulateTransient._outer_map_exit]
         }
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         in_local_storage = LocalStorage(sdfg_id, self.state_id,
                                         local_storage_subgraph,
                                         self.expr_index)

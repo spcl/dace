@@ -117,8 +117,8 @@ def make_nested_sdfg(parent):
 
     state = sdfg.add_state("compute_cols")
 
-    sdfg.add_edge(set_zero_state, state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(state, write_back_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(set_zero_state, state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(state, write_back_state, dace.sdfg.InterstateEdge())
 
     compute_entry, compute_exit = state.add_map("compute_col",
                                                 {"j": "rowptr:rowend"})
@@ -156,13 +156,13 @@ def make_nested_sdfg(parent):
                         dtype,
                         storage=dace.dtypes.StorageType.FPGA_Global)
 
-    compute_entry._in_connectors.add("rowptr")
+    compute_entry.add_in_connector("rowptr")
     state.add_memlet_path(rowptr,
                           compute_entry,
                           dst_conn="rowptr",
                           memlet=dace.memlet.Memlet.simple(rowptr, "0"))
 
-    compute_entry._in_connectors.add("rowend")
+    compute_entry.add_in_connector("rowend")
     state.add_memlet_path(rowend,
                           compute_entry,
                           dst_conn="rowend",
@@ -201,10 +201,7 @@ def make_nested_sdfg(parent):
                           b_buffer,
                           src_conn="out",
                           memlet=dace.memlet.Memlet.simple(
-                              b_buffer,
-                              "0",
-                              wcr_str="lambda a, b: a + b",
-                              wcr_identity=0))
+                              b_buffer, "0", wcr_str="lambda a, b: a + b"))
 
     return sdfg
 
@@ -253,31 +250,21 @@ def make_main_state(sdfg):
         {"row_begin", "row_end", "A_val_read", "A_col_read", "x_read"},
         {"b_write"})
 
-    state.add_memlet_path(
-        a_row,
-        row_entry,
-        rowptr,
-        memlet=dace.memlet.Memlet(
-            rowptr,
-            1,
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("i")))
+    state.add_memlet_path(a_row,
+                          row_entry,
+                          rowptr,
+                          memlet=dace.memlet.Memlet.simple(
+                              rowptr, "0", other_subset_str="i"))
     state.add_memlet_path(rowptr,
                           nested_sdfg_tasklet,
                           dst_conn="row_begin",
                           memlet=dace.memlet.Memlet.simple(rowptr, "0"))
 
-    state.add_memlet_path(
-        a_row,
-        row_entry,
-        rowend,
-        memlet=dace.memlet.Memlet(
-            rowend,
-            1,
-            dace.properties.SubsetProperty.from_string("0"),
-            1,
-            other_subset=dace.properties.SubsetProperty.from_string("i + 1")))
+    state.add_memlet_path(a_row,
+                          row_entry,
+                          rowend,
+                          memlet=dace.memlet.Memlet.simple(
+                              rowend, "0", other_subset_str="i + 1"))
     state.add_memlet_path(rowend,
                           nested_sdfg_tasklet,
                           dst_conn="row_end",
@@ -322,8 +309,8 @@ def make_sdfg(specialize):
     main_state = make_main_state(sdfg)
     post_state = make_post_state(sdfg)
 
-    sdfg.add_edge(pre_state, main_state, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(main_state, post_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(pre_state, main_state, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(main_state, post_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
@@ -390,7 +377,6 @@ if __name__ == "__main__":
     spmv = make_sdfg(args["specialize"])
     if args["specialize"]:
         spmv.specialize(dict(H=H, W=W, nnz=nnz))
-    spmv.draw_to_file()
     spmv(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=H, W=W, nnz=nnz)
 
     if dace.Config.get_bool('profiling'):

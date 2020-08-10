@@ -95,22 +95,22 @@ def make_nested_sdfg(parent):
     write_out_size = make_write_out_size(sdfg)
 
     sdfg.add_edge(set_zero, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"i": 0}))
 
     sdfg.add_edge(
         loop_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i < N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(
         loop_entry, write_out_size,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "i >= N", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(loop_body, loop_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"i": "i + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"i": "i + 1"}))
 
     return sdfg
 
@@ -159,15 +159,14 @@ def make_loop_body(sdfg):
                    dace.memlet.Memlet.simple(ratio, "0"))
     state.add_edge(
         tasklet, "b", B, None,
-        dace.memlet.Memlet(B, dace.symbolic.pystr_to_symbolic("-1"),
-                           dace.subsets.Range.from_array(B.desc(sdfg)), 1))
+        dace.memlet.Memlet.simple(B,
+                                  dace.subsets.Range.from_array(B.desc(sdfg)),
+                                  num_accesses=-1))
     state.add_edge(outsize_buffer_in, None, tasklet, "write_index",
                    dace.memlet.Memlet.simple(outsize_buffer_in, "0"))
     state.add_edge(
         tasklet, "size_out", outsize_buffer_out, None,
-        dace.memlet.Memlet(outsize_buffer_out,
-                           dace.symbolic.pystr_to_symbolic("-1"),
-                           dace.properties.SubsetProperty.from_string("0"), 1))
+        dace.memlet.Memlet.simple(outsize_buffer_out, "0", num_accesses=-1))
 
     return state
 
@@ -204,9 +203,8 @@ def make_sdfg(specialize):
     copy_to_host_state = make_copy_to_host(sdfg)
 
     sdfg.add_edge(copy_to_device_state, compute_state,
-                  dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(compute_state, copy_to_host_state,
-                  dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge())
+    sdfg.add_edge(compute_state, copy_to_host_state, dace.sdfg.InterstateEdge())
 
     return sdfg
 
@@ -242,7 +240,6 @@ if __name__ == "__main__":
     B[:] = dace.float32(0)
 
     sdfg = make_sdfg(args["specialize"])
-    sdfg.draw_to_file()
     if args["specialize"]:
         sdfg.specialize(dict(N=N))
         sdfg(A=A, B=B, outsize=outsize, ratio=ratio)
@@ -256,8 +253,8 @@ if __name__ == "__main__":
 
     if len(filtered) != outsize[0]:
         print(
-            "Difference in number of filtered items: %d (DaCe) vs. %d (numpy)"
-            % (outsize[0], len(filtered)))
+            "Difference in number of filtered items: %d (DaCe) vs. %d (numpy)" %
+            (outsize[0], len(filtered)))
         totalitems = min(outsize[0], N.get())
         print('DaCe:', B[:totalitems].view(type=np.ndarray))
         print('Regression:', filtered.view(type=np.ndarray))

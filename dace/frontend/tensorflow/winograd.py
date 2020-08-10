@@ -2,6 +2,7 @@ import dace
 import numpy as np
 import re
 from dace.memlet import Memlet
+from dace import dtypes
 from math import ceil
 
 
@@ -38,26 +39,26 @@ def add_cublas_cusolver(sdfg: dace.SDFG):
         """)
 
 
-# TODO: Use dace.frontend.common.op_impl
+# TODO: Use library nodes
 
 
 # Make sure C_memlet has a wcr if map_exit is used
 # Matrix multiplication with one matrix as constant
 def mm_small(
-        state,
-        A_node,
-        B_node,
-        C_node,
-        A_subset=None,
-        B_subset=None,
-        C_subset=None,
-        A_memlet=None,
-        B_memlet=None,
-        C_memlet=None,
-        map_entry=None,
-        map_exit=None,
-        A_direct=True,
-        B_direct=True,
+    state,
+    A_node,
+    B_node,
+    C_node,
+    A_subset=None,
+    B_subset=None,
+    C_subset=None,
+    A_memlet=None,
+    B_memlet=None,
+    C_memlet=None,
+    map_entry=None,
+    map_exit=None,
+    A_direct=True,
+    B_direct=True,
 ):
     # C = A@B
     sdfg = state.parent
@@ -185,25 +186,25 @@ def mm_small(
 # takes input and stores output in column major order. give swapped input (B, A)
 # instead of (A, B)
 def mm(
-        state,
-        A_node,
-        B_node,
-        C_node,
-        A_mode: str = "N",
-        B_mode: str = "N",
-        label: str = None,
-        A_subset=None,
-        B_subset=None,
-        C_subset=None,
-        A_memlet=None,
-        B_memlet=None,
-        C_memlet=None,
-        map_entry=None,
-        map_exit=None,
-        shadow_a=False,
-        shadow_b=False,
-        buffer_a=False,
-        buffer_c=False,
+    state,
+    A_node,
+    B_node,
+    C_node,
+    A_mode: str = "N",
+    B_mode: str = "N",
+    label: str = None,
+    A_subset=None,
+    B_subset=None,
+    C_subset=None,
+    A_memlet=None,
+    B_memlet=None,
+    C_memlet=None,
+    map_entry=None,
+    map_exit=None,
+    shadow_a=False,
+    shadow_b=False,
+    buffer_a=False,
+    buffer_c=False,
 ):
     sdfg = state.parent
     Adesc = A_node.desc(sdfg)
@@ -255,16 +256,6 @@ def mm(
             ldb=ldb,
             ldc=ldc,
         ),
-        location="cpu",
-        #     code_global="""
-        # #include <cublas_v2.h>
-        # """,
-        #    # Initialization code (called in __dace_init())
-        #    code_init="""
-        # """,
-        #    # Teardown code (called in __dace_exit())
-        #    code_exit="""
-        # """,
         language=dace.dtypes.Language.CPP,
     )
 
@@ -399,7 +390,7 @@ def printer(*inp):
 
 
 def string_builder(string):
-    """ To match DaCe variable naming conventions, replaces all undesired 
+    """ To match DaCe variable naming conventions, replaces all undesired
         characters with "_".
     """
     newstring = string
@@ -443,7 +434,7 @@ def winograd_convolution(dace_session, tf_node):
         inputNodes[1].data + "GPU",
         shape=kernel_desc.shape,
         dtype=kernel_desc.dtype,
-        toplevel=True,
+        lifetime=dtypes.AllocationLifetime.SDFG,
         storage=dace.StorageType.GPU_Global,
     )
     state.add_edge(
@@ -526,11 +517,8 @@ def winograd_convolution(dace_session, tf_node):
         dict(zip(inputParams[0][0:2], inputViewDims[2:4])),
         dace.ScheduleType.GPU_Device,
     )
-    intermediateResultNode = state.add_transient("BtI",
-                                                 bt.shape,
-                                                 dace.float32,
-                                                 dace.StorageType.GPU_Stack,
-                                                 toplevel=False)
+    intermediateResultNode = state.add_transient("BtI", bt.shape, dace.float32,
+                                                 dace.StorageType.Register)
     intermediateResultNode.setzero = True
     state.add_edge(
         inputView,
@@ -585,7 +573,7 @@ def winograd_convolution(dace_session, tf_node):
         dace.ScheduleType.GPU_Device,
     )
     intermediateResultNode = state.add_transient("GF", g.shape, dace.float32,
-                                                 dace.StorageType.GPU_Stack)
+                                                 dace.StorageType.Register)
     intermediateResultNode.setzero = True
     processedKernelNode = state.add_transient(
         "U" + "_".join([
@@ -713,7 +701,7 @@ def winograd_convolution(dace_session, tf_node):
         dace.ScheduleType.GPU_Device,
     )
     intermediateResultNode = state.add_transient("AtM", at.shape, dace.float32,
-                                                 dace.StorageType.GPU_Stack)
+                                                 dace.StorageType.Register)
     intermediateResultNode.setzero = True
     transformedOutputNode = state.add_transient(
         "inv_txformed_output" + "_".join([str(tf_node.inputs[1].shape[-1])] +
@@ -804,17 +792,14 @@ def winograd_convolution(dace_session, tf_node):
         {},
         string_builder(tf_node.name) + "_printer" + "(" +
         ",".join(taskletInputs) + ");",
-        location="cpu",
         language=dace.dtypes.Language.CPP,
     )
     for _n, _conn in zip(debugNodes, taskletInputs):
-        _n_cpu = state.add_transient(
-            _n.data + "_cpucopy",
-            _n.desc(dace_session.graph).shape,
-            _n.desc(dace_session.graph).dtype,
-            storage=dace.StorageType.CPU_Heap,
-            toplevel=True,
-        )
+        _n_cpu = state.add_transient(_n.data + "_cpucopy",
+                                     _n.desc(dace_session.graph).shape,
+                                     _n.desc(dace_session.graph).dtype,
+                                     storage=dace.StorageType.CPU_Heap,
+                                     lifetime=dtypes.AllocationLifetime.SDFG)
         state.add_edge(_n, None, _n_cpu, None,
                        Memlet.from_array(_n, _n.desc(dace_session.graph)))
         state.add_edge(

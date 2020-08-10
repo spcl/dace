@@ -2,7 +2,8 @@
 
 from dace import registry
 from dace.symbolic import symlist
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
 from typing import Tuple
@@ -23,7 +24,7 @@ class MapCollapse(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(
                 MapCollapse._outer_map_entry,
                 MapCollapse._inner_map_entry,
             )
@@ -67,8 +68,8 @@ class MapCollapse(pattern_matching.Transformation):
                     return False
 
         # Check the edges between the exits of the two maps.
-        inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
-        outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
+        inner_map_exit = graph.exit_node(inner_map_entry)
+        outer_map_exit = graph.exit_node(outer_map_entry)
 
         # Check that the destination of all the outgoing edges
         # from the inner map's exit is the outer map's exit.
@@ -106,8 +107,8 @@ class MapCollapse(pattern_matching.Transformation):
             MapCollapse._outer_map_entry]]
         inner_map_entry = graph.nodes()[self.subgraph[
             MapCollapse._inner_map_entry]]
-        inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
-        outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
+        inner_map_exit = graph.exit_node(inner_map_entry)
+        outer_map_exit = graph.exit_node(outer_map_entry)
 
-        return nxutil.merge_maps(graph, outer_map_entry, outer_map_exit,
+        return sdutil.merge_maps(graph, outer_map_entry, outer_map_exit,
                                  inner_map_entry, inner_map_exit)
