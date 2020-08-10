@@ -27,7 +27,7 @@ class ReduceExpansion(pattern_matching.Transformation):
         Expands a Reduce node into inner and outer map components,
         where the outer map consists of the axes not being reduced.
         A new reduce node is created inside the inner map.
-        Special cases where e.g reduction identities are not defined 
+        Special cases where e.g reduction identities are not defined
         and arrays being reduced to already exist are handled
         on the fly.
     """
@@ -152,6 +152,56 @@ class ReduceExpansion(pattern_matching.Transformation):
         inner_exit = nstate.exit_node(inner_entry)
         outer_exit = nstate.exit_node(outer_entry)
 
+
+        # find earliest parent read-write occurrence of array onto which
+        # we perform the reduction:
+        # do BFS, best complexity O(V+E)
+
+        queue = [nsdfg]
+        array_closest_ancestor = None
+        while len(queue) > 0:
+            current = queue.pop(0)
+            if isinstance(current, nodes.AccessNode):
+                if current.data == out_storage_node.data:
+                    # it suffices to find the first node
+                    # no matter what access (ReadWrite or Read)
+                    array_closest_ancestor = current
+                    break
+            queue.extend([in_edge.src for in_edge in graph.in_edges(current)])
+
+        # if ancestor doesn't exist:
+        #           if non-transient: create data node accessing it
+        #           if transient: ancestor_node = none, set_zero on outer node
+
+        shortcut = False
+        if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
+                                        or identity is not None:
+            if self.debug:
+                print("ReduceExpansion::Shortcut applied")
+            # we are lucky
+            shortcut = True
+            if self.create_out_transient:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
+            nstate.out_edges(outer_exit)[0].data.wcr = None
+
+
+        else:
+            if self.debug:
+                print("ReduceExpansion::No shortcut, operating with ancestor", array_closest_ancestor)
+            if not array_closest_ancestor:
+                array_closest_ancestor = nodes.AccessNode(out_storage_node.data,
+                                            access = dtypes.AccessType.ReadOnly)
+                graph.add_node(array_closest_ancestor)
+
+            # always have to create out transient in this case
+            self.create_out_transient = True
+
+
+        # array_closest_ancestor now points to the node we want to connect
+        # to the map entry
+
+
         if self.create_out_transient:
             ###### create an out transient between inner and outer map exit
             array_out = nstate.out_edges(outer_exit)[0].data.data
@@ -200,50 +250,7 @@ class ReduceExpansion(pattern_matching.Transformation):
 
 
 
-        # find earliest parent read-write occurrence of array onto which
-        # we perform the reduction:
-        # do BFS, best complexity O(V+E)
 
-        queue = [nsdfg]
-        array_closest_ancestor = None
-        while len(queue) > 0:
-            current = queue.pop(0)
-            if isinstance(current, nodes.AccessNode):
-                if current.data == out_storage_node.data:
-                    # it suffices to find the first node
-                    # no matter what access (ReadWrite or Read)
-                    array_closest_ancestor = current
-                    break
-            queue.extend([in_edge.src for in_edge in graph.in_edges(current)])
-
-        # if ancestor doesn't exist:
-        #           if non-transient: create data node accessing it
-        #           if transient: ancestor_node = none, set_zero on outer node
-
-        shortcut = False
-        if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
-                                        or identity is not None:
-            if self.debug:
-                print("ReduceExpansion::Shortcut applied")
-            # we are lucky
-            shortcut = True
-            if self.create_out_transient:
-                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
-                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
-            nstate.out_edges(outer_exit)[0].data.wcr = None
-
-
-        else:
-            if self.debug:
-                print("ReduceExpansion::No shortcut, operating with ancestor", array_closest_ancestor)
-            array_closest_ancestor = nodes.AccessNode(out_storage_node.data,
-                                        access = dtypes.AccessType.ReadOnly)
-            graph.add_node(array_closest_ancestor)
-
-
-
-        # array_closest_ancestor now points to the node we want to connect
-        # to the map entry
 
         # first, inline fuse back our NSDFG
         from dace.transformation.interstate import InlineSDFG
