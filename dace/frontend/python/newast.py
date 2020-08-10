@@ -989,11 +989,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add symbols
         for k, v in scope_arrays.items():
             if isinstance(v, data.Scalar):
-                self.sdfg.add_symbol(k, v.dtype, override_dtype=True)
+                if k not in self.sdfg.symbols:
+                    self.sdfg.add_symbol(k, v.dtype)
         symbols = symbols or {}
         for k, v in symbols.items():
             if k not in self.sdfg.symbols:
-                self.sdfg.add_symbol(k, v.dtype, override_dtype=True)
+                self.sdfg.add_symbol(k, v.dtype)
 
         # Add constants
         for cstname, cstval in constants.items():
@@ -1169,7 +1170,6 @@ class ProgramVisitor(ExtNodeVisitor):
         extra_symbols = extra_symbols or {}
         local_vars = {}
         local_vars.update(self.globals)
-        local_vars.update(extra_symbols)
         pv = ProgramVisitor(name=name,
                             filename=self.filename,
                             line_offset=node.lineno,
@@ -1187,7 +1187,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             other_sdfgs=self.other_sdfgs,
                             symbols={
                                 **self.sdfg.symbols,
-                                **extrasyms
+                                **extra_symbols
                             },
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
