@@ -1406,12 +1406,34 @@ class SDFG(OrderedDiGraph):
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def compile(self, optimizer=None, output_file=None) -> \
+    def optimize(self, optimizer=None) -> 'SDFG':
+        """ 
+        Optimize an SDFG using the CLI or external hooks. 
+        :param optimizer: If defines a valid class name, it will be called
+                          during compilation to transform the SDFG as
+                          necessary. If None, uses configuration setting.
+        :return: An SDFG (returns self if optimizer is in place)
+        """
+        # Fill in scope entry/exit connectors
+        self.fill_scope_connectors()
+
+        optclass = _get_optimizer_class(optimizer)
+        if optclass is not None:
+            # Propagate memlets in the graph
+            if self._propagate:
+                propagate_memlets_sdfg(self)
+
+            opt = optclass(self)
+            sdfg = opt.optimize()
+        else:
+            sdfg = self
+
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+        return sdfg
+
+    def compile(self, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
-            :param optimizer: If defines a valid class name, it will be called
-                              during compilation to transform the SDFG as
-                              necessary. If None, uses configuration setting.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :return: A callable CompiledSDFG object.
@@ -1436,18 +1458,6 @@ class SDFG(OrderedDiGraph):
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
-
-        # Optimize SDFG using the CLI or external hooks
-        optclass = _get_optimizer_class(optimizer)
-        if optclass is not None:
-            # Propagate memlets in the graph
-            if self._propagate:
-                propagate_memlets_sdfg(sdfg)
-
-            opt = optclass(sdfg)
-            sdfg = opt.optimize()
-
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
@@ -1555,12 +1565,16 @@ class SDFG(OrderedDiGraph):
 
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
+        if Config.get_bool('optimizer', 'transform_on_call'):
+            sdfg = self.optimize()
+        else:
+            sdfg = self
 
-        binaryobj = self.compile()
+        binaryobj = sdfg.compile()
 
         # Verify passed arguments (unless disabled by the user)
         if dace.config.Config.get_bool("execution", "general", "check_args"):
-            self.argument_typecheck(args, kwargs)
+            sdfg.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
     def fill_scope_connectors(self):
@@ -1797,9 +1811,12 @@ class SDFG(OrderedDiGraph):
                                    strict=strict,
                                    states=states)
 
-    def expand_library_nodes(self):
-        """ Recursively expand all unexpanded library nodes in the SDFG,
-            resulting in a "pure" SDFG that the code generator can handle.
+    def expand_library_nodes(self, recursive=True):
+        """ 
+        Recursively expand all unexpanded library nodes in the SDFG,
+        resulting in a "pure" SDFG that the code generator can handle.
+        :param recursive: If True, expands all library nodes recursively, 
+                          including library nodes that expand to library nodes.
         """
 
         states = list(self.states())
@@ -1815,7 +1832,8 @@ class SDFG(OrderedDiGraph):
                           "\".")
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
-                    expanded_something = True
+                    if recursive:
+                        expanded_something = True
             if expanded_something:
                 states.append(state)  # Nodes have changed. Check state again
 

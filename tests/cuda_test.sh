@@ -7,6 +7,7 @@ PYTHONPATH=$SCRIPTPATH/..
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
+DACE_optimizer_transform_on_call=${DACE_optimizer_transform_on_call:-1}
 DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
 ERRORS=0
 FAILED_TESTS=""
