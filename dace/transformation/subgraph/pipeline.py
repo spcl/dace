@@ -15,7 +15,7 @@ from dace.sdfg.graph import SubgraphView
 
 import timeit
 
-TRANSFORMATION_TIMER = True
+transformation_timer = True
 
 """
 #################
@@ -58,7 +58,7 @@ def expand_reduce(sdfg: dace.SDFG,
     if not isinstance(subgraph, List):
         subgraph = [subgraph]
 
-    if TRANSFORMATION_TIMER:
+    if transformation_timer:
         start = timeit.default_timer()
 
     for sg in subgraph:
@@ -86,7 +86,7 @@ def expand_reduce(sdfg: dace.SDFG,
                 sg.nodes().append(trafo_reduce._new_reduce)
                 sg.nodes().append(trafo_reduce._outer_entry)
 
-    if TRANSFORMATION_TIMER:
+    if transformation_timer:
         end = timeit.default_timer()
         print("**** Pipeline::Reduction timer =",end-start,"s")
 
@@ -116,7 +116,7 @@ def expand_maps(sdfg: dace.SDFG,
     for (property, val) in kwargs.items():
         setattr(trafo_expansion, property, val)
 
-    if TRANSFORMATION_TIMER:
+    if transformation_timer:
         start = timeit.default_timer()
 
     for sg in subgraph:
@@ -124,7 +124,7 @@ def expand_maps(sdfg: dace.SDFG,
         start = timeit.default_timer()
         trafo_expansion.expand(sdfg, graph, map_entries)
 
-    if TRANSFORMATION_TIMER:
+    if transformation_timer:
         end = timeit.default_timer()
         print("***** Pipeline::Expansion timer =",end-start,"s")
 
@@ -155,7 +155,7 @@ def fusion(sdfg: dace.SDFG,
     for (property, val) in kwargs.items():
         setattr(map_fusion, property, val)
 
-    if TRANSFORMATION_TIMER:
+    if transformation_timer:
         start = timeit.default_timer()
 
     for sg in subgraph:
@@ -173,7 +173,7 @@ def fusion(sdfg: dace.SDFG,
             sg.nodes().append(map_fusion._global_map_entry)
             #TODO: also add all created in_between transients...
 
-    if TRANSFORMATION_TIMER:
+    if transformation_timer:
         end = timeit.default_timer()
         print("***** Pipeline::MapFusion timer =",end-start,"s")
 
