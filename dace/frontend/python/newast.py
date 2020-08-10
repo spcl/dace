@@ -160,7 +160,7 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
         k: v
         for k, v in global_vars.items()
         if (dtypes.isconstant(v) or symbolic.issymbolic(v))
-           and not k in argtypes and k != '_'
+        and not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -917,20 +917,19 @@ class ProgramVisitor(ExtNodeVisitor):
         constructs an SDFG.
     """
     def __init__(
-            self,
-            name: str,
-            filename: str,
-            line_offset: int,
-            col_offset: int,
-            global_vars: Dict[str, Any],
-            constants: Dict[str, Any],
-            scope_arrays: Dict[str, data.Data],
-            scope_vars: Dict[str, str],
-            other_sdfgs: Dict[str,
-                              SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
-            symbols: Optional[Dict[str, data.Data]] = None,
-            nested: bool = False,
-            tmp_idx: int = 0):
+        self,
+        name: str,
+        filename: str,
+        line_offset: int,
+        col_offset: int,
+        global_vars: Dict[str, Any],
+        constants: Dict[str, Any],
+        scope_arrays: Dict[str, data.Data],
+        scope_vars: Dict[str, str],
+        other_sdfgs: Dict[str, SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
+        symbols: Optional[Dict[str, data.Data]] = None,
+        nested: bool = False,
+        tmp_idx: int = 0):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1019,7 +1018,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  self.filename)
         return super().visit(node)
 
-    def parse_program(self, program: Union[ast.FunctionDef, List[ast.AST]], is_tasklet: bool = False):
+    def parse_program(self,
+                      program: Union[ast.FunctionDef, List[ast.AST]],
+                      is_tasklet: bool = False):
         """ Parses a DaCe program or tasklet
 
         Arguments:
@@ -2813,7 +2814,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # Handle scalar inputs to nested SDFG calls
             for conn, arg in args:
                 if (arg not in self.sdfg.arrays
-                        and conn not in (mapping or {}.keys() | symbols):
+                        and conn not in (mapping or {}).keys() | symbols):
                     argdict[conn] = state.add_tasklet(
                         'scalar', {}, {conn},
                         '%s = %s' % (conn, arg),
