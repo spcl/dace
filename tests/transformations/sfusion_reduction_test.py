@@ -35,6 +35,7 @@ def TEST2(A: dace.float64[M,N], B:dace.float64[M,N],
 
 def test1():
     sdfg = TEST.to_sdfg()
+    sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     for node in state.nodes():
         if isinstance(node, dace.libraries.standard.nodes.Reduce):
@@ -64,6 +65,7 @@ def test1():
 
 def test2():
     sdfg = TEST2.to_sdfg()
+    sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
     B = np.random.rand(M.get(), N.get()).astype(np.float64)
