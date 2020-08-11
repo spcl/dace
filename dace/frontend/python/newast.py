@@ -25,6 +25,7 @@ from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
+import numpy
 import sympy
 
 # register replacements in oprepo
@@ -3113,8 +3114,20 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append(
                     (operand, type(self.scope_arrays[operand]).__name__))
-            elif isinstance(operand, (int, float, complex, bool)):
-                result.append((operand, 'NumBoolConst'))
+            # elif isinstance(
+            #     operand,
+            #     (int, numpy.int8, numpy.int16, numpy.int32, numpy.int64,
+            #      numpy.uint8, numpy.uint16, numpy.uint32, numpy.uint64,
+            #      float, numpy.float16, numpy.float32, numpy.float64,
+            #      complex, numpy.complex64, numpy.complex128)):
+            #     result.append((operand, 'NumConstant'))
+            # elif isinstance(operand, (bool, numpy.bool, numpy.bool_)):
+            #     result.append((operand, 'BoolConstant'))
+            elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
+                if isinstance(operand, (bool, numpy.bool, numpy.bool_)):
+                    result.append((operand, 'BoolConstant'))
+                else:
+                    result.append((operand, 'NumConstant'))
             else:
                 result.append((operand, type(operand).__name__))
 
