@@ -239,10 +239,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage ==
-                                    dace.dtypes.StorageType.FPGA_Global and
-                                    n.data not in nested_global_transients_seen
-                                ):
+                                    and n.desc(scope).storage
+                                    == dace.dtypes.StorageType.FPGA_Global
+                                    and n.data
+                                    not in nested_global_transients_seen):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -265,10 +265,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             global_data_parameters.append(
                                 (is_output, dataname, data))
                         global_data_names.add(dataname)
-                    elif (data.storage in (
-                            dace.dtypes.StorageType.FPGA_Local,
-                            dace.dtypes.StorageType.FPGA_Registers,
-                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage
+                          in (dace.dtypes.StorageType.FPGA_Local,
+                              dace.dtypes.StorageType.FPGA_Registers,
+                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -427,10 +427,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer, 'auto')
 
-            elif (nodedesc.storage in (
-                    dace.dtypes.StorageType.FPGA_Local,
-                    dace.dtypes.StorageType.FPGA_Registers,
-                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage
+                  in (dace.dtypes.StorageType.FPGA_Local,
+                      dace.dtypes.StorageType.FPGA_Registers,
+                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise dace.codegen.codegen.CodegenError(
@@ -541,12 +541,14 @@ class FPGACodeGen(TargetCodeGenerator):
                 if ((isinstance(host_dtype, dace.vector)
                      or isinstance(device_dtype, dace.vector))
                         and host_dtype.base_type == device_dtype.base_type):
-                    if host_dtype.veclen > device_dtype.veclen:
-                        copy_shape[-1] *= (host_dtype.veclen //
-                                           device_dtype.veclen)
-                    else:
-                        copy_shape[-1] //= (device_dtype.veclen //
-                                            host_dtype.veclen)
+                    if ((host_to_device and memlet.data == src_node.data) or
+                        (device_to_host and memlet.data == dst_node.data)):
+                        if host_dtype.veclen > device_dtype.veclen:
+                            copy_shape[-1] *= (host_dtype.veclen //
+                                               device_dtype.veclen)
+                        else:
+                            copy_shape[-1] //= (device_dtype.veclen //
+                                                host_dtype.veclen)
                     cast = True
                 else:
                     raise TypeError(
@@ -653,8 +655,8 @@ class FPGACodeGen(TargetCodeGenerator):
                         "Destination vectorization width {} "
                         "is not divisible by source vectorization width {}.".
                         format(memwidth_dst, memwidth_src))
-                self.generate_converter(False, dtype, packing_factor, dst_node,
-                                        state_id, sdfg, function_stream)
+                self.converters_to_generate.add(
+                    (False, dtype.base_type.base_type.ctype, packing_factor))
             elif memwidth_src > memwidth_dst:
                 is_pack = False
                 is_unpack = True
@@ -664,18 +666,18 @@ class FPGACodeGen(TargetCodeGenerator):
                         "Source vectorization width {} is not divisible "
                         "by destination vectorization width {}.".format(
                             memwidth_dst, memwidth_src))
-                self.generate_converter(True, dtype, packing_factor, dst_node,
-                                        state_id, sdfg, function_stream)
+                self.converters_to_generate.add(
+                    (True, dtype.base_type.base_type.ctype, packing_factor))
             else:
                 is_pack = False
                 is_unpack = False
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(
-                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage ==
-                                    dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:

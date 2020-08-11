@@ -411,10 +411,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             raise NotImplementedError(
                 "Unimplemented read type: {}".format(defined_type))
         if is_pack:
-            s = "pack_{}{}(&({}))".format(dtype.base_type.base_type.ctype,
-                                          packing_factor, read_expr)
-            self.converters_to_generate.add(
-                (True, dtype.base_type.base_type.ctype, packing_factor))
+            ctype = dtype.base_type.base_type.ctype
+            self.converters_to_generate.add((True, ctype, packing_factor))
+            return "pack_{}{}(&({}))".format(ctype, packing_factor, read_expr)
         else:
             return read_expr
 
@@ -470,12 +469,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         dtype.ctype, var_name, read_expr, var_name)
                     read_expr = " __dace_smi_{}".format(var_name)
                 if is_unpack:
+                    ctype = dtype.base_type.base_type.ctype
                     self.converters_to_generate.add(
-                        (False, dtype.base_type.base_type.ctype,
-                         packing_factor))
+                        (False, ctype, packing_factor))
                     return "unpack_{}{}({}, &{}[{}]);".format(
-                        dtype.base_type.base_type.ctype, packing_factor,
-                        read_expr, write_expr, index)
+                        ctype, packing_factor, read_expr, write_expr, index)
                 else:
                     return result + "{}[{}] = {};".format(
                         write_expr, index, read_expr)
@@ -500,12 +498,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr, var_name)
                 else:
                     if is_unpack:
+                        ctype = dtype.base_type.base_type.ctype
                         self.converters_to_generate.add(
-                            (False, dtype.base_type.base_type.ctype,
-                             packing_factor))
+                            (False, ctype, packing_factor))
                         return "unpack_{}{}({}, {});".format(
-                            dtype.base_type.base_type.ctype, packing_factor,
-                            read_expr, var_name)
+                            ctype, packing_factor, read_expr, var_name)
                     else:
                         return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
@@ -1225,8 +1222,8 @@ __kernel void \\
                         callsite_stream.write("#undef {}".format(memlet_name),
                                               sdfg, sdfg.node_id(dfg), node)
 
-    def generate_converter(self, is_unpack, dtype, veclen, sdfg,
-                           function_stream):
+    def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
+                            function_stream):
         if is_unpack:
             function_stream.write(
                 """\
@@ -1235,7 +1232,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
     for (int u = 0; u < {veclen}; ++u) {{
         ptr[u] = value[u];
     }}
-}}\n\n""".format(dtype=dtype.base_type.base_type, veclen=veclen), sdfg)
+}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
         else:
             function_stream.write(
                 """\
@@ -1246,12 +1243,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         vec[u] = ptr[u];
     }}
     return vec;
-}}\n\n""".format(dtype=dtype.base_type.base_type, veclen=veclen), sdfg)
+}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
 
     def generate_converters(self, sdfg, function_stream):
-        for unpack, dtype, veclen in self.converters_to_generate:
-            self.generate_converter(unpack, dtype, veclen, sdfg,
-                                    function_stream)
+        for unpack, ctype, veclen in self.converters_to_generate:
+            self._generate_converter(unpack, ctype, veclen, sdfg,
+                                     function_stream)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):
@@ -1393,15 +1390,15 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
-            self.width_converters.add((True, dtype, veclen))
-            unpack_str = "unpack_{}{}".format(dtype.base_type.base_type.ctype,
-                                              veclen)
+            ctype = dtype.base_type.base_type.ctype
+            self.width_converters.add((True, ctype, veclen))
+            unpack_str = "unpack_{}{}".format(ctype, veclen)
 
         if veclen_lhs > veclen_rhs:
             veclen = veclen_lhs
-            self.width_converters.add((False, dtype, veclen))
-            pack_str = "pack_{}{}".format(dtype.base_type.base_type.ctype,
-                                          veclen)
+            ctype = dtype.base_type.base_type.ctype
+            self.width_converters.add((False, ctype, veclen))
+            pack_str = "pack_{}{}".format(ctype, veclen)
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
