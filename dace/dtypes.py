@@ -778,7 +778,19 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
-bool = typeclass(numpy.bool)  # TODO: Maybe switch to just bool?
+# Save original Python types
+python_types = {
+    'int': int,
+    'float': float,
+    'complex': complex,
+    'bool': bool
+}
+
+# Create dace types
+int = typeclass(int)
+float = typeclass(float)
+complex = typeclass(complex)
+bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -794,12 +806,12 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 DTYPE_TO_TYPECLASS = {
-    int: typeclass(int),
-    float: typeclass(float),
-    complex: typeclass(complex),
-    bool: uint8,
+    python_types['int']: int,
+    python_types['float']: float,
+    python_types['complex']: complex,
+    python_types['bool']: uint8,
     numpy.bool: uint8,
-    numpy.bool_: bool,  # TODO: This seems to have changed in the latest numpy version
+    numpy.bool_: bool,  # TODO: Fix boolean types
     numpy.int8: int8,
     numpy.int16: int16,
     numpy.int32: int32,
@@ -814,6 +826,12 @@ DTYPE_TO_TYPECLASS = {
     numpy.complex64: complex64,
     numpy.complex128: complex128
 }
+
+# Restore original Python types
+int = python_types['int']
+float = python_types['float']
+complex = python_types['complex']
+bool = python_types['bool']
 
 TYPECLASS_STRINGS = [
     "int8",
