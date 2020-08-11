@@ -590,6 +590,13 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return expr
 
     symbol_map = symbol_map or {}
+
+    # If string is a single name, convert to symbol directly
+    if dtypes.validate_name(expr):
+        if expr in symbol_map:
+            return symbol_map[expr]
+        return symbol(expr)
+
     locals = {'min': sympy.Min, 'max': sympy.Max}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
