@@ -109,4 +109,4 @@ if __name__ == '__main__':
     sdfg = attn_fwd.to_sdfg()
     sdfg.save('test.sdfg')
     print("=== Compiling ===")
-    sdfg.compile(optimizer='')
+    sdfg.compile()
