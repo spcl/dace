@@ -28,9 +28,6 @@ def test_add():
     Z = np.zeros((100, 90)).astype(np.float32)
 
     sdfg(X_arr=X, W_arr=W, Z_arr=Z)
-    sdfg(X_arr=X, W_arr=W, Z_arr=Z)
-    sdfg(X_arr=X, W_arr=W, Z_arr=Z)
-    sdfg(X_arr=X, W_arr=W, Z_arr=Z)
 
     Z_t = X + W
 

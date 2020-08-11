@@ -696,15 +696,12 @@ class ONNXOp(nd.LibraryNode):
 
             # all outputs are on CPU if we execute using cpu
             outputs_on_host = [True for _ in range(len(outputs))]
-            inputs_on_host = True
 
         elif node.schedule == ScheduleType.GPU_Device:
             provider_index = 1
             try:
-
                 # the ith position indicates whether the ith output is in host memory
                 outputs_on_host = check_op(sdfg, state, node, cuda=True)
-                inputs_on_host = False
 
             except ONNXOpValidationError as e:
                 # fallback to CPU
@@ -714,7 +711,6 @@ class ONNXOp(nd.LibraryNode):
 
                 # all outputs are on host if we execute using cpu
                 outputs_on_host = [True for _ in range(len(outputs))]
-                inputs_on_host = True
         else:
             raise NotImplementedError(
                 "ORT expansion for schedule '{}' is not implemented".format(
@@ -746,9 +742,9 @@ class ONNXOp(nd.LibraryNode):
             array_storage = sdfg.arrays[edge.data.data].storage
 
             if output_on_host:
-                is_device_mismatch = can_access(ScheduleType.Default, array_storage)
+                is_device_mismatch = not can_access(ScheduleType.Default, array_storage)
             else:
-                is_device_mismatch = can_access(ScheduleType.GPU_Device, array_storage)
+                is_device_mismatch = not can_access(ScheduleType.GPU_Device, array_storage)
 
             if is_device_mismatch:
                 # we need to insert a copy
@@ -759,7 +755,7 @@ class ONNXOp(nd.LibraryNode):
             array_storage = sdfg.arrays[edge.data.data].storage
 
             if not can_access(node.schedule, array_storage):
-                input_copy_required[edge.dst_conn] = StorageType.GPU_Global if node.schedule == ScheduleType.GPU_Device else StorageType.Default
+                input_copy_required[edge.dst_conn] = StorageType.GPU_Global if provider_index == 1 else StorageType.Default
 
         if len(output_copy_required) != 0 or len(input_copy_required) != 0:
             nsdfg = dace.SDFG("nested_{}".format(unique_id))
@@ -769,9 +765,6 @@ class ONNXOp(nd.LibraryNode):
 
             for edge, is_input in node.iter_edges(state):
                 parameter_name = edge.dst_conn if is_input else edge.src_conn
-                if parameter_name not in (input_copy_required if is_input else output_copy_required):
-                    continue
-                copy_storage_type = input_copy_required[parameter_name] if is_input else output_copy_required[parameter_name]
 
                 memlet = edge.data
                 arr = sdfg.arrays[memlet.data]
@@ -788,6 +781,17 @@ class ONNXOp(nd.LibraryNode):
                                 allow_conflicts=arr.allow_conflicts,
                                 total_size=arr.total_size,
                                 alignment=arr.alignment)
+
+                if parameter_name not in (input_copy_required if is_input else output_copy_required):
+                    if is_input:
+                        access = nstate.add_read(parameter_name)
+                        nstate.add_edge(access, None, ntasklet, parameter_name, nsdfg.get_array_memlet(parameter_name))
+                    else:
+                        access = nstate.add_write(parameter_name)
+                        nstate.add_edge(ntasklet, parameter_name, access, None, nsdfg.get_array_memlet(parameter_name))
+                    continue
+
+                copy_storage_type = input_copy_required[parameter_name] if is_input else output_copy_required[parameter_name]
 
                 # add the copy of the array
                 nsdfg.add_transient("copy_" + memlet.data,
@@ -820,12 +824,7 @@ class ONNXOp(nd.LibraryNode):
                         access_copy, None, access, None,
                         nsdfg.get_array_memlet("copy_" + memlet.data))
 
-            return nd.NestedSDFG(
-                label="nested_{}".format(unique_id),
-                sdfg=nsdfg,
-                inputs=set(inputs.keys()),
-                outputs=set(outputs.keys()),
-            )
+            return nsdfg
 
         else:
             return tasklet
