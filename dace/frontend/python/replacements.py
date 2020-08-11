@@ -700,7 +700,7 @@ def _makeunop(op, opcode):
                         dace.Memlet.from_array(op2, scalar2))
         return op2
     
-    @oprepo.replaces_operator('NumBoolConst', op)
+    @oprepo.replaces_operator('NumConstant', op)
     def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
             state: SDFGState,
@@ -847,13 +847,29 @@ def _binop_impl(visitor: 'ProgramVisitor',
             return _array_x_binop(visitor, sdfg, state,
                                   operand1, operand2, op, opcode)
         else:
-            pass
+            optype1 = sdfg.arrays[operand1].dtype
+            isscal1 = _is_scalar(sdfg, operand1)
+            arrnode = state.add_read(operand1)
+            if isscal1:
+                arrmemlet = dace.Memlet.from_array(operand1, sdfg.arrays[operand1])
+            optype2 = type(operand2)
+            isscal2 = True
+            opstring = ['__in1', str(operand2)]
+            arrconn = '__in1'
     else:
         if isinstance(operand2, str):
-            pass
+            optype1 = type(operand1)
+            isscal1 = True
+            optype2 = sdfg.arrays[operand2].dtype
+            isscal2 = _is_scalar(sdfg, operand2)
+            arrnode = state.add_read(operand2)
+            if isscal2:
+                arrmemlet = dace.Memlet.from_array(operand2, sdfg.arrays[operand2])
+            opstring = [str(operand1), '__in2']
+            arrconn = '__in2'
         else:
-            optype1 = _python2numpy_type(operand1)
-            optype2 = _python2numpy_type(operand2)
+            optype1 = type(operand1)  #_python2numpy_type(operand1)
+            optype2 = type(operand2)  #_python2numpy_type(operand2)
             opstring = [str(operand1), str(operand2)]
             if optype1 != optype2:
                 new_types = _convert_type(optype1, optype2, opcode)
@@ -873,6 +889,47 @@ def _binop_impl(visitor: 'ProgramVisitor',
             state.add_edge(tasklet, 's3', node3, None,
                            dace.Memlet.from_array(operand3, scalar3))
             return operand3
+    
+    if optype1 != optype2:
+        new_types = _convert_type(optype1, optype2, opcode)
+        if new_types[0] is not None:
+            opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
+        if new_types[1] is not None:
+            opstring[1] = "dace.{}(s2)".format(new_types[1].__name__)
+        restype = dace.DTYPE_TO_TYPECLASS[
+                np.result_type(optype1, optype2).type
+        ]
+    
+    if isscal1 and isscal2:
+        operand3 = sdfg.temp_data_name()
+        _, scalar3 = sdfg.add_scalar(operand3, restype, transient=True)
+        tasklet = state.add_tasklet(
+            '_SS%s_' % op, {}, {'s3'},
+            's3 = {0} {1} {2}'.format(opstring[0], opcode, opstring[1]))
+        node3 = state.add_write(operand3)
+        state.add_edge(arrnode, None, tasklet, arrconn, arrmemlet)
+        state.add_edge(tasklet, 's3', node3, None,
+                        dace.Memlet.from_array(operand3, scalar3))
+        return operand3
+    else:
+        op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
+        arr1 = sdfg.arrays[op]
+        arr2 = sdfg.arrays[op2]
+        op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
+        tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'}, {'s3'},
+                                    's3 = {0} {1} {2}'.format(opstring[0], opcode, opstring[1]))
+        n1 = state.add_read(op1)
+        n2 = state.add_read(op2)
+        n3 = state.add_write(op3)
+        state.add_edge(n1, None, tasklet, 's1',
+                       dace.Memlet.from_array(op1, arr1))
+        state.add_edge(n2, None, tasklet, 's2',
+                       dace.Memlet.from_array(op2, arr2))
+        state.add_edge(tasklet, 's3', n3, None,
+                       dace.Memlet.from_array(op3, arr3))
+        return op3
+    else:
+        return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
 
 def _makebinop(op, opcode):
@@ -896,7 +953,12 @@ def _makebinop(op, opcode):
             op2: str):
         return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
     
-    @oprepo.replaces_operator('NumBoolConst', op, otherclass='NumBoolConst')
+    @oprepo.replaces_operator('NumConstant', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _binop_impl(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _binop_impl(visitor, sdfg, state, op1, op2, op, opcode)
