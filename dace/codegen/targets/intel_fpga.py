@@ -73,7 +73,6 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga_vendor")
-        self.converters_to_generate = set()
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return

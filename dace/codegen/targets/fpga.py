@@ -112,6 +112,9 @@ class FPGACodeGen(TargetCodeGenerator):
             dace.dtypes.StorageType.CPU_ThreadLocal,
             dace.dtypes.StorageType.FPGA_Global, None, self)
 
+        # Memory width converters (gearboxing) to generate globally
+        self.converters_to_generate = set()
+
     @property
     def has_initializer(self):
         return True
