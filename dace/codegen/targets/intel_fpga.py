@@ -61,7 +61,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga_vendor")
-        self.converters_generated = set()
+        self.converters_to_generate = set()
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
@@ -246,8 +246,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         pass
 
-    @staticmethod
-    def make_read(defined_type, dtype, var_name, expr, index, is_pack,
+    def make_read(self, defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
         if defined_type == DefinedType.Stream:
             read_expr = "read_channel_intel({})".format(expr)
@@ -263,14 +262,15 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             raise NotImplementedError(
                 "Unimplemented read type: {}".format(defined_type))
         if is_pack:
-            return "pack_{}{}(&({}))".format(dtype.base_type.ctype,
-                                             packing_factor, read_expr)
+            s = "pack_{}{}(&({}))".format(dtype.base_type.base_type.ctype,
+                                          packing_factor, read_expr)
+            self.converters_to_generate.add(
+                (True, dtype.base_type.base_type.ctype, packing_factor))
         else:
             return read_expr
 
-    @staticmethod
-    def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
-                   wcr, is_unpack, packing_factor):
+    def make_write(self, defined_type, dtype, var_name, write_expr, index,
+                   read_expr, wcr, is_unpack, packing_factor):
         """
         Creates write expression, taking into account wcr if present
         """
@@ -307,9 +307,12 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr)
             else:
                 if is_unpack:
+                    self.converters_to_generate.add(
+                        (False, dtype.base_type.base_type.ctype,
+                         packing_factor))
                     return "unpack_{}{}({}, &{}[{}]);".format(
-                        dtype.base_type.ctype, packing_factor, read_expr,
-                        write_expr, index)
+                        dtype.base_type.base_type.ctype, packing_factor,
+                        read_expr, write_expr, index)
                 else:
                     return "{}[{}] = {};".format(write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
@@ -327,6 +330,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr)
             else:
                 if is_unpack:
+                    self.converters_to_generate.add(
+                        (False, dtype.base_type.base_type.ctype,
+                         packing_factor))
                     return "unpack_{}{}({}, {});".format(
                         dtype.base_type.ctype, packing_factor, read_expr,
                         var_name)
@@ -371,9 +377,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         state_id = sdfg.node_id(state)
 
-        kernel_stream.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
-        self.generate_constants(sdfg, kernel_stream)
-        kernel_stream.write("\n", sdfg)
+        kernel_header_stream = CodeIOStream()
+        kernel_body_stream = CodeIOStream()
+
+        kernel_header_stream.write("#include <dace/intel_fpga/device.h>\n\n",
+                                   sdfg)
+        self.generate_constants(sdfg, kernel_header_stream)
+        kernel_header_stream.write("\n", sdfg)
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
@@ -390,9 +400,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream, kernel_stream)
+                                               callsite_stream,
+                                               kernel_body_stream)
 
-        kernel_stream.write("\n")
+        kernel_body_stream.write("\n")
 
         # Generate host code
         self.generate_host_function_boilerplate(
@@ -404,10 +415,16 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
-                              symbol_parameters, kernel_stream,
+                              symbol_parameters, kernel_body_stream,
                               host_code_header_stream, host_code_body_stream)
 
-        kernel_stream.write("\n")
+        kernel_body_stream.write("\n")
+
+        # Generate data width converters
+        self.generate_converters(sdfg, kernel_header_stream)
+
+        kernel_stream = (kernel_header_stream.getvalue() +
+                         kernel_body_stream.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
 
@@ -963,10 +980,8 @@ __kernel void \\
                     callsite_stream.write("#undef {}".format(memlet_name), sdfg,
                                           sdfg.node_id(dfg), node)
 
-    def generate_converter(self, is_unpack, dtype, veclen, node, state_id, sdfg,
+    def generate_converter(self, is_unpack, dtype, veclen, sdfg,
                            function_stream):
-        if (is_unpack, dtype, veclen) in self.converters_generated:
-            return
         if is_unpack:
             function_stream.write(
                 """\
@@ -975,7 +990,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
     for (int u = 0; u < {veclen}; ++u) {{
         ptr[u] = value[u];
     }}
-}}\n\n""".format(dtype=dtype.base_type, veclen=veclen), sdfg, state_id, node)
+}}\n\n""".format(dtype=dtype.base_type.base_type, veclen=veclen), sdfg)
         else:
             function_stream.write(
                 """\
@@ -986,8 +1001,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         vec[u] = ptr[u];
     }}
     return vec;
-}}\n\n""".format(dtype=dtype.base_type, veclen=veclen), sdfg, state_id, node)
-        self.converters_generated.add((is_unpack, dtype, veclen))
+}}\n\n""".format(dtype=dtype.base_type.base_type, veclen=veclen), sdfg)
+
+    def generate_converters(self, sdfg, function_stream):
+        for unpack, dtype, veclen in self.converters_to_generate:
+            self.generate_converter(unpack, dtype, veclen, sdfg,
+                                    function_stream)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):
@@ -1056,9 +1075,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
             else:
                 rk = ocl_visitor.visit(stmt)
             # Generate width converters
-            for unpack, dtype, veclen in ocl_visitor.width_converters:
-                self.generate_converter(unpack, dtype, veclen, node, state_id,
-                                        sdfg, function_stream)
+            self.converters_to_generate |= ocl_visitor.width_converters
 
             if rk is not None:
                 result = StringIO()
@@ -1131,12 +1148,14 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
             self.width_converters.add((True, dtype, veclen))
-            unpack_str = "unpack_{}{}".format(dtype.base_type.ctype, veclen)
+            unpack_str = "unpack_{}{}".format(dtype.base_type.base_type.ctype,
+                                              veclen)
 
         if veclen_lhs > veclen_rhs:
             veclen = veclen_lhs
             self.width_converters.add((False, dtype, veclen))
-            pack_str = "pack_{}{}".format(dtype.base_type.ctype, veclen)
+            pack_str = "pack_{}{}".format(dtype.base_type.base_type.ctype,
+                                          veclen)
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
