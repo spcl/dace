@@ -1279,10 +1279,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 entry, exit = state.add_map(node.name,
                                             ndrange=params,
                                             debuginfo=self.current_lineinfo)
-                param_syms = {
-                    p: self.sdfg.symbols.get(rng[1], dace.int32)
-                    for p, rng in zip(entry.map.params, entry.map.range)
-                }
             elif 'consume' in dec:
                 (stream_name, stream_elem, PE_tuple, condition,
                  chunksize) = self._parse_consume_inputs(node)
@@ -1540,7 +1536,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 for atom in symval.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
-                        if str(atom) not in self.defined:
+                        if (str(atom) not in self.defined
+                                and str(atom) not in self.sdfg.symbols):
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
@@ -1995,13 +1992,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.last_state = None
             after_state = self._add_state('after_loop')
 
-            # TODO(later): Take range start/skip into account as well
-            param_syms = {
-                indices[0]: self.sdfg.symbols.get(ranges[0][1], dace.int32)
-            }
-
             body, inputs, outputs = self._parse_subprogram(
-                'ForBody', node, additional_syms=param_syms)
+                'ForBody', node, extra_symbols=extra_syms)
             tasklet = state.add_nested_sdfg(body, self.sdfg, inputs.keys(),
                                             outputs.keys())
             self._add_dependencies(state, tasklet, None, None, inputs, outputs)
