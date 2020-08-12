@@ -29,14 +29,22 @@ required:
                     Automatically specialize every SDFG to the symbol values 
                     at call-time. Requires all symbols to be set.
 
-            interface:
+            transform_on_call:
                 type: bool
+                default: false
+                title: Transform SDFGs on Invocation
+                description: >
+                    Automatically calls sdfg.optimize() every time a DaCe
+                    program or SDFG is invoked.
+
+            interface:
+                type: str
                 default: dace.transformation.optimizer.SDFGOptimizer
                 title: SDFG Optimizer
                 description: >
-                    SDFG optimization class to import and call automatically
-                    on compilation. Defaults to the transformation CLI, empty
-                    string or an invalid class name skips the process.
+                    SDFG optimization class to import and call on 
+                    sdfg.optimize(). Defaults to the transformation CLI,
+                    empty string or an invalid class name skips optimization.
 
             visualize_sdfv:
                 type: bool
@@ -98,7 +106,7 @@ required:
 
             build_type:
                 type: str
-                default: Release
+                default: RelWithDebInfo
                 title: Build configuration
                 description: >
                     Configuration type for CMake build (can be Debug, Release,
@@ -440,6 +448,9 @@ required:
                         # FPGA programs fail to find certain libraries at
                         # runtime with runpath.
                         default: '-Wl,--disable-new-dtags'
+                        default_Darwin: ''
+                        default_Windows: ''
+
 
     execution:
         type: dict
@@ -586,7 +597,7 @@ required:
     # General settings
     debugprint:
         type: bool
-        default: true 
+        default: false 
         title: Debug printing
         description: Enable verbose printouts.
     

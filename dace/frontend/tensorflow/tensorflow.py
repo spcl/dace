@@ -352,7 +352,7 @@ class TFSession:
             self.graph.apply_gpu_transformations()
 
         # Compile and call the SDFG
-        compiled_sdfg = self.graph.compile(optimizer=False)
+        compiled_sdfg = self.graph.compile()
         compiled_sdfg(**sdfg_args)
         ############################
 
@@ -521,7 +521,7 @@ class TFSession:
             self.graph.apply_transformations(patterns,
                                              validate=validate,
                                              strict=strict)
-        compiled_sdfg = self.graph.compile(optimizer=False)
+        compiled_sdfg = self.graph.compile()
         sdfg_args.update(self.callbackFunctionDict)
 
         ############################
@@ -726,16 +726,18 @@ class TFSession:
                 callback_input_types.append(somenode.desc(self.graph))
 
         if num_outputs > 0:
-            self.callbackTypeDict[node_name] = dace.data.Scalar(
+            dace_data_scalar = dace.data.Scalar(
                 dace.callback(None, *callback_input_types))
         else:
-            self.callbackTypeDict[node_name] = dace.data.Scalar(
+            dace_data_scalar = dace.data.Scalar(
                 dace.callback(outputList[0].desc(self.graph).dtype,
                               *callback_input_types))
-        self.callbackFunctionDict[node_name] = tensorflow_callback
 
         # Register callback in SDFG
-        self.graph.add_scalar(node_name, self.callbackTypeDict[node_name].dtype)
+        node_name, _ = self.graph.add_scalar(
+            node_name, dace_data_scalar.dtype, find_new_name=True)
+        self.callbackTypeDict[node_name] = dace_data_scalar
+        self.callbackFunctionDict[node_name] = tensorflow_callback
 
         callback_tasklet = self.state.add_tasklet(
             node_name,
@@ -1144,6 +1146,8 @@ class TFSession:
         outputDims = self.get_default_dims(node.outputs[0])
         inputNode, params, dims = self.create_and_add_input_node(node.inputs[0])
         reduction_axes = self._internal_session.run(node.inputs[1])
+        if len(reduction_axes.shape) == 0:
+            reduction_axes = np.array([reduction_axes])
         reduction_axes.sort()
         norm = 1
         for i in reduction_axes:

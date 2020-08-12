@@ -1,32 +1,68 @@
 import json
 from argparse import ArgumentParser
 
-def apply_transformation(sdfg, transformation):
+def reapply_history_until(sdfg_json, index):
+    """
+    Rewind a given SDFG back to a specific point in its history by reapplying
+    all transformations until a given index in its history to its original
+    state.
+    :param sdfg_json:  The SDFG to rewind.
+    :param index:      Index of the last history item to apply.
+    """
+    # We lazy import DaCe, not to break cyclic imports, but to avoid any large
+    # delays when booting in daemon mode.
+    from dace.sdfg import SDFG
+
+    sdfg = SDFG.from_json(sdfg_json)
+
+    original_sdfg = sdfg.orig_sdfg
+    history = sdfg.transformation_hist
+
+    for i in range(index + 1):
+        transformation = history[i]
+        # FIXME: The appending should happen with the call to apply the pattern.
+        # The way it currently stands, the callee must make sure that
+        # append_transformation is called before apply_pattern, because the
+        # original SDFG may be saved incorrectly otherwise. This is not ideal
+        # and needs to be fixed.
+        original_sdfg.append_transformation(transformation)
+        transformation.apply_pattern(original_sdfg)
+
+    new_sdfg = original_sdfg.to_json()
+    return {
+        'sdfg': new_sdfg,
+    }
+
+def apply_transformation(sdfg_json, transformation):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.transformation.pattern_matching import Transformation
     from dace.sdfg import SDFG
 
-    sdfg_json = json.loads(sdfg)
-    sdfg_object = SDFG.from_json(sdfg_json)
+    sdfg = SDFG.from_json(sdfg_json)
 
     revived_transformation = Transformation.from_json(transformation)
-    revived_transformation.apply_pattern(sdfg_object)
+    # FIXME: The appending should happen with the call to apply the pattern. The
+    # way it currently stands, the callee must make sure that
+    # append_transformation is called before apply_pattern, because the original
+    # SDFG may be saved incorrectly otherwise. This is not ideal and needs to be
+    # fixed.
+    sdfg.append_transformation(revived_transformation)
+    revived_transformation.apply_pattern(sdfg)
 
-    new_sdfg = sdfg_object.to_json()
+    new_sdfg = sdfg.to_json()
     return {
-        'sdfg': new_sdfg
+        'sdfg': new_sdfg,
     }
 
-def get_transformations(sdfg):
+def get_transformations(sdfg_json):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.transformation.optimizer import SDFGOptimizer
     from dace.sdfg import SDFG
 
-    sdfg_json = json.loads(sdfg)
-    sdfg_object = SDFG.from_json(sdfg_json)
-    optimizer = SDFGOptimizer(sdfg_object)
+    sdfg = SDFG.from_json(sdfg_json)
+    optimizer = SDFGOptimizer(sdfg)
     matches = optimizer.get_pattern_matches()
 
     transformations = []
@@ -52,13 +88,20 @@ def run_daemon():
 
     @daemon.route('/transformations', methods=['POST'])
     def _get_transformations():
-        return get_transformations(request.get_json())
+        request_json = request.get_json()
+        return get_transformations(request_json['sdfg'])
 
     @daemon.route('/apply_transformation', methods=['POST'])
     def _apply_transformation():
         request_json = request.get_json()
         return apply_transformation(request_json['sdfg'],
                                     request_json['transformation'])
+
+    @daemon.route('/reapply_history_until', methods=['POST'])
+    def _reapply_history_until():
+        request_json = request.get_json()
+        return reapply_history_until(request_json['sdfg'],
+                                     request_json['index'])
 
     daemon.run()
 
