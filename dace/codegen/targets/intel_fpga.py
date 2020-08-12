@@ -420,8 +420,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Generate data width converters
         self.generate_converters(sdfg, kernel_header_stream)
 
-        kernel_stream = (kernel_header_stream.getvalue() +
-                         kernel_body_stream.getvalue())
+        kernel_stream.write(kernel_header_stream.getvalue() +
+                            kernel_body_stream.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
 
