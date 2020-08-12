@@ -420,8 +420,15 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Generate data width converters
         self.generate_converters(sdfg, kernel_header_stream)
 
-        kernel_stream.write(kernel_header_stream.getvalue() +
-                            kernel_body_stream.getvalue())
+        res = (kernel_header_stream.getvalue() + kernel_body_stream.getvalue())
+
+        # TODO: To avoid re-implementing process_out_memlets and potentially
+        # other CPU codegen functionality, convert to OpenCL vector types here.
+        # It was either this or copy-pasting large amounts of code :-)
+        # We need a solution for this in the new code generator.
+        res = re.sub("dace::vec<([^,]+), ([2-9]+|[1-9][0-9]+)>", "\\1\\2", res)
+
+        kernel_stream.write(res)
 
         self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
 
@@ -707,6 +714,7 @@ __kernel void \\
         memlet = edge.data
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
+        data_dtype = data_desc.dtype
 
         is_scalar = not isinstance(conntype, dtypes.pointer)
         dtype = conntype if is_scalar else conntype._typeclass
@@ -714,15 +722,28 @@ __kernel void \\
         memlet_type = self.make_vector_type(dtype, False)
         offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None)
 
+        if dtype != data_dtype:
+            if (isinstance(dtype, dace.vector)
+                    and dtype.base_type == data_dtype):
+                cast = True
+            else:
+                raise TypeError("Type mismatch: {} vs. {}".format(
+                    dtype, data_dtype))
+        else:
+            cast = False
+
         result = ""
 
         def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
+            if cast:
+                rhs = f"(*({memlet_type} const *)&{data_name})"
+            else:
+                rhs = data_name
             if not memlet.dynamic:
                 if not is_output:
                     # We can pre-read the value
-                    result += "{} {} = {};".format(memlet_type, connector,
-                                                   data_name)
+                    result += "{} {} = {};".format(memlet_type, connector, rhs)
                 else:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
@@ -733,18 +754,21 @@ __kernel void \\
                                                   memlet_type)
             else:
                 # Variable number of reads or writes
-                result += "{} *{} = &{};".format(memlet_type, connector,
-                                                 data_name)
+                result += "{} *{} = &{};".format(memlet_type, connector, rhs)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Pointer,
                                                   '%s *' % memlet_type)
         elif def_type == DefinedType.Pointer:
+            if cast:
+                rhs = f"(({memlet_type} const *){data_name})"
+            else:
+                rhs = data_name
             if is_scalar and not memlet.dynamic:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     result += "{} {} = {}[{}];".format(memlet_type, connector,
-                                                       data_name, offset)
+                                                       rhs, offset)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
@@ -753,11 +777,14 @@ __kernel void \\
                 else:
                     qualifiers = ""
                 ctype = '{}{} *'.format(qualifiers, memlet_type)
-                result += "{}{} = &{}[{}];".format(ctype, connector, data_name,
+                result += "{}{} = &{}[{}];".format(ctype, connector, rhs,
                                                    offset)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.Pointer, ctype)
         elif def_type == DefinedType.Stream:
+            if cast:
+                raise TypeError("Cannot cast stream from {} to {}.".format(
+                    data_dtype, dtype))
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
@@ -773,6 +800,10 @@ __kernel void \\
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         elif def_type == DefinedType.StreamArray:
+            if cast:
+                raise TypeError(
+                    "Cannot cast stream array from {} to {}.".format(
+                        data_dtype, dtype))
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
