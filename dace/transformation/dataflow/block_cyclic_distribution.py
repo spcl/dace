@@ -114,7 +114,7 @@ class BlockCyclicData(pattern_matching.Transformation):
                     oldval = e.data.subset[i]
                 pval = Mod(floor(oldval / self.block[i]), pgrid.grid[i])
                 lval = floor(oldval / (pgrid.grid[i] * self.block[i]))
-                oval = floor(oldval / self.block[i])
+                oval = Mod(oldval, self.block[i])
                 dist_ranges[i] = (pval, pval, 1)
                 local_ranges[i] = (lval, lval, 1)
                 local_ranges[i + dims] = (oval, oval, 1)
@@ -175,7 +175,7 @@ class BlockCyclicMap(pattern_matching.Transformation):
 
         for i in range(dims):
             pspace[i] = (0, pgrid.grid[i] - 1, 1)
-            lspace[i] = (0, ceiling((mspace[i][1] - mspace[i][0] + 1) / (self.block[i] * pgrid.grid[i])), 1)
+            lspace[i] = (0, ceiling((mspace[i][1] - mspace[i][0] + 1) / (self.block[i] * pgrid.grid[i])) - 1, 1)
             ospace[i] = (mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i])) * self.block[i],
                          mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i]) + 1) * self.block[i] - 1, 1)
         pmap = nodes.Map('p_' + mname, pidx, subsets.Range(pspace))
