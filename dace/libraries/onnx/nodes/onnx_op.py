@@ -24,6 +24,62 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation.pattern_matching import ExpandTransformation
 
 
+def _add_ort_init_code(sdfg: SDFG):
+    """ Add onnxruntime initialization code to the SDFG if required """
+
+    if "OrtKernelSession" not in sdfg.global_code['frame'].as_string:
+        sdfg.append_global_code("""
+        // Start global ORT setup
+        const OrtApi* __ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
+
+        // helper function to check for status
+        void __ort_check_status(OrtStatus* status)
+        {
+            if (status != NULL) {
+                const char* msg = __ort_api->GetErrorMessage(status);
+                fprintf(stderr, "%s\\n", msg);
+                __ort_api->ReleaseStatus(status);
+                exit(1);
+            }
+        }
+        OrtEnv* __ort_env;
+        OrtKernelSession* __ort_session;
+        OrtSessionOptions* __ort_session_options;
+
+        OrtMemoryInfo* __ort_mem_info;
+
+        // End global ORT setup
+        """)
+
+        sdfg.append_init_code("""
+        __ort_check_status(__ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &__ort_mem_info));
+        __ort_check_status(__ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dace_graph", &__ort_env));
+        __ort_check_status(__ort_api->CreateSessionOptions(&__ort_session_options));
+        __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, /*use_arena=*/0));
+        """)
+
+        if any(True for state in sdfg.nodes() for node in state.nodes()
+                if hasattr(node, "schedule")
+                and node.schedule == ScheduleType.GPU_Device):
+            # if the SDFG contains a GPU node, add the CUDA provider
+            sdfg.append_init_code("""
+            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
+            """)
+
+        sdfg.append_init_code("""
+        __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session));
+        """)
+
+        session_cleanup_code = """
+        __ort_api->ReleaseMemoryInfo(__ort_mem_info);
+        __ort_api->ReleaseKernelSession(__ort_session);
+        __ort_api->ReleaseSessionOptions(__ort_session_options);
+        __ort_api->ReleaseEnv(__ort_env);
+        """
+        sdfg.prepend_exit_code(session_cleanup_code)
+
+
+
 def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
     """Get the position that the parameter has in the onnx op"""
     if "__" in parameter_name:
@@ -511,57 +567,7 @@ class ONNXOp(nd.LibraryNode):
         unique_id = "{}_{}_{}_{}".format(clean_onnx_name(node.name),
                                          sdfg.sdfg_id, sdfg.node_id(state),
                                          state.node_id(node))
-
-        if "OrtKernelSession" not in sdfg.global_code['frame'].as_string:
-            sdfg.append_global_code("""
-            // Start global ORT setup
-            const OrtApi* __ort_api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
-
-            // helper function to check for status
-            void __ort_check_status(OrtStatus* status)
-            {
-                if (status != NULL) {
-                    const char* msg = __ort_api->GetErrorMessage(status);
-                    fprintf(stderr, "%s\\n", msg);
-                    __ort_api->ReleaseStatus(status);
-                    exit(1);
-                }
-            }
-            OrtEnv* __ort_env;
-            OrtKernelSession* __ort_session;
-            OrtSessionOptions* __ort_session_options;
-
-            OrtMemoryInfo* __ort_mem_info;
-
-            // End global ORT setup
-            """)
-
-            sdfg.append_init_code("""
-            __ort_check_status(__ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &__ort_mem_info)); 
-            __ort_check_status(__ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dace_graph", &__ort_env));
-            __ort_check_status(__ort_api->CreateSessionOptions(&__ort_session_options));
-            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, /*use_arena=*/0));
-            """)
-
-            if any(True for state in sdfg.nodes() for node in state.nodes()
-                   if hasattr(node, "schedule")
-                   and node.schedule == ScheduleType.GPU_Device):
-                # if the SDFG contains a GPU node, add the CUDA provider
-                sdfg.append_init_code("""
-                __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
-                """)
-
-            sdfg.append_init_code("""
-            __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session));
-            """)
-
-            session_cleanup_code = """
-            __ort_api->ReleaseMemoryInfo(__ort_mem_info);
-            __ort_api->ReleaseKernelSession(__ort_session);
-            __ort_api->ReleaseSessionOptions(__ort_session_options);
-            __ort_api->ReleaseEnv(__ort_env);
-            """
-            sdfg.prepend_exit_code(session_cleanup_code)
+        _add_ort_init_code(sdfg)
 
         sdfg.append_global_code(
             "OrtExecutableKernel *__ort_kernel_{};\n".format(unique_id))
@@ -574,6 +580,74 @@ class ONNXOp(nd.LibraryNode):
         __ort_check_status(__ort_api->CreateExecutableKernelContext("{name}", "{op_type}", &__ort_context_{name}));
         """.format(name=unique_id, op_type=node.schema.name))
 
+        # check if ORT supports CUDA for this node
+        ##########################################
+        if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
+            provider_index = 0
+
+            # all outputs are on CPU if we execute using cpu
+            outputs_on_host = [True for _ in range(len(outputs))]
+
+        elif node.schedule == ScheduleType.GPU_Device:
+            provider_index = 1
+            try:
+                # the ith position indicates whether the ith output is in host memory
+                outputs_on_host = check_op(sdfg, state, node, cuda=True)
+
+            except ONNXOpValidationError as e:
+                # fallback to CPU
+                print("Falling back to CPU for node {}. Reason:\n{}".format(
+                    node.name, str(e)))
+                provider_index = 0
+
+                # all outputs are on host if we execute using cpu
+                outputs_on_host = [True for _ in range(len(outputs))]
+        else:
+            raise NotImplementedError(
+                "ORT expansion for schedule '{}' is not implemented".format(
+                    node.schedule))
+
+        # check if we need to insert device copies
+        ##########################################
+
+        # maps the connectors for which a copy will be required to the storage type required to be connected to the tasklet
+        input_copy_required = {}
+        output_copy_required = {}
+
+        # check outputs
+        for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state), outputs_on_host):
+            # get the memlet for this output
+            array = sdfg.arrays[edge.data.data]
+
+            if output_on_host:
+                is_device_mismatch = not can_access(ScheduleType.Default, array.storage)
+            else:
+                is_device_mismatch = not can_access(ScheduleType.GPU_Device, array.storage)
+
+            if not is_device_mismatch and isinstance(array, dt.Scalar) and provider_index == 1:
+                # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
+                is_device_mismatch = True
+
+            if is_device_mismatch:
+                # we need to insert a copy
+                output_copy_required[edge.src_conn] = StorageType.Default if output_on_host else StorageType.GPU_Global
+
+        # check inputs
+        for edge in state.in_edges(node):
+            array = sdfg.arrays[edge.data.data]
+
+            device_mismatch = not can_access(node.schedule, array.storage)
+
+            if not is_device_mismatch and isinstance(array, dt.Scalar) and provider_index == 1:
+                # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
+                is_device_mismatch = True
+
+            if device_mismatch:
+                input_copy_required[edge.dst_conn] = StorageType.GPU_Global if provider_index == 1 else StorageType.Default
+
+
+        # begin codegen
+        ##########################################
         tasklet_setup_code = ""
         tasklet_code = ""
         tasklet_cleanup_code = ""
@@ -582,6 +656,9 @@ class ONNXOp(nd.LibraryNode):
             v: k
             for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
         }
+
+        # emit code for inputs and outputs
+        ##########################################
 
         for edge, is_input in node.iter_edges(state):
             parameter_name = edge.dst_conn if is_input else edge.src_conn
@@ -600,7 +677,12 @@ class ONNXOp(nd.LibraryNode):
                 input_output_string=input_output_string,
                 parameter_name=parameter_name)
 
-            if isinstance(arr, dt.Scalar):
+
+            if (isinstance(arr, dt.Scalar)
+                # when scalars are copied we will copy them to dace arrays
+                #(this is because ORT requires scalars to be cudaMalloced)
+                and memlet.data not in output_copy_required and memlet.data not in input_copy_required):
+
                 tasklet_setup_code += """
                 OrtValue* {ort_value_name};
                 __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
@@ -690,32 +772,6 @@ class ONNXOp(nd.LibraryNode):
         tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Compute(__ort_kernel_{}));\n".format(
             unique_id)
 
-        # check if ORT supports CUDA for this node
-        if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
-            provider_index = 0
-
-            # all outputs are on CPU if we execute using cpu
-            outputs_on_host = [True for _ in range(len(outputs))]
-
-        elif node.schedule == ScheduleType.GPU_Device:
-            provider_index = 1
-            try:
-                # the ith position indicates whether the ith output is in host memory
-                outputs_on_host = check_op(sdfg, state, node, cuda=True)
-
-            except ONNXOpValidationError as e:
-                # fallback to CPU
-                print("Falling back to CPU for node {}. Reason:\n{}".format(
-                    node.name, str(e)))
-                provider_index = 0
-
-                # all outputs are on host if we execute using cpu
-                outputs_on_host = [True for _ in range(len(outputs))]
-        else:
-            raise NotImplementedError(
-                "ORT expansion for schedule '{}' is not implemented".format(
-                    node.schedule))
-
         sdfg.append_init_code(
             "__ort_check_status(__ort_api->CreateExecutableKernel("
             "__ort_session, __ort_context_{id}, /*provider_index=*/{provider_index}, &__ort_kernel_{id}));\n"
@@ -731,32 +787,6 @@ class ONNXOp(nd.LibraryNode):
                              language=dace.dtypes.Language.CPP)
         tasklet.environments = {"ONNXRuntime"}
 
-        # check if we need to insert device copies
-        # maps the connectors for which a copy will be required to the storage type required to be connected to the tasklet
-        input_copy_required = {}
-        output_copy_required = {}
-
-        # check outputs
-        for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state), outputs_on_host):
-            # get the memlet for this output
-            array_storage = sdfg.arrays[edge.data.data].storage
-
-            if output_on_host:
-                is_device_mismatch = not can_access(ScheduleType.Default, array_storage)
-            else:
-                is_device_mismatch = not can_access(ScheduleType.GPU_Device, array_storage)
-
-            if is_device_mismatch:
-                # we need to insert a copy
-                output_copy_required[edge.src_conn] = StorageType.Default if output_on_host else StorageType.GPU_Global
-
-        # check inputs
-        for edge in state.in_edges(node):
-            array_storage = sdfg.arrays[edge.data.data].storage
-
-            if not can_access(node.schedule, array_storage):
-                input_copy_required[edge.dst_conn] = StorageType.GPU_Global if provider_index == 1 else StorageType.Default
-
         if len(output_copy_required) != 0 or len(input_copy_required) != 0:
             nsdfg = dace.SDFG("nested_{}".format(unique_id))
             nstate = nsdfg.add_state()
@@ -770,17 +800,27 @@ class ONNXOp(nd.LibraryNode):
                 arr = sdfg.arrays[memlet.data]
 
                 # add the original array
-                nsdfg.add_array(parameter_name,
-                                arr.shape,
-                                arr.dtype,
-                                storage=arr.storage,
-                                transient=False,
-                                strides=arr.strides,
-                                offset=arr.offset,
-                                lifetime=arr.lifetime,
-                                allow_conflicts=arr.allow_conflicts,
-                                total_size=arr.total_size,
-                                alignment=arr.alignment)
+                if isinstance(arr, dt.Array):
+                    nsdfg.add_array(parameter_name,
+                                    arr.shape,
+                                    arr.dtype,
+                                    storage=arr.storage,
+                                    transient=False,
+                                    strides=arr.strides,
+                                    offset=arr.offset,
+                                    lifetime=arr.lifetime,
+                                    allow_conflicts=arr.allow_conflicts,
+                                    total_size=arr.total_size,
+                                    alignment=arr.alignment)
+                elif isinstance(arr, dt.Scalar):
+                    nsdfg.add_scalar(parameter_name,
+                                     arr.dtype,
+                                     storage=arr.storage,
+                                     transient=False,
+                                     lifetime=arr.lifetime)
+                else:
+                    raise ValueError("Unsupported data type {} connected to an ONNX tasklet".format(type(arr)))
+
 
                 if parameter_name not in (input_copy_required if is_input else output_copy_required):
                     if is_input:
