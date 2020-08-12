@@ -643,96 +643,96 @@ __kernel void \\
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
-
-        callsite_stream.write('{\n', sdfg, state_id, node)
-
-        state_dfg = sdfg.nodes()[state_id]
-
-        self._dispatcher.defined_vars.enter_scope(node)
-
-        arrays = set()
-        for edge in dfg.in_edges(node):
-            u = edge.src
-            memlet = edge.data
-
-            if edge.dst_conn:  # Not (None or "")
-
-                if edge.dst_conn in arrays:  # Disallow duplicates
-                    raise SyntaxError('Duplicates found in memlets')
-
-                # Special case: code->code
-                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    src_node = find_input_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.dst_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.dst_conn)
-
-        callsite_stream.write('\n', sdfg, state_id, node)
-
-        # Use outgoing edges to preallocate output local vars
-        for edge in dfg.out_edges(node):
-            v = edge.dst
-            memlet = edge.data
-
-            if edge.src_conn:
-
-                if edge.src_conn in arrays:  # Disallow duplicates
-                    continue
-
-                # Special case: code->code
-                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.src_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.src_conn)
-
-        callsite_stream.write("\n////////////////////\n", sdfg, state_id, node)
-
-        self.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                             callsite_stream, self._cpu_codegen._locals,
-                             self._cpu_codegen._ldepth,
-                             self._cpu_codegen._toplevel_schedule)
-
-        callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
-
-        # Process outgoing memlets
-        self.generate_memlet_outputs(sdfg, state_dfg, state_id, node,
-                                     callsite_stream, function_stream)
-        self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
-
-        for edge in state_dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
-            if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn, callsite_stream,
-                                                 sdfg, state_id, node)
-
-        callsite_stream.write('}\n', sdfg, state_id, node)
-        self._dispatcher.defined_vars.exit_scope(node)
+    # def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
+    #                       callsite_stream):
+    #
+    #     callsite_stream.write('{\n', sdfg, state_id, node)
+    #
+    #     state_dfg = sdfg.nodes()[state_id]
+    #
+    #     self._dispatcher.defined_vars.enter_scope(node)
+    #
+    #     arrays = set()
+    #     for edge in dfg.in_edges(node):
+    #         u = edge.src
+    #         memlet = edge.data
+    #
+    #         if edge.dst_conn:  # Not (None or "")
+    #
+    #             if edge.dst_conn in arrays:  # Disallow duplicates
+    #                 raise SyntaxError('Duplicates found in memlets')
+    #
+    #             # Special case: code->code
+    #             if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
+    #                 raise NotImplementedError(
+    #                     "Tasklet to tasklet memlets not implemented")
+    #
+    #             else:
+    #                 src_node = find_input_arraynode(state_dfg, edge)
+    #                 self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+    #                                                state_dfg, state_id,
+    #                                                function_stream,
+    #                                                callsite_stream)
+    #
+    #             # Also define variables in the C++ unparser scope
+    #             self._cpu_codegen._locals.define(edge.dst_conn, -1,
+    #                                              self._cpu_codegen._ldepth + 1)
+    #             arrays.add(edge.dst_conn)
+    #
+    #     callsite_stream.write('\n', sdfg, state_id, node)
+    #
+    #     # Use outgoing edges to preallocate output local vars
+    #     for edge in dfg.out_edges(node):
+    #         v = edge.dst
+    #         memlet = edge.data
+    #
+    #         if edge.src_conn:
+    #
+    #             if edge.src_conn in arrays:  # Disallow duplicates
+    #                 continue
+    #
+    #             # Special case: code->code
+    #             if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
+    #                 raise NotImplementedError(
+    #                     "Tasklet to tasklet memlets not implemented")
+    #
+    #             else:
+    #                 dst_node = find_output_arraynode(state_dfg, edge)
+    #                 self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+    #                                                state_dfg, state_id,
+    #                                                function_stream,
+    #                                                callsite_stream)
+    #
+    #             # Also define variables in the C++ unparser scope
+    #             self._cpu_codegen._locals.define(edge.src_conn, -1,
+    #                                              self._cpu_codegen._ldepth + 1)
+    #             arrays.add(edge.src_conn)
+    #
+    #     callsite_stream.write("\n////////////////////\n", sdfg, state_id, node)
+    #
+    #     self.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+    #                          callsite_stream, self._cpu_codegen._locals,
+    #                          self._cpu_codegen._ldepth,
+    #                          self._cpu_codegen._toplevel_schedule)
+    #
+    #     callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
+    #
+    #     # Process outgoing memlets
+    #     self.generate_memlet_outputs(sdfg, state_dfg, state_id, node,
+    #                                  callsite_stream, function_stream)
+    #     self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
+    #
+    #     for edge in state_dfg.out_edges(node):
+    #         datadesc = sdfg.arrays[edge.data.data]
+    #         if (isinstance(datadesc, dace.data.Array) and
+    #             (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
+    #              or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
+    #                 and not cpp.is_write_conflicted(dfg, edge)):
+    #             self.generate_no_dependence_post(edge.src_conn, callsite_stream,
+    #                                              sdfg, state_id, node)
+    #
+    #     callsite_stream.write('}\n', sdfg, state_id, node)
+    #     self._dispatcher.defined_vars.exit_scope(node)
 
     def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
                              callsite_stream):
@@ -1092,6 +1092,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         constant_string = constant_stream.getvalue()
         constant_string = constant_string.replace("constexpr", "__constant")
         callsite_stream.write(constant_string, sdfg)
+
+    def process_out_memlets(self, sdfg, state_id, node, state_dfg,
+                            callsite_stream, function_stream):
+        self.generate_memlet_outputs(sdfg, state_dfg, state_id, node,
+                                     callsite_stream, function_stream)
+        self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
 
 
 class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
