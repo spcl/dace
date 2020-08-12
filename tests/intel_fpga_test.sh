@@ -78,7 +78,7 @@ run_all() {
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
-    run_sample intel_fpga/veclen_conversion "\n"
+    run_sample fpga/veclen_conversion "\n"
 
     run_sample fpga/veclen_copy_conversion "\n"
 
