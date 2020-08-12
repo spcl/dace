@@ -80,6 +80,8 @@ run_all() {
 
     run_sample fpga/veclen_conversion "\n"
 
+    run_sample fpga/veclen_conversion_connector "\n"
+
     run_sample fpga/veclen_copy_conversion "\n"
 
     # #### WCR ####
