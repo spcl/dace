@@ -838,6 +838,20 @@ __kernel void \\
 
         callsite_stream.write(result, sdfg, state_id, tasklet)
 
+    def generate_channel_writes(self, sdfg, dfg, node, callsite_stream):
+        for edge in dfg.out_edges(node):
+            connector = edge.src_conn
+            memlet = edge.data
+            data_name = memlet.data
+            if data_name is not None:
+                data_desc = sdfg.arrays[data_name]
+                if (isinstance(data_desc, dace.data.Stream)
+                        and memlet.volume == 1 and not memlet.dynamic):
+                    callsite_stream.write(
+                        f"write_channel_intel({data_name}, {connector});", sdfg,
+                        sdfg.node_id(dfg), node)
+
+
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
             memlet = edge.data
@@ -982,6 +996,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                               True,
                                               function_stream,
                                               codegen=self)
+        self.generate_channel_writes(sdfg, state_dfg, node, callsite_stream)
         self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
 
     def write_and_resolve_expr(self,
