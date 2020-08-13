@@ -22,7 +22,6 @@ if __name__ == "__main__":
                      vectorize_connector=True)
     sdfg.specialize({"W": args.vector_length})
 
-    # Initialize arrays: Randomize A and B, zero C
     A = np.arange(args.size, dtype=np.float64)
     B = np.zeros((args.size, ), dtype=np.float64)
 
