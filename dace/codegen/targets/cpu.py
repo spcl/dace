@@ -1005,7 +1005,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 DefinedType.ArrayInterface
         ]:
             if output:
-                if not memlet.dynamic or (memlet.dynamic
+                if var_type == DefinedType.ArrayInterface:
+                    result += "{} {} = {};".format(memlet_type, local_name,
+                                                   expr)
+                elif not memlet.dynamic or (memlet.dynamic
                                           and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
