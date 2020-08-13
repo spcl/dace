@@ -970,6 +970,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 conntype = conntype.dtype
 
         is_scalar = not isinstance(conntype, dtypes.pointer)
+        is_pointer = isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
         memlet_type = conntype.dtype.ctype
@@ -1005,7 +1006,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 DefinedType.ArrayInterface
         ]:
             if output:
-                if var_type == DefinedType.ArrayInterface:
+                if is_pointer and var_type == DefinedType.ArrayInterface:
                     result += "{} {} = {};".format(memlet_type, local_name,
                                                    expr)
                 elif not memlet.dynamic or (memlet.dynamic
