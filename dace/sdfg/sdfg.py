@@ -31,8 +31,8 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
 from dace.properties import (make_properties, Property, CodeProperty,
+                             TransformationHistProperty, SDFGReferenceProperty,
                              DictProperty, OrderedDictProperty, CodeBlock)
-
 
 def _arrays_to_json(arrays):
     if arrays is None:
@@ -202,6 +202,9 @@ class SDFG(OrderedDiGraph):
     exit_code = DictProperty(
         str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
 
+    orig_sdfg = SDFGReferenceProperty(allow_none=True)
+    transformation_hist = TransformationHistProperty()
+
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
@@ -241,6 +244,8 @@ class SDFG(OrderedDiGraph):
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.orig_sdfg = None
+        self.transformation_hist = []
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -473,6 +478,20 @@ class SDFG(OrderedDiGraph):
         if location not in self.exit_code:
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.exit_code[location].code += cpp_code
+
+    def append_transformation(self, transformation):
+        """
+        Appends a transformation to the treansformation history of this SDFG.
+        If this is the first transformation being applied, it also saves the
+        initial state of the SDFG to return to and play back the history.
+        :param transformation: The transformation to append.
+        """
+        if not self.orig_sdfg:
+            clone = copy.deepcopy(self)
+            clone.transformation_hist = []
+            clone.orig_sdfg = None
+            self.orig_sdfg = clone
+        self.transformation_hist.append(transformation)
 
     ##########################################
     # Instrumentation-related methods
