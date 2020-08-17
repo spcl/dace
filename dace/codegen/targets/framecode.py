@@ -451,7 +451,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             sid = sdfg.node_id(state)
 
             callsite_stream.write(
-                "__state_{}_{}:\n".format(sdfg.sdfg_id, state.label), sdfg, sid)
+                "__state_{}_{}:;\n".format(sdfg.sdfg_id, state.label), sdfg,
+                sid)
 
             # Don't generate brackets and comments for empty states
             if len([n for n in state.nodes()]) > 0:
@@ -462,10 +463,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                                 callsite_stream)
 
                 callsite_stream.write('}', sdfg, sid)
-
-            else:
-
-                callsite_stream.write(";")
 
             out_edges = sdfg.out_edges(state)
 
