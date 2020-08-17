@@ -44,9 +44,21 @@ class CodeIOStream(StringIO):
         for line in lines:
             opening_braces = line.count('{')
             closing_braces = line.count('}')
+
+            # Count closing braces before opening ones (e.g., for "} else {")
+            initial_closing_braces = 0
+            for char in line:
+                if char == '}':
+                    initial_closing_braces += 1
+                if char == '{':
+                    break
+            closing_braces -= initial_closing_braces
+
             brace_balance = opening_braces - closing_braces
 
             # Write line and then change indentation
+            if initial_closing_braces > 0:
+                self._indent -= initial_closing_braces
             if brace_balance < 0:
                 self._indent += brace_balance
 
