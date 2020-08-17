@@ -1130,11 +1130,11 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
         # Create appropriate dictionaries from inputs
         tinputs = {
-            k: self.parent.arrays[v.data].dtype
+            k: None
             for k, v in inputs.items()
         }
         toutputs = {
-            k: self.parent.arrays[v.data].dtype
+            k: None
             for k, v in outputs.items()
         }
 
