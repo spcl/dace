@@ -57,6 +57,7 @@ class CUDACodeGen(TargetCodeGenerator):
         dispatcher = self._dispatcher
 
         self.create_grid_barrier = False
+        self.extra_nsdfg_args = []
         self._in_device_code = False
         self._cpu_codegen = None
         self._block_dims = None
@@ -1154,8 +1155,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
         # Add data from nested SDFGs to kernel arguments
-        nested_allocated = set()
+        self.extra_nsdfg_args = []
         if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
+            to_allocate = set()
             for nested_sdfg in [
                     node.sdfg for node in dfg_scope.nodes()
                     if isinstance(node, nodes.NestedSDFG)
@@ -1165,14 +1167,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     nested_to_allocate = (
                         set(nested_state.top_level_transients()) -
                         nested_shared_transients)
-                    nodes_to_allocate = [
+                    to_allocate |= set(
                         n for n in nested_state.data_nodes()
                         if n.data in nested_to_allocate
-                        and n.data not in nested_allocated
-                    ]
-                    for nested_node in nodes_to_allocate:
-                        kernel_args[nested_node.data] = nested_node.desc(
-                            nested_sdfg)
+                    )
+            for nested_node in sorted(to_allocate, key=lambda n: n.data):
+                desc = nested_node.desc(nested_sdfg)
+                kernel_args[nested_node.data] = desc
+                self.extra_nsdfg_args.append(
+                    (desc.signature(name=''), nested_node.data,
+                        nested_node.data))
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
@@ -2078,6 +2082,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
         if self.create_grid_barrier:
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
+
+        # Add data from nested SDFGs to kernel arguments
+        result.extend(self.extra_nsdfg_args)
+
         return result
 
     def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
