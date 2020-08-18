@@ -1256,7 +1256,7 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         self._cpu_codegen.generate_tasklet_preamble(*args, **kwargs)
 
     def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
-                                   function_stream, callsite_stream,
+                                   function_stream, before_memlets_stream,
                                    after_memlets_stream):
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):

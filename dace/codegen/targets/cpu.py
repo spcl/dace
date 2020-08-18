@@ -1262,7 +1262,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
         codegen.generate_tasklet_postamble(sdfg, dfg, state_id, node,
-                                           function_stream, callsite_stream,
+                                           function_stream, inner_stream,
                                            after_memlets_stream)
 
         # Process outgoing memlets
@@ -1286,12 +1286,12 @@ class CPUCodeGen(TargetCodeGenerator):
                               node)
         callsite_stream.write('{', sdfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), sdfg, state_id, node)
+        callsite_stream.write(after_memlets_stream.getvalue())
         callsite_stream.write('}', sdfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
         self._dispatcher.defined_vars.exit_scope(node)
 
-        callsite_stream.write(after_memlets_stream.getvalue())
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         inner_stream, locals, ldepth, toplevel_schedule):
