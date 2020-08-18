@@ -261,7 +261,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             raise NotImplementedError(
                 "Unimplemented read type: {}".format(defined_type))
         if is_pack:
-            ctype = dtype.base_type.base_type.ctype
+            ctype = fpga.vector_element_type_of(dtype).ctype
             self.converters_to_generate.add((True, ctype, packing_factor))
             return "pack_{}{}(&({}))".format(ctype, packing_factor, read_expr)
         else:
@@ -305,7 +305,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr)
             else:
                 if is_unpack:
-                    ctype = dtype.base_type.base_type.ctype
+                    ctype = fpga.vector_element_type_of(dtype).ctype
                     self.converters_to_generate.add(
                         (False, ctype, packing_factor))
                     return "unpack_{}{}({}, &{}[{}]);".format(
@@ -327,7 +327,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr)
             else:
                 if is_unpack:
-                    ctype = dtype.base_type.base_type.ctype
+                    ctype = fpga.vector_element_type_of(dtype).ctype
                     self.converters_to_generate.add(
                         (False, ctype, packing_factor))
                     return "unpack_{}{}({}, {});".format(
@@ -851,7 +851,6 @@ __kernel void \\
                         f"write_channel_intel({data_name}, {connector});", sdfg,
                         sdfg.node_id(dfg), node)
 
-
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
             memlet = edge.data
@@ -1064,13 +1063,13 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
-            ctype = dtype.base_type.base_type.ctype
+            ctype = fpga.vector_element_type_of(dtype).ctype
             self.width_converters.add((True, ctype, veclen))
             unpack_str = "unpack_{}{}".format(ctype, veclen)
 
         if veclen_lhs > veclen_rhs:
             veclen = veclen_lhs
-            ctype = dtype.base_type.base_type.ctype
+            ctype = fpga.vector_element_type_of(dtype).ctype
             self.width_converters.add((False, ctype, veclen))
             pack_str = "pack_{}{}".format(ctype, veclen)
             # TODO: Horrible hack to not dereference pointers if we have to

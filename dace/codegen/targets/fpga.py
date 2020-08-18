@@ -40,6 +40,13 @@ class MemoryType(enum.Enum):
     DDR = enum.auto()
     HBM = enum.auto()
 
+def vector_element_type_of(dtype):
+    if isinstance(dtype, dace.pointer):
+        # "Dereference" the pointer type and try again
+        return vector_element_type_of(dtype.base_type)
+    elif isinstance(dtype, dace.vector):
+        return dtype.base_type
+    return dtype
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
@@ -663,7 +670,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         "is not divisible by source vectorization width {}.".
                         format(memwidth_dst, memwidth_src))
                 self.converters_to_generate.add(
-                    (False, dtype.base_type.base_type.ctype, packing_factor))
+                    (False, vector_element_type_of(dtype).ctype, packing_factor))
             elif memwidth_src > memwidth_dst:
                 is_pack = False
                 is_unpack = True
@@ -674,7 +681,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         "by destination vectorization width {}.".format(
                             memwidth_dst, memwidth_src))
                 self.converters_to_generate.add(
-                    (True, dtype.base_type.base_type.ctype, packing_factor))
+                    (True, vector_element_type_of(dtype).ctype, packing_factor))
             else:
                 is_pack = False
                 is_unpack = False
