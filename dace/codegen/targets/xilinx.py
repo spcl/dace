@@ -268,6 +268,20 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
+        arguments = [
+            f'{atype} {aname}' for atype, aname, _ in memlet_references
+        ]
+        arguments += [
+            f'{node.sdfg.symbols[aname].signature(aname)}'
+            for aname in sorted(node.symbol_mapping.keys())
+            if aname not in sdfg.constants
+        ]
+        arguments = ', '.join(arguments)
+        return f'void {sdfg_label}({arguments}) {{\n#pragma HLS INLINE'
+
     def write_and_resolve_expr(self,
                                sdfg,
                                memlet,

@@ -170,7 +170,7 @@ class LoopUnroll(DetectLoop):
 
     def instantiate_loop(self, sdfg: sd.SDFG, loop_states: List[sd.SDFGState],
                          loop_subgraph: gr.SubgraphView, itervar: str,
-                         value: symbolic.SymbolicType):
+                         value: symbolic.SymbolicType, state_label: str=None):
         # Using to/from JSON copies faster than deepcopy (which will also
         # copy the parent SDFG)
         new_states = [
@@ -180,7 +180,7 @@ class LoopUnroll(DetectLoop):
 
         # Replace iterate with value in each state
         for state in new_states:
-            state.set_label(state.label + '_%s_%d' % (itervar, value))
+            state.set_label(state.label + '_%s_%s' % (itervar, state_label or value))
             state.replace(itervar, value)
 
         # Add subgraph to original SDFG

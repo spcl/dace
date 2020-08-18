@@ -665,7 +665,8 @@ class DictProperty(Property):
                 for k, v in saved_dictionary.items()
             }
 
-        return saved_dictionary
+        # Sort by key before saving
+        return {k: v for k, v in sorted(saved_dictionary.items())}
 
     @staticmethod
     def from_string(s):

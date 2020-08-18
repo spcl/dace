@@ -842,8 +842,13 @@ class FPGACodeGen(TargetCodeGenerator):
             getattr(self, method_name)(sdfg, dfg, state_id, node,
                                        function_stream, callsite_stream)
         else:
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
+
+            self._cpu_codegen.calling_codegen = old_codegen
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
@@ -1161,6 +1166,21 @@ class FPGACodeGen(TargetCodeGenerator):
                 sdfg, state, module_name, subgraph,
                 subgraph_parameters[subgraph] + scalar_parameters,
                 symbol_parameters, module_stream, entry_stream, host_stream)
+
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, node,
+                                                       memlet_references,
+                                                       sdfg_label)
+
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
+                            sdfg_label):
+        return self._cpu_codegen.generate_nsdfg_call(sdfg, state, node,
+                                                     memlet_references,
+                                                     sdfg_label)
+
+    def generate_nsdfg_arguments(self, sdfg, state, node):
+        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
 
     def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
                                            parameters, symbol_parameters,
