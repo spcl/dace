@@ -754,4 +754,5 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                               codegen=self)
 
     def unparse_tasklet(self, *args, **kwargs):
-        cpp.unparse_tasklet(*args, self, **kwargs)
+        # Pass this object for callbacks into the Xilinx codegen
+        cpp.unparse_tasklet(*args, codegen=self, **kwargs)
