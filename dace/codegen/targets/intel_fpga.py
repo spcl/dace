@@ -688,7 +688,8 @@ __kernel void \\
 
         # Process outgoing memlets with the internal SDFG
         self.process_out_memlets(sdfg, state_id, node, state_dfg,
-                                 callsite_stream, function_stream)
+                                 self._dispatcher, callsite_stream, True,
+                                 function_stream)
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
@@ -848,8 +849,7 @@ __kernel void \\
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.volume == 1 and not memlet.dynamic):
                     callsite_stream.write(
-                        f"write_channel_intel({data_name}, {connector});", sdfg,
-                        sdfg.node_id(dfg), node)
+                        f"write_channel_intel({data_name}, {connector});", sdfg)
 
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
@@ -865,8 +865,7 @@ __kernel void \\
                 data_desc = sdfg.arrays[data_name]
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.num_accesses != 1):
-                    callsite_stream.write("#undef {}".format(memlet_name), sdfg,
-                                          sdfg.node_id(dfg), node)
+                    callsite_stream.write("#undef {}".format(memlet_name), sdfg)
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
                             function_stream):
@@ -984,19 +983,14 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         constant_string = constant_string.replace("constexpr", "__constant")
         callsite_stream.write(constant_string, sdfg)
 
-    def process_out_memlets(self, sdfg, state_id, node, state_dfg,
-                            callsite_stream, function_stream):
-        self._cpu_codegen.process_out_memlets(sdfg,
-                                              state_id,
-                                              node,
-                                              state_dfg,
-                                              self._dispatcher,
-                                              callsite_stream,
-                                              True,
-                                              function_stream,
-                                              codegen=self)
-        self.generate_channel_writes(sdfg, state_dfg, node, callsite_stream)
-        self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
+    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
+                                   function_stream, callsite_stream,
+                                   after_memlets_stream):
+        super().generate_tasklet_postamble(sdfg, dfg, state_id, node,
+                                           function_stream, callsite_stream,
+                                           after_memlets_stream)
+        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream)
+        self.generate_undefines(sdfg, dfg, node, after_memlets_stream)
 
     def write_and_resolve_expr(self,
                                sdfg,

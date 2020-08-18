@@ -40,6 +40,7 @@ class MemoryType(enum.Enum):
     DDR = enum.auto()
     HBM = enum.auto()
 
+
 def vector_element_type_of(dtype):
     if isinstance(dtype, dace.pointer):
         # "Dereference" the pointer type and try again
@@ -47,6 +48,7 @@ def vector_element_type_of(dtype):
     elif isinstance(dtype, dace.vector):
         return dtype.base_type
     return dtype
+
 
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
@@ -670,7 +672,8 @@ class FPGACodeGen(TargetCodeGenerator):
                         "is not divisible by source vectorization width {}.".
                         format(memwidth_dst, memwidth_src))
                 self.converters_to_generate.add(
-                    (False, vector_element_type_of(dtype).ctype, packing_factor))
+                    (False, vector_element_type_of(dtype).ctype,
+                     packing_factor))
             elif memwidth_src > memwidth_dst:
                 is_pack = False
                 is_unpack = True
@@ -1234,121 +1237,34 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
             self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
                                                None, host_code_stream)
 
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
+    def _generate_Tasklet(self, *args, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen._generate_Tasklet(*args, codegen=self, **kwargs)
 
-        # TODO: this is mostly copy-pasta from the CPU-codegen. Refactor to
-        # inject hooks into the CPU codegen once the new codegen has been
-        # implemented.
+    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
+                          edge, function_stream, callsite_stream):
+        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg,
+                                       state_dfg, state_id, function_stream,
+                                       callsite_stream)
 
-        outer_stream_begin = CodeIOStream()
-        outer_stream_end = CodeIOStream()
-        inner_stream = CodeIOStream()
+    def process_out_memlets(self, *args, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
-        state_dfg = sdfg.nodes()[state_id]
+    def generate_tasklet_preamble(self, *args, **kwargs):
+        # Fall back on CPU implementation
+        self._cpu_codegen.generate_tasklet_preamble(*args, **kwargs)
 
-        # Prepare preamble and code for after memlets
-        after_memlets_stream = CodeIOStream()
-        self._cpu_codegen.generate_tasklet_preamble(sdfg, dfg, state_id, node,
-                                                    function_stream,
-                                                    callsite_stream,
-                                                    after_memlets_stream)
-
-        self._dispatcher.defined_vars.enter_scope(node)
-
-        arrays = set()
-        for edge in state_dfg.in_edges(node):
-            u = edge.src
-            memlet = edge.data
-            src_node = state_dfg.memlet_path(edge)[0].src
-
-            if edge.dst_conn:  # Not (None or "")
-                if edge.dst_conn in arrays:  # Disallow duplicates
-                    raise SyntaxError("Duplicates found in memlets")
-                ctype = node.in_connectors[edge.dst_conn].ctype
-                self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                               state_dfg, state_id,
-                                               function_stream, inner_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.dst_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1,
-                                                 ctype)
-                arrays.add(edge.dst_conn)
-
-        # Use outgoing edges to preallocate output local vars
-        tasklet_out_connectors = set()
-        for edge in state_dfg.out_edges(node):
-            dst_node = state_dfg.memlet_path(edge)[-1].dst
-            if isinstance(dst_node, dace.sdfg.nodes.CodeNode):
-                raise NotImplementedError(
-                    "Tasklet to tasklet memlets not implemented")
-
-            if edge.src_conn:
-                if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
-                    continue
-                self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                               state_dfg, state_id,
-                                               function_stream, callsite_stream)
-
-                cdtype = node.out_connectors[edge.src_conn]
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.src_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1,
-                                                 cdtype.ctype)
-                tasklet_out_connectors.add(edge.src_conn)
-
-        # Emit post-memlet tasklet preamble code
-        callsite_stream.write(after_memlets_stream.getvalue())
-
-        # Instrumentation: Pre-tasklet
-        instr = self._dispatcher.instrumentation[node.instrument]
-        if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, outer_stream_begin,
-                                inner_stream, function_stream)
-
-        inner_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
-
-        self.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                             inner_stream, self._cpu_codegen._locals,
-                             self._cpu_codegen._ldepth,
-                             self._cpu_codegen._toplevel_schedule)
-
-        inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
-
-        # Generate pre-memlet tasklet postamble
-        after_memlets_stream = CodeIOStream()
-        self._cpu_codegen.generate_tasklet_postamble(sdfg, dfg, state_id, node,
-                                                     function_stream,
-                                                     callsite_stream,
-                                                     after_memlets_stream)
-
-        # Process outgoing memlets
-        self.process_out_memlets(sdfg, state_id, node, state_dfg, inner_stream,
-                                 function_stream)
-
-        # [FPGA-specific]: Inject dependency pragmas on memlets
-        for edge in state_dfg.out_edges(node):
+    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
+                                   function_stream, callsite_stream,
+                                   after_memlets_stream):
+        # Inject dependency pragmas on memlets
+        for edge in dfg.out_edges(node):
             datadesc = sdfg.arrays[edge.data.data]
             if (isinstance(datadesc, dace.data.Array)
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn, callsite_stream,
-                                                 sdfg, state_id, node)
-
-        # Instrumentation: Post-tasklet
-        if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, outer_stream_end,
-                              inner_stream, function_stream)
-
-        callsite_stream.write(outer_stream_begin.getvalue(), sdfg, state_id,
-                              node)
-        callsite_stream.write('{', sdfg, state_id, node)
-        callsite_stream.write(inner_stream.getvalue(), sdfg, state_id, node)
-        callsite_stream.write('}', sdfg, state_id, node)
-        callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
-
-        self._dispatcher.defined_vars.exit_scope(node)
-
-        callsite_stream.write(after_memlets_stream.getvalue())
+                self.generate_no_dependence_post(edge.src_conn,
+                                                 after_memlets_stream, sdfg,
+                                                 state_id, node)

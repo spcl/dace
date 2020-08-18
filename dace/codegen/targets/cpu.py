@@ -1010,7 +1010,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     result += "{} {} = {};".format(memlet_type, local_name,
                                                    expr)
                 elif not memlet.dynamic or (memlet.dynamic
-                                          and memlet.wcr is not None):
+                                            and memlet.wcr is not None):
                     # Dynamic WCR memlets start uninitialized
                     result += "{} {};".format(memlet_type, local_name)
                     defined = DefinedType.Scalar
@@ -1079,8 +1079,18 @@ class CPUCodeGen(TargetCodeGenerator):
     #########################################################################
     # Dynamically-called node dispatchers
 
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
+    def _generate_Tasklet(self,
+                          sdfg,
+                          dfg,
+                          state_id,
+                          node,
+                          function_stream,
+                          callsite_stream,
+                          codegen=None):
+
+        # Allow other code generators to call this with a callback
+        codegen = codegen or self
+
         outer_stream_begin = CodeIOStream()
         outer_stream_end = CodeIOStream()
         inner_stream = CodeIOStream()
@@ -1089,9 +1099,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()
-        self.generate_tasklet_preamble(sdfg, dfg, state_id, node,
-                                       function_stream, callsite_stream,
-                                       after_memlets_stream)
+        codegen.generate_tasklet_preamble(sdfg, dfg, state_id, node,
+                                          function_stream, callsite_stream,
+                                          after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
 
@@ -1159,22 +1169,13 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
 
-                cdtype = node.out_connectors[edge.src_conn]
-                if isinstance(sdfg.arrays[edge.data.data], data.Stream):
-                    pass
-                elif isinstance(cdtype, dtypes.pointer):
-                    # If pointer, also point to output
-                    base_ptr = cpp_ptr_expr(sdfg, edge.data)
-                    inner_stream.write(
-                        f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg,
-                        state_id, node)
-                else:
-                    inner_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
-                                       state_id, node)
+                codegen.define_out_memlet(sdfg, state_dfg, state_id, node,
+                                          dst_node, edge, function_stream,
+                                          inner_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
-                                    cdtype.ctype)
+                                    node.out_connectors[edge.src_conn].ctype)
                 tasklet_out_connectors.add(edge.src_conn)
 
         for edge in state_dfg.out_edges(node):
@@ -1252,20 +1253,20 @@ class CPUCodeGen(TargetCodeGenerator):
 
         inner_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
 
-        unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                        inner_stream, self._locals, self._ldepth,
-                        self._toplevel_schedule, self)
+        codegen.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+                                inner_stream, self._locals, self._ldepth,
+                                self._toplevel_schedule)
 
         inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
 
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
-        self.generate_tasklet_postamble(sdfg, dfg, state_id, node,
-                                        function_stream, callsite_stream,
-                                        after_memlets_stream)
+        codegen.generate_tasklet_postamble(sdfg, dfg, state_id, node,
+                                           function_stream, callsite_stream,
+                                           after_memlets_stream)
 
         # Process outgoing memlets
-        self.process_out_memlets(
+        codegen.process_out_memlets(
             sdfg,
             state_id,
             node,
@@ -1291,6 +1292,27 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.exit_scope(node)
 
         callsite_stream.write(after_memlets_stream.getvalue())
+
+    def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
+                        inner_stream, locals, ldepth, toplevel_schedule):
+        # Call the generic CPP unparse_tasklet method
+        unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+                        inner_stream, locals, ldepth, toplevel_schedule, self)
+
+    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
+                          edge, function_stream, callsite_stream):
+        cdtype = src_node.out_connectors[edge.src_conn]
+        if isinstance(sdfg.arrays[edge.data.data], data.Stream):
+            pass
+        elif isinstance(cdtype, dtypes.pointer):
+            # If pointer, also point to output
+            base_ptr = cpp_ptr_expr(sdfg, edge.data)
+            callsite_stream.write(
+                f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id,
+                src_node)
+        else:
+            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
+                                  state_id, src_node)
 
     def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node, function_stream,
                                callsite_stream):

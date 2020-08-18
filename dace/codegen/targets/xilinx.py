@@ -741,18 +741,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
                                           dst_node, edge, None, callsite_stream)
 
-    def process_out_memlets(self, sdfg, state_id, node, state_dfg,
-                            callsite_stream, function_stream):
-        self._cpu_codegen.process_out_memlets(sdfg,
-                                              state_id,
-                                              node,
-                                              state_dfg,
-                                              self._dispatcher,
-                                              callsite_stream,
-                                              True,
-                                              function_stream,
-                                              codegen=self)
-
     def unparse_tasklet(self, *args, **kwargs):
         # Pass this object for callbacks into the Xilinx codegen
         cpp.unparse_tasklet(*args, codegen=self, **kwargs)
