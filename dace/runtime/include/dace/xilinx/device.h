@@ -11,7 +11,6 @@
 #include "dace/xilinx/reduce.h"
 #include "dace/xilinx/stream.h"
 #include "dace/xilinx/vec.h"
-#include "dace/xilinx/view.h"
 #include "dace/xilinx/access.h"
 
 #include "dace/xilinx/math.h"

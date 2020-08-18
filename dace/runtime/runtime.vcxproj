@@ -155,7 +155,6 @@
     <ClInclude Include="include\dace\stream.h" />
     <ClInclude Include="include\dace\types.h" />
     <ClInclude Include="include\dace\vector.h" />
-    <ClInclude Include="include\dace\view.h" />
     <ClInclude Include="include\dace\xilinx\access.h" />
     <ClInclude Include="include\dace\xilinx\array_interface.h" />
     <ClInclude Include="include\dace\xilinx\device.h" />
@@ -163,7 +162,6 @@
     <ClInclude Include="include\dace\xilinx\reduce.h" />
     <ClInclude Include="include\dace\xilinx\stream.h" />
     <ClInclude Include="include\dace\xilinx\vec.h" />
-    <ClInclude Include="include\dace\xilinx\view.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="include\dace\cuda\copy.cuh" />

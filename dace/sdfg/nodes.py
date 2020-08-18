@@ -373,6 +373,7 @@ class Tasklet(CodeNode):
         # Get symbols defined at beginning of node, and infer all types in
         # tasklet
         syms = state.symbols_defined_at(self)
+        syms.update(self.in_connectors)
         new_syms = infer_types(self.code.code, syms)
         for cname, oconn in self.out_connectors.items():
             if oconn.type is None:

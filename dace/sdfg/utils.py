@@ -610,8 +610,8 @@ def concurrent_subgraphs(graph):
             # Merge overlapping subgraphs
             new_subgraph = seen | components[start_node]
 
-            for i, index in enumerate(reversed(to_delete)):
-                new_subgraph |= subgraphs.pop(index - i)
+            for index in reversed(to_delete):
+                new_subgraph |= subgraphs.pop(index)
 
             subgraphs.append(new_subgraph)
 

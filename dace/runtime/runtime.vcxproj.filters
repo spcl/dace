@@ -77,9 +77,6 @@
     <ClInclude Include="include\dace\vector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\dace\view.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="include\dace\xilinx\access.h">
       <Filter>Header Files\xilinx</Filter>
     </ClInclude>
@@ -99,9 +96,6 @@
       <Filter>Header Files\xilinx</Filter>
     </ClInclude>
     <ClInclude Include="include\dace\xilinx\vec.h">
-      <Filter>Header Files\xilinx</Filter>
-    </ClInclude>
-    <ClInclude Include="include\dace\xilinx\view.h">
       <Filter>Header Files\xilinx</Filter>
     </ClInclude>
     <ClInclude Include="include\dace\perf\instrumentation.h">

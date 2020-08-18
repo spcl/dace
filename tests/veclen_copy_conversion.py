@@ -8,6 +8,8 @@ def make_sdfg(tasklet_code=None,
               dtype=dace.float32,
               veclen=16):
 
+    vtype = dace.vector(dace.float32, veclen)
+
     if tasklet_code is None:
         tasklet_code = "_out = _in"
 
@@ -21,8 +23,8 @@ def make_sdfg(tasklet_code=None,
     sdfg.add_edge(pre_state, state, dace.InterstateEdge())
     sdfg.add_edge(state, post_state, dace.InterstateEdge())
 
-    _, desc_input_host = sdfg.add_array("a", (n, ), dtype)
-    _, desc_output_host = sdfg.add_array("b", (n, ), dtype)
+    _, desc_input_host = sdfg.add_array("a", (n // veclen, ), vtype)
+    _, desc_output_host = sdfg.add_array("b", (n // veclen, ), vtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
     desc_input_device.location["bank"] = 0
@@ -39,18 +41,14 @@ def make_sdfg(tasklet_code=None,
     pre_write = pre_state.add_write("a_device")
     pre_state.add_memlet_path(pre_read,
                               pre_write,
-                              memlet=dace.Memlet.simple(pre_write,
-                                                        "0:N",
-                                                        veclen=veclen))
+                              memlet=dace.Memlet(pre_write.data, None))
 
     # Device to host
     post_read = post_state.add_read("b_device")
     post_write = post_state.add_write("b")
     post_state.add_memlet_path(post_read,
                                post_write,
-                               memlet=dace.Memlet.simple(post_write,
-                                                         "0:N",
-                                                         veclen=veclen))
+                               memlet=dace.Memlet(post_write.data, None))
 
     # Compute state
     read_memory = state.add_read("a_device")
@@ -58,13 +56,11 @@ def make_sdfg(tasklet_code=None,
 
     # Memory streams
     sdfg.add_stream("a_stream",
-                    dtype,
-                    veclen=veclen,
+                    vtype,
                     storage=dace.StorageType.FPGA_Local,
                     transient=True)
     sdfg.add_stream("b_stream",
-                    dtype,
-                    veclen=veclen,
+                    vtype,
                     storage=dace.StorageType.FPGA_Local,
                     transient=True)
     produce_input_stream = state.add_write("a_stream")
@@ -76,7 +72,7 @@ def make_sdfg(tasklet_code=None,
 
     # Iterative map
     entry, exit = state.add_map(name, {
-        "i": "0:N/{}".format(veclen),
+        "i": "0:N//{}".format(veclen),
     },
                                 schedule=dace.ScheduleType.FPGA_Device)
 
@@ -89,18 +85,10 @@ def make_sdfg(tasklet_code=None,
     # Container-to-container copies between arrays and streams
     state.add_memlet_path(read_memory,
                           produce_input_stream,
-                          memlet=dace.Memlet.simple(read_memory.data,
-                                                    "0:N",
-                                                    other_subset_str="0",
-                                                    num_accesses=n / veclen,
-                                                    veclen=veclen))
+                          memlet=dace.Memlet(read_memory.data))
     state.add_memlet_path(consume_output_stream,
                           write_memory,
-                          memlet=dace.Memlet.simple(write_memory.data,
-                                                    "0:N",
-                                                    other_subset_str="0",
-                                                    num_accesses=n / veclen,
-                                                    veclen=veclen))
+                          memlet=dace.Memlet(write_memory.data))
 
     # Container-to-container copy from vectorized stream to non-vectorized
     # buffer
@@ -119,11 +107,10 @@ def make_sdfg(tasklet_code=None,
     state.add_memlet_path(consume_input_stream,
                           entry,
                           a_buffer,
-                          memlet=dace.Memlet.simple(a_buffer.data,
-                                                    "0:{}".format(veclen),
-                                                    other_subset_str="0",
-                                                    veclen=veclen,
-                                                    num_accesses=1))
+                          memlet=dace.Memlet.simple(
+                              consume_input_stream.data,
+                              "0",
+                              other_subset_str="0:{}".format(veclen)))
     # Buffer to tasklet
     state.add_memlet_path(a_buffer,
                           unroll_entry,
@@ -131,7 +118,6 @@ def make_sdfg(tasklet_code=None,
                           dst_conn="_in",
                           memlet=dace.Memlet.simple(a_buffer.data,
                                                     "u",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Tasklet to buffer
@@ -141,7 +127,6 @@ def make_sdfg(tasklet_code=None,
                           src_conn="_out",
                           memlet=dace.Memlet.simple(b_buffer.data,
                                                     "u",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Buffer to output stream
@@ -152,7 +137,6 @@ def make_sdfg(tasklet_code=None,
                               produce_output_stream.data,
                               "0",
                               other_subset_str="0:{}".format(veclen),
-                              veclen=veclen,
                               num_accesses=1))
 
     return sdfg
@@ -164,7 +148,7 @@ if __name__ == "__main__":
 
     dtype = np.float32
 
-    gearbox = make_sdfg(tasklet_code = "_out = _in + 1", dtype=dtype)
+    gearbox = make_sdfg(tasklet_code="_out = _in + 1", dtype=dtype)
 
     size = 1024
     a = np.arange(size, dtype=dtype)

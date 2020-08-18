@@ -80,7 +80,7 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
     C = np.zeros([M.get(), N.get()], dtype.type)
 
     # Invoke SDFG: compile without additional transformations and run
-    csdfg = sdfg.compile(optimizer=False)
+    csdfg = sdfg.compile()
     csdfg(A=A,
           B=B,
           C=C,

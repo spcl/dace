@@ -3,9 +3,9 @@ import copy
 import dace
 
 
-def make_sdfg(name="fpga_stencil_test",
-              dtype=dace.float32,
-              veclen=8):
+def make_sdfg(name="fpga_stencil_test", dtype=dace.float32, veclen=8):
+
+    vtype = dace.vector(dtype, veclen)
 
     n = dace.symbol("N")
     m = dace.symbol("M")
@@ -18,8 +18,8 @@ def make_sdfg(name="fpga_stencil_test",
     sdfg.add_edge(pre_state, state, dace.InterstateEdge())
     sdfg.add_edge(state, post_state, dace.InterstateEdge())
 
-    _, desc_input_host = sdfg.add_array("a", (n, m), dtype)
-    _, desc_output_host = sdfg.add_array("b", (n, m), dtype)
+    _, desc_input_host = sdfg.add_array("a", (n, m // veclen), vtype)
+    _, desc_output_host = sdfg.add_array("b", (n, m // veclen), vtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
     desc_input_device.location["bank"] = 0
@@ -36,18 +36,16 @@ def make_sdfg(name="fpga_stencil_test",
     pre_write = pre_state.add_write("a_device")
     pre_state.add_memlet_path(pre_read,
                               pre_write,
-                              memlet=dace.Memlet.simple(pre_write,
-                                                        "0:N, 0:M",
-                                                        veclen=veclen))
+                              memlet=dace.Memlet.simple(
+                                  pre_write, "0:N, 0:M//{}".format(veclen)))
 
     # Device to host
     post_read = post_state.add_read("b_device")
     post_write = post_state.add_write("b")
     post_state.add_memlet_path(post_read,
                                post_write,
-                               memlet=dace.Memlet.simple(post_write,
-                                                         "0:N, 0:M",
-                                                         veclen=veclen))
+                               memlet=dace.Memlet.simple(
+                                   post_write, "0:N, 0:M//{}".format(veclen)))
 
     # Compute state
     read_memory = state.add_read("a_device")
@@ -55,13 +53,11 @@ def make_sdfg(name="fpga_stencil_test",
 
     # Memory streams
     sdfg.add_stream("a_stream",
-                    dtype,
-                    veclen=veclen,
+                    vtype,
                     storage=dace.StorageType.FPGA_Local,
                     transient=True)
     sdfg.add_stream("b_stream",
-                    dtype,
-                    veclen=veclen,
+                    vtype,
                     storage=dace.StorageType.FPGA_Local,
                     transient=True)
     produce_input_stream = state.add_write("a_stream")
@@ -69,8 +65,8 @@ def make_sdfg(name="fpga_stencil_test",
     produce_output_stream = state.add_write("b_stream")
     consume_output_stream = state.add_write("b_stream")
 
-    tasklet = state.add_tasklet(name, {"_north", "_west", "_east", "_south"},
-                                {"result"}, """\
+    tasklet = state.add_tasklet(
+        name, {"_north", "_west", "_east", "_south"}, {"result"}, """\
 north = _north if i >= 1 else 1
 west = _west if {W}*j + u >= 1 else 1
 east = _east if {W}*j + u < M - 1 else 1
@@ -80,12 +76,12 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
 
     entry, exit = state.add_pipeline(name, {
         "i": "0:N",
-        "j": "0:M/{}".format(veclen),
+        "j": "0:M//{}".format(veclen),
     },
                                      schedule=dace.ScheduleType.FPGA_Device,
-                                     init_size=m / veclen,
+                                     init_size=m // veclen,
                                      init_overlap=False,
-                                     drain_size=m / veclen,
+                                     drain_size=m // veclen,
                                      drain_overlap=True)
 
     # Unrolled map
@@ -97,25 +93,23 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
     # Container-to-container copies between arrays and streams
     state.add_memlet_path(read_memory,
                           produce_input_stream,
-                          memlet=dace.Memlet.simple(read_memory.data,
-                                                    "0:N, 0:M",
-                                                    other_subset_str="0",
-                                                    num_accesses=n *
-                                                    (m / veclen),
-                                                    veclen=veclen))
+                          memlet=dace.Memlet.simple(
+                              read_memory.data,
+                              "0:N, 0:M//{}".format(veclen),
+                              other_subset_str="0",
+                              num_accesses=n * (m // veclen)))
     state.add_memlet_path(consume_output_stream,
                           write_memory,
-                          memlet=dace.Memlet.simple(write_memory.data,
-                                                    "0:N, 0:M",
-                                                    other_subset_str="0",
-                                                    num_accesses=n *
-                                                    (m / veclen),
-                                                    veclen=veclen))
+                          memlet=dace.Memlet.simple(
+                              write_memory.data,
+                              "0:N, 0:M//{}".format(veclen),
+                              other_subset_str="0",
+                              num_accesses=n * (m // veclen)))
 
     # Container-to-container copy from vectorized stream to non-vectorized
     # buffer
-    sdfg.add_array("input_buffer", (veclen, ),
-                   dtype,
+    sdfg.add_array("input_buffer", (1, ),
+                   vtype,
                    storage=dace.StorageType.FPGA_Local,
                    transient=True)
     sdfg.add_array("shift_register", (2 * m + veclen, ),
@@ -126,8 +120,8 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                    dtype,
                    storage=dace.StorageType.FPGA_Local,
                    transient=True)
-    sdfg.add_array("output_buffer_packed", (veclen, ),
-                   dtype,
+    sdfg.add_array("output_buffer_packed", (1, ),
+                   vtype,
                    storage=dace.StorageType.FPGA_Local,
                    transient=True)
     input_buffer = state.add_access("input_buffer")
@@ -145,61 +139,60 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           entry,
                           read_tasklet,
                           dst_conn="_in",
-                          memlet=dace.Memlet.simple(
-                              consume_input_stream.data,
-                              "0",
-                              veclen=veclen,
-                              num_accesses=-1))
+                          memlet=dace.Memlet.simple(consume_input_stream.data,
+                                                    "0",
+                                                    num_accesses=-1))
     state.add_memlet_path(read_tasklet,
                           input_buffer,
                           src_conn="_out",
-                          memlet=dace.Memlet.simple(
-                              input_buffer.data,
-                              "0:{}".format(veclen),
-                              veclen=veclen,
-                              num_accesses=1))
-    state.add_memlet_path(input_buffer,
-                          shift_register,
-                          memlet=dace.Memlet.simple(
-                              shift_register.data,
-                              "2*M*{W}: (2*M + 1)*{W}".format(W=veclen),
-                              other_subset_str="0:{}".format(veclen),
-                              veclen=veclen,
-                              num_accesses=1))
+                          memlet=dace.Memlet.simple(input_buffer.data,
+                                                    "0",
+                                                    num_accesses=1))
+    state.add_memlet_path(
+        input_buffer,
+        shift_register,
+        memlet=dace.Memlet.simple(
+            input_buffer.data,
+            "0",
+            other_subset_str="2*M:(2*M + {W})".format(W=veclen)))
 
     # Stencils accesses
-    state.add_memlet_path(shift_register,
-                          unroll_entry,
-                          tasklet,
-                          dst_conn="_north",
-                          memlet=dace.Memlet.simple(shift_register.data,
-                                                    "u",  # North
-                                                    veclen=1,
-                                                    num_accesses=1))
-    state.add_memlet_path(shift_register,
-                          unroll_entry,
-                          tasklet,
-                          dst_conn="_west",
-                          memlet=dace.Memlet.simple(shift_register.data,
-                                                    "u + M - 1",  # West
-                                                    veclen=1,
-                                                    num_accesses=1))
-    state.add_memlet_path(shift_register,
-                          unroll_entry,
-                          tasklet,
-                          dst_conn="_east",
-                          memlet=dace.Memlet.simple(shift_register.data,
-                                                    "u + M + 1",  # East
-                                                    veclen=1,
-                                                    num_accesses=1))
-    state.add_memlet_path(shift_register,
-                          unroll_entry,
-                          tasklet,
-                          dst_conn="_south",
-                          memlet=dace.Memlet.simple(shift_register.data,
-                                                    "u + 2 * M",  # South
-                                                    veclen=1,
-                                                    num_accesses=1))
+    state.add_memlet_path(
+        shift_register,
+        unroll_entry,
+        tasklet,
+        dst_conn="_north",
+        memlet=dace.Memlet.simple(
+            shift_register.data,
+            "u",  # North
+            num_accesses=1))
+    state.add_memlet_path(
+        shift_register,
+        unroll_entry,
+        tasklet,
+        dst_conn="_west",
+        memlet=dace.Memlet.simple(
+            shift_register.data,
+            "u + M - 1",  # West
+            num_accesses=1))
+    state.add_memlet_path(
+        shift_register,
+        unroll_entry,
+        tasklet,
+        dst_conn="_east",
+        memlet=dace.Memlet.simple(
+            shift_register.data,
+            "u + M + 1",  # East
+            num_accesses=1))
+    state.add_memlet_path(
+        shift_register,
+        unroll_entry,
+        tasklet,
+        dst_conn="_south",
+        memlet=dace.Memlet.simple(
+            shift_register.data,
+            "u + 2 * M",  # South
+            num_accesses=1))
 
     # Tasklet to buffer
     state.add_memlet_path(tasklet,
@@ -208,16 +201,15 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           src_conn="result",
                           memlet=dace.Memlet.simple(output_buffer.data,
                                                     "u",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Pack buffer
     state.add_memlet_path(output_buffer,
                           output_buffer_packed,
-                          memlet=dace.Memlet.simple(output_buffer.data,
-                                                    "0:{}".format(veclen),
-                                                    veclen=veclen,
-                                                    num_accesses=1))
+                          memlet=dace.Memlet.simple(
+                              output_buffer_packed.data,
+                              "0",
+                              other_subset_str="0:{}".format(veclen)))
 
     # Only write if not initializing
     write_tasklet = state.add_tasklet(
@@ -228,22 +220,18 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
     state.add_memlet_path(output_buffer_packed,
                           write_tasklet,
                           dst_conn="_in",
-                          memlet=dace.Memlet.simple(
-                              output_buffer_packed.data,
-                              "0:{}".format(veclen),
-                              veclen=veclen,
-                              num_accesses=1))
+                          memlet=dace.Memlet.simple(output_buffer_packed.data,
+                                                    "0",
+                                                    num_accesses=1))
 
     # Buffer to output stream
     state.add_memlet_path(write_tasklet,
                           exit,
                           produce_output_stream,
                           src_conn="_out",
-                          memlet=dace.Memlet.simple(
-                              produce_output_stream.data,
-                              "0",
-                              veclen=veclen,
-                              num_accesses=-1))
+                          memlet=dace.Memlet.simple(produce_output_stream.data,
+                                                    "0",
+                                                    num_accesses=-1))
 
     return sdfg
 
@@ -252,22 +240,23 @@ if __name__ == "__main__":
 
     import numpy as np
 
-    dtype = np.float32
+    dtype = dace.float32
     n = 16
     m = 16
 
     jacobi = make_sdfg(dtype=dtype)
     jacobi.specialize({"N": n, "M": m})
 
-    a = np.arange(n*m, dtype=dtype).reshape((n, m))
-    b = np.empty((n, m), dtype=dtype)
+    a = np.arange(n * m, dtype=dtype.type).reshape((n, m))
+    b = np.empty((n, m), dtype=dtype.type)
 
     jacobi(a=a, b=b)
 
-    padded = np.ones((n + 2, m + 2), dtype)
+    padded = np.ones((n + 2, m + 2), dtype.type)
     padded[1:-1, 1:-1] = a
-    ref = 0.25 * (padded[:-2, 1:-1] + padded[2:, 1:-1] +
-                  padded[1:-1, :-2] + padded[1:-1, 2:])
+    ref = 0.25 * (padded[:-2, 1:-1] + padded[2:, 1:-1] + padded[1:-1, :-2] +
+                  padded[1:-1, 2:])
 
     if (b != ref).any():
-        raise ValueError("Unexpected output.")
+        raise ValueError("Unexpected output:\nGot: {}\nExpected: {}".format(
+            b, ref))

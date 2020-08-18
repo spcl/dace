@@ -171,4 +171,4 @@ if __name__ == '__main__':
     print("=== Generating SDFG ===")
     sdfg = rgf_dense.to_sdfg()
     print("=== Compiling ===")
-    sdfg.compile(optimizer='')
+    sdfg.compile()

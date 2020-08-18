@@ -24,10 +24,16 @@
 #ifndef __DACE_CUDACOPY_CUH
 #define __DACE_CUDACOPY_CUH
 
+#ifdef __CUDACC__
 #include <cuda_runtime.h>
+#elif defined(__HIPCC__)
+#include <hip/hip_runtime.h>
+#endif
+
 #include "../types.h"
 #include "../vector.h"
 #include "../reduction.h"
+
 
 namespace dace
 {
@@ -813,8 +819,6 @@ namespace dace
     }
 
 }  // namespace dace
-
-
 
 
 #endif  // __DACE_CUDACOPY_CUH

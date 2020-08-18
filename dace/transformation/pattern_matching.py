@@ -9,7 +9,7 @@ from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
 from dace.sdfg.graph import SubgraphView
-from dace.properties import make_properties, Property, SubgraphProperty
+from dace.properties import make_properties, Property, DictProperty
 from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
@@ -39,7 +39,7 @@ class Transformation(object):
     # Properties
     sdfg_id = Property(dtype=int, category="(Debug)")
     state_id = Property(dtype=int, category="(Debug)")
-    subgraph = SubgraphProperty(dtype=dict, category="(Debug)")
+    _subgraph = DictProperty(key_type=int, value_type=int, category="(Debug)")
     expr_index = Property(dtype=int, category="(Debug)")
 
     @staticmethod
@@ -111,8 +111,15 @@ class Transformation(object):
                                 'subgraph'
                                 ' dictionary must be '
                                 'instances of int.')
-        self.subgraph = subgraph
+        # Serializable subgraph with node IDs as keys
+        expr = self.expressions()[expr_index]
+        self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
+        self._subgraph_user = subgraph
         self.expr_index = expr_index
+
+    @property
+    def subgraph(self):
+        return self._subgraph_user
 
     def __lt__(self, other):
         """ Comparing two transformations by their class name and node IDs
@@ -178,6 +185,35 @@ class Transformation(object):
         string += type(self).match_to_str(graph, self.subgraph)
         return string
 
+    def to_json(self, parent=None):
+        props = dace.serialize.all_properties_to_json(self)
+        return {
+            'type': 'Transformation',
+            'transformation': type(self).__name__,
+            **props
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        xform = next(ext for ext in Transformation.extensions().keys()
+                     if ext.__name__ == json_obj['transformation'])
+
+        # Recreate subgraph
+        expr = xform.expressions()[json_obj['expr_index']]
+        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
+
+        # Reconstruct transformation
+        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
+                    json_obj['expr_index'])
+        context = context or {}
+        context['transformation'] = ret
+        dace.serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'transformation', 'type'})
+        return ret
+
 
 class ExpandTransformation(Transformation):
     """Base class for transformations that simply expand a node into a
@@ -233,6 +269,13 @@ class ExpandTransformation(Transformation):
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
             expansion.debuginfo = node.debuginfo
+            if isinstance(expansion, dace.sdfg.nodes.NestedSDFG):
+                # Fix parent references
+                nsdfg = expansion.sdfg
+                nsdfg.parent = state
+                nsdfg.parent_sdfg = sdfg
+                nsdfg.update_sdfg_list([])
+                nsdfg.parent_nsdfg_node = expansion
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(
@@ -242,6 +285,7 @@ class ExpandTransformation(Transformation):
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
+
 
 @make_registry
 class SubgraphTransformation(object):
@@ -261,7 +305,7 @@ class SubgraphTransformation(object):
         :return: True if the subgraph can be transformed, or False otherwise.
         """
         pass
-    
+
     def apply(self, sdfg: SDFG, subgraph: SubgraphView):
         """
         Applies the transformation on the given subgraph.
@@ -270,8 +314,6 @@ class SubgraphTransformation(object):
                          transformation on.
         """
         pass
-
-
 
 
 # Module functions ############################################################

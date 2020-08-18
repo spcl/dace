@@ -122,6 +122,8 @@ def detect_reduction_type(wcr_str, openmp=False):
     elif (isinstance(wcr_ast, ast.Compare)
           and isinstance(wcr_ast.ops[0], ast.NotEq)):
         return dtypes.ReductionType.Logical_Xor
+    elif result == b:
+        return dtypes.ReductionType.Exchange
     # OpenMP extensions
     elif openmp and result == a - b:
         return dtypes.ReductionType.Sub

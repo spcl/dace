@@ -530,19 +530,22 @@ class CPPUnparser:
 
     def _Constant(self, t):
         value = t.value
-        if isinstance(value, tuple):
-            self.write("(")
-            if len(value) == 1:
-                self._write_constant(value[0])
-                self.write(",")
-            else:
-                interleave(lambda: self.write(", "), self._write_constant,
-                           value)
-            self.write(")")
-        elif value is Ellipsis:  # instead of `...` for Py2 compatibility
-            self.write("...")
+        if value is True or value is False or value is None:
+            self.write(_py2c_nameconst[value])
         else:
-            self._write_constant(t.value)
+            if isinstance(value, tuple):
+                self.write("(")
+                if len(value) == 1:
+                    self._write_constant(value[0])
+                    self.write(",")
+                else:
+                    interleave(lambda: self.write(", "), self._write_constant,
+                               value)
+                self.write(")")
+            elif value is Ellipsis:  # instead of `...` for Py2 compatibility
+                self.write("...")
+            else:
+                self._write_constant(t.value)
 
     def _ClassDef(self, t):
         raise NotImplementedError('Classes are unsupported')

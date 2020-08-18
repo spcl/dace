@@ -19,27 +19,38 @@
 #endif
 
 // Visual Studio (<=2017) + CUDA support
-#if defined(_MSC_VER) && (_MSC_VER <= 1999 || defined(__CUDACC__)) || defined(DACE_XILINX)
+#if defined(_MSC_VER) && _MSC_VER <= 1999
 #define DACE_CONSTEXPR
 #else
 #define DACE_CONSTEXPR constexpr
 #endif
 
-
+// GPU support
 #ifdef __CUDACC__
     #include <cuda_runtime.h>
     #include <thrust/complex.h>
     #include "../../../external/cub/cub/grid/grid_barrier.cuh"
+#elif defined(__HIPCC__)
+    #include <hip/hip_runtime.h>
+#endif
+
+#if defined(__CUDACC__) || defined(__HIPCC__)
     #define DACE_HDFI __host__ __device__ __forceinline__
     #define DACE_HFI __host__ __forceinline__
     #define DACE_DFI __device__ __forceinline__
+    
+    // Workaround so that half is defined as a scalar (for reductions)
+    namespace std {
+        template <>
+        struct is_scalar<half> : std::integral_constant<bool, true> {};
+    }  // namespace std
 #else
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline
 #endif
 
-#ifdef __CUDA_ARCH__
+#if defined(__CUDA_ARCH__) || defined(__HIP_ARCH__)
     #define __DACE_UNROLL DACE_PRAGMA(unroll)
 #else
     #define __DACE_UNROLL
@@ -63,6 +74,8 @@ namespace dace
     #ifdef __CUDACC__
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
+    typedef half float16;
+    #elif defined(__HIPCC__)
     typedef half float16;
     #else
     typedef std::complex<float> complex64;
@@ -109,6 +122,7 @@ namespace dace
         Bitwise_Xor = 10,
         Min_Location = 11,
         Max_Location = 12,
+        Exchange = 13
     };
 }
 

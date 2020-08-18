@@ -463,7 +463,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except sympy.core.sympify.SympifyError:
+            except sympy.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -539,7 +539,8 @@ class Range(Subset):
         elif self.dims() == other.dims():
             # case 2: subsets have the same dimensions (but possibly different
             # data_dims) -> all non-data dims remain
-            for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+            for idx, ((rb, re, rs),
+                      rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     if isinstance(other, Indices):
                         new_subset.append(rb)

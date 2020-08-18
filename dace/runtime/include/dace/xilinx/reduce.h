@@ -13,7 +13,7 @@
 namespace dace {
 
 ////////////////////////////////////////////////////////////////////////////////
-// Conversion from DACE reduction types to hlslib types 
+// Conversion from DACE reduction types to hlslib types
 ////////////////////////////////////////////////////////////////////////////////
 
 template <ReductionType rt>
@@ -139,7 +139,7 @@ ReduceImpl(T_in &&a, T_out &&b) {
 }  // End anonymous namespace
 
 ////////////////////////////////////////////////////////////////////////////////
-// Function exposed to DACE 
+// Function exposed to DACE
 ////////////////////////////////////////////////////////////////////////////////
 
 template <typename T, unsigned W_in, unsigned W_out, class Functor,
@@ -152,5 +152,31 @@ T Reduce(T_in &&a, T_out &&b) {
   return ReduceImpl<T, W_in, W_out, Functor>(Read<T, W_in>(a),
                                              Read<T, W_out>(b));
 }
+
+template <ReductionType reduction_type, typename T>
+struct xilinx_wcr_fixed {
+  static inline T reduce(T *ptr, const T &value) {
+    #pragma HLS INLINE
+    using Functor =
+        typename ConvertReduction<reduction_type>::template Operator<T>;
+    T old_val = *ptr;
+    *ptr = Reduce<T, 1, 1, Functor>(old_val, value);
+    return old_val;
+  }
+};
+
+// Specialization for vector types
+template <ReductionType reduction_type, typename T, unsigned int veclen>
+struct xilinx_wcr_fixed_vec {
+  static inline vec<T, veclen> reduce(vec<T, veclen> *ptr,
+                                      const vec<T, veclen> &value) {
+    #pragma HLS INLINE
+    using Functor =
+        typename ConvertReduction<reduction_type>::template Operator<T>;
+    vec<T, veclen> old_val = *ptr;
+    *ptr = Reduce<T, veclen, veclen, Functor>(old_val, value);
+    return old_val;
+  }
+};
 
 }  // End namespace dace
