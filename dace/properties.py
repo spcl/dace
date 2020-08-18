@@ -554,6 +554,37 @@ class ListProperty(Property):
         return list(map(self.element_type, data))
 
 
+class TransformationHistProperty(Property):
+    """ Property type for transformation histories.
+    """
+    def __init__(self, *args, **kwargs):
+        """
+        Create a List property with element type Transformation.
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
+        """
+
+        kwargs['dtype'] = list
+        super().__init__(*args, **kwargs)
+
+    def __set__(self, obj, val):
+        super(TransformationHistProperty, self).__set__(obj, val)
+
+    def to_json(self, hist):
+        if hist is None:
+            return None
+        return [elem.to_json() for elem in hist]
+
+    def from_json(self, data, sdfg=None):
+        if data is None:
+            return data
+        if not isinstance(data, list):
+            raise TypeError(
+                'TransformationHistProperty expects a list input, got %s' % data
+            )
+        return [dace.serialize.from_json(elem) for elem in data]
+
+
 class DictProperty(Property):
     """ Property type for dictionaries. """
     def __init__(self, key_type, value_type, *args, **kwargs):

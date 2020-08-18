@@ -9,8 +9,8 @@ from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
-                       is_devicelevel_gpu, is_array_stream_view,
-                       NodeNotExpandedError)
+                       is_array_stream_view, NodeNotExpandedError)
+from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 from typing import Union
 
 
@@ -25,6 +25,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
+        self.calling_codegen = self
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -804,8 +805,16 @@ class CPUCodeGen(TargetCodeGenerator):
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
-                        defined_type, _ = self._dispatcher.defined_vars.get(
-                            memlet.data)
+                        try:
+                            defined_type, _ = self._dispatcher.defined_vars.get(
+                                memlet.data)
+                        except KeyError:  # The variable is not defined
+                            # This case happens with nested SDFG outputs,
+                            # which we skip since the memlets are references
+                            if isinstance(node, nodes.NestedSDFG):
+                                continue
+                            raise
+
                         if defined_type == DefinedType.Scalar:
                             expr = memlet.data
                         elif defined_type == DefinedType.ArrayInterface:
@@ -1297,6 +1306,54 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
                                callsite_stream)
 
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
+        arguments = [
+            f'{atype} {aname}' for atype, aname, _ in memlet_references
+        ]
+        arguments += [
+            f'{node.sdfg.symbols[aname].signature(aname)}'
+            for aname in sorted(node.symbol_mapping.keys())
+            if aname not in sdfg.constants
+        ]
+        arguments = ', '.join(arguments)
+        return f'void {sdfg_label}({arguments}) {{'
+
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
+                            sdfg_label):
+        args = ', '.join([argval for _, _, argval in memlet_references] + [
+            sym2cpp(symval)
+            for symname, symval in sorted(node.symbol_mapping.items())
+            if symname not in sdfg.constants
+        ])
+        return f'{sdfg_label}({args});'
+
+    def generate_nsdfg_arguments(self, sdfg, state, node):
+        # Connectors that are both input and output share the same name
+        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
+
+        memlet_references = []
+        for _, _, _, vconn, in_memlet in state.in_edges(node):
+            if vconn in inout or in_memlet.data is None:
+                continue
+            memlet_references.append(
+                emit_memlet_reference(self._dispatcher,
+                                      sdfg,
+                                      in_memlet,
+                                      vconn,
+                                      conntype=node.in_connectors[vconn]))
+
+        for _, uconn, _, _, out_memlet in state.out_edges(node):
+            if out_memlet.data is not None:
+                memlet_references.append(
+                    emit_memlet_reference(self._dispatcher,
+                                          sdfg,
+                                          out_memlet,
+                                          uconn,
+                                          conntype=node.out_connectors[uconn]))
+        return memlet_references
+
     def _generate_NestedSDFG(
         self,
         sdfg,
@@ -1306,100 +1363,42 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ):
-        callsite_stream.write('{', sdfg, state_id, node)
-        self._dispatcher.defined_vars.enter_scope(sdfg)
+        self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=False)
         state_dfg = sdfg.nodes()[state_id]
 
-        # Connectors that are both input and output share the same name
-        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
-
-        # TODO: Emit nested SDFG as a separate function
+        # Emit nested SDFG as a separate function
         nested_stream = CodeIOStream()
-
+        nested_global_stream = CodeIOStream()
         sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id, state_id,
                                       dfg.node_id(node))
+
+        #########################################
+        # Take care of nested SDFG I/O (arguments)
         # Arguments are input connectors, output connectors, and symbols
-        # TODO: Use one method for kernels and nested SDFGs
-        # arguments = [
-        #     f'{atype.ctype} {aname}' for aname, atype in set(
-        #         itertools.chain(node.in_connectors.items(),
-        #                         node.out_connectors.items()))
-        # ]
-        # arguments += [
-        #     f'{node.sdfg.symbols[aname].ctype} {aname}'
-        #     for aname in node.symbol_mapping.keys()
-        # ]
-        # arguments = ', '.join(arguments)
-        # nested_stream.write(f'void {sdfg_label}({arguments}) {{}}', sdfg,
-        #                     state_id, node)
+        codegen = self.calling_codegen
+        memlet_references = codegen.generate_nsdfg_arguments(
+            sdfg, state_dfg, node)
 
-        # Emit accessors as pointers/references (rather than new objects)
-        # Take care of nested SDFG I/O
-        for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
-            if vconn in inout or in_memlet.data is None:
-                continue
-            callsite_stream.write(
-                emit_memlet_reference(self._dispatcher,
-                                      sdfg,
-                                      in_memlet,
-                                      vconn,
-                                      conntype=node.in_connectors[vconn]), sdfg,
-                state_id, node)
-        for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
-            if out_memlet.data is not None:
-                out_code = emit_memlet_reference(
-                    self._dispatcher,
-                    sdfg,
-                    out_memlet,
-                    uconn,
-                    conntype=node.out_connectors[uconn])
+        nested_stream.write(
+            codegen.generate_nsdfg_header(sdfg, state_dfg, node,
+                                          memlet_references, sdfg_label), sdfg,
+            state_id, node)
 
-                callsite_stream.write(out_code, sdfg, state_id, node)
-
-        callsite_stream.write("\n{    ///////////////////\n", sdfg, state_id,
-                              node)
-
-        # Emit symbol mappings
-        # HACK: We first emit variables of the form __dacesym_X = Y to avoid
-        #       overriding symbolic expressions when the symbol names match
-        # TODO: When emitting nested SDFGs as separate functions,
-        #       remove the workaround
-        for symname, symval in sorted(node.symbol_mapping.items()):
-            if symname in sdfg.constants:
-                continue
-            callsite_stream.write(
-                '{dtype} __dacesym_{symname} = {symval};\n'.format(
-                    dtype=node.sdfg.symbols[symname],
-                    symname=symname,
-                    symval=sym2cpp(symval)), sdfg, state_id, node)
-        for symname in sorted(node.symbol_mapping.keys()):
-            if symname in sdfg.constants:
-                continue
-            callsite_stream.write(
-                '{dtype} {symname} = __dacesym_{symname};\n'.format(
-                    symname=symname, dtype=node.sdfg.symbols[symname]), sdfg,
-                state_id, node)
-        ## End of symbol mappings
+        #############################
+        # Generate function contents
+        self._frame.generate_constants(node.sdfg, nested_stream)
 
         old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
 
-        sdfg_label = "_%d_%d" % (state_id, dfg.node_id(node))
         # Generate code for internal SDFG
         global_code, local_code, used_targets, used_environments = self._frame.generate_code(
             node.sdfg, node.schedule, sdfg_label)
         self._dispatcher._used_environments |= used_environments
 
-        # Write generated code in the proper places (nested SDFG writes
-        # location info)
-        function_stream.write(global_code)
-        function_stream.write(nested_stream.getvalue())
-        callsite_stream.write(local_code)
-
         self._toplevel_schedule = old_schedule
 
-        callsite_stream.write("}    ///////////////////\n\n", sdfg, state_id,
-                              node)
+        nested_stream.write(local_code)
 
         # Process outgoing memlets with the internal SDFG
         self.process_out_memlets(sdfg,
@@ -1407,13 +1406,29 @@ class CPUCodeGen(TargetCodeGenerator):
                                  node,
                                  state_dfg,
                                  self._dispatcher,
-                                 callsite_stream,
+                                 nested_stream,
                                  True,
-                                 function_stream,
+                                 nested_global_stream,
                                  skip_wcr=True)
 
+        nested_stream.write('}\n\n', sdfg, state_id, node)
+
+        ########################
+        # Generate function call
+
+        callsite_stream.write(
+            codegen.generate_nsdfg_call(sdfg, state_dfg, node,
+                                        memlet_references, sdfg_label), sdfg,
+            state_id, node)
+
+        ###############################################################
+        # Write generated code in the proper places (nested SDFG writes
+        # location info)
+        function_stream.write(global_code)
+        function_stream.write(nested_global_stream.getvalue())
+        function_stream.write(nested_stream.getvalue())
+
         self._dispatcher.defined_vars.exit_scope(sdfg)
-        callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_MapEntry(
         self,

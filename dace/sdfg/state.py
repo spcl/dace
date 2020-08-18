@@ -1530,6 +1530,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                     if propagate:
                         cur_memlet = propagate_memlet(self, cur_memlet, snode,
                                                       True)
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
 
     # DEPRECATED FUNCTIONS
     ######################################
