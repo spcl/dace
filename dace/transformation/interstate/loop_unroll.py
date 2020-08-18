@@ -134,10 +134,9 @@ class LoopUnroll(DetectLoop):
 
         # Get loop states
         loop_states = list(
-            sdutil.dfs_topological_sort(
-                sdfg,
-                sources=[begin],
-                condition=lambda _, child: child != guard))
+            sdutil.dfs_conditional(sdfg,
+                                   sources=[begin],
+                                   condition=lambda _, child: child != guard))
         first_id = loop_states.index(begin)
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
