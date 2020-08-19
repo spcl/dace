@@ -62,8 +62,7 @@ if __name__ == "__main__":
             "postamble": False
         }]
 
-    for t, to in zip(transformations, transformation_options):
-        sdfg.apply_transformations(t, to)
+    sdfg.apply_transformations(transformations, transformation_options)
 
     sdfg(x=X, y=Y, z=Z, N=N)
 
