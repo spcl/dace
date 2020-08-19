@@ -419,15 +419,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Generate data width converters
         self.generate_converters(sdfg, kernel_header_stream)
 
-        res = (kernel_header_stream.getvalue() + kernel_body_stream.getvalue())
-
-        # TODO: To avoid re-implementing process_out_memlets and potentially
-        # other CPU codegen functionality, convert to OpenCL vector types here.
-        # It was either this or copy-pasting large amounts of code :-)
-        # We need a solution for this in the new code generator.
-        res = re.sub("dace::vec<([^,]+), ([2-9]+|[1-9][0-9]+)>", "\\1\\2", res)
-
-        kernel_stream.write(res)
+        kernel_stream.write(kernel_header_stream.getvalue() +
+                            kernel_body_stream.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
 
