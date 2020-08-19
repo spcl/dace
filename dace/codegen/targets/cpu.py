@@ -4,7 +4,7 @@ import warnings
 from dace import data, registry, memlet as mm
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.common import codeblock_to_cpp
-from dace.codegen.targets.cpp import *
+from dace.codegen.targets import cpp
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.sdfg import nodes
@@ -118,8 +118,8 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream,
     ):
         entry_node = dfg_scope.source_nodes()[0]
-        presynchronize_streams(sdfg, dfg_scope, state_id, entry_node,
-                               callsite_stream)
+        cpp.presynchronize_streams(sdfg, dfg_scope, state_id, entry_node,
+                                   callsite_stream)
 
         self.generate_node(sdfg, dfg_scope, state_id, entry_node,
                            function_stream, callsite_stream)
@@ -197,11 +197,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     callsite_stream,
                 )
 
-                array_expr = copy_expr(self._dispatcher,
-                                       sdfg,
-                                       nodedesc.sink,
-                                       edges[0].data,
-                                       packed_types=self._packed_types)
+                array_expr = cpp.copy_expr(self._dispatcher,
+                                           sdfg,
+                                           nodedesc.sink,
+                                           edges[0].data,
+                                           packed_types=self._packed_types)
                 threadlocal = ""
                 threadlocal_stores = [
                     dtypes.StorageType.CPU_ThreadLocal,
@@ -499,8 +499,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if memlet.data != src_node.data and memlet.other_subset:
                         stream_subset = memlet.other_subset
 
-                    stream_expr = cpp_offset_expr(src_nodedesc, stream_subset)
-                    array_expr = cpp_offset_expr(dst_nodedesc, array_subset)
+                    stream_expr = cpp.cpp_offset_expr(src_nodedesc,
+                                                      stream_subset)
+                    array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset)
                     assert functools.reduce(lambda a, b: a * b,
                                             src_nodedesc.shape, 1) == 1
                     stream.write(
@@ -547,7 +548,7 @@ class CPUCodeGen(TargetCodeGenerator):
             state_dfg = sdfg.nodes()[state_id]
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
-                memlet_copy_to_absolute_strides(
+                cpp.memlet_copy_to_absolute_strides(
                     self._dispatcher, sdfg, memlet, src_node, dst_node,
                     self._packed_types)
 
@@ -605,10 +606,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     stride_tmpl_args[j] = dst
                     j += 1
 
-            copy_args = ([src_expr, dst_expr] +
-                         ([] if memlet.wcr is None else
-                          [unparse_cr(sdfg, memlet.wcr, dst_nodedesc.dtype)]) +
-                         sym2cpp(stride_tmpl_args))
+            copy_args = (
+                [src_expr, dst_expr] +
+                ([] if memlet.wcr is None else
+                 [cpp.unparse_cr(sdfg, memlet.wcr, dst_nodedesc.dtype)]) +
+                sym2cpp(stride_tmpl_args))
 
             # Instrumentation: Pre-copy
             for instr in self._dispatcher.instrumentation.values():
@@ -619,7 +621,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             nc = True
             if memlet.wcr is not None:
-                nc = not is_write_conflicted(
+                nc = not cpp.is_write_conflicted(
                     dfg, edge, sdfg_schedule=self._toplevel_schedule)
             if nc:
                 stream.write(
@@ -683,9 +685,9 @@ class CPUCodeGen(TargetCodeGenerator):
         redtype = operations.detect_reduction_type(memlet.wcr)
         atomic = "_atomic" if not nc else ""
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp_ptr_expr(sdfg, memlet), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet), indices)
         else:
-            ptr = cpp_ptr_expr(sdfg, memlet, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, indices=indices)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -699,7 +701,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 f'{ptr}, {inname})')
 
         # General reduction
-        custom_reduction = unparse_cr(sdfg, memlet.wcr, dtype)
+        custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
         return (f'dace::wcr_custom<{dtype.ctype}>:: template reduce{atomic}('
                 f'{custom_reduction}, {ptr}, {inname})')
 
@@ -791,7 +793,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_dfg = sdfg.nodes()[state_id]
 
                     if memlet.wcr is not None:
-                        nc = not is_write_conflicted(
+                        nc = not cpp.is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
                         result.write(
                             codegen.write_and_resolve_expr(
@@ -820,14 +822,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
                             expr = '*(%s + %s).ptr_out()' % (
                                 memlet.data,
-                                cpp_array_expr(
+                                cpp.cpp_array_expr(
                                     sdfg, memlet, with_brackets=False))
                         else:
-                            expr = cpp_array_expr(sdfg, memlet)
+                            expr = cpp.cpp_array_expr(sdfg, memlet)
                             # If there is a type mismatch, cast pointer
-                            expr = make_ptr_vector_cast(sdfg, expr, memlet,
-                                                        conntype, is_scalar,
-                                                        defined_type)
+                            expr = cpp.make_ptr_vector_cast(
+                                sdfg, expr, memlet, conntype, is_scalar,
+                                defined_type)
 
                         result.write(
                             "%s = %s;\n" % (expr, in_local_name),
@@ -875,7 +877,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
         result = ''
-        expr = (cpp_array_expr(sdfg, memlet, with_brackets=False)
+        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
                 if var_type in [
                     DefinedType.Pointer, DefinedType.StreamArray,
                     DefinedType.ArrayInterface
@@ -894,8 +896,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if expr != memlet.data:
                 expr = '%s[%s]' % (memlet.data, expr)
             # If there is a type mismatch, cast pointer
-            expr = make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar,
-                                        var_type)
+            expr = cpp.make_ptr_vector_cast(sdfg, expr, memlet, conntype,
+                                            is_scalar, var_type)
 
         defined = None
 
@@ -957,7 +959,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         stream = sdfg.arrays[memlet.data]
         return memlet.data + ("[{}]".format(
-            cpp_offset_expr(stream, memlet.subset)) if isinstance(
+            cpp.cpp_offset_expr(stream, memlet.subset)) if isinstance(
                 stream, dace.data.Stream) and stream.is_stream_array() else "")
 
     def memlet_ctor(self, sdfg, memlet, dtype, is_output):
@@ -1190,12 +1192,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._dispatcher.defined_vars.exit_scope(node)
 
-
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         inner_stream, locals, ldepth, toplevel_schedule):
         # Call the generic CPP unparse_tasklet method
-        unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                        inner_stream, locals, ldepth, toplevel_schedule, self)
+        cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+                            inner_stream, locals, ldepth, toplevel_schedule,
+                            self)
 
     def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
                           edge, function_stream, callsite_stream):
@@ -1204,7 +1206,7 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
-            base_ptr = cpp_ptr_expr(sdfg, edge.data)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data)
             callsite_stream.write(
                 f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id,
                 src_node)
@@ -1259,15 +1261,15 @@ class CPUCodeGen(TargetCodeGenerator):
             if vconn in inout or in_memlet.data is None:
                 continue
             callsite_stream.write(
-                emit_memlet_reference(self._dispatcher,
-                                      sdfg,
-                                      in_memlet,
-                                      vconn,
-                                      conntype=node.in_connectors[vconn]), sdfg,
-                state_id, node)
+                cpp.emit_memlet_reference(self._dispatcher,
+                                          sdfg,
+                                          in_memlet,
+                                          vconn,
+                                          conntype=node.in_connectors[vconn]),
+                sdfg, state_id, node)
         for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
             if out_memlet.data is not None:
-                out_code = emit_memlet_reference(
+                out_code = cpp.emit_memlet_reference(
                     self._dispatcher,
                     sdfg,
                     out_memlet,
@@ -1690,8 +1692,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if node not in state_dfg.sink_nodes():
             # NOTE: sink nodes are synchronized at the end of a state
-            presynchronize_streams(sdfg, state_dfg, state_id, node,
-                                   callsite_stream)
+            cpp.presynchronize_streams(sdfg, state_dfg, state_id, node,
+                                       callsite_stream)
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
