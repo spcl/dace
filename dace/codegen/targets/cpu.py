@@ -9,6 +9,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
                                          DefinedType)
+from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_devicelevel_gpu, is_array_stream_view,
