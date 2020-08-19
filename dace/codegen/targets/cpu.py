@@ -246,14 +246,15 @@ class CPUCodeGen(TargetCodeGenerator):
             if nodedesc.storage == dtypes.StorageType.Register:
                 warnings.warn('Variable-length array %s with size %s '
                               'detected and was allocated on heap instead of '
-                              '%s' % (name, sym2cpp(arrsize), nodedesc.storage))
+                              '%s' %
+                              (name, cpp.sym2cpp(arrsize), nodedesc.storage))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
             callsite_stream.write(
                 "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
                 (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
-                 sym2cpp(arrsize)),
+                 cpp.sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
@@ -264,14 +265,14 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 callsite_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
-                    (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
+                    (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if node.setzero:
                 callsite_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
-                    (nodedesc.dtype.ctype, name, sym2cpp(arrsize)),
+                    (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
                     sdfg,
                     state_id,
                     node,
@@ -281,7 +282,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
             callsite_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" %
-                (nodedesc.dtype.ctype, name, sym2cpp(arrsize)),
+                (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
@@ -311,7 +312,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(
                     ctype=nodedesc.dtype.ctype,
                     name=name,
-                    arrsize=sym2cpp(arrsize)),
+                    arrsize=cpp.sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
@@ -319,7 +320,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 callsite_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
-                    (name, nodedesc.dtype.ctype, sym2cpp(arrsize)))
+                    (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             # Close OpenMP parallel section
             callsite_stream.write('}')
         else:
@@ -511,7 +512,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             s=src_node.data,
                             arr=dst_node.data,
                             aexpr=array_expr,
-                            maxsize=sym2cpp(array_subset.num_elements())),
+                            maxsize=cpp.sym2cpp(array_subset.num_elements())),
                         sdfg,
                         state_id,
                         [src_node, dst_node],
@@ -531,7 +532,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         )
                     else:
                         copysize = " * ".join(
-                            [sym2cpp(s) for s in memlet.subset.size()])
+                            [cpp.sym2cpp(s) for s in memlet.subset.size()])
                         stream.write(
                             "{s}.push({arr}, {size});".format(s=dst_node.data,
                                                               arr=src_node.data,
@@ -570,7 +571,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     type=ctype,
                     veclen=1,  # Taken care of in "type"
                     aligned="false",
-                    dims=", ".join(sym2cpp(copy_shape)),
+                    dims=", ".join(cpp.sym2cpp(copy_shape)),
                 )
                 dynshape = 0
 
@@ -580,14 +581,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     for s in dst_strides):
                 # Constant destination
                 shape_tmpl = "template ConstDst<%s>" % ", ".join(
-                    sym2cpp(dst_strides))
+                    cpp.sym2cpp(dst_strides))
                 dyndst = 0
             elif not any(
                     symbolic.issymbolic(s, sdfg.constants)
                     for s in src_strides):
                 # Constant source
                 shape_tmpl = "template ConstSrc<%s>" % ", ".join(
-                    sym2cpp(src_strides))
+                    cpp.sym2cpp(src_strides))
                 dynsrc = 0
             else:
                 # Both dynamic
@@ -612,7 +613,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 [src_expr, dst_expr] +
                 ([] if memlet.wcr is None else
                  [cpp.unparse_cr(sdfg, memlet.wcr, dst_nodedesc.dtype)]) +
-                sym2cpp(stride_tmpl_args))
+                cpp.sym2cpp(stride_tmpl_args))
 
             # Instrumentation: Pre-copy
             for instr in self._dispatcher.instrumentation.values():
@@ -1295,7 +1296,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 '{dtype} __dacesym_{symname} = {symval};\n'.format(
                     dtype=node.sdfg.symbols[symname],
                     symname=symname,
-                    symval=sym2cpp(symval)), sdfg, state_id, node)
+                    symval=cpp.sym2cpp(symval)), sdfg, state_id, node)
         for symname in sorted(node.symbol_mapping.keys()):
             if symname in sdfg.constants:
                 continue
@@ -1412,7 +1413,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Construct (EXCLUSIVE) map range as a list of comma-delimited C++
         # strings.
         maprange_cppstr = [
-            "%s, %s, %s" % (sym2cpp(rb), sym2cpp(re + 1), sym2cpp(rs))
+            "%s, %s, %s" %
+            (cpp.sym2cpp(rb), cpp.sym2cpp(re + 1), cpp.sym2cpp(rs))
             for rb, re, rs in node.map.range
         ]
 
@@ -1428,8 +1430,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             result.write(
                 "for (auto %s = %s; %s < %s; %s += %s) {\n" %
-                (var, sym2cpp(begin), var, sym2cpp(end + 1), var,
-                 sym2cpp(skip)),
+                (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var,
+                 cpp.sym2cpp(skip)),
                 sdfg,
                 state_id,
                 node,
@@ -1563,7 +1565,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,
-                num_pes=sym2cpp(node.consume.num_pes),
+                num_pes=cpp.sym2cpp(node.consume.num_pes),
                 pe_index=node.consume.pe_index,
             ),
             sdfg,
