@@ -2,7 +2,7 @@ import itertools
 import warnings
 
 import dace
-from dace import data, dtypes, registry, memlet as mm
+from dace import data, dtypes, registry, memlet, subsets
 from dace.codegen import cppunparse
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
@@ -856,7 +856,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def memlet_definition(self,
                           sdfg: SDFG,
-                          memlet: mm.Memlet,
+                          memlet: memlet.Memlet,
                           output: bool,
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
