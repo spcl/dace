@@ -198,17 +198,15 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}{}".format("const " if is_const else "",
-                               dtype.base_type.ctype,
-                               dtype.veclen if str(dtype.veclen) != "1" else "")
+        return "{}{}".format("const " if is_const else "", dtype.ocltype)
 
     def make_kernel_argument(self, data, var_name, is_output,
                              with_vectorization):
         if isinstance(data, dace.data.Array):
             if with_vectorization:
-                vec_type = self.make_vector_type(data.dtype, False)
+                vec_type = data.dtype.ocltype
             else:
-                vec_type = data.dtype.ctype
+                vec_type = fpga.vector_element_type_of(data.dtype).ocltype
             return "__global volatile  {}* restrict {}".format(
                 vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
@@ -261,9 +259,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             raise NotImplementedError(
                 "Unimplemented read type: {}".format(defined_type))
         if is_pack:
-            ctype = fpga.vector_element_type_of(dtype).ctype
-            self.converters_to_generate.add((True, ctype, packing_factor))
-            return "pack_{}{}(&({}))".format(ctype, packing_factor, read_expr)
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.converters_to_generate.add((True, ocltype, packing_factor))
+            return "pack_{}{}(&({}))".format(ocltype, packing_factor, read_expr)
         else:
             return read_expr
 
@@ -299,17 +297,18 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 else:
                     # use max/min opencl builtins
                     return "{}[{}] = {}{}({}[{}],{});".format(
-                        write_expr, index, ("f" if dtype.ctype == "float"
-                                            or dtype.ctype == "double" else ""),
+                        write_expr, index,
+                        ("f" if dtype.ocltype == "float"
+                         or dtype.ocltype == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
                 if is_unpack:
-                    ctype = fpga.vector_element_type_of(dtype).ctype
+                    ocltype = fpga.vector_element_type_of(dtype).ocltype
                     self.converters_to_generate.add(
-                        (False, ctype, packing_factor))
+                        (False, ocltype, packing_factor))
                     return "unpack_{}{}({}, &{}[{}]);".format(
-                        ctype, packing_factor, read_expr, write_expr, index)
+                        ocltype, packing_factor, read_expr, write_expr, index)
                 else:
                     return "{}[{}] = {};".format(write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
@@ -321,18 +320,18 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 else:
                     # use max/min opencl builtins
                     return "{} = {}{}({},{});".format(
-                        write_expr, ("f" if dtype.ctype == "float"
-                                     or dtype.ctype == "double" else ""),
+                        write_expr, ("f" if dtype.ocltype == "float"
+                                     or dtype.ocltype == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
                 if is_unpack:
-                    ctype = fpga.vector_element_type_of(dtype).ctype
+                    ocltype = fpga.vector_element_type_of(dtype).ocltype
                     self.converters_to_generate.add(
-                        (False, ctype, packing_factor))
+                        (False, ocltype, packing_factor))
                     return "unpack_{}{}({}, {});".format(
-                        dtype.base_type.ctype, packing_factor, read_expr,
-                        var_name)
+                        vector_element_type_of(dtype).ocltype, packing_factor,
+                        read_expr, var_name)
                 else:
                     return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
@@ -1006,6 +1005,11 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         return self.make_write(defined_type, dtype, memlet.data, memlet.data,
                                offset, inname, memlet.wcr, False, 1)
 
+    def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
+                             var_type):
+        vtype = self.make_vector_type(conntype, False)
+        return f"{vtype}({expr})"
+
 
 class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     """
@@ -1057,15 +1061,15 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
-            ctype = fpga.vector_element_type_of(dtype).ctype
-            self.width_converters.add((True, ctype, veclen))
-            unpack_str = "unpack_{}{}".format(ctype, veclen)
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.width_converters.add((True, ocltype, veclen))
+            unpack_str = "unpack_{}{}".format(ocltype, veclen)
 
         if veclen_lhs > veclen_rhs:
             veclen = veclen_lhs
-            ctype = fpga.vector_element_type_of(dtype).ctype
-            self.width_converters.add((False, ctype, veclen))
-            pack_str = "pack_{}{}".format(ctype, veclen)
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.width_converters.add((False, ocltype, veclen))
+            pack_str = "pack_{}{}".format(ocltype, veclen)
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":
