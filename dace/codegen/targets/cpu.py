@@ -2,7 +2,7 @@ import itertools
 import warnings
 
 import dace
-from dace import data, dtypes, registry, memlet, subsets
+from dace import data, dtypes, registry, memlet, subsets, symbolic
 from dace.codegen import cppunparse
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
