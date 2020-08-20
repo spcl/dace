@@ -8,17 +8,30 @@ def load_sdfg_from_json(json):
     # We lazy import SDFGs, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.sdfg import SDFG
-    try:
-        sdfg = SDFG.from_json(json)
-        error = None
-    except Exception as e:
+
+    if ('error' in json):
+        message = ''
+        if ('message' in json['error']):
+            message = json['error']['message']
         error = {
             'error': {
-                'message': 'Failed to parse the provided SDFG',
-                'details': get_exception_message(e),
-            },
+                'message': 'Invalid SDFG provided',
+                'details': message,
+            }
         }
         sdfg = None
+    else:
+        try:
+            sdfg = SDFG.from_json(json)
+            error = None
+        except Exception as e:
+            error = {
+                'error': {
+                    'message': 'Failed to parse the provided SDFG',
+                    'details': get_exception_message(e),
+                },
+            }
+            sdfg = None
     return {
         'error': error,
         'sdfg': sdfg,
