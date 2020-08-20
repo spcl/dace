@@ -1,8 +1,7 @@
 import itertools
 import warnings
 
-import dace
-from dace import data, dtypes, registry, memlet, subsets, symbolic
+from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import cppunparse
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
@@ -13,7 +12,8 @@ from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_devicelevel_gpu, is_array_stream_view,
-                       NodeNotExpandedError)
+                       NodeNotExpandedError, dynamic_map_inputs,
+                       local_transients)
 from typing import Union
 
 
@@ -47,14 +47,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
-            if isinstance(arg_type, dace.data.Scalar):
+            if isinstance(arg_type, data.Scalar):
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar,
                                                   arg_type.dtype.ctype)
-            elif isinstance(arg_type, dace.data.Array):
+            elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(
                     name, DefinedType.Pointer,
                     dtypes.pointer(arg_type.dtype).ctype)
-            elif isinstance(arg_type, dace.data.Stream):
+            elif isinstance(arg_type, data.Stream):
                 if arg_type.is_stream_array():
                     self._dispatcher.defined_vars.add(
                         name, DefinedType.StreamArray,
@@ -70,7 +70,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
         dispatcher.register_map_dispatcher(
-            [dace.ScheduleType.CPU_Multicore, dace.ScheduleType.Sequential],
+            [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential],
             self)
 
         cpu_storage = [
@@ -89,13 +89,13 @@ class CPUCodeGen(TargetCodeGenerator):
     def cmake_options():
         options = []
 
-        if dace.Config.get('compiler', 'cpu', 'executable'):
-            compiler = make_absolute(
-                dace.Config.get('compiler', 'cpu', 'executable'))
+        if Config.get('compiler', 'cpu', 'executable'):
+            compiler = make_absolute(Config.get('compiler', 'cpu',
+                                                'executable'))
             options.append('-DCMAKE_CXX_COMPILER="{}"'.format(compiler))
 
-        if dace.Config.get('compiler', 'cpu', 'args'):
-            flags = dace.Config.get('compiler', 'cpu', 'args')
+        if Config.get('compiler', 'cpu', 'args'):
+            flags = Config.get('compiler', 'cpu', 'args')
             options.append('-DCMAKE_CXX_FLAGS="{}"'.format(flags))
 
         return options
@@ -697,7 +697,7 @@ class CPUCodeGen(TargetCodeGenerator):
             dtype = dtype.base_type
 
         # Special call for detected reduction types
-        if redtype != dace.ReductionType.Custom:
+        if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(
                 redtype)[str(redtype).find(".") + 1:]
             return (
@@ -857,7 +857,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def memlet_definition(self,
                           sdfg: SDFG,
-                          memlet: memlet.Memlet,
+                          memlet: mmlt.Memlet,
                           output: bool,
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
@@ -964,7 +964,7 @@ class CPUCodeGen(TargetCodeGenerator):
         stream = sdfg.arrays[memlet.data]
         return memlet.data + ("[{}]".format(
             cpp.cpp_offset_expr(stream, memlet.subset)) if isinstance(
-                stream, dace.data.Stream) and stream.is_stream_array() else "")
+                stream, data.Stream) and stream.is_stream_array() else "")
 
     def memlet_ctor(self, sdfg, memlet, dtype, is_output):
 
@@ -1091,9 +1091,9 @@ class CPUCodeGen(TargetCodeGenerator):
             ctype = cdtype.ctype
             # Convert dtype to data descriptor
             if isinstance(cdtype, dtypes.pointer):
-                arg_type = dace.data.Array(cdtype._typeclass, [1])
+                arg_type = data.Array(cdtype._typeclass, [1])
             else:
-                arg_type = dace.data.Scalar(cdtype)
+                arg_type = data.Scalar(cdtype)
 
             if (isinstance(dst_node, nodes.CodeNode)
                     and edge.src_conn not in tasklet_out_connectors):
@@ -1111,18 +1111,18 @@ class CPUCodeGen(TargetCodeGenerator):
                 code = "%s %s;" % (ctype, local_name)
                 outer_stream_begin.write(code, sdfg, state_id,
                                          [edge.src, dst_node])
-                if (isinstance(arg_type, dace.data.Scalar)
+                if (isinstance(arg_type, data.Scalar)
                         or isinstance(arg_type, dtypes.typeclass)):
                     self._dispatcher.defined_vars.add(local_name,
                                                       DefinedType.Scalar,
                                                       ctype,
                                                       ancestor=1)
-                elif isinstance(arg_type, dace.data.Array):
+                elif isinstance(arg_type, data.Array):
                     self._dispatcher.defined_vars.add(local_name,
                                                       DefinedType.Pointer,
                                                       ctype,
                                                       ancestor=1)
-                elif isinstance(arg_type, dace.data.Stream):
+                elif isinstance(arg_type, data.Stream):
                     if arg_type.is_stream_array():
                         self._dispatcher.defined_vars.add(
                             local_name,
@@ -1362,7 +1362,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('{', sdfg, state_id, node)
 
         # Define all input connectors of this map entry
-        for e in dace.sdfg.dynamic_map_inputs(state_dfg, node):
+        for e in dynamic_map_inputs(state_dfg, node):
             callsite_stream.write(
                 self.memlet_definition(sdfg, e.data, False, e.dst_conn,
                                        e.dst.in_connectors[e.dst_conn]), sdfg,
@@ -1380,7 +1380,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # TODO: Refactor to generate_scope_preamble once a general code
         #  generator (that CPU inherits from) is implemented
-        if node.map.schedule == dace.ScheduleType.CPU_Multicore:
+        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             map_header += "#pragma omp parallel for"
             if node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
@@ -1392,7 +1392,7 @@ class CPUCodeGen(TargetCodeGenerator):
             #    if (isinstance(outedge.src, nodes.CodeNode)
             #            and outedge.data.wcr is not None):
             #        redt = operations.detect_reduction_type(outedge.data.wcr)
-            #        if redt != dace.ReductionType.Custom:
+            #        if redt != dtypes.ReductionType.Custom:
             #            reduction_stmts.append('reduction({typ}:{var})'.format(
             #                typ=_REDUCTION_TYPE_TO_OPENMP[redt],
             #                var=outedge.src_conn))
@@ -1402,7 +1402,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # TODO: Explicit map unroller
         if node.map.unroll:
-            if node.map.schedule == dace.ScheduleType.CPU_Multicore:
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                 raise ValueError("A Multicore CPU map cannot be unrolled (" +
                                  node.map.label + ")")
 
@@ -1441,7 +1441,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg, node)
+        to_allocate = local_transients(sdfg, dfg, node)
         allocated = set()
         for child in dfg.scope_dict(node_to_children=True)[node]:
             if not isinstance(child, nodes.AccessNode):
@@ -1466,7 +1466,7 @@ class CPUCodeGen(TargetCodeGenerator):
                              " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg, map_node)
+        to_allocate = local_transients(sdfg, dfg, map_node)
         deallocated = set()
         for child in dfg.scope_dict(node_to_children=True)[map_node]:
             if not isinstance(child, nodes.AccessNode):
@@ -1584,7 +1584,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                          transient=True,
                                          storage=dtypes.StorageType.Register,
                                          find_new_name=True)
-            ce_node = nodes.AccessNode(newname, dace.AccessType.ReadOnly)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         else:
             newname, _ = sdfg.add_array("__dace_" + node.consume.label +
                                         '_elements', [node.consume.chunksize],
@@ -1592,7 +1592,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                         transient=True,
                                         storage=dtypes.StorageType.Register,
                                         find_new_name=True)
-            ce_node = nodes.AccessNode(newname, dace.AccessType.ReadOnly)
+            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])
@@ -1617,7 +1617,7 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg, node)
+        to_allocate = local_transients(sdfg, dfg, node)
         allocated = set()
         for child in dfg.scope_dict(node_to_children=True)[node]:
             if not isinstance(child, nodes.AccessNode):
@@ -1665,7 +1665,7 @@ class CPUCodeGen(TargetCodeGenerator):
                              " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg, entry_node)
+        to_allocate = local_transients(sdfg, dfg, entry_node)
         deallocated = set()
         for child in dfg.scope_dict(node_to_children=True)[entry_node]:
             if not isinstance(child, nodes.AccessNode):
