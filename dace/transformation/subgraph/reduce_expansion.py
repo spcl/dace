@@ -74,8 +74,6 @@ class ReduceExpansion(pattern_matching.Transformation):
     }
 
     reduction_type_identity = {
-        dtypes.ReductionType.Max: -np.inf,
-        dtypes.ReductionType.Min: +np.inf,
         dtypes.ReductionType.Sum: 0,
         dtypes.ReductionType.Product: 1,
         dtypes.ReductionType.Bitwise_Or: 0,
@@ -388,9 +386,15 @@ class ReduceExpansion(pattern_matching.Transformation):
             try:
                 reduce_node_new.identity = self.reduction_type_identity[reduction_type]
             except KeyError:
-                raise ValueError(f"Cannot infer reduction identity."
-                                  "Please specify the identity of node"
-                                  "{reduce_node_new}")
+
+                if   reduction_type == dtypes.ReductionType.Min:
+                    reduce_node_new.identity = dtypes.max_value(sdfg.arrays[out_storage_node.data].dtype)
+                elif reduction_type == dtypes.ReductionType.Max:
+                    reduce_node_new.identity = dtypes.min_value(sdfg.arrays[out_storage_node.data].dtype)
+                else:
+                    raise ValueError(f"Cannot infer reduction identity."
+                                      "Please specify the identity of node"
+                                      "{reduce_node_new}")
 
 
         return

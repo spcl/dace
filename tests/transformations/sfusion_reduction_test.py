@@ -23,7 +23,7 @@ def TEST2(A: dace.float64[M,N], B:dace.float64[M,N],
           C: dace.float64[N]):
 
     tmp = np.ndarray(shape = [M,N], dtype = np.float64)
-    C[:] = dace.reduce(lambda a, b: a+b, B, axis = 0)
+    C[:] = dace.reduce(lambda a, b: max(a,b), B, axis = 0)
     for i,j in dace.map[0:M, 0:N]:
         with dace.tasklet:
             in1 << C[j]
