@@ -95,9 +95,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -732,107 +731,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 kernel_function_name=kernel_function_name,
                 kernel_args=", ".join(kernel_args)), sdfg)
 
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
-
-        # TODO: this is copy-pasta from the CPU-codegen, necessary to inject
-        # pragmas at the output memlets! Should consolidate.
-
-        callsite_stream.write('{\n', sdfg, state_id, node)
-
-        state_dfg = sdfg.nodes()[state_id]
-
-        self._dispatcher.defined_vars.enter_scope(node)
-
-        arrays = set()
-        for edge in dfg.in_edges(node):
-            u = edge.src
-            memlet = edge.data
-
-            if edge.dst_conn:  # Not (None or "")
-
-                if edge.dst_conn in arrays:  # Disallow duplicates
-                    raise SyntaxError('Duplicates found in memlets')
-
-                # Special case: code->code
-                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    src_node = find_input_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.dst_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.dst_conn)
-
-        callsite_stream.write('\n', sdfg, state_id, node)
-
-        # Use outgoing edges to preallocate output local vars
-        for edge in dfg.out_edges(node):
-            v = edge.dst
-            memlet = edge.data
-
-            if edge.src_conn:
-
-                if edge.src_conn in arrays:  # Disallow duplicates
-                    continue
-
-                # Special case: code->code
-                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.src_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.src_conn)
-
-        callsite_stream.write("\n////////////////////\n", sdfg, state_id, node)
-
-        cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                            callsite_stream, self._cpu_codegen._locals,
-                            self._cpu_codegen._ldepth,
-                            self._cpu_codegen._toplevel_schedule, self)
-
-        callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
-
-        # Process outgoing memlets
-        self._cpu_codegen.process_out_memlets(sdfg,
-                                              state_id,
-                                              node,
-                                              state_dfg,
-                                              self._dispatcher,
-                                              callsite_stream,
-                                              True,
-                                              function_stream,
-                                              codegen=self)
-
-        for edge in state_dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
-            if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and edge.data.wcr is None):
-                self.generate_no_dependence_post(edge.src_conn, callsite_stream,
-                                                 sdfg, state_id, node)
-
-        callsite_stream.write('}\n', sdfg, state_id, node)
-
-        self._dispatcher.defined_vars.exit_scope(node)
-
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
         memlet = edge.data
@@ -842,3 +740,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
                                           dst_node, edge, None, callsite_stream)
+
+    def unparse_tasklet(self, *args, **kwargs):
+        # Pass this object for callbacks into the Xilinx codegen
+        cpp.unparse_tasklet(*args, codegen=self, **kwargs)

@@ -10,7 +10,7 @@ from dace.config import Config
 from dace.sdfg.infer_types import infer_connector_types
 
 # Import CPU code generator. TODO: Remove when refactored
-from dace.codegen.targets import cpu
+from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
 
@@ -53,7 +53,7 @@ def generate_dummy(sdfg) -> str:
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
-            dims_mul = cpu.sym2cpp(
+            dims_mul = cpp.sym2cpp(
                 functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
             allocations += "  " + str(arg.signature(name=argname, with_types=True)) + \
