@@ -9,7 +9,7 @@ def load_sdfg_from_json(json):
     # delays when booting in daemon mode.
     from dace.sdfg import SDFG
 
-    if ('error' in json):
+    if 'error' in json:
         message = ''
         if ('message' in json['error']):
             message = json['error']['message']
@@ -46,7 +46,7 @@ def reapply_history_until(sdfg_json, index):
     :param index:      Index of the last history item to apply.
     """
     loaded = load_sdfg_from_json(sdfg_json)
-    if (loaded['error']):
+    if loaded['error'] is not None:
         return loaded['error']
     sdfg = loaded['sdfg']
 
@@ -82,7 +82,7 @@ def apply_transformation(sdfg_json, transformation):
     from dace.transformation.pattern_matching import Transformation
 
     loaded = load_sdfg_from_json(sdfg_json)
-    if (loaded['error']):
+    if loaded['error'] is not None:
         return loaded['error']
     sdfg = loaded['sdfg']
 
@@ -122,7 +122,7 @@ def get_transformations(sdfg_json):
     from dace.transformation.optimizer import SDFGOptimizer
 
     loaded = load_sdfg_from_json(sdfg_json)
-    if (loaded['error']):
+    if loaded['error'] is not None:
         return loaded['error']
     sdfg = loaded['sdfg']
 
