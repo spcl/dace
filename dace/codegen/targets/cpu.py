@@ -1,3 +1,4 @@
+import functools
 import itertools
 import warnings
 
