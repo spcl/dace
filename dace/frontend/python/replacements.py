@@ -836,6 +836,30 @@ def _python2numpy_type(constant: Union[int, float, complex, bool]):
         raise KeyError("Unknown Python type {}.".format(type(constant)))
 
 
+def _elementwise_binop(visitor: 'ProgramVisitor',
+                       sdfg: SDFG, state: SDFGstate,
+                       left_operand,
+                       right_operand,
+                       operator: str,
+                       opcode: str):
+    left_isdata = isinstance(left_operand, str)
+    right_isdata = isinstance(right_operand, str)
+
+    # 3 cases:
+    # a) Both operands are Data
+    # b) Only one operand is Data
+    # c) Both operands are Constants
+    if left_isdata and right_isdata:
+        # Case a
+        pass
+    elif left_isdata or right_isdata:
+        # Case b
+        pass
+    else:
+        # Case c
+
+
+
 def _binop_impl(visitor: 'ProgramVisitor',
                 sdfg: SDFG, state: SDFGState,
                 operand1: Union[str, int, float, complex, bool],
