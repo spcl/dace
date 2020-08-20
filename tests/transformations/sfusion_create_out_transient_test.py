@@ -9,10 +9,35 @@ import numpy as np
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.interstate import StateFusion
 
-from dace.transformation.subgraph.pipeline import expand_reduce, expand_maps, fusion
-
-
 import sys
+
+def fusion(sdfg: dace.SDFG,
+           graph: dace.SDFGState,
+           subgraph: Union[SubgraphView, List[SubgraphView]] = None,
+           **kwargs):
+
+    subgraph = graph if not subgraph else subgraph
+    if not isinstance(subgraph, List):
+        subgraph = [subgraph]
+
+    map_fusion = SubgraphFusion()
+    for (property, val) in kwargs.items():
+        setattr(map_fusion, property, val)
+
+    for sg in subgraph:
+        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        # remove map_entries and their corresponding exits from the subgraph
+        # already before applying transformation
+        if isinstance(sg, SubgraphView):
+            for map_entry in map_entries:
+                sg.nodes().remove(map_entry)
+                if graph.exit_node(map_entry) in sg.nodes():
+                    sg.nodes().remove(graph.exit_node(map_entry))
+        print(f"Subgraph Fusion on map entries {map_entries}")
+        map_fusion.fuse(sdfg, graph, map_entries)
+        if isinstance(sg, SubgraphView):
+            sg.nodes().append(map_fusion._global_map_entry)
+
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
 N.set(50)

@@ -1,12 +1,46 @@
 import dace
-from dace.transformation.subgraph.pipeline import expand_maps, expand_reduce, fusion
 from dace.transformation.subgraph.helpers import *
 from dace.transformation.subgraph import ReduceExpansion
+from dace.sdfg.graph import SubgraphView
 import dace.sdfg.nodes as nodes
 import numpy as np
 
 M = dace.symbol('M')
 N = dace.symbol('N')
+
+
+def expand_reduce(sdfg: dace.SDFG,
+                  graph: dace.SDFGState,
+                  subgraph: Union[SubgraphView, List[SubgraphView]] = None,
+                  **kwargs):
+
+    subgraph = graph if not subgraph else subgraph
+    if not isinstance(subgraph, List):
+        subgraph = [subgraph]
+
+    for sg in subgraph:
+        reduce_nodes = []
+        for node in sg.nodes():
+            if isinstance(node, stdlib.Reduce):
+                if not ReduceExpansion.can_be_applied(graph = graph,
+                                                candidate = {ReduceExpansion._reduce: graph.node_id(node)},
+                                                expr_index = 0,
+                                                sdfg = sdfg):
+                    print(f"WARNING: Cannot expand reduce node {node}: \
+                            Can_be_applied() failed.")
+                    continue
+                reduce_nodes.append(node)
+
+        trafo_reduce = ReduceExpansion(0,0,{},0)
+        for (property, val) in kwargs.items():
+            setattr(trafo_reduce, property, val)
+
+        for reduce_node in reduce_nodes:
+            trafo_reduce.expand(sdfg,graph,reduce_node)
+            if isinstance(sg, SubgraphView):
+                sg.nodes().remove(reduce_node)
+                sg.nodes().append(trafo_reduce._new_reduce)
+                sg.nodes().append(trafo_reduce._outer_entry)
 
 
 @dace.program

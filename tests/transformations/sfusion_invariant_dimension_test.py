@@ -2,6 +2,7 @@ import dace
 from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph import ReduceExpansion
+from dace.sdfg.utils import *
 from dace.transformation.subgraph.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
@@ -9,13 +10,37 @@ import numpy as np
 import itertools
 
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.utils import *
-
-
-from dace.transformation.subgraph.pipeline import expand_reduce, expand_maps, fusion
-
+from typing import Union, List
 
 import sys
+
+def fusion(sdfg: dace.SDFG,
+           graph: dace.SDFGState,
+           subgraph: Union[SubgraphView, List[SubgraphView]] = None,
+           **kwargs):
+
+    subgraph = graph if not subgraph else subgraph
+    if not isinstance(subgraph, List):
+        subgraph = [subgraph]
+
+    map_fusion = SubgraphFusion()
+    for (property, val) in kwargs.items():
+        setattr(map_fusion, property, val)
+
+    for sg in subgraph:
+        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        # remove map_entries and their corresponding exits from the subgraph
+        # already before applying transformation
+        if isinstance(sg, SubgraphView):
+            for map_entry in map_entries:
+                sg.nodes().remove(map_entry)
+                if graph.exit_node(map_entry) in sg.nodes():
+                    sg.nodes().remove(graph.exit_node(map_entry))
+        print(f"Subgraph Fusion on map entries {map_entries}")
+        map_fusion.fuse(sdfg, graph, map_entries)
+        if isinstance(sg, SubgraphView):
+            sg.nodes().append(map_fusion._global_map_entry)
+
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
 N.set(50)
@@ -83,23 +108,27 @@ def fix_sdfg(sdfg, graph):
     inner_sdfg = FIX.to_sdfg()
     nnode = graph.add_nested_sdfg(inner_sdfg, sdfg, {'AA','BB','CC'}, {'CC'})
     # redirect edges
+    connectors = []
     for e in graph.in_edges(nested_original):
-        if e.dst_conn == '__tmp_44_23':
+        connectors.append(e.dst_conn)
+    connectors.sort()
+
+    for e in graph.in_edges(nested_original):
+        if e.dst_conn == connectors[0]:
             graph.add_edge(e.src, e.src_conn,
                            e.dst, 'AA', e.data)
             graph.remove_edge(e)
-        if e.dst_conn == '__tmp_45_23':
+        if e.dst_conn == connectors[1]:
             graph.add_edge(e.src, e.src_conn,
                            e.dst, 'BB', e.data)
             graph.remove_edge(e)
-        if e.dst_conn == '__tmp_46_23':
+        if e.dst_conn == connectors[2]:
             graph.add_edge(e.src, e.src_conn,
                            e.dst, 'CC', e.data)
             graph.remove_edge(e)
     e = graph.out_edges(nested_original)[0]
     graph.add_edge(e.src, 'CC', e.dst, e.dst_conn, e.data)
     graph.remove_edge(e)
-
 
     change_edge_dest(graph, nested_original, nnode)
     change_edge_src(graph, nested_original, nnode)

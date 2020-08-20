@@ -1,12 +1,14 @@
 import dace
-from dace.transformation.subgraph.expansion import MultiExpansion
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 from dace.transformation.subgraph.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
 
-
+from typing import Union, List
+from dace.sdfg.graph import SubgraphView
 
 N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
+
 
 @dace.program
 def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
@@ -58,12 +60,12 @@ def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
 
 if __name__ == "__main__":
 
-    N.set(200)
-    M.set(300)
+    N.set(20)
+    M.set(30)
     O.set(50)
-    P.set(400)
-    Q.set(420)
-    R.set(250)
+    P.set(40)
+    Q.set(42)
+    R.set(25)
 
     sdfg = TEST.to_sdfg()
     state = sdfg.nodes()[0]
@@ -85,3 +87,18 @@ if __name__ == "__main__":
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
           N=N, M=M, O=O, P=P, R=R,Q=Q)
+
+    subgraph = SubgraphView(state, [node for node in state.nodes()])
+    expansion = MultiExpansion()
+    fusion = SubgraphFusion()
+
+    assert MultiExpansion.match(sdfg, subgraph)
+    expansion.apply(sdfg, subgraph)
+
+    assert SubgraphFusion.match(sdfg, subgraph)
+    fusion.apply(sdfg, subgraph)
+
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
+          N=N, M=M, O=O, P=P, R=R,Q=Q)
+    print("PASS")

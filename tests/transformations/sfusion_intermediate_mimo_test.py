@@ -8,8 +8,11 @@ import numpy as np
 import unittest
 import sys
 
-from dace.transformation.subgraph.pipeline import expand_reduce, expand_maps, fusion
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
+
+from typing import Union, List
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.subgraph.helpers import *
 
 N = dace.symbol('N')
 N.set(1000)
@@ -51,8 +54,6 @@ def test_quantitatively(sdfg):
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, D=D1, N=N)
-
-    expand_reduce(sdfg, graph)
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
     expansion = MultiExpansion()
