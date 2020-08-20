@@ -2,10 +2,7 @@ import json
 from argparse import ArgumentParser
 
 def get_exception_message(exception):
-    if hasattr(exception, 'message'):
-        return exception.message
-    else:
-        return str(exception)
+    return '%s: %s' % (type(exception).__name__, exception)
 
 def load_sdfg_from_json(json):
     # We lazy import SDFGs, not to break cyclic imports, but to avoid any large
