@@ -29,10 +29,11 @@ class Transformation(object):
         (or ``dace.registry.autoregister_params``) with two optional boolean
         keyword arguments: ``singlestate`` (default: False) and ``strict``
         (default: False).
-        If ``singlestate`` is True, the transformation operates on a single
-        state; otherwise, it will be matched over an entire SDFG.
+        If ``singlestate`` is True, the transformation is matched on subgraphs
+        inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
+        matched.
         If ``strict`` is True, this transformation will be considered strict
-        (i.e., always important to perform) and will be performed automatically
+        (i.e., always beneficial to perform) and will be performed automatically
         as part of SDFG strict transformations.
     """
 
@@ -200,7 +201,10 @@ class Transformation(object):
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
+        subgraph = {
+            expr.node(int(k)): int(v)
+            for k, v in json_obj['_subgraph'].items()
+        }
 
         # Reconstruct transformation
         ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
