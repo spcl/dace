@@ -4,18 +4,18 @@
 from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
-from dace.sdfg import replace, SDFG
+from dace.sdfg import SDFG
 from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
-from dace.sdfg.propagation import propagate_memlets_sdfg
 
 from dace.frontend.operations import detect_reduction_type
 
 from copy import deepcopy as dcpy
-from typing import List, Union
+from typing import List
 
 import dace.libraries.standard as stdlib
+import numpy as np
 
 import timeit
 
@@ -73,6 +73,16 @@ class ReduceExpansion(pattern_matching.Transformation):
         dtypes.ReductionType.Logical_Xor: 'out = reduction_in xor array_in'
     }
 
+    reduction_type_identity = {
+        dtypes.ReductionType.Max: -np.inf,
+        dtypes.ReductionType.Min: +np.inf,
+        dtypes.ReductionType.Sum: 0,
+        dtypes.ReductionType.Product: 1,
+        dtypes.ReductionType.Bitwise_Or: 0,
+        dtypes.ReductionType.Logical_And: True,
+        dtypes.ReductionType.Logical_Or: False
+    }
+
 
     @staticmethod
     def expressions():
@@ -125,18 +135,14 @@ class ReduceExpansion(pattern_matching.Transformation):
         schedule = reduce_node.schedule
         implementation = reduce_node.implementation
         if implementation and 'warp' in implementation:
-            raise NotImplementedError("WIP")
+            raise NotImplementedError("WIP: Warp Reductions are not Implemented yet.")
 
         # remove the reduce identity
         # we will reassign it later after expanding
         reduce_node.identity = None
         # expand the reduce node
-        try:
-            in_edge = graph.in_edges(reduce_node)[0]
-            nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
-        except Exception:
-            print(f"Aborting: Could not execute expansion in {reduce_node}")
-            raise TypeError("Exception in ReduceExpansion::_expand_reduce")
+        in_edge = graph.in_edges(reduce_node)[0]
+        nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
 
         # find the new nodes in the nested sdfg created
         nstate = nsdfg.sdfg.nodes()[0]
@@ -177,7 +183,7 @@ class ReduceExpansion(pattern_matching.Transformation):
         if (not array_closest_ancestor and sdfg.data(out_storage_node.data).transient) \
                                         or identity is not None:
             if self.debug:
-                print("ReduceExpansion::Shortcut applied")
+                print("ReduceExpansion::Expanding Reduction into Map")
             # we are lucky
             shortcut = True
             if self.create_out_transient:
@@ -188,18 +194,18 @@ class ReduceExpansion(pattern_matching.Transformation):
 
         else:
             if self.debug:
-                print("ReduceExpansion::No shortcut, operating with ancestor", array_closest_ancestor)
+                print(f"ReduceExpansion::Expanding Reduction into Map"
+                       "and introducing update Tasklet,"
+                       "connecting with ancestor {array_closest_ancestor}")
             if not array_closest_ancestor:
                 array_closest_ancestor = nodes.AccessNode(out_storage_node.data,
                                             access = dtypes.AccessType.ReadOnly)
                 graph.add_node(array_closest_ancestor)
+                # array_closest_ancestor now points to the node we want to connect
+                # to the map entry
 
             # always have to create out transient in this case
             self.create_out_transient = True
-
-
-        # array_closest_ancestor now points to the node we want to connect
-        # to the map entry
 
 
         if self.create_out_transient:
@@ -263,11 +269,11 @@ class ReduceExpansion(pattern_matching.Transformation):
 
         if not shortcut:
 
-            deduction_type = detect_reduction_type(wcr)
-            if deduction_type in ReduceExpansion.reduction_type_update:
-                code = ReduceExpansion.reduction_type_update[deduction_type]
-            else:
-                raise RuntimeError("Not yet implemented for custom reduction")
+            reduction_type = detect_reduction_type(wcr)
+            try:
+                code = ReduceExpansion.reduction_type_update[reduction_type]
+            except KeyError:
+                raise NotImplementedError("Not yet implemented for custom reduction")
 
 
             new_tasklet = graph.add_tasklet(name = "reduction_transient_update",
@@ -300,10 +306,6 @@ class ReduceExpansion(pattern_matching.Transformation):
             for edge in graph.out_edges(outer_exit):
                 if edge.src == edge_to_remove.dst:
                     outer_edge_to_remove = edge
-
-            # debug
-            if outer_edge_to_remove is None:
-                print("ERROR: No outer_edge_to_remove found")
 
             graph.remove_edge_and_connectors(edge_to_remove)
             graph.remove_edge_and_connectors(outer_edge_to_remove)
@@ -374,14 +376,22 @@ class ReduceExpansion(pattern_matching.Transformation):
 
         sdfg.validate()
 
-        if identity is None and self.create_out_transient:
-            # set transient_inner to set_zero = True
-            # TODO: create identities for other reductions
-            out_transient_node_inner.setzero = True
-
         # create variables for outside access
         self._new_reduce = reduce_node_new
         self._outer_entry = outer_entry
+
+
+        if identity is None and not shortcut:
+            # set the reduction identity accordingly so that the correct
+            # blank result is written to the out_transient node
+            # we use default values deducted from the reduction type
+            try:
+                reduce_node_new.identity = self.reduction_type_identity[reduction_type]
+            except KeyError:
+                raise ValueError(f"Cannot infer reduction identity."
+                                  "Please specify the identity of node"
+                                  "{reduce_node_new}")
+
 
         return
 
@@ -416,9 +426,8 @@ class ReduceExpansion(pattern_matching.Transformation):
                         strides=output_data.strides,
                         storage=output_data.storage)
 
-        # If identity is defined, add an initialization state
         if node.identity is not None:
-            print("ERROR: Identity must be overridden to None first")
+            raise ValueError("Node identity has to be None at this point.")
         else:
             nstate = nsdfg.add_state()
         # END OF INIT
