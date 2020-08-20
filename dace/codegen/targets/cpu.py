@@ -1353,7 +1353,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
         args = ', '.join([argval for _, _, argval in memlet_references] + [
-            sym2cpp(symval)
+            cpp.sym2cpp(symval)
             for symname, symval in sorted(node.symbol_mapping.items())
             if symname not in sdfg.constants
         ])
