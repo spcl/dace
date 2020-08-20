@@ -46,12 +46,10 @@ class CodeIOStream(StringIO):
             closing_braces = line.count('}')
 
             # Count closing braces before opening ones (e.g., for "} else {")
+            first_opening_brace = line.find('{')
             initial_closing_braces = 0
-            for char in line:
-                if char == '}':
-                    initial_closing_braces += 1
-                if char == '{':
-                    break
+            if first_opening_brace > 0:
+                initial_closing_braces = line[:first_opening_brace].count('}')
             closing_braces -= initial_closing_braces
 
             brace_balance = opening_braces - closing_braces
