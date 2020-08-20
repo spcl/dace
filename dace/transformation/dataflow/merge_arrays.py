@@ -6,7 +6,7 @@ from dace.sdfg.propagation import propagate_memlet
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
-class MergeArrays(pattern_matching.Transformation):
+class InMergeArrays(pattern_matching.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     _array1 = nodes.AccessNode("_")
@@ -21,19 +21,19 @@ class MergeArrays(pattern_matching.Transformation):
         # /======\
 
         g = SDFGState()
-        g.add_node(MergeArrays._array1)
-        g.add_node(MergeArrays._array2)
-        g.add_node(MergeArrays._map_entry)
-        g.add_edge(MergeArrays._array1, None, MergeArrays._map_entry, None,
+        g.add_node(InMergeArrays._array1)
+        g.add_node(InMergeArrays._array2)
+        g.add_node(InMergeArrays._map_entry)
+        g.add_edge(InMergeArrays._array1, None, InMergeArrays._map_entry, None,
                    memlet.Memlet())
-        g.add_edge(MergeArrays._array2, None, MergeArrays._map_entry, None,
+        g.add_edge(InMergeArrays._array2, None, InMergeArrays._map_entry, None,
                    memlet.Memlet())
         return [g]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        arr1_id = candidate[MergeArrays._array1]
-        arr2_id = candidate[MergeArrays._array2]
+        arr1_id = candidate[InMergeArrays._array1]
+        arr2_id = candidate[InMergeArrays._array2]
 
         # Ensure both arrays contain the same data
         arr1 = graph.node(arr1_id)
@@ -50,7 +50,7 @@ class MergeArrays(pattern_matching.Transformation):
                 and arr1_id >= arr2_id):
             return False
 
-        map = graph.node(candidate[MergeArrays._map_entry])
+        map = graph.node(candidate[InMergeArrays._map_entry])
 
         # If arr1's connector leads directly to map, skip it
         if all(e.dst_conn and not e.dst_conn.startswith('IN_')
@@ -74,15 +74,15 @@ class MergeArrays(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        arr = graph.node(candidate[MergeArrays._array1])
-        map = graph.node(candidate[MergeArrays._map_entry])
-        return '%s (%d, %d) -> %s' % (arr.data, candidate[MergeArrays._array1],
-                                      candidate[MergeArrays._array2], map.label)
+        arr = graph.node(candidate[InMergeArrays._array1])
+        map = graph.node(candidate[InMergeArrays._map_entry])
+        return '%s (%d, %d) -> %s' % (arr.data, candidate[
+            InMergeArrays._array1], candidate[InMergeArrays._array2], map.label)
 
     def apply(self, sdfg):
         graph = sdfg.node(self.state_id)
-        array = graph.node(self.subgraph[MergeArrays._array1])
-        map = graph.node(self.subgraph[MergeArrays._map_entry])
+        array = graph.node(self.subgraph[InMergeArrays._array1])
+        map = graph.node(self.subgraph[InMergeArrays._map_entry])
         map_edge = next(e for e in graph.out_edges(array) if e.dst == map)
         result_connector = map_edge.dst_conn[3:]
 
@@ -105,6 +105,115 @@ class MergeArrays(pattern_matching.Transformation):
 
         # Remove other nodes from state
         graph.remove_nodes_from(set(e.src for e in source_edges))
+
+        # Remove connectors from scope entry
+        for c in connectors_to_remove:
+            map.remove_in_connector('IN_' + c)
+            map.remove_out_connector('OUT_' + c)
+
+        # Re-propagate memlets
+        map_edge._data = propagate_memlet(dfg_state=graph,
+                                          memlet=map_edge.data,
+                                          scope_node=map,
+                                          union_inner_edges=True)
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
+class OutMergeArrays(pattern_matching.Transformation):
+    """ Merge duplicate arrays connected to the same scope entry. """
+
+    _array1 = nodes.AccessNode("_")
+    _array2 = nodes.AccessNode("_")
+    _map_exit = nodes.ExitNode()
+
+    @staticmethod
+    def expressions():
+        # Matching
+        # \======/
+        #   |  |
+        #   o  o
+
+        g = SDFGState()
+        g.add_node(OutMergeArrays._array1)
+        g.add_node(OutMergeArrays._array2)
+        g.add_node(OutMergeArrays._map_exit)
+        g.add_edge(OutMergeArrays._map_exit, None, OutMergeArrays._array1, None,
+                   memlet.Memlet())
+        g.add_edge(OutMergeArrays._map_exit, None, OutMergeArrays._array2, None,
+                   memlet.Memlet())
+        return [g]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        arr1_id = candidate[OutMergeArrays._array1]
+        arr2_id = candidate[OutMergeArrays._array2]
+
+        # Ensure both arrays contain the same data
+        arr1 = graph.node(arr1_id)
+        arr2 = graph.node(arr2_id)
+        if arr1.data != arr2.data:
+            return False
+
+        # Ensure only arr1's node ID contains outgoing edges
+        if graph.out_degree(arr2) > 0:
+            return False
+
+        # Ensure arr1 and arr2's node IDs are ordered (avoid duplicates)
+        if (graph.out_degree(arr1) == 0 and graph.out_degree(arr2) == 0
+                and arr1_id >= arr2_id):
+            return False
+
+        map = graph.node(candidate[OutMergeArrays._map_exit])
+
+        if (any(e.src != map for e in graph.in_edges(arr1))
+                or any(e.src != map for e in graph.in_edges(arr2))):
+            return False
+
+        # Ensure arr1 and arr2 are the first two sink nodes (avoid further
+        # duplicates)
+        all_sink_nodes = set(
+            graph.node_id(e.dst) for e in graph.out_edges(map) if e.dst != arr1
+            and e.dst != arr2 and e.dst.data == arr1.data and e.src_conn
+            and e.src_conn.startswith('OUT_') and graph.out_degree(e.dst) == 0)
+        if any(nid < arr1_id or nid < arr2_id for nid in all_sink_nodes):
+            return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        arr = graph.node(candidate[OutMergeArrays._array1])
+        map = graph.node(candidate[OutMergeArrays._map_exit])
+        return '%s (%d, %d) -> %s' % (
+            arr.data, candidate[OutMergeArrays._array1],
+            candidate[OutMergeArrays._array2], map.label)
+
+    def apply(self, sdfg):
+        graph = sdfg.node(self.state_id)
+        array = graph.node(self.subgraph[OutMergeArrays._array1])
+        map = graph.node(self.subgraph[OutMergeArrays._map_exit])
+        map_edge = next(e for e in graph.in_edges(array) if e.src == map)
+        result_connector = map_edge.src_conn[4:]
+
+        # Find all other outgoing access nodes without outgoing edges
+        dst_edges = [
+            e for e in graph.out_edges(map)
+            if isinstance(e.dst, nodes.AccessNode) and e.dst.data == array.data
+            and e.dst != array and e.src_conn and e.src_conn.startswith('OUT_')
+            and graph.out_degree(e.dst) == 0
+        ]
+
+        # Modify connectors to point to first array
+        connectors_to_remove = set()
+        for e in dst_edges:
+            connector = e.src_conn[4:]
+            connectors_to_remove.add(connector)
+            for inner_edge in graph.in_edges(map):
+                if inner_edge.dst_conn[3:] == connector:
+                    inner_edge.dst_conn = 'IN_' + result_connector
+
+        # Remove other nodes from state
+        graph.remove_nodes_from(set(e.dst for e in dst_edges))
 
         # Remove connectors from scope entry
         for c in connectors_to_remove:

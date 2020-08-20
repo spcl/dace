@@ -354,7 +354,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
+                and isinstance(node.id, str)):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)
