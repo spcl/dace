@@ -34,6 +34,7 @@ from dace.properties import (make_properties, Property, CodeProperty,
                              TransformationHistProperty, SDFGReferenceProperty,
                              DictProperty, OrderedDictProperty, CodeBlock)
 
+
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
@@ -865,7 +866,7 @@ class SDFG(OrderedDiGraph):
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
-            v.signature(name=k, with_types=with_types, for_call=for_call)
+            v.as_arg(name=k, with_types=with_types, for_call=for_call)
             for k, v in self.arglist().items()
         ]
 

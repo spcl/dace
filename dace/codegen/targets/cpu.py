@@ -12,9 +12,8 @@ from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
-                       is_array_stream_view,
-                       NodeNotExpandedError, dynamic_map_inputs,
-                       local_transients)
+                       is_array_stream_view, NodeNotExpandedError,
+                       dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 from typing import Union
 
@@ -59,12 +58,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     dtypes.pointer(arg_type.dtype).ctype)
             elif isinstance(arg_type, data.Stream):
                 if arg_type.is_stream_array():
-                    self._dispatcher.defined_vars.add(
-                        name, DefinedType.StreamArray,
-                        arg_type.signature(name=''))
+                    self._dispatcher.defined_vars.add(name,
+                                                      DefinedType.StreamArray,
+                                                      arg_type.as_arg(name=''))
                 else:
-                    self._dispatcher.defined_vars.add(
-                        name, DefinedType.Stream, arg_type.signature(name=''))
+                    self._dispatcher.defined_vars.add(name, DefinedType.Stream,
+                                                      arg_type.as_arg(name=''))
             else:
                 raise TypeError(
                     "Unrecognized argument type: {t} (value {v})".format(
@@ -1343,7 +1342,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {aname}' for atype, aname, _ in memlet_references
         ]
         arguments += [
-            f'{node.sdfg.symbols[aname].signature(aname)}'
+            f'{node.sdfg.symbols[aname].as_arg(aname)}'
             for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants
         ]
@@ -1377,11 +1376,12 @@ class CPUCodeGen(TargetCodeGenerator):
         for _, uconn, _, _, out_memlet in state.out_edges(node):
             if out_memlet.data is not None:
                 memlet_references.append(
-                    cpp.emit_memlet_reference(self._dispatcher,
-                                          sdfg,
-                                          out_memlet,
-                                          uconn,
-                                          conntype=node.out_connectors[uconn]))
+                    cpp.emit_memlet_reference(
+                        self._dispatcher,
+                        sdfg,
+                        out_memlet,
+                        uconn,
+                        conntype=node.out_connectors[uconn]))
         return memlet_references
 
     def _generate_NestedSDFG(

@@ -237,7 +237,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
         else:
-            return data.signature(with_types=True, name=var_name)
+            return data.as_arg(with_types=True, name=var_name)
 
     def generate_unroll_loop_pre(self, kernel_stream, factor, sdfg, state_id,
                                  node):
@@ -274,7 +274,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             f'{atype} {aname}' for atype, aname, _ in memlet_references
         ]
         arguments += [
-            f'{node.sdfg.symbols[aname].signature(aname)}'
+            f'{node.sdfg.symbols[aname].as_arg(aname)}'
             for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants
         ]
@@ -399,7 +399,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         module_stream.write("\n", sdfg)
 
         symbol_params = [
-            v.signature(with_types=True, name=k)
+            v.as_arg(with_types=True, name=k)
             for k, v in symbol_parameters.items()
         ]
         arrays = list(sorted(global_data_parameters, key=lambda t: t[1]))
@@ -414,7 +414,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if kernel_arg:
                 array_args.append(kernel_arg)
         kernel_args = array_args + [
-            v.signature(with_types=True, name=k) for k, v in scalars
+            v.as_arg(with_types=True, name=k) for k, v in scalars
         ]
 
         kernel_args = dace.dtypes.deduplicate(kernel_args)
@@ -480,7 +480,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if not isinstance(p, dace.data.Array) and name in added:
                 continue
             added.add(name)
-            kernel_args.append(p.signature(False, name=name))
+            kernel_args.append(p.as_arg(False, name=name))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
@@ -527,7 +527,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 added.add(pname)
                 if isinstance(p, dace.data.Stream):
                     kernel_args_call.append(
-                        p.signature(with_types=False, name=pname))
+                        p.as_arg(with_types=False, name=pname))
                     if p.is_stream_array():
                         kernel_args_module.append(
                             "dace::FIFO<{}, {}, {}> {}[{}]".format(
@@ -540,9 +540,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                 p.buffer_size, pname))
                 else:
                     kernel_args_call.append(
-                        p.signature(with_types=False, name=pname))
+                        p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
-                        p.signature(with_types=True, name=pname))
+                        p.as_arg(with_types=True, name=pname))
         module_function_name = "module_" + name
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -730,13 +730,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         for is_output, name, arg in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
                 kernel_args.append(
-                    arg.signature(with_types=True,
-                                  name=name + ("_out" if is_output else "_in")))
+                    arg.as_arg(with_types=True,
+                               name=name + ("_out" if is_output else "_in")))
             else:
                 if name in seen:
                     continue
                 seen.add(name)
-                kernel_args.append(arg.signature(with_types=True, name=name))
+                kernel_args.append(arg.as_arg(with_types=True, name=name))
 
         host_code_stream.write(
             """\
