@@ -303,7 +303,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
     def redirect_edge(self, graph, edge, new_src = None, new_src_conn = None ,
                                          new_dst = None, new_dst_conn = None, new_data = None ):
-        
+
         data = new_data if new_data else edge.data
         if new_src:
             ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn, data)
@@ -524,7 +524,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
         global_map_entry = nodes.MapEntry(global_map)
         global_map_exit  = nodes.MapExit(global_map)
 
-
+        schedule = map_entries[0].schedule
         global_map_entry.schedule = schedule
         graph.add_node(global_map_entry)
         graph.add_node(global_map_exit)
