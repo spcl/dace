@@ -69,6 +69,7 @@ if __name__ == "__main__":
 
     sdfg = TEST.to_sdfg()
     state = sdfg.nodes()[0]
+    sdfg.apply_strict_transformations()
 
     A = np.random.rand(N.get()).astype(np.float64)
     B = np.random.rand(M.get()).astype(np.float64)
