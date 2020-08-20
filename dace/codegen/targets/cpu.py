@@ -1601,14 +1601,14 @@ class CPUCodeGen(TargetCodeGenerator):
             out_memlet_path[0].src_conn,
             ce_node,
             None,
-            memlet.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
+            mmlt.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
         )
         state_dfg.add_edge(
             ce_node,
             None,
             out_memlet_path[0].dst,
             out_memlet_path[0].dst_conn,
-            memlet.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
+            mmlt.Memlet.from_array(ce_node.data, ce_node.desc(sdfg)),
         )
         for e in out_memlet_path[1:]:
             e.data.data = ce_node.data
