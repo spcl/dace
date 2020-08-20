@@ -893,11 +893,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 # generated from the FPGA codegen. We should find a nicer
                 # solution.
                 if self._packed_types is True:
-                    offset = cpp_offset_expr(sdfg.arrays[memlet.data],
-                                             memlet.subset)
+                    offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data],
+                                                 memlet.subset)
                 else:
-                    offset = cpp_offset_expr(sdfg.arrays[memlet.data],
-                                             memlet.subset)
+                    offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data],
+                                                 memlet.subset)
                 if offset == "0":
                     memlet_params.append(memlet_expr)
                 else:
