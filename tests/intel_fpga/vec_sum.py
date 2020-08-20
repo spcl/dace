@@ -24,15 +24,12 @@ if __name__ == "__main__":
     print("==== Program start ====")
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("vectorize_first", choices=["true", "false"])
     parser.add_argument("N", type=int, nargs="?", default=24)
-    parser.add_argument("--compile-only",
-                        default=False,
-                        action="store_true",
-                        dest="compile-only")
-    args = vars(parser.parse_args())
+    args = parser.parse_args()
     dace.config.Config.set("compiler", "intel_fpga", "mode", value="emulator")
 
-    N.set(args["N"])
+    N.set(args.N)
 
     print('Vectors addition %d' % (N.get()))
 
@@ -43,9 +40,32 @@ if __name__ == "__main__":
 
     Z_exp = X + Y + Z
 
-    #compute expected result
-    vec_sum(X, Y, Z)
+    sdfg = vec_sum.to_sdfg()
+
+    if args.vectorize_first == "true":
+        transformations = [
+            dace.transformation.dataflow.vectorization.Vectorization,
+            dace.transformation.interstate.fpga_transform_sdfg.FPGATransformSDFG
+        ]
+        transformation_options = [{}, {
+            "propagate_parent": True,
+            "postamble": False
+        }]
+    elif args.vectorize_first == "false":
+        transformations = [
+            dace.transformation.interstate.fpga_transform_sdfg.
+            FPGATransformSDFG,
+            dace.transformation.dataflow.vectorization.Vectorization
+        ]
+        transformation_options = [{}, {
+            "propagate_parent": True,
+            "postamble": False
+        }]
+
+    sdfg.apply_transformations(transformations, transformation_options)
+
+    sdfg(x=X, y=Y, z=Z, N=N)
+
     diff = np.linalg.norm(Z_exp - Z) / N.get()
-    print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    if diff > 1e-5:
+        raise ValueError("Difference: {}".format(diff))
