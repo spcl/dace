@@ -2,7 +2,21 @@
 #define __DACE_CUDAINTEROP_H
 
 #ifdef WITH_CUDA
-#include <cuda_runtime.h>
+  #if defined(__HIPCC__) || defined(WITH_HIP)
+    #include <hip/hip_runtime.h>
+    #define gpuLaunchKernel hipLaunchKernel
+    #define gpuMalloc hipMalloc
+    #define gpuMemset hipMemset
+    #define gpuFree hipFree
+  #else
+    #include <cuda_runtime.h>
+    #define gpuLaunchKernel cudaLaunchKernel
+    #define gpuMalloc cudaMalloc
+    #define gpuMemset cudaMemset
+    #define gpuFree cudaFree
+  #endif
+
+  #include "cuda/cudacommon.cuh"
 #else
 
 // CUDA interoperability (defining external functions without having to include
