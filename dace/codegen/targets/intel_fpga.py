@@ -212,7 +212,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
         else:
-            return data.signature(with_types=True, name=var_name)
+            return data.as_arg(with_types=True, name=var_name)
 
     @staticmethod
     def generate_unroll_loop_pre(kernel_stream, factor, sdfg, state_id, node):
@@ -496,7 +496,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             arg = self.make_kernel_argument(p, pname, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
-                kernel_args_host.append(p.signature(True, name=pname))
+                kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
 
         module_function_name = "module_" + name

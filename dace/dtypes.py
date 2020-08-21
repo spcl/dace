@@ -188,19 +188,19 @@ _OCL_TYPES = {
 
 # Translation of types to OpenCL vector types
 _OCL_VECTOR_TYPES = {
-  numpy.int8: "char",
-  numpy.uint8: "uchar",
-  numpy.int16: "short",
-  numpy.uint16: "ushort",
-  numpy.int32: "int",
-  numpy.uint32: "uint",
-  numpy.int64: "long",
-  numpy.uint64: "ulong",
-  numpy.float16: "half",
-  numpy.float32: "float",
-  numpy.float64: "double",
-  numpy.complex64: "complex float",
-  numpy.complex128: "coplex double",
+    numpy.int8: "char",
+    numpy.uint8: "uchar",
+    numpy.int16: "short",
+    numpy.uint16: "ushort",
+    numpy.int32: "int",
+    numpy.uint32: "uint",
+    numpy.int64: "long",
+    numpy.uint64: "ulong",
+    numpy.float16: "half",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
 }
 
 # Translation of types to ctypes types
@@ -357,6 +357,9 @@ class typeclass(object):
     @property
     def ocltype(self):
         return _OCL_TYPES[self.type]
+
+    def as_arg(self, name):
+        return self.ctype + ' ' + name
 
 
 def max_value(dtype: typeclass):
@@ -715,7 +718,7 @@ class callback(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
-    def signature(self, name):
+    def as_arg(self, name):
         from dace import data
 
         return_type_cstring = (self.return_type.ctype

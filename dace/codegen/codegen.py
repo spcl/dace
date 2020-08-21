@@ -47,8 +47,8 @@ def generate_dummy(sdfg) -> str:
     # first find all scalars and set them to 42
     for argname, arg in al.items():
         if isinstance(arg, data.Scalar):
-            allocations += "  " + str(
-                arg.signature(name=argname, with_types=True)) + " = 42;\n"
+            allocations += "  " + str(arg.as_arg(name=argname,
+                                                 with_types=True)) + " = 42;\n"
 
     # allocate the array args using calloc
     for argname, arg in al.items():
@@ -56,7 +56,7 @@ def generate_dummy(sdfg) -> str:
             dims_mul = cpp.sym2cpp(
                 functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
-            allocations += "  " + str(arg.signature(name=argname, with_types=True)) + \
+            allocations += "  " + str(arg.as_arg(name=argname, with_types=True)) + \
                            " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
             deallocations += "  free(" + argname + ");\n"
 

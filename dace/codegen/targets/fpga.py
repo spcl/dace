@@ -284,10 +284,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             global_data_parameters.append(
                                 (is_output, dataname, data))
                         global_data_names.add(dataname)
-                    elif (data.storage
-                          in (dace.dtypes.StorageType.FPGA_Local,
-                              dace.dtypes.StorageType.FPGA_Registers,
-                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage in (
+                            dace.dtypes.StorageType.FPGA_Local,
+                            dace.dtypes.StorageType.FPGA_Registers,
+                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -443,10 +443,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer, 'auto')
 
-            elif (nodedesc.storage
-                  in (dace.dtypes.StorageType.FPGA_Local,
-                      dace.dtypes.StorageType.FPGA_Registers,
-                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage in (
+                    dace.dtypes.StorageType.FPGA_Local,
+                    dace.dtypes.StorageType.FPGA_Registers,
+                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise dace.codegen.codegen.CodegenError(
@@ -825,7 +825,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     "hlslib::ocl::Access::readWrite> &{}".format(
                         desc.dtype.ctype, name))
         else:
-            return (desc.signature(with_types=True, name=name))
+            return (desc.as_arg(with_types=True, name=name))
 
     def get_next_scope_entries(self, sdfg, dfg, scope_entry):
         parent_scope_entry = dfg.scope_dict()[scope_entry]
@@ -857,8 +857,13 @@ class FPGACodeGen(TargetCodeGenerator):
             getattr(self, method_name)(sdfg, dfg, state_id, node,
                                        function_stream, callsite_stream)
         else:
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
+
+            self._cpu_codegen.calling_codegen = old_codegen
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
                     function_stream, callsite_stream):
@@ -1177,6 +1182,21 @@ class FPGACodeGen(TargetCodeGenerator):
                 subgraph_parameters[subgraph] + scalar_parameters,
                 symbol_parameters, module_stream, entry_stream, host_stream)
 
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, node,
+                                                       memlet_references,
+                                                       sdfg_label)
+
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
+                            sdfg_label):
+        return self._cpu_codegen.generate_nsdfg_call(sdfg, state, node,
+                                                     memlet_references,
+                                                     sdfg_label)
+
+    def generate_nsdfg_arguments(self, sdfg, state, node):
+        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
+
     def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
                                            parameters, symbol_parameters,
                                            nested_global_transients,
@@ -1208,7 +1228,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 continue
             seen.add(arg)
             if not isinstance(arg, dace.data.Stream):
-                kernel_args_call_host.append(arg.signature(False, name=argname))
+                kernel_args_call_host.append(arg.as_arg(False, name=argname))
                 kernel_args_opencl.append(
                     FPGACodeGen.make_opencl_parameter(argname, arg))
 

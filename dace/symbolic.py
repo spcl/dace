@@ -1,6 +1,7 @@
 import ast
 import sympy
 import pickle
+import re
 from typing import Dict, Optional, Union
 import warnings
 import numpy
@@ -584,10 +585,38 @@ def simplify_ext(expr):
     return expr
 
 
+class SympyBooleanConverter(ast.NodeTransformer):
+    """ 
+    Replaces boolean operations with the appropriate SymPy functions to avoid
+    non-symbolic evaluation.
+    """
+    def visit_UnaryOp(self, node):
+        if isinstance(node.op, ast.Not):
+            func_node = ast.copy_location(
+                ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node,
+                                args=[self.visit(node.operand)],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        return node
+
+    def visit_BoolOp(self, node):
+        func_node = ast.copy_location(
+            ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
+        new_node = ast.Call(func=func_node,
+                            args=[self.visit(value) for value in node.values],
+                            keywords=[])
+        return ast.copy_location(new_node, node)
+
+
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
+    from dace.frontend.python.astutils import unparse  # Avoid import loops
+
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
+    if isinstance(expr, str) and dtypes.validate_name(expr):
+        return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {'min': sympy.Min, 'max': sympy.Max}
@@ -595,9 +624,10 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
 
-    # Sympy processes "not" as direct evaluation rather than negation
-    if isinstance(expr, str) and 'not' in expr:
-        expr = expr.replace('not', 'Not')
+    # Sympy processes "not/and/or" as direct evaluation. Replace with
+    # And/Or(x, y), Not(x)
+    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b', expr):
+        expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:

@@ -56,14 +56,20 @@ class CUDACodeGen(TargetCodeGenerator):
         self._dispatcher = frame_codegen.dispatcher
         dispatcher = self._dispatcher
 
+        self.create_grid_barrier = False
+        self.extra_nsdfg_args = []
         self._in_device_code = False
         self._cpu_codegen = None
         self._block_dims = None
         self._grid_dims = None
         self._kernel_map = None
         target_type = "" if self.backend == 'cuda' else self.backend
-        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda', '', self.language,
-                                      CUDACodeGen, 'CUDA', target_type=target_type)
+        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
+                                      '',
+                                      self.language,
+                                      CUDACodeGen,
+                                      'CUDA',
+                                      target_type=target_type)
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -137,7 +143,8 @@ class CUDACodeGen(TargetCodeGenerator):
     def _emit_sync(self, codestream: CodeIOStream):
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
             codestream.write('''DACE_CUDA_CHECK({backend}GetLastError());
-            DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
+            DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(
+                backend=self.backend))
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -166,7 +173,6 @@ class CUDACodeGen(TargetCodeGenerator):
             backend_header = 'hip/hip_runtime.h'
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
-
 
         self._codeobject.code = """
 #include <{backend_header}>
@@ -285,7 +291,9 @@ void __dace_exit_cuda({params}) {{
         backend = Config.get('compiler', 'cuda', 'backend')
         if backend == 'cuda':
             cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
-            cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
+            cuda_arch = [
+                ca for ca in cuda_arch if ca is not None and len(ca) > 0
+            ]
 
             flags = Config.get("compiler", "cuda", "args")
             flags += ' ' + ' '.join(
@@ -299,8 +307,8 @@ void __dace_exit_cuda({params}) {{
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join(
-                '--offload-arch=gfx{arch}'.format(arch=arch) for arch in hip_arch)
+            flags += ' ' + ' '.join('--offload-arch=gfx{arch}'.format(arch=arch)
+                                    for arch in hip_arch)
             options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
@@ -489,10 +497,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                           function_stream, codestream)
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            codestream.write('%sFree(%s);\n' % (self.backend, dataname), sdfg, state_id, node)
+            codestream.write('%sFree(%s);\n' % (self.backend, dataname), sdfg,
+                             state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            codestream.write('%sFreeHost(%s);\n' % (self.backend, dataname), sdfg, state_id,
-                             node)
+            codestream.write('%sFreeHost(%s);\n' % (self.backend, dataname),
+                             sdfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
@@ -755,9 +764,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 callsite_stream.write(
                     '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
-                    (self.backend, dst_expr, src_expr, copysize, self.backend, 
-                     src_location, dst_location, cudastream), sdfg, 
-                    state_id, [src_node, dst_node])
+                    (self.backend, dst_expr, src_expr, copysize, self.backend,
+                     src_location, dst_location, cudastream), sdfg, state_id,
+                    [src_node, dst_node])
                 node_dtype = dst_node.desc(sdfg).dtype
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write(
@@ -778,15 +787,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             callsite_stream.write(
                                 '{backend}MemcpyAsync({dst}[__idx].{fname}, '
                                 '{src}[__idx].{fname}, {sz}, '
-                                '{backend}Memcpy{sloc}To{dloc}, {stream});'.format(
-                                    dst=str(dst_node),
-                                    src=str(src_node),
-                                    fname=field_name,
-                                    sz=size,
-                                    sloc=src_location,
-                                    dloc=dst_location,
-                                    stream=cudastream,
-                                    backend=self.backend), sdfg, state_id,
+                                '{backend}Memcpy{sloc}To{dloc}, {stream});'.
+                                format(dst=str(dst_node),
+                                       src=str(src_node),
+                                       fname=field_name,
+                                       sz=size,
+                                       sloc=src_location,
+                                       dloc=dst_location,
+                                       stream=cudastream,
+                                       backend=self.backend), sdfg, state_id,
                                 [src_node, dst_node])
                     callsite_stream.write('}')
             elif dims == 2:
@@ -797,8 +806,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                        src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' %
                        src_node.desc(sdfg).dtype.ctype, sym2cpp(copy_shape[1]) +
                        ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
-                       sym2cpp(copy_shape[0]), self.backend, src_location, 
-                       dst_location, cudastream), sdfg, state_id, 
+                       sym2cpp(copy_shape[0]), self.backend, src_location,
+                       dst_location, cudastream), sdfg, state_id,
                     [src_node, dst_node])
 
             # Post-copy synchronization
@@ -1127,6 +1136,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and node.map.schedule == dtypes.ScheduleType.GPU_Device):
                 create_grid_barrier = True
 
+        self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.sdfg_id,
                                        sdfg.node_id(state),
                                        state.node_id(scope_entry))
@@ -1145,8 +1155,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
         # Add data from nested SDFGs to kernel arguments
-        nested_allocated = set()
+        self.extra_nsdfg_args = []
         if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
+            to_allocate = set()
             for nested_sdfg in [
                     node.sdfg for node in dfg_scope.nodes()
                     if isinstance(node, nodes.NestedSDFG)
@@ -1156,14 +1167,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     nested_to_allocate = (
                         set(nested_state.top_level_transients()) -
                         nested_shared_transients)
-                    nodes_to_allocate = [
-                        n for n in nested_state.data_nodes()
-                        if n.data in nested_to_allocate
-                        and n.data not in nested_allocated
-                    ]
-                    for nested_node in nodes_to_allocate:
-                        kernel_args[nested_node.data] = nested_node.desc(
-                            nested_sdfg)
+                    to_allocate |= set(n for n in nested_state.data_nodes()
+                                       if n.data in nested_to_allocate)
+            for nested_node in sorted(to_allocate, key=lambda n: n.data):
+                desc = nested_node.desc(nested_sdfg)
+                kernel_args[nested_node.data] = desc
+                self.extra_nsdfg_args.append(
+                    (desc.as_arg(name=''), nested_node.data, nested_node.data))
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
@@ -1173,7 +1183,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
 
         kernel_args_typed = [
-            ('const ' if k in const_params else '') + v.signature(name=k)
+            ('const ' if k in const_params else '') + v.as_arg(name=k)
             for k, v in kernel_args.items()
         ]
 
@@ -1254,13 +1264,11 @@ void __dace_runkernel_{fname}({fargs})
 int dace_number_SMs;
 {backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0);
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
-                '''.format(
-                    fraction=Config.get('compiler', 'cuda',
-                                        'persistent_map_SM_fraction'),
-                    occupancy=Config.get('compiler', 'cuda',
-                                         'persistent_map_occupancy'),
-                    backend=self.backend
-                ))
+                '''.format(fraction=Config.get('compiler', 'cuda',
+                                               'persistent_map_SM_fraction'),
+                           occupancy=Config.get('compiler', 'cuda',
+                                                'persistent_map_occupancy'),
+                           backend=self.backend))
 
         extra_kernel_args = []
         if create_grid_barrier:
@@ -1339,7 +1347,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                 ev = e._cuda_event
                 callsite_stream.write(
                     'DACE_CUDA_CHECK({backend}EventSynchronize(dace::cuda::__events[{ev}]));'
-                    .format(ev=ev, backend=self.backend), sdfg, state_id, [e.src, e.dst])
+                    .format(ev=ev, backend=self.backend), sdfg, state_id,
+                    [e.src, e.dst])
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(
                     sdfg, e.data, False, e.dst_conn,
@@ -2055,14 +2064,38 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
+            sdfg, state, node, memlet_references, sdfg_label)
+
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
+                            sdfg_label):
+        return self._cpu_codegen.generate_nsdfg_call(sdfg, state, node,
+                                                     memlet_references,
+                                                     sdfg_label)
+
+    def generate_nsdfg_arguments(self, sdfg, state, node):
+        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
+        if self.create_grid_barrier:
+            result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
+
+        # Add data from nested SDFGs to kernel arguments
+        result.extend(self.extra_nsdfg_args)
+
+        return result
+
     def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
                              callsite_stream):
         old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
+        old_codegen = self._cpu_codegen.calling_codegen
+        self._cpu_codegen.calling_codegen = self
 
         self._cpu_codegen._generate_NestedSDFG(sdfg, dfg, state_id, node,
                                                function_stream, callsite_stream)
 
+        self._cpu_codegen.calling_codegen = old_codegen
         self._toplevel_schedule = old_schedule
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
