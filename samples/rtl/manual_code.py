@@ -23,7 +23,10 @@ sdfg.append_global_code(cpp_code='''
         
         // include model header, generated from verilating "top.v"
         #include "Vtop.h"
-        
+        #include "Vtop.cpp"
+        #include "Vtop__Slow.cpp"
+        #include "Vtop__Syms.cpp"
+
         // current simulation time (64-bit unsigned, cycles, global)
         vluint64_t main_time = 0;
         ''')
@@ -100,6 +103,46 @@ state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0:N-1'))
 
 # validate sdfg
 sdfg.validate()
+
+# run verilator
+unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+import os, subprocess
+base_path = os.path.join(".dacecache", sdfg.name, "build")
+absolut_path = os.path.abspath(base_path)
+code = '''
+module top
+  #(
+    parameter  WIDTH = 32
+  ) 
+  ( input                  clk_i
+  , input                  rst_i
+  , input      [WIDTH-1:0] a
+  , output reg [WIDTH-1:0] b
+  );
+
+  always_ff @(posedge clk_i) begin
+    if (rst_i)
+      b <= a;
+    else
+      b <= b + 1;
+  end    
+
+
+  always@ (*) begin
+      if (b >= 10) begin
+        $finish;
+      end
+   end
+        
+endmodule
+'''
+
+with open(os.path.join(absolut_path, "top.v"), "w") as file:
+    file.writelines(code)
+
+subprocess.call(['verilator', '-Wall', '-cc', 'top.v'], cwd=absolut_path)
+
+print()
 
 ######################################################################
 
