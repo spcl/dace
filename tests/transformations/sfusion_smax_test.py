@@ -11,6 +11,7 @@ import dace.libraries.standard as stdlib
 import dace.sdfg.nodes as nodes
 from typing import Union, List
 
+
 def expand_reduce(sdfg: dace.SDFG,
                   graph: dace.SDFGState,
                   subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -24,31 +25,34 @@ def expand_reduce(sdfg: dace.SDFG,
         reduce_nodes = []
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
-                if not ReduceExpansion.can_be_applied(graph = graph,
-                                                candidate = {ReduceExpansion._reduce: graph.node_id(node)},
-                                                expr_index = 0,
-                                                sdfg = sdfg):
+                if not ReduceExpansion.can_be_applied(
+                        graph=graph,
+                        candidate={
+                            ReduceExpansion._reduce: graph.node_id(node)
+                        },
+                        expr_index=0,
+                        sdfg=sdfg):
                     print(f"WARNING: Cannot expand reduce node {node}: \
                             Can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
-        trafo_reduce = ReduceExpansion(0,0,{},0)
+        trafo_reduce = ReduceExpansion(0, 0, {}, 0)
         for (property, val) in kwargs.items():
             setattr(trafo_reduce, property, val)
 
         for reduce_node in reduce_nodes:
-            trafo_reduce.expand(sdfg,graph,reduce_node)
+            trafo_reduce.expand(sdfg, graph, reduce_node)
             if isinstance(sg, SubgraphView):
                 sg.nodes().remove(reduce_node)
                 sg.nodes().append(trafo_reduce._new_reduce)
                 sg.nodes().append(trafo_reduce._outer_entry)
 
+
 def expand_maps(sdfg: dace.SDFG,
                 graph: dace.SDFGState,
                 subgraph: Union[SubgraphView, List[SubgraphView]] = None,
                 **kwargs):
-
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, List):
@@ -97,7 +101,7 @@ H, B, SN, SM = (dace.symbol(s) for s in ('H', 'B', 'SN', 'SM'))
 
 @dace.program
 def softmax(X_in: dace_dtype[H, B, SN, SM]):
-    tmp_max = dace.reduce(lambda a, b: max(a, b), X_in, axis=3, identity = 0)
+    tmp_max = dace.reduce(lambda a, b: max(a, b), X_in, axis=3, identity=0)
 
     tmp_out = np.ndarray([H, B, SN, SM], dtype=dace_dtype)
     out = np.ndarray([H, B, SN, SM], dtype=dace_dtype)
@@ -124,8 +128,11 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
 
 sdfg = softmax.to_sdfg()
 sdfg.apply_strict_transformations()
-H.set(10); B.set(10); SN.set(20); SM.set(20)
-A = np.ndarray((H.get(), B.get(), SN.get(), SM.get()), dtype = np.float32)
+H.set(10)
+B.set(10)
+SN.set(20)
+SM.set(20)
+A = np.ndarray((H.get(), B.get(), SN.get(), SM.get()), dtype=np.float32)
 
 
 def get_partition(sdfg, graph):
@@ -153,10 +160,11 @@ def get_partition(sdfg, graph):
 
 def test_pipeline():
 
-    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
+    X_in = np.random.rand(H.get(), B.get(), SN.get(),
+                          SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
-    res1 = csdfg(X_in = X_in, H=H, B=B, SN=SN, SM=SM)
+    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
 
     subgraph = get_partition(sdfg, sdfg.nodes()[0])
     expand_reduce(sdfg, sdfg.nodes()[0], subgraph)
@@ -164,7 +172,7 @@ def test_pipeline():
     fusion(sdfg, sdfg.nodes()[0], subgraph)
 
     csdfg = sdfg.compile()
-    res2 = csdfg(X_in = X_in, H=H, B=B, SN=SN, SM=SM)
+    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
 
     assert np.allclose(res1, res2)
     print("PASS")

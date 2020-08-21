@@ -11,6 +11,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph.helpers import *
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -117,7 +118,6 @@ def config():
     return A, expected
 
 
-
 def test_offsets():
     sdfg = dace.SDFG('mapfission_offsets')
     sdfg.add_array('A', [20], dace.float64)
@@ -156,7 +156,6 @@ def test_offsets():
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
     assert (np.allclose(A_cpy, expected))
-
 
     fusion(sdfg, sdfg.nodes()[0], None)
 

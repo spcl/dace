@@ -11,6 +11,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph.helpers import *
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -135,10 +136,8 @@ def test_offsets_array():
                           t1,
                           dst_conn='a',
                           memlet=dace.Memlet.simple('A', 'i'))
-    state.add_edge(t1, 'b', interim, None,
-                   dace.Memlet.simple('interim', '0'))
-    state.add_edge(interim, None, t2, 'a',
-                   dace.Memlet.simple('interim', '0'))
+    state.add_edge(t1, 'b', interim, None, dace.Memlet.simple('interim', '0'))
+    state.add_edge(interim, None, t2, 'a', dace.Memlet.simple('interim', '0'))
     state.add_memlet_path(t2,
                           mx,
                           awrite,
@@ -166,6 +165,7 @@ def test_offsets_array():
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
     assert (np.allclose(A_cpy, expected))
+
 
 if __name__ == '__main__':
     test_offsets_array()

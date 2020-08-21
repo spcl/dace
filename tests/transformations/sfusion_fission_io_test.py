@@ -11,6 +11,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph.helpers import *
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -172,7 +173,6 @@ def test_inputs_outputs():
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
 
-
     fusion(sdfg, sdfg.nodes()[0], None)
 
     C_cpy = deepcopy(C)
@@ -181,7 +181,6 @@ def test_inputs_outputs():
     csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
-
 
 
 if __name__ == '__main__':

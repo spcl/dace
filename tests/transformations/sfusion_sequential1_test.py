@@ -7,6 +7,7 @@ import numpy as np
 
 N = dace.symbol('N')
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -34,9 +35,9 @@ def fusion(sdfg: dace.SDFG,
         if isinstance(sg, SubgraphView):
             sg.nodes().append(map_fusion._global_map_entry)
 
+
 @dace.program
-def TEST(A: dace.float64[N], B:dace.float64[N],
-          C: dace.float64[N]):
+def TEST(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 
     for i in dace.map[0:N]:
         with dace.tasklet:
@@ -63,10 +64,10 @@ if __name__ == "__main__":
     C2 = np.random.rand(N.get()).astype(np.float64)
 
     csdfg = sdfg.compile()
-    csdfg(A=A,B=B,C=C1,N=N)
+    csdfg(A=A, B=B, C=C1, N=N)
 
     fusion(sdfg, state)
     csdfg = sdfg.compile()
-    csdfg(A=A,B=B,C=C2,N=N)
+    csdfg(A=A, B=B, C=C2, N=N)
 
     assert np.allclose(C1, C2)

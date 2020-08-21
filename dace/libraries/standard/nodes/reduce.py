@@ -642,23 +642,31 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
 
     environments = [CUDA]
 
-    collapse = Property(desc = "Collapse Reduction for better viewability",
-                        dtype = bool,
-                        default = False)
+    collapse = Property(desc="Collapse Reduction for better viewability",
+                        dtype=bool,
+                        default=False)
 
     @staticmethod
-    def redirect_edge(graph, edge, new_src = None, new_src_conn = None ,
-                                         new_dst = None, new_dst_conn = None, new_data = None ):
+    def redirect_edge(graph,
+                      edge,
+                      new_src=None,
+                      new_src_conn=None,
+                      new_dst=None,
+                      new_dst_conn=None,
+                      new_data=None):
 
         data = new_data if new_data else edge.data
         if new_src and new_dst:
-            ret = graph.add_edge(new_src, new_src_conn, new_dst, new_dst_conn, data)
+            ret = graph.add_edge(new_src, new_src_conn, new_dst, new_dst_conn,
+                                 data)
             graph.remove_edge(edge)
         elif new_src:
-            ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn, data)
+            ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn,
+                                 data)
             graph.remove_edge(edge)
         elif new_dst:
-            ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn, data)
+            ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn,
+                                 data)
             graph.remove_edge(edge)
         else:
             pass
@@ -687,23 +695,32 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
                       schedule = dtypes.ScheduleType.Default)
 
         map = new_entry.map
-        ExpandReduceCUDABlockAll.redirect_edge(graph, in_edge, new_dst = new_entry)
-        ExpandReduceCUDABlockAll.redirect_edge(graph, out_edge, new_src = new_exit)
+        ExpandReduceCUDABlockAll.redirect_edge(graph,
+                                               in_edge,
+                                               new_dst=new_entry)
+        ExpandReduceCUDABlockAll.redirect_edge(graph,
+                                               out_edge,
+                                               new_src=new_exit)
 
-
-        subset_in = subsets.Range([in_edge.data.subset[i] if i not in axes
-                                   else (new_entry.map.params[0],new_entry.map.params[0],1)
-                                   for i in range(len(in_edge.data.subset))])
-        memlet_in = dace.Memlet(data = in_edge.data.data,
-                           volume = 1,
-                           subset = subset_in)
+        subset_in = subsets.Range([
+            in_edge.data.subset[i] if i not in axes else
+            (new_entry.map.params[0], new_entry.map.params[0], 1)
+            for i in range(len(in_edge.data.subset))
+        ])
+        memlet_in = dace.Memlet(data=in_edge.data.data,
+                                volume=1,
+                                subset=subset_in)
         memlet_out = dcpy(out_edge.data)
-        graph.add_edge(u = new_entry, u_connector = None,
-                       v = reduce_node,v_connector = None,
-                       memlet = memlet_in)
-        graph.add_edge(u = reduce_node, u_connector = None,
-                       v = new_exit, v_connector = None,
-                       memlet = memlet_out)
+        graph.add_edge(u=new_entry,
+                       u_connector=None,
+                       v=reduce_node,
+                       v_connector=None,
+                       memlet=memlet_in)
+        graph.add_edge(u=reduce_node,
+                       u_connector=None,
+                       v=new_exit,
+                       v_connector=None,
+                       memlet=memlet_out)
 
         ### add in and out local storage
         from dace.transformation.dataflow.local_storage import LocalStorage
@@ -719,8 +736,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
 
         local_storage = LocalStorage(sdfg.sdfg_id,
                                      sdfg.nodes().index(state),
-                                     in_local_storage_subgraph,
-                                     0)
+                                     in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
         local_storage.apply(sdfg)
@@ -729,8 +745,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
 
         local_storage = LocalStorage(sdfg.sdfg_id,
                                      sdfg.nodes().index(state),
-                                     out_local_storage_subgraph,
-                                     0)
+                                     out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
         local_storage.apply(sdfg)
         out_transient = local_storage._data_node
@@ -745,25 +760,29 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
 
         ### add an if tasket and diverge
         code = 'if '
-        for (i,param) in enumerate(new_entry.map.params):
+        for (i, param) in enumerate(new_entry.map.params):
             code += (param + '==0')
             if i < len(axes) - 1:
                 code += ' and '
         code += ':\n'
         code += '\tout=inp'
 
-        tasklet_node = graph.add_tasklet(name = 'block_reduce_write',
-                                         inputs = ['inp'],
-                                         outputs = ['out'],
-                                         code = code)
+        tasklet_node = graph.add_tasklet(name='block_reduce_write',
+                                         inputs=['inp'],
+                                         outputs=['out'],
+                                         code=code)
 
         edge_out_outtrans = graph.out_edges(out_transient)[0]
         edge_out_innerexit = graph.out_edges(new_exit)[0]
-        ExpandReduceCUDABlockAll.redirect_edge(graph, edge_out_outtrans,
-                           new_dst = tasklet_node, new_dst_conn = 'inp')
-        e = graph.add_edge(u = tasklet_node, u_connector = 'out',
-                           v = new_exit, v_connector = None,
-                           memlet = dcpy(edge_out_innerexit.data))
+        ExpandReduceCUDABlockAll.redirect_edge(graph,
+                                               edge_out_outtrans,
+                                               new_dst=tasklet_node,
+                                               new_dst_conn='inp')
+        e = graph.add_edge(u=tasklet_node,
+                           u_connector='out',
+                           v=new_exit,
+                           v_connector=None,
+                           memlet=dcpy(edge_out_innerexit.data))
         # set dynamic with volume 0 FORNOW
         e.data.volume = 0
         e.data.dynamic = True

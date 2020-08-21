@@ -7,11 +7,13 @@ from dace.libraries.standard.nodes.reduce import Reduce
 
 N = dace.symbol('N')
 M = dace.symbol('M')
-N.set(30); M.set(30)
+N.set(30)
+M.set(30)
+
 
 @dace.program
-def TEST(A: dace.float32[M,N]):
-    return dace.reduce(lambda a, b: max(a,b), A, axis=1, identity = 0)
+def TEST(A: dace.float32[M, N]):
+    return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)
 
 
 def test():
@@ -26,7 +28,7 @@ def test():
     reduce_node.implementation = 'CUDA (device)'
 
     csdfg = sdfg.compile()
-    result1 = csdfg(A=A,M=M,N=N)
+    result1 = csdfg(A=A, M=M, N=N)
 
     sdfg_id = 0
     state_id = 0
@@ -36,8 +38,8 @@ def test():
     transform.reduce_implementation = 'CUDA (block allreduce)'
     transform.apply(sdfg)
     csdfg = sdfg.compile()
-    result2 = csdfg(A=A,M=M,N=N)
-    
+    result2 = csdfg(A=A, M=M, N=N)
+
     print(np.linalg.norm(result1))
     print(np.linalg.norm(result2))
     assert np.allclose(result1, result2)

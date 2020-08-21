@@ -8,6 +8,7 @@ from typing import List, Union
 
 N = dace.symbol('N')
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -38,7 +39,7 @@ def fusion(sdfg: dace.SDFG,
 
 @dace.program
 def TEST(A: dace.float64[N], C: dace.float64[N]):
-    B = np.ndarray(shape = [N], dtype = np.float64)
+    B = np.ndarray(shape=[N], dtype=np.float64)
     for i in dace.map[0:N]:
         with dace.tasklet:
             in1 << A[i]
@@ -64,10 +65,10 @@ if __name__ == "__main__":
     C2 = np.random.rand(N.get()).astype(np.float64)
 
     csdfg = sdfg.compile()
-    csdfg(A=A,C=C1,N=N)
+    csdfg(A=A, C=C1, N=N)
     fusion(sdfg, state)
     csdfg = sdfg.compile()
-    csdfg(A=A,C=C2,N=N)
+    csdfg(A=A, C=C2, N=N)
 
     print(np.linalg.norm(C1))
     print(np.linalg.norm(C2))

@@ -11,6 +11,7 @@ from dace.transformation.interstate import StateFusion
 
 import sys
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -46,11 +47,11 @@ O.set(70)
 
 
 @dace.program
-def TEST(A: dace.float64[M,N], B: dace.float64[M,N], C: dace.float64[M,N]):
-    for i,j in dace.map[0:M, 0:N]:
+def TEST(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
+    for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
-            in1 << A[i,j]
-            out1 >> A[i,j]
+            in1 << A[i, j]
+            out1 >> A[i, j]
             out1 = in1 + 1.0
 
     with dace.tasklet:
@@ -58,10 +59,10 @@ def TEST(A: dace.float64[M,N], B: dace.float64[M,N], C: dace.float64[M,N]):
         out1 >> B[:]
         out1 = in1
 
-    for i,j in dace.map[0:M, 0:N]:
+    for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
-            in1 << A[i,j]
-            out >> A[i,j]
+            in1 << A[i, j]
+            out >> A[i, j]
             out = in1 + 2.0
 
     with dace.tasklet:
@@ -72,17 +73,17 @@ def TEST(A: dace.float64[M,N], B: dace.float64[M,N], C: dace.float64[M,N]):
 
 def test_quantitatively(sdfg, graph):
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
-    B1 = np.zeros(shape=[M.get(), N.get()], dtype = np.float64)
-    C1 = np.zeros(shape=[M.get(), N.get()], dtype = np.float64)
-    B2 = np.zeros(shape=[M.get(), N.get()], dtype = np.float64)
-    C2 = np.zeros(shape=[M.get(), N.get()], dtype = np.float64)
+    B1 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
+    C1 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
+    B2 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
+    C2 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
     csdfg = sdfg.compile()
-    csdfg(A=A,B=B1,C=C1,N=N,M=M)
+    csdfg(A=A, B=B1, C=C1, N=N, M=M)
     fusion(sdfg, graph)
     csdfg = sdfg.compile()
-    csdfg(A=A,B=B2,C=C2,N=N,M=M)
-    assert np.allclose(B1,B2)
-    assert np.allclose(C1,C2)
+    csdfg(A=A, B=B2, C=C2, N=N, M=M)
+    assert np.allclose(B1, B2)
+    assert np.allclose(C1, C2)
 
 
 if __name__ == "__main__":

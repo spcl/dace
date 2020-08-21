@@ -17,7 +17,6 @@ from typing import List, Union
 import dace.libraries.standard as stdlib
 
 
-
 @make_properties
 class MultiExpansion(pattern_matching.SubgraphTransformation):
     ''' Implements the MultiExpansion transformation.
@@ -28,12 +27,10 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     '''
 
-    debug = Property(dtype = bool,
-                     desc = "Debug Mode",
-                     default = True)
-    sequential_innermaps = Property(dtype = bool,
-                                    desc = "Sequential innermaps",
-                                    default = False)
+    debug = Property(dtype=bool, desc="Debug Mode", default=True)
+    sequential_innermaps = Property(dtype=bool,
+                                    desc="Sequential innermaps",
+                                    default=False)
 
     @staticmethod
     def match(sdfg, subgraph) -> bool:
@@ -61,17 +58,16 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
 
         return True
 
-
-    def apply(self, sdfg, subgraph, map_base_variables = None):
+    def apply(self, sdfg, subgraph, map_base_variables=None):
         # get lowest scope map entries and expand
 
         graph = subgraph.graph
 
         # next, get all the base maps and expand
         maps = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
-        self.expand(sdfg, graph, maps, map_base_variables = map_base_variables)
+        self.expand(sdfg, graph, maps, map_base_variables=map_base_variables)
 
-    def expand(self, sdfg, graph, map_entries, map_base_variables = None):
+    def expand(self, sdfg, graph, map_entries, map_base_variables=None):
         """
         Expansion into outer and inner maps for each map in a specified set.
         The resulting outer maps all have same range and indices, corresponding
@@ -97,7 +93,6 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
             # find the maximal subset of variables to expand
             # greedy if there exist multiple ranges that are equal in a map
 
-
             map_base_ranges = helpers.common_map_base_ranges(maps)
             reassignments = helpers.find_reassignment(maps, map_base_ranges)
 
@@ -108,10 +103,10 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
             map_base_variables = []
             for rng in map_base_ranges:
                 for i in range(len(maps[0].params)):
-                    if maps[0].range[i] == rng and maps[0].params[i] not in map_base_variables:
+                    if maps[0].range[i] == rng and maps[0].params[
+                            i] not in map_base_variables:
                         map_base_variables.append(maps[0].params[i])
                         break
-
 
             params_dict = {}
             if self.debug:
@@ -182,7 +177,6 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
                 for var, rng in zip(map_base_variables, map_base_ranges):
                     assert map.range[map.params.index(var)] == rng
 
-
         # then expand all the maps
         for map, map_entry in zip(maps, map_entries):
             if map.get_param_num() == len(map_base_variables):
@@ -226,8 +220,8 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
                 graph.add_memlet_path(map_entry,
                                       map_entry_inner,
                                       edge.dst,
-                                      src_conn = edge.src_conn,
-                                      memlet = edge.data,
+                                      src_conn=edge.src_conn,
+                                      memlet=edge.data,
                                       dst_conn=edge.dst_conn)
 
             dynamic_edges = dynamic_map_inputs(graph, map_entry)
@@ -244,17 +238,17 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
                            for r in mapnode.map.range):
                         graph.add_memlet_path(edge.src,
                                               *path,
-                                              memlet = edge.data,
-                                              src_conn = edge.src_conn,
-                                              dst_conn = edge.dst_conn)
+                                              memlet=edge.data,
+                                              src_conn=edge.src_conn,
+                                              dst_conn=edge.dst_conn)
 
             for edge in graph.in_edges(map_exit):
                 graph.remove_edge(edge)
                 graph.add_memlet_path(edge.src,
                                       map_exit_inner,
                                       map_exit,
-                                      memlet = edge.data,
-                                      src_conn = edge.src_conn,
-                                      dst_conn = edge.dst_conn)
+                                      memlet=edge.data,
+                                      src_conn=edge.src_conn,
+                                      dst_conn=edge.dst_conn)
 
         return

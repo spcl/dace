@@ -12,6 +12,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph.helpers import *
 
+
 def fusion(sdfg: dace.SDFG,
            graph: dace.SDFGState,
            subgraph: Union[SubgraphView, List[SubgraphView]] = None,
@@ -121,7 +122,6 @@ def config():
 def test_subgraph():
     A, expected = config()
     B_init = np.random.rand(2)
-
 
     graph = mapfission_sdfg()
     graph.apply_transformations(MapFission)
