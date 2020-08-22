@@ -26,7 +26,7 @@ class MemletPattern(object):
 
 @registry.make_registry
 class SeparableMemletPattern(object):
-    """ Memlet pattern that can be applied to each of the dimensions 
+    """ Memlet pattern that can be applied to each of the dimensions
         separately. """
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
@@ -347,7 +347,7 @@ class ModuloSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class ConstantSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that matches constant (i.e., unrelated to 
+    """ Separable memlet pattern that matches constant (i.e., unrelated to
         current scope) expressions.
     """
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
@@ -392,7 +392,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 
 @registry.autoregister
 class GenericSMemlet(SeparableMemletPattern):
-    """ Separable memlet pattern that detects any expression, and propagates 
+    """ Separable memlet pattern that detects any expression, and propagates
         interval bounds. Used as a last resort. """
     def match(self, dim_exprs, variable_context, node_range, orig_edges,
               dim_index, total_dims):
@@ -530,7 +530,7 @@ class ConstantRangeMemlet(MemletPattern):
 
 
 def propagate_memlets_sdfg(sdfg):
-    """ Propagates memlets throughout an entire given SDFG. 
+    """ Propagates memlets throughout an entire given SDFG.
         @note: This is an in-place operation on the SDFG.
     """
     for state in sdfg.nodes():
@@ -538,7 +538,7 @@ def propagate_memlets_sdfg(sdfg):
 
 
 def _propagate_labels(g, sdfg):
-    """ Propagates memlets throughout one SDFG state. 
+    """ Propagates memlets throughout one SDFG state.
         :param g: The state to propagate in.
         :param sdfg: The SDFG in which the state is situated.
         @note: This is an in-place operation on the SDFG state.
@@ -630,8 +630,8 @@ def propagate_memlet(dfg_state,
                      scope_node: nodes.EntryNode,
                      union_inner_edges: bool,
                      arr=None):
-    """ Tries to propagate a memlet through a scope (computes the image of 
-        the memlet function applied on an integer set of, e.g., a map range) 
+    """ Tries to propagate a memlet through a scope (computes the image of
+        the memlet function applied on an integer set of, e.g., a map range)
         and returns a new memlet object.
         :param dfg_state: An SDFGState object representing the graph.
         :param memlet: The memlet adjacent to the scope node from the inside.
@@ -662,7 +662,7 @@ def propagate_memlet(dfg_state,
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets
-   if union_inner_edges:
+    if union_inner_edges:
         if isinstance(scope_node, nodes.EntryNode):
             try:
                 target_conn = next(e.src_conn for e in neighboring_edges if e.data == memlet)
@@ -695,7 +695,6 @@ def propagate_memlet(dfg_state,
                     if e.data.data == memlet.data and e.data != memlet
 
                 ]
-                
     else:
         aggdata = []
 
