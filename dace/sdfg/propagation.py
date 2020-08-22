@@ -662,11 +662,26 @@ def propagate_memlet(dfg_state,
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets
+       # Find other adjacent edges within the connected to the scope node
+    # and union their subsets
     if union_inner_edges:
-        aggdata = [
-            e.data for e in neighboring_edges
-            if e.data.data == memlet.data and e.data != memlet
-        ]
+        if isinstance(scope_node, nodes.EntryNode):
+            target_conn = next(e.src_conn for e in neighboring_edges if e.data == memlet)
+            aggdata = [
+                e.data for e in neighboring_edges
+                if e.data.data == memlet.data and e.data != memlet
+                and e.src_conn == target_conn
+
+            ]
+        if isinstance(scope_node, nodes.ExitNode):
+            # multiple incoming edges into an exit node in_conn are technically not allowed... 
+            target_conn = next(e.dst_conn for e in neighboring_edges if e.data == memlet)
+            aggdata = [
+                e.data for e in neighboring_edges
+                if e.data.data == memlet.data and e.data != memlet
+                and e.dst_conn == target_conn
+
+            ]
     else:
         aggdata = []
 
