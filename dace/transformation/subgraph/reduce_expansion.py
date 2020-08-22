@@ -34,15 +34,15 @@ class ReduceExpansion(pattern_matching.Transformation):
 
     _reduce = stdlib.Reduce()
 
-    debug = Property(desc="Debug Info", dtype=bool, default=True)
+    debug = Property(desc="Debug Info", dtype=bool, default=False)
 
-    create_in_transient = Property(desc="Create local in-transient in"
-                                   "shared memory",
+    create_in_transient = Property(desc="Create local in-transient"
+                                        "in registers",
                                    dtype=bool,
                                    default=False)
 
     create_out_transient = Property(desc="Create local out-transient"
-                                    "in register",
+                                         "in registers",
                                     dtype=bool,
                                     default=False)
 
@@ -243,9 +243,9 @@ class ReduceExpansion(pattern_matching.Transformation):
 
             # push to shared memory / default
             nsdfg.sdfg.data(in_transient_node_inner.data
-                            ).storage = dtypes.StorageType.Default
+                            ).storage = dtypes.StorageType.Register
 
-        # first, inline fuse back our NSDFG
+        # first, inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
         inline_sdfg = InlineSDFG(
             sdfg.sdfg_list.index(sdfg),

@@ -27,9 +27,10 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
     Map access variables and memlets are changed accordingly
     '''
 
-    debug = Property(dtype=bool, desc="Debug Mode", default=True)
+    debug = Property(dtype=bool, desc="Debug Mode", default=False)
     sequential_innermaps = Property(dtype=bool,
-                                    desc="Sequential innermaps",
+                                    desc="Make all inner maps that are"
+                                         "created during expansion sequential",
                                     default=False)
 
     @staticmethod
@@ -250,5 +251,3 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
                                       memlet=edge.data,
                                       src_conn=edge.src_conn,
                                       dst_conn=edge.dst_conn)
-
-        return
