@@ -739,8 +739,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
-                '%s;\n' % (isvar.signature(with_types=True, name=isvarName)),
-                sdfg)
+                '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
 
         callsite_stream.write('\n', sdfg)
 
