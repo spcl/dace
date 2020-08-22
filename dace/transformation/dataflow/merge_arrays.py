@@ -112,8 +112,10 @@ class InMergeArrays(pattern_matching.Transformation):
             map.remove_out_connector('OUT_' + c)
 
         # Re-propagate memlets
+        edge_to_propagate = next(e for e in graph.out_edges(map)
+                                 if e.src_conn[4:] == result_connector)
         map_edge._data = propagate_memlet(dfg_state=graph,
-                                          memlet=map_edge.data,
+                                          memlet=edge_to_propagate.data,
                                           scope_node=map,
                                           union_inner_edges=True)
 
@@ -221,7 +223,9 @@ class OutMergeArrays(pattern_matching.Transformation):
             map.remove_out_connector('OUT_' + c)
 
         # Re-propagate memlets
+        edge_to_propagate = next(e for e in graph.in_edges(map)
+                                 if e.dst_conn[3:] == result_connector)
         map_edge._data = propagate_memlet(dfg_state=graph,
-                                          memlet=map_edge.data,
+                                          memlet=edge_to_propagate.data,
                                           scope_node=map,
                                           union_inner_edges=True)
