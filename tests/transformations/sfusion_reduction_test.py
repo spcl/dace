@@ -1,13 +1,17 @@
 import dace
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 from dace.transformation.subgraph import ReduceExpansion
 from dace.sdfg.graph import SubgraphView
 import dace.sdfg.nodes as nodes
 import numpy as np
+import dace.libraries.standard as stdlib
+
+from typing import Union, List
 
 M = dace.symbol('M')
 N = dace.symbol('N')
-
+N.set(20)
+M.set(30)
 
 def expand_reduce(sdfg: dace.SDFG,
                   graph: dace.SDFGState,
@@ -47,7 +51,7 @@ def expand_reduce(sdfg: dace.SDFG,
 
 
 @dace.program
-def TEST(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
+def test_program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     tmp[:] = 2 * A[:] + B[:]
@@ -55,7 +59,7 @@ def TEST(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
 
 @dace.program
-def TEST2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
+def test_program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     C[:] = dace.reduce(lambda a, b: max(a, b), B, axis=0)
@@ -68,8 +72,8 @@ def TEST2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
     C[:] = dace.reduce(lambda a, b: a + b, tmp, axis=0)
 
 
-def test1():
-    sdfg = TEST.to_sdfg()
+def test_p1():
+    sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     for node in state.nodes():
@@ -99,8 +103,8 @@ def test1():
     print("PASS")
 
 
-def test2():
-    sdfg = TEST2.to_sdfg()
+def test_p2():
+    sdfg = test_program2.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
@@ -122,7 +126,5 @@ def test2():
 
 
 if __name__ == "__main__":
-    N.set(20)
-    M.set(30)
-    test1()
-    test2()
+    test_p1()
+    test_p2()

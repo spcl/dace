@@ -2,7 +2,7 @@ import dace
 from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph import ReduceExpansion
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
 import numpy as np
 
@@ -26,7 +26,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -47,7 +47,7 @@ O.set(70)
 
 
 @dace.program
-def TEST(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
+def test_program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
     for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
             in1 << A[i, j]
@@ -86,9 +86,11 @@ def test_quantitatively(sdfg, graph):
     assert np.allclose(C1, C2)
 
 
-if __name__ == "__main__":
-
-    sdfg = TEST.to_sdfg()
+def test_out_transient():
+    sdfg = test_program.to_sdfg()
     sdfg.apply_transformations_repeated(StateFusion)
     graph = sdfg.nodes()[0]
     test_quantitatively(sdfg, graph)
+
+if __name__ == "__main__":
+    test_out_transient()

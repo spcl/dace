@@ -1,6 +1,5 @@
 import dace
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
-from dace.transformation.subgraph.helpers import *
 import dace.sdfg.nodes as nodes
 import numpy as np
 
@@ -11,7 +10,7 @@ N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
 
 
 @dace.program
-def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
+def test_program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
          D: dace.float64[M], E: dace.float64[N], F: dace.float64[P],
          G: dace.float64[M], H: dace.float64[P], I: dace.float64[N],
          J: dace.float64[R], X: dace.float64[N], Y: dace.float64[M],
@@ -58,7 +57,8 @@ def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O],
             out = in1 + in2 + in3
 
 
-if __name__ == "__main__":
+
+def test_p1():
 
     N.set(20)
     M.set(30)
@@ -67,7 +67,7 @@ if __name__ == "__main__":
     Q.set(42)
     R.set(25)
 
-    sdfg = TEST.to_sdfg()
+    sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
 
@@ -103,3 +103,6 @@ if __name__ == "__main__":
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
           N=N, M=M, O=O, P=P, R=R,Q=Q)
     print("PASS")
+
+if __name__ == "__main__":
+    test_p1()

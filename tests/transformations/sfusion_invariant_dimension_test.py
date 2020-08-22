@@ -2,8 +2,8 @@ import dace
 from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph import ReduceExpansion
-from dace.sdfg.utils import *
-from dace.transformation.subgraph.helpers import *
+import dace.sdfg.utils as utils
+import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
 import numpy as np
 
@@ -29,7 +29,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -51,11 +51,11 @@ O.set(70)
 A = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
 B = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
 C = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
-OUT1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+out1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def TEST(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
+def test_program(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
          C: dace.float64[N, M, O]):
     for i, j in dace.map[0:N, 0:M]:
         with dace.tasklet:
@@ -77,7 +77,7 @@ def TEST(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
 
 
 @dace.program
-def FIX(AA: dace.float64[O], BB: dace.float64[O], CC: dace.float64[O]):
+def helper_sdfg(AA: dace.float64[O], BB: dace.float64[O], CC: dace.float64[O]):
     for z in range(1, 0):
         with dace.tasklet:
             in1 << AA[z]
@@ -95,6 +95,7 @@ def test_qualitatively(sdfg, graph):
 
 
 def fix_sdfg(sdfg, graph):
+    # fix sdfg as for now the SDFG gets parsed wrongly
     for node in graph.nodes():
         if isinstance(node, dace.sdfg.nodes.NestedSDFG):
             nested_original = node
@@ -107,7 +108,7 @@ def fix_sdfg(sdfg, graph):
                         e.data.subset = subsets.Range.from_string(new_subset)
 
     # next up replace sdfg
-    inner_sdfg = FIX.to_sdfg()
+    inner_sdfg = helper_sdfg.to_sdfg()
     nnode = graph.add_nested_sdfg(inner_sdfg, sdfg, {'AA', 'BB', 'CC'}, {'CC'})
     # redirect edges
     connectors = []
@@ -129,8 +130,8 @@ def fix_sdfg(sdfg, graph):
     graph.add_edge(e.src, 'CC', e.dst, e.dst_conn, e.data)
     graph.remove_edge(e)
 
-    change_edge_dest(graph, nested_original, nnode)
-    change_edge_src(graph, nested_original, nnode)
+    utils.change_edge_dest(graph, nested_original, nnode)
+    utils.change_edge_src(graph, nested_original, nnode)
     graph.remove_node(nested_original)
     sdfg.validate()
 
@@ -152,10 +153,12 @@ def test_quantitatively(sdfg, graph):
     assert np.allclose(C1, C2)
     print('PASS')
 
-
-if __name__ == '__main__':
-    sdfg = TEST.to_sdfg()
+def test_invariant_dim():
+    sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     fix_sdfg(sdfg, graph)
     test_quantitatively(sdfg, graph)
+
+if __name__ == '__main__':
+    test_invariant_dim()

@@ -12,14 +12,14 @@ from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 from typing import Union, List
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph.helpers import *
+
 
 N = dace.symbol('N')
 N.set(1000)
 
 
 @dace.program
-def TEST(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
          D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
@@ -73,9 +73,8 @@ def test_quantitatively(sdfg):
     assert np.allclose(C1, C2)
     assert np.allclose(D1, D2)
 
-
-if __name__ == '__main__':
-    sdfg = TEST.to_sdfg()
+def test_mimo():
+    sdfg = test_program.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
     sdfg.apply_transformations_repeated(StateFusion)
     # merge the C array
@@ -94,3 +93,6 @@ if __name__ == '__main__':
     sdfg.nodes()[0].remove_node(C2)
     sdfg.validate()
     test_quantitatively(sdfg)
+
+if __name__ == '__main__':
+    test_mimo()

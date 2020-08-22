@@ -1,5 +1,5 @@
 import dace
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.graph import SubgraphView
 import dace.sdfg.nodes as nodes
@@ -22,7 +22,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -37,7 +37,7 @@ def fusion(sdfg: dace.SDFG,
 
 
 @dace.program
-def TEST(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 
     for i in dace.map[0:N]:
         with dace.tasklet:
@@ -51,11 +51,10 @@ def TEST(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
             out1 >> C[i]
             out1 = in1 + 1
 
-
-if __name__ == "__main__":
+def test_sequential():
     N.set(1000)
 
-    sdfg = TEST.to_sdfg()
+    sdfg = test_program.to_sdfg()
     state = sdfg.nodes()[0]
 
     A = np.random.rand(N.get()).astype(np.float64)
@@ -71,3 +70,6 @@ if __name__ == "__main__":
     csdfg(A=A, B=B, C=C2, N=N)
 
     assert np.allclose(C1, C2)
+
+if __name__ == "__main__":
+    test_sequential()

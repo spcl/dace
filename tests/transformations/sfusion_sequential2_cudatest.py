@@ -1,6 +1,6 @@
 import dace
 from dace.transformation.subgraph import SubgraphFusion
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 from dace.sdfg.graph import SubgraphView
 import dace.sdfg.nodes as nodes
 import numpy as np
@@ -23,7 +23,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -38,7 +38,7 @@ def fusion(sdfg: dace.SDFG,
 
 
 @dace.program
-def TEST(A: dace.float64[N], C: dace.float64[N]):
+def test_program(A: dace.float64[N], C: dace.float64[N]):
     B = np.ndarray(shape=[N], dtype=np.float64)
     for i in dace.map[0:N]:
         with dace.tasklet:
@@ -56,7 +56,7 @@ def TEST(A: dace.float64[N], C: dace.float64[N]):
 if __name__ == "__main__":
     N.set(50)
 
-    sdfg = TEST.to_sdfg()
+    sdfg = test_program.to_sdfg()
     sdfg.apply_gpu_transformations()
     state = sdfg.nodes()[0]
 

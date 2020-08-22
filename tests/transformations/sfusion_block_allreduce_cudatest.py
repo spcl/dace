@@ -12,13 +12,13 @@ M.set(30)
 
 
 @dace.program
-def TEST(A: dace.float32[M, N]):
+def test_program(A: dace.float32[M, N]):
     return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)
 
 
-def test():
+def test_blockallreduce():
     A = np.random.rand(M.get(), N.get()).astype(np.float32)
-    sdfg = TEST.to_sdfg()
+    sdfg = test_program.to_sdfg()
     sdfg.apply_gpu_transformations()
 
     graph = sdfg.nodes()[0]
@@ -48,4 +48,4 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
+    test_blockallreduce()

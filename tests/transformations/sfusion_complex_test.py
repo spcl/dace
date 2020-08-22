@@ -2,7 +2,7 @@ import dace
 from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.subgraph import ReduceExpansion
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
 import numpy as np
 
@@ -62,7 +62,7 @@ def expand_maps(sdfg: dace.SDFG,
         setattr(trafo_expansion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         trafo_expansion.expand(sdfg, graph, map_entries)
 
 
@@ -80,7 +80,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -102,14 +102,14 @@ O.set(70)
 A = np.random.rand(N.get()).astype(np.float64)
 B = np.random.rand(M.get()).astype(np.float64)
 C = np.random.rand(O.get()).astype(np.float64)
-OUT1 = np.ndarray((N.get(), M.get()), np.float64)
-OUT2 = np.ndarray((1), np.float64)
-OUT3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+out1 = np.ndarray((N.get(), M.get()), np.float64)
+out2 = np.ndarray((1), np.float64)
+out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
-         OUT1: dace.float64[N,M], OUT2: dace.float64[1], OUT3: dace.float64[N,M,O]):
+def test_program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
+         out1: dace.float64[N,M], out2: dace.float64[1], out3: dace.float64[N,M,O]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
     tmp2 = np.ndarray([N, M, O], dtype=dace.float64)
@@ -150,7 +150,7 @@ def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
         with dace.tasklet:
             in1 << t2[i, j]
             in2 << A[i]
-            out >> OUT1[i, j]
+            out >> out1[i, j]
 
             out = in1 * in1 * in2 + in2
 
@@ -167,14 +167,14 @@ def TEST(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
         with dace.tasklet:
             in1 << tmp3[i, j, k]
             in2 << tmp1[i, j, k]
-            out >> OUT3[i, j, k]
+            out >> out3[i, j, k]
 
             out = in1 + in2
 
     @dace.tasklet
     def fun():
         in1 << tmp3[0, 0, 0]
-        out >> OUT2
+        out >> out2
 
         out = in1 * 42
 
@@ -192,41 +192,42 @@ def test_quantitatively(sdfg, graph):
     A = np.random.rand(N.get()).astype(np.float64)
     B = np.random.rand(M.get()).astype(np.float64)
     C = np.random.rand(O.get()).astype(np.float64)
-    OUT1_base = np.ndarray((N.get(), M.get()), np.float64)
-    OUT2_base = np.ndarray((1), np.float64)
-    OUT3_base = np.ndarray((N.get(), M.get(), O.get()), np.float64)
-    OUT1 = np.ndarray((N.get(), M.get()), np.float64)
-    OUT2 = np.ndarray((1), np.float64)
-    OUT3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+    out1_base = np.ndarray((N.get(), M.get()), np.float64)
+    out2_base = np.ndarray((1), np.float64)
+    out3_base = np.ndarray((N.get(), M.get(), O.get()), np.float64)
+    out1 = np.ndarray((N.get(), M.get()), np.float64)
+    out2 = np.ndarray((1), np.float64)
+    out3 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
     csdfg = sdfg.compile()
     csdfg(A=A,
           B=B,
           C=C,
-          OUT1=OUT1_base,
-          OUT2=OUT2_base,
-          OUT3=OUT3_base,
+          out1=out1_base,
+          out2=out2_base,
+          out3=out3_base,
           N=N,
           M=M,
           O=O)
 
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
-    #sgf = SubgraphFusion()
-    #matcher = sgf.match(sdfg, SubgraphView(graph, [node for node in graph.nodes()]))
-    #assert matcher == True
+    sgf = SubgraphFusion()
+    matcher = sgf.match(sdfg, SubgraphView(graph, [node for node in graph.nodes()]))
+    assert matcher == True
     fusion(sdfg, graph)
     sdfg.validate()
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C, OUT1=OUT1, OUT2=OUT2, OUT3=OUT3, N=N, M=M, O=O)
+    csdfg(A=A, B=B, C=C, out1=out1, out2=out2, out3=out3, N=N, M=M, O=O)
 
-    assert np.allclose(OUT1, OUT1_base)
-    assert np.allclose(OUT2, OUT2_base)
-    assert np.allclose(OUT3, OUT3_base)
+    assert np.allclose(out1, out1_base)
+    assert np.allclose(out2, out2_base)
+    assert np.allclose(out3, out3_base)
     print('PASS')
 
-
-if __name__ == "__main__":
-
-    sdfg = TEST.to_sdfg()
+def test_complex():
+    sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
     test_quantitatively(sdfg, sdfg.nodes()[0])
+
+if __name__ == "__main__":
+    test_complex()

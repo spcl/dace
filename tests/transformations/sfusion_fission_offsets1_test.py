@@ -9,7 +9,7 @@ import unittest
 from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 
 
 def fusion(sdfg: dace.SDFG,
@@ -26,7 +26,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
