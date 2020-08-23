@@ -40,23 +40,12 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
-    cpu_transient_allocation = Property(
-        desc="Storage Location to push"
-        "transients to in CPU environment",
+    transient_allocation = Property(
+        desc="Storage Location to push transients to that are "
+             "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
-        default=dtypes.StorageType.Default,
-        choices=[dtypes.StorageType.Register,
-                 dtypes.StorageType.CPU_Heap,
-                 dtypes.StorageType.CPU_ThreadLocal,
-                 dtypes.StorageType.Default])
+        default=dtypes.StorageType.Default)
 
-    cuda_transient_allocation = Property(desc="Storage Location to push"
-                                         "transients to in GPU environment",
-                                         dtype=dtypes.StorageType,
-                                         default=dtypes.StorageType.Default,
-                                         choices=[dtypes.StorageType.Register,
-                                                  dtypes.StorageType.GPU_Shared,
-                                                  dtypes.StorageType.Default])
 
     @staticmethod
     def match(sdfg, subgraph):
@@ -802,10 +791,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 transient_to_transform.total_size = new_data_totalsize
                 transient_to_transform.offset = new_data_offset
                 transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
-                if schedule == dtypes.ScheduleType.GPU_Device:
-                    transient_to_transform.storage = self.cuda_transient_allocation
-                else:
-                    transient_to_transform.storage = self.cpu_transient_allocation
+                transient_to_transform.storage = self.transient_allocation
 
 
             else:
