@@ -43,15 +43,20 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
     cpu_transient_allocation = Property(
         desc="Storage Location to push"
         "transients to in CPU environment",
-        dtype=str,
-        default="default",
-        choices=["register", "heap", "threadlocal", "default"])
+        dtype=dtypes.StorageType,
+        default=dtypes.StorageType.Default,
+        choices=[dtypes.StorageType.Register,
+                 dtypes.StorageType.CPU_Heap,
+                 dtypes.StorageType.CPU_ThreadLocal,
+                 dtypes.StorageType.Default])
 
     cuda_transient_allocation = Property(desc="Storage Location to push"
                                          "transients to in GPU environment",
-                                         dtype=str,
-                                         default="local",
-                                         choices=["shared", "local", "default"])
+                                         dtype=dtypes.StorageType,
+                                         default=dtypes.StorageType.Default,
+                                         choices=[dtypes.StorageType.Register,
+                                                  dtypes.StorageType.GPU_Shared,
+                                                  dtypes.StorageType.Default])
 
     @staticmethod
     def match(sdfg, subgraph):
@@ -71,7 +76,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 return False
 
         # next, get all the maps
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         map_exits = [graph.exit_node(map_entry) for map_entry in map_entries]
         maps = [map_entry.map for map_entry in map_entries]
 
@@ -435,7 +440,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
         graph = subgraph.graph
 
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         self.fuse(sdfg, graph, map_entries, **kwargs)
 
     def fuse(self, sdfg, graph, map_entries, **kwargs):
@@ -727,7 +732,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
             # end main loop.
 
-        # TODO: do one pass for special case (*)
+
 
         # create a mapping from data arrays to offsets
         # for later memlet adjustments later
@@ -797,24 +802,11 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 transient_to_transform.total_size = new_data_totalsize
                 transient_to_transform.offset = new_data_offset
                 transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
-
                 if schedule == dtypes.ScheduleType.GPU_Device:
-                    if self.cuda_transient_allocation == 'local':
-                        transient_to_transform.storage = dtypes.StorageType.Register
-                    if self.cuda_transient_allocation == 'shared':
-                        transient_to_transform.storage = dtypes.StorageType.GPU_Shared
-                    if self.cuda_transient_allocation == 'default':
-                        transient_to_transform.storage = dtypes.StorageType.Default
-
+                    transient_to_transform.storage = self.cuda_transient_allocation
                 else:
-                    if self.cpu_transient_allocation == 'register':
-                        transient_to_transform.storage = dtypes.StorageType.Register
-                    if self.cpu_transient_allocation == 'threadlocal':
-                        transient_to_transform.storage = dtypes.StorageType.CPU_ThreadLocal
-                    if self.cpu_transient_allocation == 'heap':
-                        transient_to_transform.storage = dtypes.StorageType.CPU_Heap
-                    if self.cpu_transient_allocation == 'default':
-                        transient_to_transform.storage = dtypes.StorageType.Default
+                    transient_to_transform.storage = self.cpu_transient_allocation
+
 
             else:
                 # don't modify data container - array is needed outside

@@ -12,6 +12,8 @@ import dace.dtypes as dtypes
 from dace.codegen.targets.framecode import set_default_schedule_and_storage_types
 import dace.transformation.subgraph.pipeline as pipeline
 from dace.sdfg.graph import SubgraphView
+from typing import List, Union
+
 
 import dace.libraries.standard as stdlib
 

@@ -1,8 +1,9 @@
 import dace
+import dace.transformation.subgraph.helpers as helpers
 from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.graph import SubgraphView
-import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
+from typing import List, Union
 import numpy as np
 
 N = dace.symbol('N')
@@ -22,7 +23,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -37,8 +38,8 @@ def fusion(sdfg: dace.SDFG,
 
 
 @dace.program
-def test_program(A: dace.float64[N], C: dace.float64[N]):
-    B = np.ndarray(shape=[N], dtype=np.float64)
+def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+
     for i in dace.map[0:N]:
         with dace.tasklet:
             in1 << A[i]

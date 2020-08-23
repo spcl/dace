@@ -748,7 +748,8 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         sdfg.data(out_transient.data).storage = dtypes.StorageType.Register
 
         # hack: swap edges as local_storage does not work correctly here
-        # TODO: NOTE: If local_storage ever changes, this will not work any more
+        # as subsets and data get assigned wrongly (should be swapped)
+        # NOTE: If local_storage ever changes, this will not work any more
         e1 = graph.in_edges(out_transient)[0]
         e2 = graph.out_edges(out_transient)[0]
         e1.data.data = dcpy(e2.data.data)

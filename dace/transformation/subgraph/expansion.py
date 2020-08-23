@@ -46,7 +46,7 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
                 return False
 
         # next, get all the maps
-        maps = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
+        maps = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         brng = helpers.common_map_base_ranges(maps)
 
         # if leq than one map found -> fail
@@ -65,7 +65,7 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
         graph = subgraph.graph
 
         # next, get all the base maps and expand
-        maps = helpers.get_lowest_scope_maps(sdfg, graph, subgraph)
+        maps = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         self.expand(sdfg, graph, maps, map_base_variables=map_base_variables)
 
     def expand(self, sdfg, graph, map_entries, map_base_variables=None):

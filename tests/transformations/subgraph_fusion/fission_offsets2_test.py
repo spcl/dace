@@ -26,7 +26,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -118,15 +118,14 @@ def config():
     return A, expected
 
 
-def test_offsets_array():
-    sdfg = dace.SDFG('mapfission_offsets2')
+def test_offsets():
+    sdfg = dace.SDFG('mapfission_offsets')
     sdfg.add_array('A', [20], dace.float64)
-    sdfg.add_array('interim', [1], dace.float64, transient=True)
+    sdfg.add_scalar('interim', dace.float64, transient=True)
     state = sdfg.add_state()
     me, mx = state.add_map('outer', dict(i='10:20'))
 
     t1 = state.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
-    interim = state.add_access('interim')
     t2 = state.add_tasklet('addtwo', {'a'}, {'b'}, 'b = a + 2')
 
     aread = state.add_read('A')
@@ -136,8 +135,7 @@ def test_offsets_array():
                           t1,
                           dst_conn='a',
                           memlet=dace.Memlet.simple('A', 'i'))
-    state.add_edge(t1, 'b', interim, None, dace.Memlet.simple('interim', '0'))
-    state.add_edge(interim, None, t2, 'a', dace.Memlet.simple('interim', '0'))
+    state.add_edge(t1, 'b', t2, 'a', dace.Memlet.simple('interim', '0'))
     state.add_memlet_path(t2,
                           mx,
                           awrite,
@@ -147,25 +145,25 @@ def test_offsets_array():
     sdfg.apply_transformations(MapFission)
 
     dace.propagate_memlets_sdfg(sdfg)
+
     sdfg.validate()
 
     # Test
     A = np.random.rand(20)
+    A_cpy = A.copy()
     expected = A.copy()
     expected[10:] += 3
-    A_cpy = A.copy()
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
-    print(np.linalg.norm(A_cpy))
-    print(np.linalg.norm(expected))
     assert (np.allclose(A_cpy, expected))
 
     fusion(sdfg, sdfg.nodes()[0], None)
-    A_cpy = A.copy()
+
     csdfg = sdfg.compile()
+    A_cpy = A.copy()
     csdfg(A=A_cpy)
     assert (np.allclose(A_cpy, expected))
 
 
 if __name__ == '__main__':
-    test_offsets_array()
+    test_offsets()

@@ -8,7 +8,7 @@ import numpy as np
 
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.interstate import StateFusion
-
+from typing import List, Union
 import sys
 
 
@@ -26,7 +26,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):

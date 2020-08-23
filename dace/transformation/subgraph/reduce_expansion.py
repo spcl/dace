@@ -47,11 +47,12 @@ class ReduceExpansion(pattern_matching.Transformation):
                                     default=False)
 
     reduce_implementation = Property(
-        desc="Reduce implementation of inner reduce",
+        desc="Reduce implementation of inner reduce. If specified,"
+             "overrides any existing implementations",
         dtype=str,
-        default='adopt',
+        default=None,
         choices=[
-            'adopt', 'pure', 'OpenMP', 'CUDA (device)', 'CUDA (block)',
+            'pure', 'OpenMP', 'CUDA (device)', 'CUDA (block)',
             'CUDA (block allreduce)', 'CUDA (warp)', 'CUDA (warp allreduce)'
         ],
         allow_none=True)
@@ -324,7 +325,7 @@ class ReduceExpansion(pattern_matching.Transformation):
         # FORNOW: choose default schedule and implementation
         new_schedule = dtypes.ScheduleType.Default
         new_implementation = self.reduce_implementation \
-                             if self.reduce_implementation != 'adopt' \
+                             if self.reduce_implementation is not None \
                              else implementation
         new_axes = dcpy(reduce_node.axes)
 

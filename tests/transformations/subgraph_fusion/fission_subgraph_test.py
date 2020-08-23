@@ -1,4 +1,5 @@
-from copy import deepcopy
+import copy
+from copy import deepcopy as dcpy
 import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
@@ -9,7 +10,7 @@ import unittest
 from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
-from dace.transformation.subgraph.helpers import *
+import dace.transformation.subgraph.helpers as helpers
 
 
 def fusion(sdfg: dace.SDFG,
@@ -26,7 +27,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):
@@ -66,7 +67,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -118,70 +119,29 @@ def config():
     return A, expected
 
 
-def test_inputs_outputs():
-    """
-    Test subgraphs where the computation modules that are in the middle
-    connect to the outside.
-    """
+def test_subgraph():
+    A, expected = config()
+    B_init = np.random.rand(2)
 
-    sdfg = dace.SDFG('inputs_outputs_fission')
-    sdfg.add_array('in1', [2], dace.float64)
-    sdfg.add_array('in2', [2], dace.float64)
-    sdfg.add_scalar('tmp', dace.float64, transient=True)
-    sdfg.add_array('out1', [2], dace.float64)
-    sdfg.add_array('out2', [2], dace.float64)
-    state = sdfg.add_state()
-    in1 = state.add_read('in1')
-    in2 = state.add_read('in2')
-    out1 = state.add_write('out1')
-    out2 = state.add_write('out2')
-    me, mx = state.add_map('outer', dict(i='0:2'))
-    t1 = state.add_tasklet('t1', {'i1'}, {'o1', 'o2'},
-                           'o1 = i1 * 2; o2 = i1 * 5')
-    t2 = state.add_tasklet('t2', {'i1', 'i2'}, {'o1'}, 'o1 = i1 * i2')
-    state.add_memlet_path(in1,
-                          me,
-                          t1,
-                          dst_conn='i1',
-                          memlet=dace.Memlet.simple('in1', 'i'))
-    state.add_memlet_path(in2,
-                          me,
-                          t2,
-                          dst_conn='i2',
-                          memlet=dace.Memlet.simple('in2', 'i'))
-    state.add_edge(t1, 'o1', t2, 'i1', dace.Memlet.simple('tmp', '0'))
-    state.add_memlet_path(t2,
-                          mx,
-                          out1,
-                          src_conn='o1',
-                          memlet=dace.Memlet.simple('out1', 'i'))
-    state.add_memlet_path(t1,
-                          mx,
-                          out2,
-                          src_conn='o2',
-                          memlet=dace.Memlet.simple('out2', 'i'))
-    sdfg.apply_transformations(MapFission)
-    dace.sdfg.propagation.propagate_memlets_sdfg(sdfg)
-    # Test
-    A, B, C, D = tuple(np.random.rand(2) for _ in range(4))
-    expected_C = (A * 2) * B
-    expected_D = A * 5
-    csdfg = sdfg.compile()
-    C_cpy = deepcopy(C)
-    D_cpy = deepcopy(D)
-    csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
-    assert np.allclose(C_cpy, expected_C)
-    assert np.allclose(D_cpy, expected_D)
+    graph = mapfission_sdfg()
+    graph.apply_transformations(MapFission)
+    dace.sdfg.propagation.propagate_memlets_sdfg(graph)
+    cgraph = graph.compile()
 
-    fusion(sdfg, sdfg.nodes()[0], None)
+    B = dcpy(B_init)
+    cgraph(A=A, B=B)
+    assert np.allclose(B, expected)
 
-    C_cpy = deepcopy(C)
-    D_cpy = deepcopy(D)
-    csdfg = sdfg.compile()
-    csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
-    assert np.allclose(C_cpy, expected_C)
-    assert np.allclose(D_cpy, expected_D)
+    graph.validate()
+
+    fusion(graph, graph.nodes()[0], None)
+    ccgraph = graph.compile()
+
+    B = dcpy(B_init)
+    ccgraph(A=A, B=B)
+    assert np.allclose(B, expected)
+    graph.validate()
 
 
 if __name__ == '__main__':
-    test_inputs_outputs()
+    test_subgraph()

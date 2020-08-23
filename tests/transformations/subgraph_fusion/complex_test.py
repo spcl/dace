@@ -7,6 +7,8 @@ import dace.sdfg.nodes as nodes
 import numpy as np
 
 from dace.sdfg.graph import SubgraphView
+import dace.libraries.standard as stdlib
+from typing import Union, List
 
 import sys
 
@@ -62,7 +64,7 @@ def expand_maps(sdfg: dace.SDFG,
         setattr(trafo_expansion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
         trafo_expansion.expand(sdfg, graph, map_entries)
 
 
@@ -80,7 +82,7 @@ def fusion(sdfg: dace.SDFG,
         setattr(map_fusion, property, val)
 
     for sg in subgraph:
-        map_entries = helpers.get_lowest_scope_maps(sdfg, graph, sg)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
         # remove map_entries and their corresponding exits from the subgraph
         # already before applying transformation
         if isinstance(sg, SubgraphView):

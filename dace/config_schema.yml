@@ -26,7 +26,7 @@ required:
                 default: false
                 title: Auto-specialize symbols
                 description: >
-                    Automatically specialize every SDFG to the symbol values 
+                    Automatically specialize every SDFG to the symbol values
                     at call-time. Requires all symbols to be set.
 
             transform_on_call:
@@ -42,7 +42,7 @@ required:
                 default: dace.transformation.optimizer.SDFGOptimizer
                 title: SDFG Optimizer
                 description: >
-                    SDFG optimization class to import and call on 
+                    SDFG optimization class to import and call on
                     sdfg.optimize(). Defaults to the transformation CLI,
                     empty string or an invalid class name skips optimization.
 
@@ -63,18 +63,25 @@ required:
                 default: true
                 title: Automatic strict transformations
                 description: >
-                    Automatically performs strict transformations 
+                    Automatically performs strict transformations
                     that are considered to be safe.
 
             detect_control_flow:
                 type: bool
-                default: true 
+                default: true
                 title: Detect control flow from state transitions
                 description: >
-                    Attempts to infer control flow constructs "if", 
-                    "for" and "while" from state transitions, allowing 
-                    code generators to generate appropriate code. 
-
+                    Attempts to infer control flow constructs "if",
+                    "for" and "while" from state transitions, allowing
+                    code generators to generate appropriate code.
+            symbolic_positive:
+                type: bool
+                default: true
+                title: Treat all symbolic expressions as positive
+                description: >
+                    Every expression in which a symbolic value appears
+                    is treated as strictly positive. This is necessary
+                    for certain Range evaluations using Subgraph Fusion.
     compiler:
         type: dict
         title: Compiler
@@ -85,7 +92,7 @@ required:
                 default: false
                 title: Use cache
                 description: >
-                    If enabled, does not recompile code generated from SDFGs 
+                    If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
             library_extension:
@@ -114,7 +121,7 @@ required:
 
             allow_shadowing:
                 type: str
-                default: true 
+                default: true
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
@@ -132,11 +139,11 @@ required:
 
             fpga_vendor:
                 type: str
-                default: xilinx 
+                default: xilinx
                 title: FPGA vendor
                 description: >
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
-                    generating code. 
+                    generating code.
 
             autobuild_bitstreams:
                 type: bool
@@ -174,7 +181,7 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
-                        
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:
@@ -213,7 +220,7 @@ required:
                         title: Additional CUDA architectures
                         description: >
                             Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current 
+                            to compile GPU code for, excluding the current
                             architecture on the compiling machine.
                         default: '35'
 
@@ -222,7 +229,7 @@ required:
                         title: Additional HIP architectures
                         description: >
                             Additional HIP architectures (separated by commas)
-                            to compile GPU code for, excluding the current 
+                            to compile GPU code for, excluding the current
                             architecture on the compiling machine.
                         default: '906'
 
@@ -282,8 +289,8 @@ required:
                         type: int
                         title: Concurrent execution streams
                         description: >
-                            Maximum number of concurrent CUDA/HIP streams to 
-                            generate. Special values: -1 only uses the 
+                            Maximum number of concurrent CUDA/HIP streams to
+                            generate. Special values: -1 only uses the
                             default stream, 0 uses infinite concurrent streams.
                         default: 0
 
@@ -305,20 +312,20 @@ required:
             # FPGA (Xilinx) compiler flags
             xilinx:
                 type: dict
-                title: Xilinx 
+                title: Xilinx
                 description: FPGA (Xilinx) compiler preferences
                 required:
 
                     mode:
-                        type: str 
-                        default: simulation 
-                        title: Compilation mode 
-                        description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware) 
+                        type: str
+                        default: simulation
+                        title: Compilation mode
+                        description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware)
 
                     path:
                         type: str
-                        default: '' 
-                        title: Vitis installation override 
+                        default: ''
+                        title: Vitis installation override
                         description: >
                             Path to specific Vitis/SDx/SDAccel installation to
                             use instead of just searching PATH and environment
@@ -326,14 +333,14 @@ required:
 
                     platform:
                         type: str
-                        default: xilinx_u250_xdma_201830_2 
-                        title: Target platform for Xilinx 
+                        default: xilinx_u250_xdma_201830_2
+                        title: Target platform for Xilinx
                         description: Platform name of Vitis/SDx/SDAccel target.
 
                     enable_debugging:
-                        type: bool 
-                        default: false 
-                        title: Enable debugging for hardware kernels 
+                        type: bool
+                        default: false
+                        title: Enable debugging for hardware kernels
                         description: >
                             Injects debugging cores on the interfaces of the
                             kernel, allowing fine-grained debugging of hardware
@@ -348,28 +355,28 @@ required:
 
                     synthesis_flags:
                         type: str
-                        title: Synthesis arguments 
-                        description: High-level synthesis C++ flags 
+                        title: Synthesis arguments
+                        description: High-level synthesis C++ flags
                         default: "-std=c++11"
 
                     build_flags:
                         type: str
                         title: Arguments
-                        description: Kernel build C++ flags 
+                        description: Kernel build C++ flags
                         default: ""
-                        
+
             #############################################
             # Intel FPGA compiler flags
             intel_fpga:
                 type: dict
-                title: Intel FPGA 
+                title: Intel FPGA
                 description: Intel FPGA compiler preferences.
                 required:
 
                     mode:
-                        type: str 
-                        default: emulator 
-                        title: Compilation mode 
+                        type: str
+                        default: emulator
+                        title: Compilation mode
                         description: >
                           Target of FPGA kernel build
                           (emulator/simulator/hardware).
@@ -377,7 +384,7 @@ required:
                     path:
                         type: str
                         default: ''
-                        title: Intel FPGA OpenCL SDK installation override 
+                        title: Intel FPGA OpenCL SDK installation override
                         description: >
                             Path to specific Intel FPGA OpenCL SDK installation
                             to use instead of just searching PATH and
@@ -385,13 +392,13 @@ required:
 
                     board:
                         type: str
-                        default: a10gx 
-                        title: Target FPGA board 
+                        default: a10gx
+                        title: Target FPGA board
 
                     enable_debugging:
-                        type: bool 
-                        default: false 
-                        title: Enable debugging for hardware kernels 
+                        type: bool
+                        default: false
+                        title: Enable debugging for hardware kernels
                         description: Injects debugging cores where available.
 
                     host_flags:
@@ -402,8 +409,8 @@ required:
 
                     kernel_flags:
                         type: str
-                        title: Kernel flags 
-                        description: High-level synthesis C++ flags 
+                        title: Kernel flags
+                        description: High-level synthesis C++ flags
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
 
                     launch_async:
@@ -426,7 +433,7 @@ required:
                         default: ''
                         title: Compiler executable override
                         description: File path or name of compiler executable
-            
+
             #############################################
             # Linker
             linker:
@@ -455,7 +462,7 @@ required:
     execution:
         type: dict
         title: Execution
-        description: Binary execution preferences        
+        description: Binary execution preferences
         required:
             general:
                 type: dict
@@ -477,7 +484,7 @@ required:
                     check_args:
                         type: bool
                         default: true
-                        title: Check arguments 
+                        title: Check arguments
                         description: >
                             Do strict verification that arguments passed when
                             calling a DaCe program match the expected dtypes.
@@ -497,7 +504,7 @@ required:
                         default: 'scp ${host}:${srcfile} ${dstfile}'
                         title: "Remote->Local copy command"
                         description: >
-                            Command to use to copy ${srcfile} on ${host} to 
+                            Command to use to copy ${srcfile} on ${host} to
                             the local ${dstfile}.
                         template_vars:
                             - host
@@ -521,8 +528,8 @@ required:
                         default: 5
                         title: "Repetitions per Run"
                         description: >
-                            Number of repetitions to run for each click of the 
-                            Run button (median value will be reported in the 
+                            Number of repetitions to run for each click of the
+                            Run button (median value will be reported in the
                             performance chart).
             mpi:
                 type: dict
@@ -544,7 +551,7 @@ required:
                         type: int
                         default: 4
                         title: Number of processes
-                        description: Number of MPI processes to use 
+                        description: Number of MPI processes to use
     diode:
         type: dict
         title: DIODE
@@ -597,10 +604,10 @@ required:
     # General settings
     debugprint:
         type: bool
-        default: false 
+        default: false
         title: Debug printing
         description: Enable verbose printouts.
-    
+
     profiling:
         type: bool
         default: false
@@ -612,8 +619,8 @@ required:
         default: true
         title: Status bar for profiling
         description: >
-            Enable tqdm status bar while profiling. If tqdm is not installed 
-            a warning will appear. To disable this feature (and the warning) set 
+            Enable tqdm status bar while profiling. If tqdm is not installed
+            a warning will appear. To disable this feature (and the warning) set
             this option to false.
 
     treps:
@@ -662,7 +669,7 @@ required:
                     Speeds up build time but disallows concurrent invocations.
 
     #############################################
-    # DaCe library settings 
+    # DaCe library settings
 
     library:
         type: dict
@@ -676,8 +683,8 @@ required:
                 required:
                     default_implementation:
                         type: str
-                        default: pure 
-                        description: Default implementation BLAS library nodes.  
+                        default: pure
+                        description: Default implementation BLAS library nodes.
                     override:
                         type: bool
                         default: false
