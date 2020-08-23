@@ -116,7 +116,7 @@ constexpr int num_stages = 2 * W;
 using Stage_t = ap_uint<hlslib::ConstLog2(num_stages)>;
 using Count_t = ap_uint<hlslib::ConstLog2(W)>;
 using Vec_t = typename std::remove_reference<decltype(A_pipe_in)>::type::Data_t;
-using Data_t = decltype(ratio);
+using Data_t = decltype(ratio_in);
 
 Vec_t stages[num_stages];
 #pragma HLS ARRAY_PARTITION variable=stages complete
@@ -148,7 +148,7 @@ for (unsigned i = 0; i < N / W + 1; ++i) {
   Count_t additional_elements = 0;
   for (unsigned w = 0; w < W; ++w) {
     #pragma HLS UNROLL
-    if (stages[0][w] < ratio) {
+    if (stages[0][w] < ratio_in) {
       ++empty_slots_left;
       non_zero[0][w] = false;
       num_shifts[0][w] = 0;

@@ -205,8 +205,13 @@ runall() {
 # Check if GPU tests can be run
 nvidia-smi >/dev/null 2>&1
 if [ $? -ne 0 ]; then
-    echo "GPUs not available or unusable"
-    exit 99
+    rocm-smi >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "GPUs not available or unusable"
+        exit 99
+    fi
+    # HIP-capable devices found
+    DACE_compiler_cuda_backend="hip"
 fi
 
 

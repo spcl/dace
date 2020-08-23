@@ -53,24 +53,27 @@ run_sample() {
 
 run_all() {
 
-    #### VECTORIZATION ####
-    # Vectorization 1: first vectorize and then transform for FPGA
-    run_sample intel_fpga/vec_sum vec_sum "Vectorization\$0(propagate_parent=True, postamble=False)\nFPGATransformSDFG\$0\n"
-    # Vectorization 2: first transform for FPGA then vectorize
-    run_sample intel_fpga/vec_sum vec_sum "FPGATransformSDFG\$0\nVectorization\$0(propagate_parent=True, postamble=False)\n"
-    # Vectorization 3: TODO non vectorizable N
+    #### Vectorization ####
+    # TODO: These tests require getting access to how types are generated in
+    # process_out_memlets on a fine-grained level, which is not yet possible.
+    # This will be implement as part of the new codegen.
+    # run_sample intel_fpga/vec_sum vec_sum "\n" true
+    # run_sample intel_fpga/vec_sum vec_sum "\n" false
+    # run_sample fpga/veclen_conversion_connector "\n"
+    run_sample fpga/veclen_conversion "\n"
+    run_sample fpga/veclen_copy_conversion "\n"
 
     # Throw error when kernel names are too long
     run_sample intel_fpga/name_too_long name_too_long "\n"
 
     # Test removing degenerate loops that only have a single iteration
-    run_sample remove_degenerate_loop remove_degenerate_loop_test "\n" 
+    run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
     # Test pipeline scopes 
-    run_sample pipeline_scope pipeline_scope "\n" 
+    run_sample fpga/pipeline_scope pipeline_scope "\n" 
 
     # Test shift register abstraction with stencil code
-    run_sample fpga_stencil fpga_stencil_test "\n"
+    run_sample fpga/fpga_stencil fpga_stencil_test "\n"
 
     ### MAP TILING ####
     # First tile then transform
@@ -78,11 +81,7 @@ run_all() {
     # Other way around
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\nMapTiling\$0\n"
 
-    run_sample intel_fpga/veclen_conversion "\n"
-
-    run_sample veclen_copy_conversion "\n"
-
-    # #### WCR ####
+    #### WCR ####
     # simple WCR (accumulates on scalar)
     run_sample intel_fpga/dot dot "FPGATransformSDFG\$0\n"
 

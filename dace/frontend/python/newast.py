@@ -909,6 +909,14 @@ class TaskletTransformer(ExtNodeTransformer):
 
         return node
 
+    def visit_Name(self, node: ast.Name):
+        # If accessing a symbol, add it to the SDFG symbol list
+        if (isinstance(node.ctx, ast.Load) and node.id in self.defined
+                and isinstance(self.defined[node.id], symbolic.symbol)):
+            if node.id not in self.sdfg.symbols:
+                self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+        return self.generic_visit(node)
+
 
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
@@ -1861,7 +1869,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym in mv.free_symbols:
                 if (sym.name not in self.sdfg.symbols
                         and sym.name in self.globals):
-                    self.sdfg.add_symbol(sym.name, sym.dtype)
+                    self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
 
     def _recursive_visit(self,
                          body: List[ast.AST],
@@ -2065,6 +2073,12 @@ class ProgramVisitor(ExtNodeVisitor):
             op_name, op_subset = operand
         elif isinstance(operand, (int, float, complex)):
             op_is_scalar = True
+        elif symbolic.issymbolic(operand):
+            op_is_scalar = True
+            for sym in operand.free_symbols:
+                if str(sym) not in self.sdfg.symbols:
+                    self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
+            operand = symbolic.symstr(operand)
         else:
             op_name = operand
             op_array = self.sdfg.arrays[op_name]

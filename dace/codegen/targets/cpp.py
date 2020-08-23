@@ -4,6 +4,7 @@ import functools
 
 import sympy as sp
 from six import StringIO
+from typing import Tuple
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
@@ -196,9 +197,13 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
-                          pointer_name: str, conntype: dtypes.typeclass):
-    """ Returns a string with a definition of a reference to an existing
-        memlet. Used in nested SDFG arguments. """
+                          pointer_name: str,
+                          conntype: dtypes.typeclass) -> Tuple[str, str, str]:
+    """ 
+    Returns a tuple of three strings with a definition of a reference to an 
+    existing memlet. Used in nested SDFG arguments.
+    :return: A tuple of the form (type, name, value).
+    """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
     datadef = memlet.data
@@ -206,19 +211,16 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
-    # Special case to avoid self-reference
-    if pointer_name == datadef and offset_expr == '[0]':
-        return ''
-
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data)
+    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data, 1)
     if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
+            ref = '&'
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -266,7 +268,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
                                 typedef,
                                 allow_shadowing=True)
 
-    return '%s%s %s = %s;' % (typedef, ref, pointer_name, expr)
+    return (typedef + ref, pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
@@ -589,7 +591,8 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
                 and hasattr(node, "_cuda_stream")):
             callsite_stream.write(
                 'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
-                % (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
+                %
+                (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
                 sdfg,
                 state_id,
                 node,

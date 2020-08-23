@@ -536,7 +536,7 @@ class StateGraphView(object):
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
-            v.signature(name=k, with_types=with_types, for_call=for_call)
+            v.as_arg(name=k, with_types=with_types, for_call=for_call)
             for k, v in self.arglist().items()
         ]
 
@@ -1129,14 +1129,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         # Create appropriate dictionaries from inputs
-        tinputs = {
-            k: None
-            for k, v in inputs.items()
-        }
-        toutputs = {
-            k: None
-            for k, v in outputs.items()
-        }
+        tinputs = {k: None for k, v in inputs.items()}
+        toutputs = {k: None for k, v in outputs.items()}
 
         tasklet = nd.Tasklet(
             name,

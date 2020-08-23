@@ -95,9 +95,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -238,7 +237,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
         else:
-            return data.signature(with_types=True, name=var_name)
+            return data.as_arg(with_types=True, name=var_name)
 
     def generate_unroll_loop_pre(self, kernel_stream, factor, sdfg, state_id,
                                  node):
@@ -267,6 +266,20 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
+
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
+        arguments = [
+            f'{atype} {aname}' for atype, aname, _ in memlet_references
+        ]
+        arguments += [
+            f'{node.sdfg.symbols[aname].as_arg(aname)}'
+            for aname in sorted(node.symbol_mapping.keys())
+            if aname not in sdfg.constants
+        ]
+        arguments = ', '.join(arguments)
+        return f'void {sdfg_label}({arguments}) {{\n#pragma HLS INLINE'
 
     def write_and_resolve_expr(self,
                                sdfg,
@@ -386,7 +399,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         module_stream.write("\n", sdfg)
 
         symbol_params = [
-            v.signature(with_types=True, name=k)
+            v.as_arg(with_types=True, name=k)
             for k, v in symbol_parameters.items()
         ]
         arrays = list(sorted(global_data_parameters, key=lambda t: t[1]))
@@ -401,7 +414,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if kernel_arg:
                 array_args.append(kernel_arg)
         kernel_args = array_args + [
-            v.signature(with_types=True, name=k) for k, v in scalars
+            v.as_arg(with_types=True, name=k) for k, v in scalars
         ]
 
         kernel_args = dace.dtypes.deduplicate(kernel_args)
@@ -467,7 +480,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if not isinstance(p, dace.data.Array) and name in added:
                 continue
             added.add(name)
-            kernel_args.append(p.signature(False, name=name))
+            kernel_args.append(p.as_arg(False, name=name))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
@@ -514,7 +527,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 added.add(pname)
                 if isinstance(p, dace.data.Stream):
                     kernel_args_call.append(
-                        p.signature(with_types=False, name=pname))
+                        p.as_arg(with_types=False, name=pname))
                     if p.is_stream_array():
                         kernel_args_module.append(
                             "dace::FIFO<{}, {}, {}> {}[{}]".format(
@@ -527,9 +540,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                 p.buffer_size, pname))
                 else:
                     kernel_args_call.append(
-                        p.signature(with_types=False, name=pname))
+                        p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
-                        p.signature(with_types=True, name=pname))
+                        p.as_arg(with_types=True, name=pname))
         module_function_name = "module_" + name
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -717,13 +730,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         for is_output, name, arg in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
                 kernel_args.append(
-                    arg.signature(with_types=True,
-                                  name=name + ("_out" if is_output else "_in")))
+                    arg.as_arg(with_types=True,
+                               name=name + ("_out" if is_output else "_in")))
             else:
                 if name in seen:
                     continue
                 seen.add(name)
-                kernel_args.append(arg.signature(with_types=True, name=name))
+                kernel_args.append(arg.as_arg(with_types=True, name=name))
 
         host_code_stream.write(
             """\
@@ -731,107 +744,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                 kernel_function_name=kernel_function_name,
                 kernel_args=", ".join(kernel_args)), sdfg)
-
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
-
-        # TODO: this is copy-pasta from the CPU-codegen, necessary to inject
-        # pragmas at the output memlets! Should consolidate.
-
-        callsite_stream.write('{\n', sdfg, state_id, node)
-
-        state_dfg = sdfg.nodes()[state_id]
-
-        self._dispatcher.defined_vars.enter_scope(node)
-
-        arrays = set()
-        for edge in dfg.in_edges(node):
-            u = edge.src
-            memlet = edge.data
-
-            if edge.dst_conn:  # Not (None or "")
-
-                if edge.dst_conn in arrays:  # Disallow duplicates
-                    raise SyntaxError('Duplicates found in memlets')
-
-                # Special case: code->code
-                if isinstance(edge.src, dace.sdfg.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    src_node = find_input_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.dst_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.dst_conn)
-
-        callsite_stream.write('\n', sdfg, state_id, node)
-
-        # Use outgoing edges to preallocate output local vars
-        for edge in dfg.out_edges(node):
-            v = edge.dst
-            memlet = edge.data
-
-            if edge.src_conn:
-
-                if edge.src_conn in arrays:  # Disallow duplicates
-                    continue
-
-                # Special case: code->code
-                if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.src_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.src_conn)
-
-        callsite_stream.write("\n////////////////////\n", sdfg, state_id, node)
-
-        cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                            callsite_stream, self._cpu_codegen._locals,
-                            self._cpu_codegen._ldepth,
-                            self._cpu_codegen._toplevel_schedule, self)
-
-        callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
-
-        # Process outgoing memlets
-        self._cpu_codegen.process_out_memlets(sdfg,
-                                              state_id,
-                                              node,
-                                              state_dfg,
-                                              self._dispatcher,
-                                              callsite_stream,
-                                              True,
-                                              function_stream,
-                                              codegen=self)
-
-        for edge in state_dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
-            if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and edge.data.wcr is None):
-                self.generate_no_dependence_post(edge.src_conn, callsite_stream,
-                                                 sdfg, state_id, node)
-
-        callsite_stream.write('}\n', sdfg, state_id, node)
-
-        self._dispatcher.defined_vars.exit_scope(node)
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
@@ -842,3 +754,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
                                           dst_node, edge, None, callsite_stream)
+
+    def unparse_tasklet(self, *args, **kwargs):
+        # Pass this object for callbacks into the Xilinx codegen
+        cpp.unparse_tasklet(*args, codegen=self, **kwargs)
