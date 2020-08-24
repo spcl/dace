@@ -6,7 +6,7 @@ from functools import reduce
 import sympy.core.sympify
 from typing import Set
 import warnings
-
+from dace.config import Config
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
@@ -226,6 +226,9 @@ class Range(Subset):
 
     def max_element_approx(self):
         return [_approx(x[1]) for x in self.ranges]
+
+    def min_element_approx(self):
+        return [_approx(x[0]) for x in self.ranges]
 
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
@@ -672,6 +675,9 @@ class Indices(Subset):
     def max_element_approx(self):
         return [_approx(ind) for ind in self.indices]
 
+    def min_element_approx(self):
+        return [_approx(ind) for ind in self.indices]
+
     def data_dims(self):
         return 0
 
@@ -791,6 +797,12 @@ class Indices(Subset):
         for i, ind in enumerate(self.indices):
             self.indices[i] = (ind.subs(repl_dict)
                                if symbolic.issymbolic(ind) else ind)
+    def pop(self, dimensions):
+        new_indices = []
+        for i in range(len(self.indices)):
+            if i not in dimensions:
+                new_indices.append(self.indices[i])
+        self.indices = new_indices
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
@@ -799,9 +811,42 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
         raise ValueError('Dimension mismatch between %s and %s' %
                          (str(subset_a), str(subset_b)))
 
-    result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-        subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
-        subset_b.max_element())]
+    # Check whether all expressions containing a symbolic value should
+    # always be evaluated to positive. If so, union will yield
+    # a different result respectively.
+    symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+    if not symbolic_positive:
+        result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
+            subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
+            subset_b.max_element())]
+
+    else:
+        result = []
+        for arb, brb, are, bre in zip(subset_a.min_element(), subset_b.min_element(),
+                                      subset_a.max_element(), subset_b.max_element()):
+            try:
+                minrb = min(arb, brb)
+            except TypeError:
+                if len(arb.free_symbols) == 0:
+                    minrb = arb
+                elif len(brb.free_symbols) == 0:
+                    minrb = brb
+                else:
+                    raise
+
+            try:
+                maxre = max(are, bre)
+            except TypeError:
+                if len(are.free_symbols) == 0:
+                    maxre = bre
+                elif len(bre.free_symbols) == 0:
+                    maxre = are
+                else:
+                    raise
+            result.append((minrb, maxre, 1))
+
+
     return Range(result)
 
 
