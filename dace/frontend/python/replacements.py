@@ -837,6 +837,60 @@ def _python2numpy_type(constant: Union[int, float, complex, bool]):
 
 
 def _elementwise_binop(visitor: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGstate,
+                       left_operand: str,
+                       right_operand: str,
+                       operator: str,
+                       opcode: str):
+    '''Both operands are Arrays'''
+
+    left_arr = sdfg.arrays[left_operand]
+    right_arr = sdfg.arrays[right_operand]
+
+    left_type = left_arr.dtype
+    right_type = right_arr.dtype
+
+    # Implicit Python coversion implemented as casting
+    tasklet_args = ['__in1', '__in2']
+    if left_type != right_type:
+        new_types = _convert_type(left_type, right_type, opcode)
+        if new_types[0] is not None:
+            tasklet_args[0] = "dace.{}(s1)".format(new_types[0].__name__)
+        if new_types[1] is not None:
+            tasklet_args[1] = "dace.{}(s2)".format(new_types[1].__name__)
+
+    if _is_op_boolean(op):
+        restype = dace.bool
+    else:
+        restype = dace.DTYPE_TO_TYPECLASS[
+            np.result_type(left_type, right_type).type]
+    
+    left_shape = left_arr.shape
+    right_shape = right_arr.shape
+
+    (out_shape, all_idx_dict, out_idx,
+     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+
+    out_operand, _ = sdfg.add_temp_transient(out_shape, restype,
+                                             left_arr.storage)
+        
+    state.add_mapped_tasklet("_%s_" % operator,
+                            all_idx_dict, {
+                                '__in1': Memlet.simple(left_operand, left_idx),
+                                '__in2': Memlet.simple(right_operand, left_idx)
+                            },
+                            '__out = {i1} {op} {i2}'.format(
+                                i1=tasklet_args[0], op=opcode,
+                                i2=tasklet_args[1]),
+                            {'__out': Memlet.simple(out_operand, out_idx)},
+                            external_edges=True)
+    
+    return out_operand
+
+
+
+def _elementwise_binop(visitor: 'ProgramVisitor',
                        sdfg: SDFG, state: SDFGstate,
                        left_operand,
                        right_operand,
@@ -845,18 +899,74 @@ def _elementwise_binop(visitor: 'ProgramVisitor',
     left_isdata = isinstance(left_operand, str)
     right_isdata = isinstance(right_operand, str)
 
-    # 3 cases:
-    # a) Both operands are Data
-    # b) Only one operand is Data
-    # c) Both operands are Constants
-    if left_isdata and right_isdata:
-        # Case a
-        pass
-    elif left_isdata or right_isdata:
-        # Case b
-        pass
+    tasklet_args = [None, None]
+
+    if left_isdata:
+        left_type = sdfg.arrays[left_operand].dtype
+        left_shape = sdfg.arrays[left_operand].shape
+        left_isscalar = _is_scalar(sdfg, left_operand)
+        left_node = state.add_read(left_operand)
+        if left_isscalar:
+            left_memlet = dace.Memlet.from_array(left_operand,
+                                                 sdfg.arrays[left_operand])
+        tasklet_args[0] = '__in1'
+        left_conn = '__in1'
     else:
-        # Case c
+        left_type = type(left_operand)
+        left_shape = [1]
+        left_isscalar = True
+        left_node = None
+        left_memlet = None
+        tasklet_args[0] = str(left_operand)
+    
+    if right_isdata:
+        right_type = sdfg.arrays[right_operand].dtype
+        right_shape = sdfg.arrays[right_operand].shape
+        right_isscalar = _is_scalar(sdfg, right_operand)
+        right_node = state.add_read(right_operand)
+        if right_isscalar:
+            right_memlet = dace.Memlet.from_array(right_operand,
+                                                  sdfg.arrays[right_operand])
+        tasklet_args[1] = '__in2'
+        right_conn = '__in2'
+    else:
+        right_type = type(right_operand)
+        right_shape = [1]
+        right_isscalar = True
+        right_node = None
+        right_memlet = None
+        tasklet_args[1] = str(right_operand)
+    
+    if left_type != right_type:
+        new_types = _convert_type(left_type, right_type, opcode)
+        if new_types[0] is not None:
+            tasklet_args[0] = "dace.{}(s1)".format(new_types[0].__name__)
+        if new_types[1] is not None:
+            tasklet_args[1] = "dace.{}(s2)".format(new_types[1].__name__)
+
+    # TODO: Add exceptions for power operator
+    if _is_op_boolean(op):
+        restype = dace.bool
+    else:
+        restype = dace.DTYPE_TO_TYPECLASS[
+            np.result_type(left_type, right_type).type]
+
+    if left_isdata or right_isdata:
+        (out_shape, all_idx_dict, out_idx,
+         left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+        name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
+        
+        if out_shape == [1]:
+
+        name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
+        state.add_mapped_tasklet("_%s_" % opname,
+                                all_idx_dict, {
+                                    '__in1': Memlet.simple(op1, arr1_idx),
+                                    '__in2': Memlet.simple(op2, arr2_idx)
+                                },
+                                '__out = __in1 %s __in2' % opcode,
+                                {'__out': Memlet.simple(name, all_idx)},
+                                external_edges=True)
 
 
 
