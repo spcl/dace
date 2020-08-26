@@ -69,6 +69,7 @@ class CUDACodeGen(TargetCodeGenerator):
                                       self.language,
                                       CUDACodeGen,
                                       'CUDA',
+                                      target_name=self.target_name,
                                       target_type=target_type)
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
