@@ -58,7 +58,6 @@ run_all() {
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test 0
     run_sample fpga/pipeline_scope pipeline_test 1
-    run_sample fpga/veclen_conversion_connector veclen_conversion_connector 1
     run_sample fpga/veclen_copy_conversion veclen_copy_conversion 1
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 0 24
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream 0 64 64 640

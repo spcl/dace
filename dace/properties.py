@@ -227,8 +227,9 @@ class Property:
                     type(val).__name__, self.attr_name, self.dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None and isinstance(self.choices,
-                                                   (list, tuple, set)):
+        if self.choices is not None \
+                and isinstance(self.choices,(list, tuple, set)) \
+                and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(
                     val, self.choices))
@@ -910,8 +911,8 @@ class LambdaProperty(Property):
 
 
 class CodeBlock(object):
-    """ Helper class that represents code blocks with language. 
-        Used in `CodeProperty`, implemented as a list of AST statements if 
+    """ Helper class that represents code blocks with language.
+        Used in `CodeProperty`, implemented as a list of AST statements if
         language is Python, or a string otherwise.
     """
     def __init__(self,
@@ -935,7 +936,7 @@ class CodeBlock(object):
             self.code = code
 
     def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
-        """ 
+        """
         Returns the set of free symbol names in this code block, excluding
         the given symbol names.
         """

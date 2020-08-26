@@ -345,23 +345,21 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}{}".format("const " if is_const else "",
-                               dtype.base_type.ctype,
-                               dtype.veclen if str(dtype.veclen) != "1" else "")
+        return "{}{}".format("const " if is_const else "", dtype.ocltype)
 
     def make_kernel_argument(self, data, var_name, is_output,
                              with_vectorization):
         if isinstance(data, dace.data.Array):
             if with_vectorization:
-                vec_type = self.make_vector_type(data.dtype, False)
+                vec_type = data.dtype.ocltype
             else:
-                vec_type = data.dtype.ctype
+                vec_type = fpga.vector_element_type_of(data.dtype).ocltype
             return "__global volatile  {}* restrict {}".format(
                 vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
         else:
-            return data.signature(with_types=True, name=var_name)
+            return data.as_arg(with_types=True, name=var_name)
 
     @staticmethod
     def generate_unroll_loop_pre(kernel_stream, factor, sdfg, state_id, node):
@@ -410,9 +408,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             raise NotImplementedError(
                 "Unimplemented read type: {}".format(defined_type))
         if is_pack:
-            ctype = dtype.base_type.base_type.ctype
-            self.converters_to_generate.add((True, ctype, packing_factor))
-            return "pack_{}{}(&({}))".format(ctype, packing_factor, read_expr)
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.converters_to_generate.add((True, ocltype, packing_factor))
+            return "pack_{}{}(&({}))".format(ocltype, packing_factor, read_expr)
         else:
             return read_expr
 
@@ -452,8 +450,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 else:
                     # use max/min opencl builtins
                     return "{}[{}] = {}{}({}[{}],{});".format(
-                        write_expr, index, ("f" if dtype.ctype == "float"
-                                            or dtype.ctype == "double" else ""),
+                        write_expr, index,
+                        ("f" if dtype.ocltype == "float"
+                         or dtype.ocltype == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
@@ -467,11 +466,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         dtype.ctype, var_name, read_expr, var_name)
                     read_expr = " __dace_smi_{}".format(var_name)
                 if is_unpack:
-                    ctype = dtype.base_type.base_type.ctype
+                    ocltype = fpga.vector_element_type_of(dtype).ocltype
                     self.converters_to_generate.add(
-                        (False, ctype, packing_factor))
+                        (False, ocltype, packing_factor))
                     return "unpack_{}{}({}, &{}[{}]);".format(
-                        ctype, packing_factor, read_expr, write_expr, index)
+                        ocltype, packing_factor, read_expr, write_expr, index)
                 else:
                     return result + "{}[{}] = {};".format(
                         write_expr, index, read_expr)
@@ -484,8 +483,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 else:
                     # use max/min opencl builtins
                     return "{} = {}{}({},{});".format(
-                        write_expr, ("f" if dtype.ctype == "float"
-                                     or dtype.ctype == "double" else ""),
+                        write_expr, ("f" if dtype.ocltype == "float"
+                                     or dtype.ocltype == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
@@ -496,11 +495,12 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr, var_name)
                 else:
                     if is_unpack:
-                        ctype = dtype.base_type.base_type.ctype
+                        ocltype = fpga.vector_element_type_of(dtype).ocltype
                         self.converters_to_generate.add(
-                            (False, ctype, packing_factor))
+                            (False, ocltype, packing_factor))
                         return "unpack_{}{}({}, {});".format(
-                            ctype, packing_factor, read_expr, var_name)
+                            vector_element_type_of(dtype).ocltype, packing_factor,
+                            read_expr, var_name)
                     else:
                         return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
@@ -617,15 +617,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Generate data width converters
         self.generate_converters(sdfg, kernel_header_stream)
 
-        res = (kernel_header_stream.getvalue() + kernel_body_stream.getvalue())
-
-        # TODO: To avoid re-implementing process_out_memlets and potentially
-        # other CPU codegen functionality, convert to OpenCL vector types here.
-        # It was either this or copy-pasting large amounts of code :-)
-        # We need a solution for this in the new code generator.
-        res = re.sub("dace::vec<([^,]+), ([2-9]+|[1-9][0-9]+)>", "\\1\\2", res)
-
-        kernel_stream.write(res)
+        kernel_stream.write(kernel_header_stream.getvalue() +
+                            kernel_body_stream.getvalue())
 
         self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
 
@@ -702,7 +695,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             arg = self.make_kernel_argument(p, pname, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
-                kernel_args_host.append(p.signature(True, name=pname))
+                kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
 
         # If a remote stream is used, add the communicator
@@ -909,7 +902,8 @@ __kernel void \\
 
         # Process outgoing memlets with the internal SDFG
         self.process_out_memlets(sdfg, state_id, node, state_dfg,
-                                 callsite_stream, function_stream)
+                                 self._dispatcher, callsite_stream, True,
+                                 function_stream)
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
@@ -1087,12 +1081,10 @@ __kernel void \\
                     #this could be a remote stream
                     if data_desc.storage  == dace.dtypes.StorageType.FPGA_Remote:
                         callsite_stream.write(
-                            f"SMI_Push(&{data_name}, &{connector});", sdfg,
-                            sdfg.node_id(dfg), node)
+                            f"SMI_Push(&{data_name}, &{connector});", sdfg)
                     else:
                         callsite_stream.write(
-                            f"write_channel_intel({data_name}, {connector});", sdfg,
-                            sdfg.node_id(dfg), node)
+                            f"write_channel_intel({data_name}, {connector});", sdfg)
 
 
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
@@ -1113,10 +1105,10 @@ __kernel void \\
                         and memlet.volume != 1):
                     if not data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
                         callsite_stream.write("#undef {}".format(memlet_name),
-                                              sdfg, sdfg.node_id(dfg), node)
+                                              sdfg)
                     elif defined_type == DefinedType.RemoteStream:
                         callsite_stream.write("#undef {}".format(memlet_name),
-                                              sdfg, sdfg.node_id(dfg), node)
+                                              sdfg)
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
                             function_stream):
@@ -1234,19 +1226,14 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         constant_string = constant_string.replace("constexpr", "__constant")
         callsite_stream.write(constant_string, sdfg)
 
-    def process_out_memlets(self, sdfg, state_id, node, state_dfg,
-                            callsite_stream, function_stream):
-        self._cpu_codegen.process_out_memlets(sdfg,
-                                              state_id,
-                                              node,
-                                              state_dfg,
-                                              self._dispatcher,
-                                              callsite_stream,
-                                              True,
-                                              function_stream,
-                                              codegen=self)
-        self.generate_channel_writes(sdfg, state_dfg, node, callsite_stream)
-        self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
+    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
+                                   function_stream, callsite_stream,
+                                   after_memlets_stream):
+        super().generate_tasklet_postamble(sdfg, dfg, state_id, node,
+                                           function_stream, callsite_stream,
+                                           after_memlets_stream)
+        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream)
+        self.generate_undefines(sdfg, dfg, node, after_memlets_stream)
 
     def write_and_resolve_expr(self,
                                sdfg,
@@ -1261,6 +1248,11 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         return self.make_write(defined_type, dtype, memlet.data, memlet.data,
                                offset, inname, memlet.wcr, False, 1, None)
+
+    def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
+                             var_type):
+        vtype = self.make_vector_type(conntype, False)
+        return f"{vtype}({expr})"
 
 
 class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
@@ -1314,15 +1306,15 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
-            ctype = dtype.base_type.base_type.ctype
-            self.width_converters.add((True, ctype, veclen))
-            unpack_str = "unpack_{}{}".format(ctype, veclen)
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.width_converters.add((True, ocltype, veclen))
+            unpack_str = "unpack_{}{}".format(ocltype, veclen)
 
         if veclen_lhs > veclen_rhs:
             veclen = veclen_lhs
-            ctype = dtype.base_type.base_type.ctype
-            self.width_converters.add((False, ctype, veclen))
-            pack_str = "pack_{}{}".format(ctype, veclen)
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.width_converters.add((False, ocltype, veclen))
+            pack_str = "pack_{}{}".format(ocltype, veclen)
             # TODO: Horrible hack to not dereference pointers if we have to
             # unpack it
             if value[0] == "*":

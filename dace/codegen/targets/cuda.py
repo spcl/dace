@@ -1167,16 +1167,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     nested_to_allocate = (
                         set(nested_state.top_level_transients()) -
                         nested_shared_transients)
-                    to_allocate |= set(
-                        n for n in nested_state.data_nodes()
-                        if n.data in nested_to_allocate
-                    )
+                    to_allocate |= set(n for n in nested_state.data_nodes()
+                                       if n.data in nested_to_allocate)
             for nested_node in sorted(to_allocate, key=lambda n: n.data):
                 desc = nested_node.desc(nested_sdfg)
                 kernel_args[nested_node.data] = desc
                 self.extra_nsdfg_args.append(
-                    (desc.signature(name=''), nested_node.data,
-                        nested_node.data))
+                    (desc.as_arg(name=''), nested_node.data, nested_node.data))
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
@@ -1186,7 +1183,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
 
         kernel_args_typed = [
-            ('const ' if k in const_params else '') + v.signature(name=k)
+            ('const ' if k in const_params else '') + v.as_arg(name=k)
             for k, v in kernel_args.items()
         ]
 
