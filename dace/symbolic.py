@@ -588,6 +588,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
+    if isinstance(expr, str) and dtypes.validate_name(expr):
+        return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {'min': sympy.Min, 'max': sympy.Max}
@@ -596,7 +598,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     locals.update(sympy.abc._clash)
 
     # Sympy processes "not" as direct evaluation rather than negation
-    if isinstance(expr, str) and 'not' in expr:
+    if isinstance(expr, str) and 'not ' in expr:
         expr = expr.replace('not', 'Not')
 
     # TODO: support SymExpr over-approximated expressions
