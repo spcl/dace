@@ -131,3 +131,97 @@ Supported
 
 ### 6.17 Operator precedence
 Supported
+
+## 7 Simple Statements
+### 7.1 Expression statements
+Partially supported, as described in the previous section. Python interactive
+mode is not supported.
+
+### 7.2 Assignment statements
+Assignment statements with single or multiple targets are supported, both with
+and without parentheses. Statements with starred targets are not supported.
+Targets may only be identifiers, and subscriptions/slices of Numpy arrays.
+(TODO: We should support targets that are attribute references of dace.struct
+objects)
+
+#### 7.2.1 Augmented assignment statements
+Supported with the same constraints for targets as in assignment statements.
+
+#### 7.2.2 Annotated assignment statements
+Unsupported
+
+### 7.3 The assert statement
+Unsupported
+
+### 7.4 The pass statement
+Unsupported
+
+### 7.5 The del statement
+Unsupported
+
+### 7.6 The resunt statement
+Supported (TODO: Maybe we need to provide more details here on how it works)
+
+### 7.7 The yield statement
+Unsupported
+
+### 7.8 The raise statement
+Unsusupported
+
+### 7.9 The break statement
+(TODO: Should be supported, but currently leads to an incorrect SDFG)
+
+### 7.10 The continue statement
+(TODO: Should be supported, but currently leads to an incorrect SDFG)
+
+### 7.11 The import statement
+Unsupported, inclduing 7.11.1 Future statements
+
+### 7.12 The global statement
+Unsupported
+
+### 7.13 The nonlocal statement
+Unsupported
+
+## 8 Compound Statements
+### 8.1 The if statement
+Supported  
+TODO: Perhaps we should document some interesting side-effects of not redefining
+variables in SDFGs. E.g., in the following code, variable b will be of type
+dace.int always, even if `a[0] == np.float32(np.pi)`, unless it is explcitly
+declared as such:
+```python
+@dace.program
+def single_target(a: dace.float32[1]):
+    if (a[0] < 0):
+        b = 0
+    elif (a[0] < 1):
+        b = 1
+    else:
+        b = a
+    return b
+```
+
+### 8.2 The while statement
+Supported (TODO: Practically broken due to continue/break resulting in wrong
+control-flow in the SDFG)
+
+### 8.3 The for statement
+Supported (TODO: Partially broken due to continue/break resulting in wrong
+control-flow in the SDFG)
+
+### 8.4 The try statement
+Unsupported
+
+### 8.5 The with statement
+Only supported `with dace.tasklet`
+
+### 8.6 Function definitions
+Supported only with the `dace.program` decorator. Function arguments must be
+type-annotated. Nested `dace.program` definitions are not supported.
+
+### 8.7 Class definitions
+Unsupported
+
+### 8.8 Coroutines
+Unsupported
