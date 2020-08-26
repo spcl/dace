@@ -9,8 +9,8 @@ from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
-                       is_devicelevel_gpu, is_array_stream_view,
-                       NodeNotExpandedError)
+                       is_array_stream_view, NodeNotExpandedError)
+from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 from typing import Union
 
 
@@ -25,6 +25,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
+        self.calling_codegen = self
         dispatcher = self._dispatcher
 
         self._locals = cppunparse.CPPLocals()
@@ -803,8 +804,16 @@ class CPUCodeGen(TargetCodeGenerator):
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
-                        defined_type, _ = self._dispatcher.defined_vars.get(
-                            memlet.data)
+                        try:
+                            defined_type, _ = self._dispatcher.defined_vars.get(
+                                memlet.data)
+                        except KeyError:  # The variable is not defined
+                            # This case happens with nested SDFG outputs,
+                            # which we skip since the memlets are references
+                            if isinstance(node, nodes.NestedSDFG):
+                                continue
+                            raise
+
                         if defined_type == DefinedType.Scalar:
                             expr = memlet.data
                         elif defined_type == DefinedType.ArrayInterface:
@@ -1297,6 +1306,54 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
                                callsite_stream)
 
+    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+                              sdfg_label):
+        # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
+        arguments = [
+            f'{atype} {aname}' for atype, aname, _ in memlet_references
+        ]
+        arguments += [
+            f'{node.sdfg.symbols[aname].signature(aname)}'
+            for aname in sorted(node.symbol_mapping.keys())
+            if aname not in sdfg.constants
+        ]
+        arguments = ', '.join(arguments)
+        return f'void {sdfg_label}({arguments}) {{'
+
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
+                            sdfg_label):
+        args = ', '.join([argval for _, _, argval in memlet_references] + [
+            sym2cpp(symval)
+            for symname, symval in sorted(node.symbol_mapping.items())
+            if symname not in sdfg.constants
+        ])
+        return f'{sdfg_label}({args});'
+
+    def generate_nsdfg_arguments(self, sdfg, state, node):
+        # Connectors that are both input and output share the same name
+        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
+
+        memlet_references = []
+        for _, _, _, vconn, in_memlet in state.in_edges(node):
+            if vconn in inout or in_memlet.data is None:
+                continue
+            memlet_references.append(
+                emit_memlet_reference(self._dispatcher,
+                                      sdfg,
+                                      in_memlet,
+                                      vconn,
+                                      conntype=node.in_connectors[vconn]))
+
+        for _, uconn, _, _, out_memlet in state.out_edges(node):
+            if out_memlet.data is not None:
+                memlet_references.append(
+                    emit_memlet_reference(self._dispatcher,
+                                          sdfg,
+                                          out_memlet,
+                                          uconn,
+                                          conntype=node.out_connectors[uconn]))
+        return memlet_references
+
     def _generate_NestedSDFG(
         self,
         sdfg,
@@ -1309,9 +1366,6 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=False)
         state_dfg = sdfg.nodes()[state_id]
 
-        # Connectors that are both input and output share the same name
-        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
-
         # Emit nested SDFG as a separate function
         nested_stream = CodeIOStream()
         nested_global_stream = CodeIOStream()
@@ -1320,43 +1374,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
-        memlet_references = []
-        for _, _, _, vconn, in_memlet in state_dfg.in_edges(node):
-            if vconn in inout or in_memlet.data is None:
-                continue
-            memlet_references.append(
-                emit_memlet_reference(self._dispatcher,
-                                      sdfg,
-                                      in_memlet,
-                                      vconn,
-                                      conntype=node.in_connectors[vconn]))
-
-        for _, uconn, _, _, out_memlet in state_dfg.out_edges(node):
-            if out_memlet.data is not None:
-                memlet_references.append(
-                    emit_memlet_reference(self._dispatcher,
-                                          sdfg,
-                                          out_memlet,
-                                          uconn,
-                                          conntype=node.out_connectors[uconn]))
-
         # Arguments are input connectors, output connectors, and symbols
-        header = 'inline '
-        if is_devicelevel_gpu(sdfg, state_dfg, node):
-            header = 'DACE_DFI '
+        codegen = self.calling_codegen
+        memlet_references = codegen.generate_nsdfg_arguments(
+            sdfg, state_dfg, node)
 
-        # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
-        arguments = [
-            f'{atype} {aname}' for atype, aname, _ in memlet_references
-        ]
-        arguments += [
-            f'{node.sdfg.symbols[aname].signature(aname)}'
-            for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
-        ]
-        arguments = ', '.join(arguments)
-        nested_stream.write(f'{header}void {sdfg_label}({arguments}) {{', sdfg,
-                            state_id, node)
+        nested_stream.write(
+            codegen.generate_nsdfg_header(sdfg, state_dfg, node,
+                                          memlet_references, sdfg_label), sdfg,
+            state_id, node)
 
         #############################
         # Generate function contents
@@ -1390,12 +1416,10 @@ class CPUCodeGen(TargetCodeGenerator):
         ########################
         # Generate function call
 
-        args = ', '.join([argval for _, _, argval in memlet_references] + [
-            sym2cpp(symval)
-            for symname, symval in sorted(node.symbol_mapping.items())
-            if symname not in sdfg.constants
-        ])
-        callsite_stream.write(f'{sdfg_label}({args});', sdfg, state_id, node)
+        callsite_stream.write(
+            codegen.generate_nsdfg_call(sdfg, state_dfg, node,
+                                        memlet_references, sdfg_label), sdfg,
+            state_id, node)
 
         ###############################################################
         # Write generated code in the proper places (nested SDFG writes
