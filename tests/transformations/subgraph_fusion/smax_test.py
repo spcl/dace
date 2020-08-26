@@ -126,13 +126,11 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
     return out
 
 
-sdfg = softmax.to_sdfg()
-sdfg.apply_strict_transformations()
+
 H.set(10)
 B.set(10)
 SN.set(20)
 SM.set(20)
-A = np.ndarray((H.get(), B.get(), SN.get(), SM.get()), dtype=np.float32)
 
 
 def get_partition(sdfg, graph):
@@ -159,7 +157,8 @@ def get_partition(sdfg, graph):
 
 
 def test_2fuse():
-
+    sdfg = softmax.to_sdfg()
+    sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
 
@@ -179,6 +178,8 @@ def test_2fuse():
     return
 
 def test_1fuse():
+    sdfg = softmax.to_sdfg()
+    sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
 
@@ -187,7 +188,7 @@ def test_1fuse():
 
     expand_reduce(sdfg, sdfg.nodes()[0])
     expand_maps(sdfg, sdfg.nodes()[0])
-    fusion(sdfg, sdfg.nodes()[0], transient_allocation = dtypes.StorageType.Register)
+    fusion(sdfg, sdfg.nodes()[0])
 
     #sdfg.specialize({'SM':SM})
     csdfg = sdfg.compile()
@@ -200,5 +201,5 @@ def test_1fuse():
     return
 
 if __name__ == "__main__":
-    #test_2fuse()
+    test_2fuse()
     test_1fuse()
