@@ -4,6 +4,7 @@ import collections
 import copy
 import dace
 import functools
+import re
 from dace.codegen import control_flow as cflow
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.common import codeblock_to_cpp
@@ -272,23 +273,30 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         ]
         nested_allocated = set()
         for sub_graph in gpu_persistent_subgraphs:
-            for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
-                                if isinstance(n, nodes.NestedSDFG)]:
+            for nested_sdfg in [
+                    n.sdfg for n in sub_graph.nodes()
+                    if isinstance(n, nodes.NestedSDFG)
+            ]:
                 nested_shared_transients = set(nested_sdfg.shared_transients())
                 for nested_state in nested_sdfg.nodes():
                     nested_sid = nested_sdfg.node_id(nested_state)
                     nested_to_allocate = (
-                        set(nested_state.top_level_transients())
-                        - nested_shared_transients
-                    )
-                    nodes_to_allocate = [n for n in nested_state.data_nodes()
-                                         if n.data in nested_to_allocate
-                                         and n.data not in nested_allocated]
+                        set(nested_state.top_level_transients()) -
+                        nested_shared_transients)
+                    nodes_to_allocate = [
+                        n for n in nested_state.data_nodes()
+                        if n.data in nested_to_allocate
+                        and n.data not in nested_allocated
+                    ]
                     for nested_node in nodes_to_allocate:
                         nested_allocated.add(nested_node.data)
                         self._dispatcher.dispatch_allocate(
-                            nested_sdfg, nested_state, nested_sid,
-                            nested_node, global_stream, callsite_stream,
+                            nested_sdfg,
+                            nested_state,
+                            nested_sid,
+                            nested_node,
+                            global_stream,
+                            callsite_stream,
                         )
 
         callsite_stream.write('\n')
@@ -338,19 +346,21 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             gpu_persistent_subgraphs = [
                 state.scope_subgraph(node) for node in state.nodes()
                 if isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == dace.ScheduleType.GPU_Persistent]
+                and node.map.schedule == dace.ScheduleType.GPU_Persistent
+            ]
             nested_deallocated = set()
             for sub_graph in gpu_persistent_subgraphs:
-                for nested_sdfg in [n.sdfg for n in sub_graph.nodes()
-                                    if isinstance(n, nodes.NestedSDFG)]:
+                for nested_sdfg in [
+                        n.sdfg for n in sub_graph.nodes()
+                        if isinstance(n, nodes.NestedSDFG)
+                ]:
                     nested_shared_transients = \
                         set(nested_sdfg.shared_transients())
                     for nested_state in nested_sdfg:
                         nested_sid = nested_sdfg.node_id(nested_state)
                         nested_to_allocate = (
-                                set(nested_state.top_level_transients())
-                                - nested_shared_transients
-                        )
+                            set(nested_state.top_level_transients()) -
+                            nested_shared_transients)
                         nodes_to_deallocate = [
                             n for n in nested_state.data_nodes()
                             if n.data in nested_to_allocate
@@ -360,8 +370,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             nested_deallocated.add(nested_node.data)
                             self._dispatcher.dispatch_deallocate(
                                 nested_sdfg, nested_state, nested_sid,
-                                nested_node, global_stream, callsite_stream
-                            )
+                                nested_node, global_stream, callsite_stream)
 
             # Emit internal transient array deallocation
             deallocated = set()
@@ -442,7 +451,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             sid = sdfg.node_id(state)
 
             callsite_stream.write(
-                "__state_{}_{}:\n".format(sdfg.sdfg_id, state.label), sdfg, sid)
+                "__state_{}_{}:;\n".format(sdfg.sdfg_id, state.label), sdfg,
+                sid)
 
             # Don't generate brackets and comments for empty states
             if len([n for n in state.nodes()]) > 0:
@@ -453,10 +463,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                                 callsite_stream)
 
                 callsite_stream.write('}', sdfg, sid)
-
-            else:
-
-                callsite_stream.write(";")
 
             out_edges = sdfg.out_edges(state)
 
@@ -733,8 +739,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
-                '%s;\n' % (isvar.signature(with_types=True, name=isvarName)),
-                sdfg)
+                '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
 
         callsite_stream.write('\n', sdfg)
 
@@ -1021,7 +1026,21 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             generated_header = global_stream.getvalue()
             generated_code = callsite_stream.getvalue()
 
-        # Return the generated global and local code strings
-        return (generated_header, generated_code, self._dispatcher.used_targets,
-                self._dispatcher.used_environments)
+        # Clean up generated code
+        gotos = re.findall(r'goto (.*);', generated_code)
+        clean_code = ''
+        for line in generated_code.split('\n'):
+            # Empty line with semicolon
+            if re.match(r'^\s*;\s*', line):
+                continue
+            # Label that might be unused
+            label = re.findall(
+                r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+            if len(label) > 0:
+                if label[0] not in gotos:
+                    continue
+            clean_code += line + '\n'
 
+        # Return the generated global and local code strings
+        return (generated_header, clean_code, self._dispatcher.used_targets,
+                self._dispatcher.used_environments)

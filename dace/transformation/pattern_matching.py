@@ -29,10 +29,11 @@ class Transformation(object):
         (or ``dace.registry.autoregister_params``) with two optional boolean
         keyword arguments: ``singlestate`` (default: False) and ``strict``
         (default: False).
-        If ``singlestate`` is True, the transformation operates on a single
-        state; otherwise, it will be matched over an entire SDFG.
+        If ``singlestate`` is True, the transformation is matched on subgraphs
+        inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
+        matched.
         If ``strict`` is True, this transformation will be considered strict
-        (i.e., always important to perform) and will be performed automatically
+        (i.e., always beneficial to perform) and will be performed automatically
         as part of SDFG strict transformations.
     """
 
@@ -200,7 +201,10 @@ class Transformation(object):
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
+        subgraph = {
+            expr.node(int(k)): int(v)
+            for k, v in json_obj['_subgraph'].items()
+        }
 
         # Reconstruct transformation
         ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
@@ -269,6 +273,13 @@ class ExpandTransformation(Transformation):
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
             expansion.debuginfo = node.debuginfo
+            if isinstance(expansion, dace.sdfg.nodes.NestedSDFG):
+                # Fix parent references
+                nsdfg = expansion.sdfg
+                nsdfg.parent = state
+                nsdfg.parent_sdfg = sdfg
+                nsdfg.update_sdfg_list([])
+                nsdfg.parent_nsdfg_node = expansion
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(

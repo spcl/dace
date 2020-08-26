@@ -169,13 +169,13 @@ class DefinedMemlets:
     """ Keeps track of the type of defined memlets to ensure that they are
         referenced correctly in nested scopes and SDFGs. """
     def __init__(self):
-        self._scopes = [(None, {})]
+        self._scopes = [(None, {}, True)]
 
-    def enter_scope(self, parent):
-        self._scopes.append((parent, {}))
+    def enter_scope(self, parent, can_access_parent=True):
+        self._scopes.append((parent, {}, can_access_parent))
 
     def exit_scope(self, parent):
-        expected, _ = self._scopes.pop()
+        expected, _, _ = self._scopes.pop()
         if expected != parent:
             raise ValueError(
                 "Exited scope {} mismatched current scope {}".format(
@@ -188,10 +188,15 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name) -> Tuple[DefinedType, str]:
-        for _, scope in reversed(self._scopes):
+    def get(self, name: str, ancestor: int = 0) -> Tuple[DefinedType, str]:
+        for _, scope, can_access_parent in reversed(self._scopes):
+            if ancestor > 0:
+                ancestor -= 1
+                continue
             if name in scope:
                 return scope[name]
+            if not can_access_parent:
+                break
         raise KeyError("Variable {} has not been defined".format(name))
 
     def add(self,
@@ -204,7 +209,7 @@ class DefinedMemlets:
             raise TypeError('Variable name type cannot be %s' %
                             type(name).__name__)
 
-        for _, scope in reversed(self._scopes):
+        for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(
                     name, scope[name], dtype)
@@ -214,6 +219,8 @@ class DefinedMemlets:
                         print("WARNING: " + err_str)
                 else:
                     raise dace.codegen.codegen.CodegenError(err_str)
+            if not can_access_parent:
+                break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
 

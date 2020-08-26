@@ -254,6 +254,10 @@ class DaceProgram:
         # Update arguments with symbols in data shapes
         kwargs.update(infer_symbols_from_shapes(sdfg, kwargs))
 
+        # Allow CLI to prompt for optimizations
+        if Config.get_bool('optimizer', 'transform_on_call'):
+            sdfg = sdfg.optimize()
+
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile()

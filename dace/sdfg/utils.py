@@ -151,6 +151,52 @@ def dfs_topological_sort(G, sources=None, condition=None):
                 stack.pop()
 
 
+def dfs_conditional(G, sources=None, condition=None):
+    """ Produce nodes in a depth-first ordering.
+
+    :param G: An input DiGraph (assumed acyclic).
+    :param sources: (optional) node or list of nodes that
+                    specify starting point(s) for depth-first search and return
+                    edges in the component reachable from source.
+    :return: A generator of edges in the lastvisit depth-first-search.
+
+    @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
+    by D. Eppstein, July 2004.
+
+    @note: If a source is not specified then a source is chosen arbitrarily and
+    repeatedly until all components in the graph are searched.
+
+    """
+    if sources is None:
+        # produce edges for all components
+        nodes = G
+    else:
+        # produce edges for components with source
+        try:
+            nodes = iter(sources)
+        except TypeError:
+            nodes = [sources]
+
+    visited = set()
+    for start in nodes:
+        if start in visited:
+            continue
+        yield start
+        visited.add(start)
+        stack = [(start, iter(G.neighbors(start)))]
+        while stack:
+            parent, children = stack[-1]
+            try:
+                child = next(children)
+                if child not in visited:
+                    visited.add(child)
+                    if condition is None or condition(parent, child):
+                        yield child
+                        stack.append((child, iter(G.neighbors(child))))
+            except StopIteration:
+                stack.pop()
+
+
 def change_edge_dest(graph: gr.OrderedDiGraph,
                      node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
                      node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph]):
@@ -564,8 +610,8 @@ def concurrent_subgraphs(graph):
             # Merge overlapping subgraphs
             new_subgraph = seen | components[start_node]
 
-            for i, index in enumerate(reversed(to_delete)):
-                new_subgraph |= subgraphs.pop(index - i)
+            for index in reversed(to_delete):
+                new_subgraph |= subgraphs.pop(index)
 
             subgraphs.append(new_subgraph)
 

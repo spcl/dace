@@ -68,9 +68,8 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
             # Unionize children_nodes with new nodes
             children_nodes |= more_nodes
             # Add nodes of the next level to next_map_nodes
-            next_map_nodes.extend([
-                node for node in more_nodes if isinstance(node, nd.EntryNode)
-            ])
+            next_map_nodes.extend(
+                [node for node in more_nodes if isinstance(node, nd.EntryNode)])
         map_nodes = next_map_nodes
 
     if include_entry:
@@ -125,8 +124,7 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,
     return external_queue
 
 
-def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState',
-                       scope_dict: ScopeDictType):
+def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
     """ Return a JSON-serializable dictionary of a scope dictionary,
         using integral node IDs instead of object references. """
     def node_id_or_none(node):
@@ -153,10 +151,10 @@ def scope_contains_scope(sdict: ScopeDictType, node: NodeType,
     return False
 
 
-def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                       node: NodeType) -> bool:
-    """ Tests whether a node in an SDFG is contained within GPU device-level
-        code.
+def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
+                node: NodeType, schedules: List[dtypes.ScheduleType]) -> bool:
+    """ Tests whether a node in an SDFG is contained within a certain set of 
+        scope schedules.
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
@@ -169,26 +167,45 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         sdict = state.scope_dict()
         scope = sdict[node]
         while scope is not None:
-            if scope.schedule in dtypes.GPU_SCHEDULES:
+            if scope.schedule in schedules:
                 return True
             scope = sdict[scope]
         # Traverse up nested SDFGs
         if sdfg.parent is not None:
-            if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
-            else:
-                parent = sdfg.parent
-            state, node = next(
-                (s, n) for s in parent.nodes() for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+            parent = sdfg.parent_sdfg
+            state = sdfg.parent
+            node = sdfg.parent_nsdfg_node
         else:
             parent = sdfg.parent
         sdfg = parent
     return False
 
 
-def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG',
-                           state: 'dace.sdfg.SDFGState',
+def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
+                       node: NodeType) -> bool:
+    """ Tests whether a node in an SDFG is contained within GPU device-level
+        code.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: True if node is in device-level code, False otherwise.
+    """
+    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
+
+
+def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
+                        node: NodeType) -> bool:
+    """ Tests whether a node in an SDFG is contained within FPGA device-level
+        code.
+        :param sdfg: The SDFG in which the node resides.
+        :param state: The SDFG state in which the node resides.
+        :param node: The node in question
+        :return: True if node is in device-level code, False otherwise.
+    """
+    return is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
+
+
+def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                            node: NodeType) -> Tuple[symbolic.SymExpr]:
     """ Returns the current thread-block size if the given node is enclosed in
         a GPU kernel, or None otherwise.
@@ -210,8 +227,8 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG',
             elif scope.schedule == dtypes.ScheduleType.GPU_Device:
                 # No thread-block map, use config default
                 return tuple(
-                    int(s) for s in Config.get(
-                        'compiler', 'cuda', 'default_block_size').split(','))
+                    int(s) for s in Config.get('compiler', 'cuda',
+                                               'default_block_size').split(','))
             elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 # Dynamic thread-block map, use configured value
                 return tuple(

@@ -4,6 +4,7 @@ import functools
 
 import sympy as sp
 from six import StringIO
+from typing import Tuple
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
@@ -196,9 +197,13 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
-                          pointer_name: str, conntype: dtypes.typeclass):
-    """ Returns a string with a definition of a reference to an existing
-        memlet. Used in nested SDFG arguments. """
+                          pointer_name: str,
+                          conntype: dtypes.typeclass) -> Tuple[str, str, str]:
+    """ 
+    Returns a tuple of three strings with a definition of a reference to an 
+    existing memlet. Used in nested SDFG arguments.
+    :return: A tuple of the form (type, name, value).
+    """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
     datadef = memlet.data
@@ -206,19 +211,16 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
-    # Special case to avoid self-reference
-    if pointer_name == datadef and offset_expr == '[0]':
-        return ''
-
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data)
+    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data, 1)
     if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
+            ref = '&'
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
         ref = '&' if is_scalar else ''
@@ -266,7 +268,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
                                 typedef,
                                 allow_shadowing=True)
 
-    return '%s%s %s = %s;' % (typedef, ref, pointer_name, expr)
+    return (typedef + ref, pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
@@ -581,15 +583,16 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
 
     # If raw C++ code, return the code directly
     if node.language != dtypes.Language.Python:
-        # If this code runs on the host and is associated with a CUDA stream,
+        # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
         max_streams = int(
             Config.get("compiler", "cuda", "max_concurrent_streams"))
         if (max_streams >= 0 and not is_devicelevel_gpu(sdfg, state_dfg, node)
                 and hasattr(node, "_cuda_stream")):
             callsite_stream.write(
-                'int __dace_current_stream_id = %d;\ncudaStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
-                % node._cuda_stream,
+                'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
+                %
+                (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
                 sdfg,
                 state_id,
                 node,
@@ -903,11 +906,12 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(
             sdfg, state_dfg, node):
         return
+    backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream"):
             cudastream = "dace::cuda::__streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
-                "cudaStreamSynchronize(%s);" % cudastream,
+                "%sStreamSynchronize(%s);" % (backend, cudastream),
                 sdfg,
                 state_id,
                 [e.src, e.dst],
@@ -918,6 +922,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
+    backend = Config.get('compiler', 'cuda', 'backend')
     if max_streams >= 0:
         cudastream = "dace::cuda::__streams[%d]" % node._cuda_stream
         for edge in dfg.out_edges(scope_exit):
@@ -926,13 +931,14 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
             if (isinstance(edge.dst, nodes.AccessNode)
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
-                    """cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
-cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
+                    """{backend}EventRecord(dace::cuda::__events[{ev}], {src_stream});
+{backend}StreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
                     .format(
                         ev=edge._cuda_event
                         if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream,
+                        backend=backend,
                     ),
                     sdfg,
                     state_id,
@@ -953,13 +959,14 @@ cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{e
                 # for it in target stream.
                 elif e.dst._cuda_stream != node._cuda_stream:
                     callsite_stream.write(
-                        """cudaEventRecord(dace::cuda::__events[{ev}], {src_stream});
-    cudaStreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
+                        """{backend}EventRecord(dace::cuda::__events[{ev}], {src_stream});
+    {backend}StreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
                         .format(
                             ev=e._cuda_event
                             if hasattr(e, "_cuda_event") else 0,
                             src_stream=cudastream,
                             dst_stream=e.dst._cuda_stream,
+                            backend=backend,
                         ),
                         sdfg,
                         state_id,

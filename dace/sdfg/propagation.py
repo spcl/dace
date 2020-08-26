@@ -714,6 +714,7 @@ def propagate_memlet(dfg_state,
                 if new_subset is None:
                     warnings.warn('Subset union failed between %s and %s ' %
                                   (old_subset, tmp_subset))
+                    break
 
         # Some unions failed
         if new_subset is None:

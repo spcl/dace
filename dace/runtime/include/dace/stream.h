@@ -10,11 +10,10 @@
 
 #include "vector.h"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/stream.cuh"
 #else
 #include "cudainterop.h"
-#include "cuda/cudacommon.cuh"
 
 namespace dace {
     // Forward/mirror declaration of GPU classes
@@ -39,16 +38,16 @@ namespace dace {
     template<typename T, bool IS_POW2>
     void FreeGPUArrayStreamView(GPUStream<T, IS_POW2>& stream)
     {
-        DACE_CUDA_CHECK(cudaFree(stream.m_start));
-        DACE_CUDA_CHECK(cudaFree(stream.m_end));
-        DACE_CUDA_CHECK(cudaFree(stream.m_pending));
+        DACE_CUDA_CHECK(gpuFree(stream.m_start));
+        DACE_CUDA_CHECK(gpuFree(stream.m_end));
+        DACE_CUDA_CHECK(gpuFree(stream.m_pending));
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         FreeGPUArrayStreamView(stream);
-        DACE_CUDA_CHECK(cudaFree(stream.m_data));
+        DACE_CUDA_CHECK(gpuFree(stream.m_data));
     }
 }  // namespace dace
 #endif
