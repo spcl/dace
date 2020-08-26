@@ -581,8 +581,6 @@ if(DACE_ENABLE_INTELFPGA)
     set(FPGA_GENERATED_SOURCES)     # list of generated device files (one per program)
     set(SMI_HOST_CODEGEN_TARGETS)   # list of host based targets
 
-    #TODO define NUM_RANKS
-    set(NUM_RANKS 4)
 
     set(WORKDIR ${CMAKE_CURRENT_BINARY_DIR}/)
     file(MAKE_DIRECTORY ${WORKDIR})
