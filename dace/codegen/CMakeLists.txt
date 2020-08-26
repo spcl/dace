@@ -568,7 +568,7 @@ if(DACE_ENABLE_INTELFPGA)
 
   	# Add SMI include directory to AOC
   	set(DACE_AOC_BUILD_FLAGS ${DACE_AOC_BUILD_FLAGS}  -I${DACE_SMI_DIR}/include)
-
+    set(NUM_RANKS ${DACE_INTELFPGA_SMI_NUM_RANKS})
 
 
   	# TODO parse optional arguments (dace.conf?)
@@ -710,7 +710,6 @@ if(DACE_ENABLE_INTELFPGA)
     set(EMULATOR_TARGET intelfpga_smi_compile_${DACE_PROGRAM_NAME}_emulator)
     list(LENGTH DACE_INTELFPGA_KERNEL_FILES KERNELS_LENGTH)
     add_custom_target(${EMULATOR_TARGET})
-
 
     math(EXPR LOOP_END "${NUM_RANKS} - 1")
     foreach(SMI_EMULATION_RANK RANGE 0 ${LOOP_END} 1)
