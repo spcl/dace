@@ -1,5 +1,5 @@
 # TODO do checking on if type exists for non required fields (maybe automate this?)
-from collections import Iterable
+from collections import Iterable, defaultdict
 from copy import deepcopy
 from functools import reduce
 import itertools
@@ -59,8 +59,8 @@ def _add_ort_init_code(sdfg: SDFG):
         """)
 
         if any(True for state in sdfg.nodes() for node in state.nodes()
-                if hasattr(node, "schedule")
-                and node.schedule == ScheduleType.GPU_Device):
+               if hasattr(node, "schedule")
+               and node.schedule == ScheduleType.GPU_Device):
             # if the SDFG contains a GPU node, add the CUDA provider
             sdfg.append_init_code("""
             __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
@@ -77,7 +77,6 @@ def _add_ort_init_code(sdfg: SDFG):
         __ort_api->ReleaseEnv(__ort_env);
         """
         sdfg.prepend_exit_code(session_cleanup_code)
-
 
 
 def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
@@ -294,7 +293,9 @@ class ONNXOp(nd.LibraryNode):
         outputs = list(self.schema.outputs)
         if outputs[-1].param_type == ONNXParameterType.Variadic:
             name = outputs[-1].name
-            outputs = itertools.chain(outputs[:-1], (name + "__" + str(i) for i in itertools.count()))
+            outputs = itertools.chain(outputs[:-1],
+                                      (name + "__" + str(i)
+                                       for i in itertools.count()))
 
         edges = state.out_edges(self)
         outputs = list(itertools.islice(outputs, len(edges)))
@@ -343,8 +344,8 @@ class ONNXOp(nd.LibraryNode):
             out_edges,
             key=lambda edge: get_idx(self.schema.outputs, edge.src_conn))
 
-        return itertools.chain(zip(sorted_in, itertools.repeat(True)), zip(sorted_out,
-                                                                           itertools.repeat(False)))
+        return itertools.chain(zip(sorted_in, itertools.repeat(True)),
+                               zip(sorted_out, itertools.repeat(False)))
 
     def validate(self, sdfg: SDFG, state: SDFGState):
         in_edges = state.in_edges(self)
@@ -611,40 +612,46 @@ class ONNXOp(nd.LibraryNode):
         ##########################################
 
         # maps the connectors for which a copy will be required to the storage type required to be connected to the tasklet
-        input_copy_required = {}
-        output_copy_required = {}
+        input_copy_required = defaultdict(dict)
+        output_copy_required = defaultdict(dict)
 
         # check outputs
-        for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state), outputs_on_host):
+        for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state),
+                                        outputs_on_host):
             # get the memlet for this output
             array = sdfg.arrays[edge.data.data]
 
             if output_on_host:
-                is_device_mismatch = not can_access(ScheduleType.Default, array.storage)
+                is_device_mismatch = not can_access(ScheduleType.Default,
+                                                    array.storage)
             else:
-                is_device_mismatch = not can_access(ScheduleType.GPU_Device, array.storage)
+                is_device_mismatch = not can_access(ScheduleType.GPU_Device,
+                                                    array.storage)
 
-            if not is_device_mismatch and isinstance(array, dt.Scalar) and provider_index == 1:
+            if isinstance(array, dt.Scalar) and provider_index == 1:
                 # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
                 is_device_mismatch = True
+                output_copy_required[edge.src_conn]['copy_to_array'] = True
 
             if is_device_mismatch:
                 # we need to insert a copy
-                output_copy_required[edge.src_conn] = StorageType.Default if output_on_host else StorageType.GPU_Global
+                output_copy_required[edge.src_conn][
+                    'storage'] = StorageType.Default if output_on_host else StorageType.GPU_Global
 
         # check inputs
         for edge in state.in_edges(node):
             array = sdfg.arrays[edge.data.data]
 
-            device_mismatch = not can_access(node.schedule, array.storage)
+            is_device_mismatch = not can_access(node.schedule, array.storage)
 
-            if not is_device_mismatch and isinstance(array, dt.Scalar) and provider_index == 1:
+            if isinstance(array, dt.Scalar) and provider_index == 1:
                 # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
                 is_device_mismatch = True
+                input_copy_required[edge.dst_conn]['copy_to_array'] = True
 
-            if device_mismatch:
-                input_copy_required[edge.dst_conn] = StorageType.GPU_Global if provider_index == 1 else StorageType.Default
-
+            if is_device_mismatch:
+                input_copy_required[edge.dst_conn][
+                    'storage'] = StorageType.GPU_Global if provider_index == 1 else StorageType.Default
 
         # begin codegen
         ##########################################
@@ -659,10 +666,21 @@ class ONNXOp(nd.LibraryNode):
 
         # emit code for inputs and outputs
         ##########################################
+        in_connectors = {}
+        out_connectors = {}
 
         for edge, is_input in node.iter_edges(state):
+
             parameter_name = edge.dst_conn if is_input else edge.src_conn
+
+            if len(output_copy_required) != 0 or len(input_copy_required) != 0:
+                edge_connector_name = "_conn_" + parameter_name
+            else:
+                edge_connector_name = parameter_name
+
+
             input_output_string = "input" if is_input else "output"
+            connector_dict = in_connectors if is_input else out_connectors
             memlet = edge.data
             desc = sdfg.arrays[memlet.data]
             sdfg.append_init_code("""
@@ -677,17 +695,20 @@ class ONNXOp(nd.LibraryNode):
                 input_output_string=input_output_string,
                 parameter_name=parameter_name)
 
-
-            if (isinstance(desc, dt.Scalar)
-                # when scalars are copied we will copy them to dace arrays
-                # (this is because ORT requires scalars to be cudaMalloced)
-                and memlet.data not in output_copy_required and memlet.data not in input_copy_required):
+            copy_to_array = (
+                (parameter_name in output_copy_required
+                 and 'copy_to_array' in output_copy_required[parameter_name])
+                or (parameter_name in input_copy_required
+                    and 'copy_to_array' in input_copy_required[parameter_name]))
+            if (isinstance(desc, dt.Scalar) and
+                    # when copying to array, the ort value is not a scalar but an array
+                    not copy_to_array):
 
                 tasklet_setup_code += """
                 OrtValue* {ort_value_name};
                 __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
                     __ort_mem_info,
-                    &{parameter_name},
+                    &{edge_connector_name},
                     {data_size} * sizeof({ctype}),
                     nullptr,
                     0,
@@ -695,26 +716,30 @@ class ONNXOp(nd.LibraryNode):
                     &{ort_value_name}
                 ));
                 """.format(input_output_string=input_output_string,
-                           parameter_name=parameter_name,
+                           edge_connector_name=edge_connector_name,
                            data_size=reduce(lambda x, y: x * y, desc.shape),
                            ctype=desc.dtype.ctype,
                            type_str=reversed_onnx_dtype_map[desc.dtype].upper(),
                            ort_value_name=ort_value_name)
-            elif isinstance(desc, dt.Array):
+                connector_dict[parameter_name] = None
+
+            elif isinstance(desc, dt.Array) or copy_to_array:
+
+                # when we copy a scalar to an array, that scalar ofc has shape []
+                dims = [] if copy_to_array else desc.shape
+
                 # setup dims array
                 tasklet_setup_code += """
                 int64_t {input_output_string}_{parameter_name}_dims[{dims_size}] = {{{dims}}};
                 """.format(input_output_string=input_output_string,
                            parameter_name=parameter_name,
-                           dims_size=len(desc.shape),
-                           dims=", ".join(str(s) for s in desc.shape))
+                           dims_size=len(dims),
+                           dims=", ".join(str(s) for s in dims))
 
-                if isinstance(desc, dt.Array) and len(
-                        desc.shape) == 1 and desc.shape[0] == 1:
-                    data = "&{}".format(parameter_name)
-                else:
-                    data = "const_cast < void * > (reinterpret_cast < const void * > ({}))".format(
-                        parameter_name)
+                connector_dict[parameter_name] = dace.pointer(desc.dtype)
+                data = "const_cast < void * > (reinterpret_cast < const void * > ({}))".format(
+                    edge_connector_name)
+
                 tasklet_setup_code += """
                 OrtValue* {ort_value_name};
                 __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
@@ -731,7 +756,7 @@ class ONNXOp(nd.LibraryNode):
                            parameter_name=parameter_name,
                            data_size=reduce(lambda x, y: x * y, desc.shape),
                            ctype=desc.dtype.ctype,
-                           dims_size=len(desc.shape),
+                           dims_size=len(dims),
                            type_str=reversed_onnx_dtype_map[desc.dtype].upper(),
                            ort_value_name=ort_value_name)
             else:
@@ -781,8 +806,8 @@ class ONNXOp(nd.LibraryNode):
 
         tasklet_code = tasklet_setup_code + tasklet_code + tasklet_cleanup_code
         tasklet = nd.Tasklet('onnx_code',
-                             set(inputs.keys()),
-                             set(outputs.keys()),
+                             in_connectors,
+                             out_connectors,
                              tasklet_code,
                              language=dace.dtypes.Language.CPP)
         tasklet.environments = {"ONNXRuntime"}
@@ -791,6 +816,11 @@ class ONNXOp(nd.LibraryNode):
             nsdfg = dace.SDFG("nested_{}".format(unique_id))
             nstate = nsdfg.add_state()
             ntasklet = deepcopy(tasklet)
+
+            # add a prefix to connectors to prevent shadowing of array names
+            ntasklet.in_connectors = {"_conn_" + k: v for k, v in tasklet.in_connectors.items()}
+            ntasklet.out_connectors = {"_conn_" + k: v for k, v in tasklet.out_connectors.items()}
+
             nstate.add_node(ntasklet)
 
             for edge, is_input in node.iter_edges(state):
@@ -800,26 +830,39 @@ class ONNXOp(nd.LibraryNode):
                 desc = sdfg.arrays[memlet.data]
 
                 # add the original array
-                nsdfg.add_datadesc(parameter_name, deepcopy(desc))
-                if not (isinstance(desc, dt.Array) or isinstance(desc, dt.Scalar)):
-                    raise ValueError("Unsupported data type {} connected to an ONNX tasklet".format(type(desc)))
+                original_desc = deepcopy(desc)
+                original_desc.transient = False
+                nsdfg.add_datadesc(parameter_name, original_desc)
+                if not (isinstance(desc, dt.Array)
+                        or isinstance(desc, dt.Scalar)):
+                    raise ValueError(
+                        "Unsupported data type {} connected to an ONNX tasklet".
+                        format(type(desc)))
 
-
-                if parameter_name not in (input_copy_required if is_input else output_copy_required):
+                if parameter_name not in (input_copy_required if is_input else
+                                          output_copy_required):
                     if is_input:
                         access = nstate.add_read(parameter_name)
-                        nstate.add_edge(access, None, ntasklet, parameter_name, nsdfg.get_array_memlet(parameter_name))
+                        nstate.add_edge(access, None, ntasklet, "_conn_" + parameter_name,
+                                        nsdfg.get_array_memlet(parameter_name))
                     else:
                         access = nstate.add_write(parameter_name)
-                        nstate.add_edge(ntasklet, parameter_name, access, None, nsdfg.get_array_memlet(parameter_name))
+                        nstate.add_edge(ntasklet, "_conn_" + parameter_name, access, None,
+                                        nsdfg.get_array_memlet(parameter_name))
                     continue
 
-                copy_storage_type = input_copy_required[parameter_name] if is_input else output_copy_required[parameter_name]
+                copy_options = input_copy_required[
+                    parameter_name] if is_input else output_copy_required[
+                        parameter_name]
 
-                # add the copy of the array
-                copy_desc = deepcopy(desc)
-                copy_desc.storage = copy_storage_type
+                # add the copy of the descriptor
+                if 'copy_to_array' in copy_options:
+                    copy_desc = dt.Array(shape=[1], dtype=desc.dtype)
+                else:
+                    copy_desc = deepcopy(desc)
+
                 copy_desc.transient = True
+                copy_desc.storage = copy_options['storage']
                 nsdfg.add_datadesc("copy_" + memlet.data, copy_desc)
 
                 nmemlet = deepcopy(memlet)
@@ -830,12 +873,12 @@ class ONNXOp(nd.LibraryNode):
                     nstate.add_edge(
                         access, None, access_copy, None,
                         nsdfg.get_array_memlet("copy_" + memlet.data))
-                    nstate.add_edge(access_copy, None, ntasklet, parameter_name,
+                    nstate.add_edge(access_copy, None, ntasklet, "_conn_" + parameter_name,
                                     nmemlet)
                 else:
                     access = nstate.add_write(parameter_name)
                     access_copy = nstate.add_access("copy_" + memlet.data)
-                    nstate.add_edge(ntasklet, parameter_name, access_copy, None,
+                    nstate.add_edge(ntasklet, "_conn_" + parameter_name, access_copy, None,
                                     nmemlet)
                     nstate.add_edge(
                         access_copy, None, access, None,
@@ -896,7 +939,7 @@ for schema in onnx.defs.get_all_schemas():
         super(ONNXOp, self).__init__(
             name,
             location=location,
-            # add required parameters as in/out connectors
+            # add required parameters as in/out connectors, without types for now
             inputs={
                 inp.name
                 for inp in self.schema.inputs

@@ -6,7 +6,9 @@ Testing input and output combinations for onnx Ops
 | Scalar CPU     | Add        |            | Shape     |           |
 | Scalar GPU     |            | Add        |           | Squeeze   |
 | Array CPU      | Unsqueeze  |            | Add       | Shape     |
-| Array GPU      |            | Squeeze    |           | Add       |
+| Array GPU      | Squeeze    | Unsqueeze  | Add       |
+
+ALSO: test CPU fallback for all combinations of GPU ops
 """
 import os
 
@@ -14,6 +16,39 @@ import numpy as np
 
 import dace
 import dace.libraries.onnx as donnx
+
+
+def test_unsqueeze(gpu=False):
+    sdfg = dace.SDFG("test_expansion")
+
+    sdfg.add_scalar("X_arr", dace.float32)
+    sdfg.add_array("__return", [1], dace.float32)
+
+    state = sdfg.add_state()
+    access_X = state.add_access("X_arr")
+
+    access_result = state.add_access("__return")
+
+    op_node = donnx.ONNXUnsqueeze("Unsqueeze", axes=[0])
+
+    state.add_node(op_node)
+    state.add_edge(access_X, None, op_node, "data",
+                   sdfg.get_array_memlet("X_arr"))
+
+    state.add_edge(op_node, "expanded", access_result, None,
+                   sdfg.get_array_memlet("__return"))
+
+    X = np.float32(np.random.rand())
+
+    if gpu:
+        sdfg.apply_gpu_transformations()
+
+    sdfg.view()
+    result = sdfg(X_arr=X)
+
+    assert result.shape == (1, )
+    assert X == result[0]
+
 
 def test_add(scalars=False, gpu=False):
     sdfg = dace.SDFG("test_expansion")
@@ -27,7 +62,6 @@ def test_add(scalars=False, gpu=False):
         sdfg.add_array("X_arr", [2, 2], dace.float32)
         sdfg.add_array("W_arr", [2, 2], dace.float32)
         sdfg.add_array("__return", [2, 2], dace.float32)
-
 
     state = sdfg.add_state()
     access_X = state.add_access("X_arr")
@@ -45,15 +79,19 @@ def test_add(scalars=False, gpu=False):
     state.add_edge(access_W, None, op_node, "B", sdfg.get_array_memlet("W_arr"))
 
     if scalars:
-        state.add_edge(op_node, "C", access_Z,  None, sdfg.get_array_memlet("Z_arr"))
+        state.add_edge(op_node, "C", access_Z, None,
+                       sdfg.get_array_memlet("Z_arr"))
     else:
-        state.add_edge(op_node, "C", access_result, None, sdfg.get_array_memlet("__return"))
+        state.add_edge(op_node, "C", access_result, None,
+                       sdfg.get_array_memlet("__return"))
 
     if scalars:
         unsqueeze_op = donnx.ONNXUnsqueeze("Unsqueeze", axes=[0])
         state.add_node(unsqueeze_op)
-        state.add_edge(access_Z, None, unsqueeze_op, "data", sdfg.get_array_memlet("Z_arr"))
-        state.add_edge(unsqueeze_op, "expanded", access_result, None, sdfg.get_array_memlet("__return"))
+        state.add_edge(access_Z, None, unsqueeze_op, "data",
+                       sdfg.get_array_memlet("Z_arr"))
+        state.add_edge(unsqueeze_op, "expanded", access_result, None,
+                       sdfg.get_array_memlet("__return"))
 
     shapes = [] if scalars else [2, 2]
     X = np.random.rand(*shapes)
@@ -61,7 +99,6 @@ def test_add(scalars=False, gpu=False):
     if not scalars:
         X = X.astype(np.float32)
         W = W.astype(np.float32)
-
 
     if gpu:
         sdfg.apply_gpu_transformations()
@@ -78,8 +115,7 @@ def test_add(scalars=False, gpu=False):
 if __name__ == '__main__':
     use_gpu = "ONNX_TEST_CUDA" in os.environ
 
+    test_unsqueeze(gpu=use_gpu)
     for scalars in [True, False]:
         for gpu in [True, False] if use_gpu else [False]:
             test_add(scalars=scalars, gpu=gpu)
-
-
