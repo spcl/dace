@@ -300,7 +300,7 @@ class ONNXOp(nd.LibraryNode):
         outputs = list(itertools.islice(outputs, len(edges)))
         src_conn_to_edge = {edge.src_conn: edge for edge in edges}
 
-        return [src_conn_to_edge[param] for param in outputs]
+        return [src_conn_to_edge[param.name] for param in outputs]
 
     def iter_edges(
             self,
