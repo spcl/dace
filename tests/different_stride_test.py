@@ -2,7 +2,7 @@ import dace
 import numpy as np
 
 
-def copy_with_strides(src_numeric, dst_numeric):
+def copy_with_strides(src_numeric, dst_numeric, copy_numeric=True):
     symvals = {}
 
     if src_numeric:
@@ -17,13 +17,19 @@ def copy_with_strides(src_numeric, dst_numeric):
         X, Y, Z, W = (dace.symbol(s) for s in 'XYZW')
         symvals.update({'X': 60, 'Y': 20, 'Z': 5, 'W': 1})
 
-    sdfg = dace.SDFG('cws')
+    if copy_numeric:
+        C1, C2, C3, C4 = 2, 3, 4, 5
+    else:
+        C1, C2, C3, C4 = (dace.symbol(s) for s in ['C1', 'C2', 'C3', 'C4'])
+        symvals.update({'C1': 2, 'C2': 3, 'C3': 4, 'C4': 5})
+
+    sdfg = dace.SDFG('cws' + str(src_numeric)[0] + str(dst_numeric)[0] + str(copy_numeric)[0])
     sdfg.add_array('A',
-                   shape=[2, 3, 4, 5],
+                   shape=[C1, C2, C3, C4],
                    dtype=dace.float64,
                    strides=[E, F, G, H])
     sdfg.add_array('B',
-                   shape=[2, 3, 4, 5],
+                   shape=[C1, C2, C3, C4],
                    dtype=dace.float64,
                    strides=[X, Y, Z, W])
     state = sdfg.add_state()
@@ -48,15 +54,20 @@ def test_copy_with_symbolic_strides():
     copy_with_strides(False, False)
 
 
+def test_copy_all_symbolic():
+    copy_with_strides(False, False, False)
+
+
 def test_copy_with_src_symbolic_stride():
-    copy_with_strides(True, False)
-
-
-def test_copy_with_dst_symbolic_stride():
     copy_with_strides(False, True)
 
 
+def test_copy_with_dst_symbolic_stride():
+    copy_with_strides(True, False)
+
+
 if __name__ == '__main__':
+    test_copy_all_symbolic()
     test_copy_with_numeric_strides()
     test_copy_with_symbolic_strides()
     test_copy_with_src_symbolic_stride()
