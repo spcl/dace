@@ -67,7 +67,7 @@ def _add_ort_init_code(sdfg: SDFG):
             """)
 
         sdfg.append_init_code("""
-        __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session));
+        __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session, 12));
         """)
 
         session_cleanup_code = """
@@ -300,7 +300,7 @@ class ONNXOp(nd.LibraryNode):
         outputs = list(itertools.islice(outputs, len(edges)))
         src_conn_to_edge = {edge.src_conn: edge for edge in edges}
 
-        return [src_conn_to_edge[param.name] for param in outputs]
+        return [src_conn_to_edge[param] for param in outputs]
 
     def iter_edges(
             self,
@@ -680,7 +680,7 @@ class ONNXOp(nd.LibraryNode):
 
             if (isinstance(arr, dt.Scalar)
                 # when scalars are copied we will copy them to dace arrays
-                #(this is because ORT requires scalars to be cudaMalloced)
+                # (this is because ORT requires scalars to be cudaMalloced)
                 and memlet.data not in output_copy_required and memlet.data not in input_copy_required):
 
                 tasklet_setup_code += """

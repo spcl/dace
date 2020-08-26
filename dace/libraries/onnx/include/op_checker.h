@@ -27,7 +27,7 @@ DACE_EXPORTED OrtStatus* CreateSessionOptions(OrtSessionOptions** options) {
 
 
 DACE_EXPORTED OrtStatus* CreateKernelSession(const OrtSessionOptions* options, OrtKernelSession** session) {
-	return ort_api->CreateKernelSession(options, session);
+	return ort_api->CreateKernelSession(options, session, 12);
 }
 
 DACE_EXPORTED OrtStatus* CreateExecutableKernelContext(const char* name, const char* op_type, OrtExecutableKernelContext** kernel) {
