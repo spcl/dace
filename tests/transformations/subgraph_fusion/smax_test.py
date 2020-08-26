@@ -158,7 +158,7 @@ def get_partition(sdfg, graph):
     return [subgraph1, subgraph2]
 
 
-def test_pipeline():
+def test_2fuse():
 
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
@@ -178,6 +178,24 @@ def test_pipeline():
     print("PASS")
     return
 
+def test_1fuse():
+    X_in = np.random.rand(H.get(), B.get(), SN.get(),
+                          SM.get()).astype(np.float32)
+
+    csdfg = sdfg.compile()
+    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+
+    expand_reduce(sdfg, sdfg.nodes()[0])
+    expand_maps(sdfg, sdfg.nodes()[0])
+    fusion(sdfg, sdfg.nodes()[0])
+
+    csdfg = sdfg.compile()
+    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+
+    assert np.allclose(res1, res2)
+    print("PASS")
+    return
 
 if __name__ == "__main__":
-    test_pipeline()
+    test_2fuse()
+    test_1fuse()
