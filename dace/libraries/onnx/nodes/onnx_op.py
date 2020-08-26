@@ -664,12 +664,12 @@ class ONNXOp(nd.LibraryNode):
             parameter_name = edge.dst_conn if is_input else edge.src_conn
             input_output_string = "input" if is_input else "output"
             memlet = edge.data
-            arr = sdfg.arrays[memlet.data]
+            desc = sdfg.arrays[memlet.data]
             sdfg.append_init_code("""
             // Add parameter {parameter_name}
             __ort_check_status(__ort_api->ExecutableKernelContext_Add{input_output_string}(__ort_context_{id}, ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_string}));
             """.format(id=unique_id,
-                       type_string=reversed_onnx_dtype_map[arr.dtype].upper(),
+                       type_string=reversed_onnx_dtype_map[desc.dtype].upper(),
                        parameter_name=parameter_name,
                        input_output_string=input_output_string.capitalize()))
 
@@ -678,7 +678,7 @@ class ONNXOp(nd.LibraryNode):
                 parameter_name=parameter_name)
 
 
-            if (isinstance(arr, dt.Scalar)
+            if (isinstance(desc, dt.Scalar)
                 # when scalars are copied we will copy them to dace arrays
                 # (this is because ORT requires scalars to be cudaMalloced)
                 and memlet.data not in output_copy_required and memlet.data not in input_copy_required):
@@ -696,21 +696,21 @@ class ONNXOp(nd.LibraryNode):
                 ));
                 """.format(input_output_string=input_output_string,
                            parameter_name=parameter_name,
-                           data_size=reduce(lambda x, y: x * y, arr.shape),
-                           ctype=arr.dtype.ctype,
-                           type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
+                           data_size=reduce(lambda x, y: x * y, desc.shape),
+                           ctype=desc.dtype.ctype,
+                           type_str=reversed_onnx_dtype_map[desc.dtype].upper(),
                            ort_value_name=ort_value_name)
-            elif isinstance(arr, dt.Array):
+            elif isinstance(desc, dt.Array):
                 # setup dims array
                 tasklet_setup_code += """
                 int64_t {input_output_string}_{parameter_name}_dims[{dims_size}] = {{{dims}}};
                 """.format(input_output_string=input_output_string,
                            parameter_name=parameter_name,
-                           dims_size=len(arr.shape),
-                           dims=", ".join(str(s) for s in arr.shape))
+                           dims_size=len(desc.shape),
+                           dims=", ".join(str(s) for s in desc.shape))
 
-                if isinstance(arr, dt.Array) and len(
-                        arr.shape) == 1 and arr.shape[0] == 1:
+                if isinstance(desc, dt.Array) and len(
+                        desc.shape) == 1 and desc.shape[0] == 1:
                     data = "&{}".format(parameter_name)
                 else:
                     data = "const_cast < void * > (reinterpret_cast < const void * > ({}))".format(
@@ -729,15 +729,15 @@ class ONNXOp(nd.LibraryNode):
                 """.format(input_output_string=input_output_string,
                            data=data,
                            parameter_name=parameter_name,
-                           data_size=reduce(lambda x, y: x * y, arr.shape),
-                           ctype=arr.dtype.ctype,
-                           dims_size=len(arr.shape),
-                           type_str=reversed_onnx_dtype_map[arr.dtype].upper(),
+                           data_size=reduce(lambda x, y: x * y, desc.shape),
+                           ctype=desc.dtype.ctype,
+                           dims_size=len(desc.shape),
+                           type_str=reversed_onnx_dtype_map[desc.dtype].upper(),
                            ort_value_name=ort_value_name)
             else:
                 raise NotImplementedError(
                     "Data-descriptor type {} not supported for ONNX nodes".
-                    format(type(arr)))
+                    format(type(desc)))
 
 
             tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Set{input_output_string_capital}(" \
@@ -797,29 +797,12 @@ class ONNXOp(nd.LibraryNode):
                 parameter_name = edge.dst_conn if is_input else edge.src_conn
 
                 memlet = edge.data
-                arr = sdfg.arrays[memlet.data]
+                desc = sdfg.arrays[memlet.data]
 
                 # add the original array
-                if isinstance(arr, dt.Array):
-                    nsdfg.add_array(parameter_name,
-                                    arr.shape,
-                                    arr.dtype,
-                                    storage=arr.storage,
-                                    transient=False,
-                                    strides=arr.strides,
-                                    offset=arr.offset,
-                                    lifetime=arr.lifetime,
-                                    allow_conflicts=arr.allow_conflicts,
-                                    total_size=arr.total_size,
-                                    alignment=arr.alignment)
-                elif isinstance(arr, dt.Scalar):
-                    nsdfg.add_scalar(parameter_name,
-                                     arr.dtype,
-                                     storage=arr.storage,
-                                     transient=False,
-                                     lifetime=arr.lifetime)
-                else:
-                    raise ValueError("Unsupported data type {} connected to an ONNX tasklet".format(type(arr)))
+                nsdfg.add_datadesc(parameter_name, deepcopy(desc))
+                if not (isinstance(desc, dt.Array) or isinstance(desc, dt.Scalar)):
+                    raise ValueError("Unsupported data type {} connected to an ONNX tasklet".format(type(desc)))
 
 
                 if parameter_name not in (input_copy_required if is_input else output_copy_required):
@@ -834,16 +817,10 @@ class ONNXOp(nd.LibraryNode):
                 copy_storage_type = input_copy_required[parameter_name] if is_input else output_copy_required[parameter_name]
 
                 # add the copy of the array
-                nsdfg.add_transient("copy_" + memlet.data,
-                                    arr.shape,
-                                    arr.dtype,
-                                    storage=copy_storage_type,
-                                    strides=arr.strides,
-                                    offset=arr.offset,
-                                    lifetime=arr.lifetime,
-                                    allow_conflicts=arr.allow_conflicts,
-                                    total_size=arr.total_size,
-                                    alignment=arr.alignment)
+                copy_desc = deepcopy(desc)
+                copy_desc.storage = copy_storage_type
+                copy_desc.transient = True
+                nsdfg.add_datadesc("copy_" + memlet.data, copy_desc)
 
                 nmemlet = deepcopy(memlet)
                 nmemlet.data = "copy_" + nmemlet.data
