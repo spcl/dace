@@ -583,6 +583,7 @@ class ONNXOp(nd.LibraryNode):
 
         # check if ORT supports CUDA for this node
         ##########################################
+        actual_node_schedule = node.schedule
         if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
             provider_index = 0
 
@@ -600,6 +601,7 @@ class ONNXOp(nd.LibraryNode):
                 print("Falling back to CPU for node {}. Reason:\n{}".format(
                     node.name, str(e)))
                 provider_index = 0
+                actual_node_schedule = ScheduleType.Default
 
                 # all outputs are on host if we execute using cpu
                 outputs_on_host = [True for _ in range(len(outputs))]
@@ -615,6 +617,7 @@ class ONNXOp(nd.LibraryNode):
         input_copy_required = defaultdict(dict)
         output_copy_required = defaultdict(dict)
 
+
         # check outputs
         for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state),
                                         outputs_on_host):
@@ -628,7 +631,7 @@ class ONNXOp(nd.LibraryNode):
                 is_device_mismatch = not can_access(ScheduleType.GPU_Device,
                                                     array.storage)
 
-            if isinstance(array, dt.Scalar) and provider_index == 1:
+            if isinstance(array, dt.Scalar) and actual_node_schedule == ScheduleType.GPU_Device:
                 # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
                 is_device_mismatch = True
                 output_copy_required[edge.src_conn]['copy_to_array'] = True
@@ -642,9 +645,9 @@ class ONNXOp(nd.LibraryNode):
         for edge in state.in_edges(node):
             array = sdfg.arrays[edge.data.data]
 
-            is_device_mismatch = not can_access(node.schedule, array.storage)
+            is_device_mismatch = not can_access(actual_node_schedule, array.storage)
 
-            if isinstance(array, dt.Scalar) and provider_index == 1:
+            if isinstance(array, dt.Scalar) and actual_node_schedule == ScheduleType.GPU_Device:
                 # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
                 is_device_mismatch = True
                 input_copy_required[edge.dst_conn]['copy_to_array'] = True

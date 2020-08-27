@@ -70,6 +70,8 @@ def test_squeeze(gpu, apply_strict):
         sdfg.expand_library_nodes()
         sdfg.apply_strict_transformations()
 
+    sdfg.expand_library_nodes()
+    sdfg.save("sdfg.sdfg")
     result = sdfg(X_arr=X)
 
     assert result.shape == (1, )
@@ -220,11 +222,12 @@ def test_add(scalars, gpu, apply_strict):
 if __name__ == '__main__':
     pytest.main([__file__, "-s"])
 
+    # test fallback to cpu ops;
+    # monkey patch try_create to always fail
     def fail_create(self, cuda=False):
         if cuda or self.check_output_locations:
-            raise ONNXOpValidationError("shit")
+            raise ONNXOpValidationError("oh no :(")
 
     OpChecker.try_create = types.MethodType(fail_create, OpChecker)
-    USE_GPU = False
 
     pytest.main([__file__, "-s"])
