@@ -139,7 +139,7 @@ def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
 
 def scope_contains_scope(sdict: ScopeDictType, node: NodeType,
                          other_node: NodeType) -> bool:
-    """ 
+    """
     Returns true iff scope of `node` contains the scope of  `other_node`.
     """
     curnode = other_node
@@ -153,7 +153,7 @@ def scope_contains_scope(sdict: ScopeDictType, node: NodeType,
 
 def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 node: NodeType, schedules: List[dtypes.ScheduleType]) -> bool:
-    """ Tests whether a node in an SDFG is contained within a certain set of 
+    """ Tests whether a node in an SDFG is contained within a certain set of
         scope schedules.
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
@@ -190,7 +190,8 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
+    return False  # FIXME: Hack for StencilFlow
+    # return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
@@ -212,7 +213,7 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
-        :return: A tuple of sizes or None if the node is not in device-level 
+        :return: A tuple of sizes or None if the node is not in device-level
                  code.
     """
     from dace.sdfg.sdfg import SDFGState
