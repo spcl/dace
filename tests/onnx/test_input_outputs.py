@@ -19,15 +19,7 @@ import pytest
 import dace
 import dace.libraries.onnx as donnx
 from dace.libraries.onnx.check_impl import OpChecker, ONNXOpValidationError
-
-USE_GPU = "ONNX_TEST_CUDA" in os.environ
-
-
-def parameterize_gpu(function):
-    if USE_GPU:
-        return pytest.mark.parametrize("gpu", [True, False])(function)
-    else:
-        return pytest.mark.parametrize("gpu", [False])(function)
+from tests.onnx.utils import parameterize_gpu
 
 
 @parameterize_gpu
@@ -76,6 +68,7 @@ def test_squeeze(gpu, apply_strict):
 
     assert result.shape == (1, )
     assert result[0] == X
+
 
 @parameterize_gpu
 @pytest.mark.parametrize("apply_strict", [True, False])
