@@ -7,6 +7,7 @@ import os
 import re
 from six import StringIO
 import numpy as np
+import sympy
 
 import dace
 from dace import registry, subsets, dtypes
@@ -270,13 +271,16 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 memlet = dfg.in_edges(node)[0].data
                 rcv_rank = node.desc(sdfg).location["rcv_rank"]
                 port = node.desc(sdfg).location["port"][0]
-                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not rcv_rank.isdecimal(
-                ):
+                if rcv_rank not in sdfg.constants and rcv_rank not in sdfg.symbols and not isinstance(
+                        rcv_rank, sympy.numbers.Integer) and not isinstance(
+                            rcv_rank, int) and not rcv_rank.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Receiver rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
 
-                if not isinstance(port, int) and not port.isdecimal():
+                if not isinstance(port,
+                                  sympy.numbers.Integer) and not isinstance(
+                                      port, int) and not port.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
@@ -297,13 +301,16 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 memlet = dfg.out_edges(node)[0].data
                 snd_rank = node.desc(sdfg).location["snd_rank"]
                 port = node.desc(sdfg).location["port"][0]
-                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not snd_rank.isdecimal(
-                ):
+                if snd_rank not in sdfg.constants and snd_rank not in sdfg.symbols and not isinstance(
+                        snd_rank,
+                        sympy.numbers.Integer) and not snd_rank.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Sender rank for remote stream {} must be a constant, a symbol or a number"
                         .format(node.label))
 
-                if not isinstance(port, int) and not port.isdecimal():
+                if not isinstance(port,
+                                  sympy.numbers.Integer) and not isinstance(
+                                      port, int) and not port.isdecimal():
                     raise dace.codegen.codegen.CodegenError(
                         "Port for remote stream {} must be a constant or a number"
                         .format(node.label))
@@ -489,8 +496,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         read_expr)
             else:
                 if (isinstance(src_node_desc, dace.data.Stream)
-                        and src_node_desc.storage
-                        == dace.dtypes.StorageType.FPGA_Remote):
+                        and src_node_desc.storage ==
+                        dace.dtypes.StorageType.FPGA_Remote):
                     return "SMI_Pop(&{},(void *)&{})".format(
                         read_expr, var_name)
                 else:
@@ -499,8 +506,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                         self.converters_to_generate.add(
                             (False, ocltype, packing_factor))
                         return "unpack_{}{}({}, {});".format(
-                            vector_element_type_of(dtype).ocltype, packing_factor,
-                            read_expr, var_name)
+                            vector_element_type_of(dtype).ocltype,
+                            packing_factor, read_expr, var_name)
                     else:
                         return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
@@ -1079,13 +1086,13 @@ __kernel void \\
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.volume == 1 and not memlet.dynamic):
                     #this could be a remote stream
-                    if data_desc.storage  == dace.dtypes.StorageType.FPGA_Remote:
+                    if data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
                         callsite_stream.write(
                             f"SMI_Push(&{data_name}, &{connector});", sdfg)
                     else:
                         callsite_stream.write(
-                            f"write_channel_intel({data_name}, {connector});", sdfg)
-
+                            f"write_channel_intel({data_name}, {connector});",
+                            sdfg)
 
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
@@ -1309,7 +1316,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((True, ocltype, veclen))
             unpack_str = "unpack_{}{}".format(ocltype, veclen)
-
         if veclen_lhs > veclen_rhs:
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype

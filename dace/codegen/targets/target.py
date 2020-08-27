@@ -207,7 +207,7 @@ class DefinedMemlets:
         ret = None
         for _, scope,_ in reversed(self._scopes):
             if name in scope:
-                ret = scope[name]
+                ret = scope[name][0]
                 break
         return ret
 
