@@ -11,17 +11,20 @@ Testing input and output combinations for onnx Ops
 ALSO: test CPU fallback for all combinations of GPU ops
 """
 import os
+import types
 
 import numpy as np
 import pytest
 
 import dace
 import dace.libraries.onnx as donnx
+from dace.libraries.onnx.check_impl import OpChecker, ONNXOpValidationError
+
+USE_GPU = "ONNX_TEST_CUDA" in os.environ
 
 
 def parameterize_gpu(function):
-    use_gpu = "ONNX_TEST_CUDA" in os.environ
-    if use_gpu:
+    if USE_GPU:
         return pytest.mark.parametrize("gpu", [True, False])(function)
     else:
         return pytest.mark.parametrize("gpu", [False])(function)
@@ -139,7 +142,6 @@ def test_unsqueeze(gpu, apply_strict):
         sdfg.expand_library_nodes()
         sdfg.apply_strict_transformations()
 
-    sdfg.view()
     result = sdfg(X_arr=X)
 
     assert result.shape == (1, )
@@ -216,4 +218,13 @@ def test_add(scalars, gpu, apply_strict):
 
 
 if __name__ == '__main__':
-    pytest.main([__file__])
+    pytest.main([__file__, "-s"])
+
+    def fail_create(self, cuda=False):
+        if cuda or self.check_output_locations:
+            raise ONNXOpValidationError("shit")
+
+    OpChecker.try_create = types.MethodType(fail_create, OpChecker)
+    USE_GPU = False
+
+    pytest.main([__file__, "-s"])

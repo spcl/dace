@@ -1,21 +1,15 @@
-import sys
 from itertools import chain
-import warnings
 
-import onnx
 import aenum
 import numpy as np
+import onnx
 
 import dace
 from dace.dtypes import typeclass
-from dace.properties import make_properties, Property, DictProperty, ListProperty, SetProperty
 from dace.libraries.onnx.converters import convert_onnx_proto, onnx_type_str_to_typeclass, get_proto_attr
+from dace.properties import make_properties, Property, DictProperty, ListProperty
 
 _KNOWN_ONNX_PROTOS = {}
-
-# TODO @orausch migrate all str types to bytes
-# TODO @orausch rethink how to check proto HasField
-
 
 def onnx_representation(represents, **mapping):
     """ Decorator for python representations of ONNX protobufs.
