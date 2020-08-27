@@ -293,15 +293,17 @@ class ONNXOp(nd.LibraryNode):
         outputs = list(self.schema.outputs)
         if outputs[-1].param_type == ONNXParameterType.Variadic:
             name = outputs[-1].name
-            outputs = itertools.chain(outputs[:-1],
+            outputs = itertools.chain([param.name for param in outputs[:-1]],
                                       (name + "__" + str(i)
                                        for i in itertools.count()))
+        else:
+            outputs = [param.name for param in outputs]
 
         edges = state.out_edges(self)
         outputs = list(itertools.islice(outputs, len(edges)))
         src_conn_to_edge = {edge.src_conn: edge for edge in edges}
 
-        return [src_conn_to_edge[param.name] for param in outputs]
+        return [src_conn_to_edge[name] for name in outputs]
 
     def iter_edges(
             self,
@@ -617,7 +619,6 @@ class ONNXOp(nd.LibraryNode):
         input_copy_required = defaultdict(dict)
         output_copy_required = defaultdict(dict)
 
-
         # check outputs
         for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state),
                                         outputs_on_host):
@@ -631,7 +632,8 @@ class ONNXOp(nd.LibraryNode):
                 is_device_mismatch = not can_access(ScheduleType.GPU_Device,
                                                     array.storage)
 
-            if isinstance(array, dt.Scalar) and actual_node_schedule == ScheduleType.GPU_Device:
+            if isinstance(array, dt.Scalar
+                          ) and actual_node_schedule == ScheduleType.GPU_Device:
                 # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
                 is_device_mismatch = True
                 output_copy_required[edge.src_conn]['copy_to_array'] = True
@@ -645,9 +647,11 @@ class ONNXOp(nd.LibraryNode):
         for edge in state.in_edges(node):
             array = sdfg.arrays[edge.data.data]
 
-            is_device_mismatch = not can_access(actual_node_schedule, array.storage)
+            is_device_mismatch = not can_access(actual_node_schedule,
+                                                array.storage)
 
-            if isinstance(array, dt.Scalar) and actual_node_schedule == ScheduleType.GPU_Device:
+            if isinstance(array, dt.Scalar
+                          ) and actual_node_schedule == ScheduleType.GPU_Device:
                 # ORT kernels expect scalars to be cudaMalloced. We will copy during expansion to enforce this
                 is_device_mismatch = True
                 input_copy_required[edge.dst_conn]['copy_to_array'] = True
@@ -680,7 +684,6 @@ class ONNXOp(nd.LibraryNode):
                 edge_connector_name = "_conn_" + parameter_name
             else:
                 edge_connector_name = parameter_name
-
 
             input_output_string = "input" if is_input else "output"
             connector_dict = in_connectors if is_input else out_connectors
@@ -821,8 +824,14 @@ class ONNXOp(nd.LibraryNode):
             ntasklet = deepcopy(tasklet)
 
             # add a prefix to connectors to prevent shadowing of array names
-            ntasklet.in_connectors = {"_conn_" + k: v for k, v in tasklet.in_connectors.items()}
-            ntasklet.out_connectors = {"_conn_" + k: v for k, v in tasklet.out_connectors.items()}
+            ntasklet.in_connectors = {
+                "_conn_" + k: v
+                for k, v in tasklet.in_connectors.items()
+            }
+            ntasklet.out_connectors = {
+                "_conn_" + k: v
+                for k, v in tasklet.out_connectors.items()
+            }
 
             nstate.add_node(ntasklet)
 
@@ -846,11 +855,13 @@ class ONNXOp(nd.LibraryNode):
                                           output_copy_required):
                     if is_input:
                         access = nstate.add_read(parameter_name)
-                        nstate.add_edge(access, None, ntasklet, "_conn_" + parameter_name,
+                        nstate.add_edge(access, None, ntasklet,
+                                        "_conn_" + parameter_name,
                                         nsdfg.get_array_memlet(parameter_name))
                     else:
                         access = nstate.add_write(parameter_name)
-                        nstate.add_edge(ntasklet, "_conn_" + parameter_name, access, None,
+                        nstate.add_edge(ntasklet, "_conn_" + parameter_name,
+                                        access, None,
                                         nsdfg.get_array_memlet(parameter_name))
                     continue
 
@@ -876,13 +887,13 @@ class ONNXOp(nd.LibraryNode):
                     nstate.add_edge(
                         access, None, access_copy, None,
                         nsdfg.get_array_memlet("copy_" + memlet.data))
-                    nstate.add_edge(access_copy, None, ntasklet, "_conn_" + parameter_name,
-                                    nmemlet)
+                    nstate.add_edge(access_copy, None, ntasklet,
+                                    "_conn_" + parameter_name, nmemlet)
                 else:
                     access = nstate.add_write(parameter_name)
                     access_copy = nstate.add_access("copy_" + memlet.data)
-                    nstate.add_edge(ntasklet, "_conn_" + parameter_name, access_copy, None,
-                                    nmemlet)
+                    nstate.add_edge(ntasklet, "_conn_" + parameter_name,
+                                    access_copy, None, nmemlet)
                     nstate.add_edge(
                         access_copy, None, access, None,
                         nsdfg.get_array_memlet("copy_" + memlet.data))

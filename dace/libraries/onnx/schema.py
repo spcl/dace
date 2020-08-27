@@ -121,7 +121,7 @@ class ONNXParameter:
                            desc="Whether this parameter is homogeneous")
 
     def __repr__(self):
-        return str(self.param_type) + "\t" + self.name
+        return "{} ({})".format(self.name, str(self.param_type))
 
 
 class ONNXAttributeType(aenum.AutoNumberEnum):
@@ -225,7 +225,7 @@ class ONNXSchema:
                            desc="The operator output parameter descriptors")
 
     def __repr__(self):
-        return self.domain + self.name
+        return self.domain + "." + self.name
 
     def validate(self):
         # check all parameters with a type str have a entry in the type constraints
