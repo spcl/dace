@@ -1311,6 +1311,9 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             raise ValueError("Conflicting memory widths: {} and {}".format(
                 veclen_lhs, veclen_rhs))
 
+        #Define veclen
+        veclen = veclen_rhs
+        
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
