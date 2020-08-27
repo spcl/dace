@@ -529,11 +529,11 @@ class vector(typeclass):
 
     @property
     def ocltype(self):
-        vectype = _OCL_VECTOR_TYPES[self.type]
         if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
             return f"{vectype}{self.veclen}"
         else:
-            return vectype
+            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
