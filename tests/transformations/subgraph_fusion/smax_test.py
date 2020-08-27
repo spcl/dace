@@ -126,13 +126,11 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
     return out
 
 
-sdfg = softmax.to_sdfg()
-sdfg.apply_strict_transformations()
+
 H.set(10)
 B.set(10)
 SN.set(20)
 SM.set(20)
-A = np.ndarray((H.get(), B.get(), SN.get(), SM.get()), dtype=np.float32)
 
 
 def get_partition(sdfg, graph):
@@ -158,8 +156,10 @@ def get_partition(sdfg, graph):
     return [subgraph1, subgraph2]
 
 
-def test_pipeline():
-
+def test_2fuse():
+    sdfg = softmax.to_sdfg()
+    sdfg._name = 'softmax_2part'
+    sdfg.apply_strict_transformations()
     X_in = np.random.rand(H.get(), B.get(), SN.get(),
                           SM.get()).astype(np.float32)
 
@@ -178,6 +178,30 @@ def test_pipeline():
     print("PASS")
     return
 
+def test_1fuse():
+    sdfg = softmax.to_sdfg()
+    sdfg._name = 'softmax_fused'
+    sdfg.apply_strict_transformations()
+    X_in = np.random.rand(H.get(), B.get(), SN.get(),
+                          SM.get()).astype(np.float32)
+
+    csdfg = sdfg.compile()
+    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+
+    expand_reduce(sdfg, sdfg.nodes()[0])
+    expand_maps(sdfg, sdfg.nodes()[0])
+    fusion(sdfg, sdfg.nodes()[0])
+
+    #sdfg.specialize({'SM':SM})
+    csdfg = sdfg.compile()
+    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+
+    print(np.linalg.norm(res1))
+    print(np.linalg.norm(res2))
+    assert np.allclose(res1, res2)
+    print("PASS")
+    return
 
 if __name__ == "__main__":
-    test_pipeline()
+    test_2fuse()
+    test_1fuse()
