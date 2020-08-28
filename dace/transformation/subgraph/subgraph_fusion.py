@@ -426,7 +426,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
     def apply(self, sdfg, do_not_override = [], **kwargs):
         graph = sdfg.node(self.state_id)
-        subgraph = SubgraphView(graph, self.subgraph)
+        subgraph = SubgraphView(graph, [graph.node(id) for id in self.subgraph])
 
         map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         self.fuse(sdfg, graph, map_entries, do_not_override, **kwargs)
