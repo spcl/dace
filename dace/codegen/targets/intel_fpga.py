@@ -1313,13 +1313,13 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         #Define veclen
         veclen = veclen_rhs
-        
+
         if veclen_rhs > veclen_lhs:
             veclen = veclen_rhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((True, ocltype, veclen))
             unpack_str = "unpack_{}{}".format(ocltype, veclen)
-        if veclen_lhs > veclen_rhs:
+        if veclen_lhs > veclen_rhs and isinstance(dtype_rhs, dace.pointer):
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((False, ocltype, veclen))
