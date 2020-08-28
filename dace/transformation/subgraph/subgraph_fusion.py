@@ -424,10 +424,9 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
         return (subgraph_contains_data, transients_created,
                 invariant_dimensions)
 
-    def apply(self, sdfg, subgraph, do_not_override = [], **kwargs):
-        self.subgraph = subgraph
-
-        graph = subgraph.graph
+    def apply(self, sdfg, do_not_override = [], **kwargs):
+        graph = sdfg.node(self.state_id)
+        subgraph = SubgraphView(graph, self.subgraph)
 
         map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         self.fuse(sdfg, graph, map_entries, do_not_override, **kwargs)
