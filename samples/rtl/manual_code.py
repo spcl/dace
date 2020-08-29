@@ -1,5 +1,8 @@
 ''' example rtl tasklet '''
 import dace
+import os
+import subprocess
+
 import numpy as np
 
 # add symbol
@@ -26,6 +29,7 @@ sdfg.append_global_code(cpp_code='''
         #include "Vtop.cpp"
         #include "Vtop__Slow.cpp"
         #include "Vtop__Syms.cpp"
+        #include "verilated.cpp"
 
         // current simulation time (64-bit unsigned, cycles, global)
         vluint64_t main_time = 0;
@@ -44,7 +48,7 @@ tasklet = state.add_tasklet(
         // apply initial input values
         top->rst_i = 0;
         top->clk_i = 0;
-        top->a = a;
+        top->a = *a;
         top->eval();
     
         // apply reset signal and simulate
@@ -74,7 +78,7 @@ tasklet = state.add_tasklet(
             top->eval();
     
             // read outputs
-            VL_PRINTF("[%x] clk_i=%x rst_i=%x a=%x b=%x\n", main_time, top->clk_i, top->rst_i, top->a, top->b);
+            VL_PRINTF("[%x] clk_i=%x rst_i=%x a=%x b=%x\\n", main_time, top->clk_i, top->rst_i, top->a, top->b);
     
             // negative clock edge
             top->clk_i = !top->clk_i;
@@ -82,7 +86,8 @@ tasklet = state.add_tasklet(
         }
     
         // write result
-        b = top->b;
+        int b_local = (int)top->b;
+        b = &b_local;
     
         // final model cleanup
         top->final();
@@ -92,6 +97,7 @@ tasklet = state.add_tasklet(
         top = NULL;
         ''',
     language=dace.Language.CPP)
+
 
 # add input/output array
 A = state.add_read('A')
@@ -106,8 +112,7 @@ sdfg.validate()
 
 # run verilator
 unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
-import os, subprocess
-base_path = os.path.join(".dacecache", sdfg.name, "build")
+base_path = os.path.join(".dacecache", sdfg.name, "src", "rtl")
 absolut_path = os.path.abspath(base_path)
 code = '''
 module top
@@ -137,9 +142,15 @@ module top
 endmodule
 '''
 
+# write verilog to file
+import shutil
+if os.path.isdir(absolut_path):
+    shutil.rmtree(absolut_path)
+os.mkdir(absolut_path)
 with open(os.path.join(absolut_path, "top.v"), "w") as file:
     file.writelines(code)
 
+# call verilator
 subprocess.call(['verilator', '-Wall', '-cc', 'top.v'], cwd=absolut_path)
 
 print()
@@ -156,7 +167,7 @@ if __name__ == '__main__':
     print("a={}, b={}".format(a, b))
 
     # call program
-    sdfg(A=a, B=b, N=n, BIT_WIDTH=32)
+    sdfg(A=a, B=b, N=n) #, BIT_WIDTH=32)
 
     # show result
     print("a={}, b={}".format(a, b))
