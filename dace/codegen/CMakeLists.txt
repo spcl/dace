@@ -34,6 +34,7 @@ set(DACE_ENABLE_CUDA OFF)
 set(DACE_ENABLE_HIP OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
+set(DACE_ENABLE_RTL OFF)
 
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
@@ -77,6 +78,13 @@ foreach(DACE_FILE ${DACE_FILES})
   elseif(${DACE_FILE_TARGET} STREQUAL "mpi")
     set(DACE_ENABLE_MPI ON)
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
+  elseif(${DACE_FILE_TARGET} STREQUAL "rtl")
+    set(DACE_ENABLE_RTL ON)
+    if(DACE_FILE_EXT MATCHES ".v" OR DACE_FILE_EXT MATCHES ".sv")
+      set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
+      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+    endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
@@ -510,6 +518,59 @@ if(DACE_ENABLE_XILINX)
   endif()
 
 endif() # DACE_ENABLE_XILINX
+
+
+
+set(DACE_ENABLE_RTL ON)
+set(DACE_RTL_FILES "${DACE_SRC_DIR}/rtl/top.v")
+
+if(DACE_ENABLE_RTL)
+
+  # find verilator installation
+  find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
+  if (NOT verilator_FOUND)
+    message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
+  endif()
+
+  # check minimal version requirements
+  set(VERILATOR_MIN_VERSION "4.039")
+  if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
+    message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
+  endif()
+
+  # Create a new executable target that will contain all your sources
+  #add_executable( tasklet
+  #sim_main.cpp)
+  # -> we do not build the executable here
+
+  # Add the verilated circuit to the target
+  #verilate( tasklet
+  #          INCLUDE_DIRS "."
+  #          SOURCES top.v
+
+  # add verilated design as shared lib
+  #  add_library(VERILATED_LIB STATIC "/usr/local/share/verilator/include/verilated.cpp")
+  add_library(VERILATED_LIB OBJECT)
+
+
+  # include verilator
+  set(VERILATOR_INCLUDE "/usr/local/share/verilator/include" "${DACE_SRC_DIR}/rtl/obj_dir")
+  include_directories(${VERILATOR_INCLUDE})
+
+  verilate(VERILATED_LIB SOURCES ${DACE_RTL_FILES})
+
+  #set(DACE_OBJECTS ${DACE_OBJECTS} ${VERILATED_LIB})
+
+  # add & link library
+  #add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  #target_link_libraries(${DACE_PROGRAM_NAME} ${VERILATED_LIB})
+  # do not link here, it is created below, add VERILATED_LIB to the variable instead
+  set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
+
+  # includes: -I obj_dir -I/usr/local/share/verilator/include sim_main.cpp Vtop__ALL.cpp /usr/local/share/verilator/include/verilated.cpp
+endif() # DACE_ENABLE_RTL
+
+
 
 # Create Intel FPGA object files
 if(DACE_ENABLE_INTELFPGA)
