@@ -10,90 +10,7 @@ from dace.sdfg.graph import SubgraphView
 import dace.libraries.standard as stdlib
 import dace.sdfg.nodes as nodes
 from typing import Union, List
-
-
-def expand_reduce(sdfg: dace.SDFG,
-                  graph: dace.SDFGState,
-                  subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-                  **kwargs):
-
-    subgraph = graph if not subgraph else subgraph
-    if not isinstance(subgraph, List):
-        subgraph = [subgraph]
-
-    for sg in subgraph:
-        reduce_nodes = []
-        for node in sg.nodes():
-            if isinstance(node, stdlib.Reduce):
-                if not ReduceExpansion.can_be_applied(
-                        graph=graph,
-                        candidate={
-                            ReduceExpansion._reduce: graph.node_id(node)
-                        },
-                        expr_index=0,
-                        sdfg=sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}: \
-                            Can_be_applied() failed.")
-                    continue
-                reduce_nodes.append(node)
-
-        trafo_reduce = ReduceExpansion(0, 0, {}, 0)
-        for (property, val) in kwargs.items():
-            setattr(trafo_reduce, property, val)
-
-        for reduce_node in reduce_nodes:
-            trafo_reduce.expand(sdfg, graph, reduce_node)
-            if isinstance(sg, SubgraphView):
-                sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._new_reduce)
-                sg.nodes().append(trafo_reduce._outer_entry)
-
-
-def expand_maps(sdfg: dace.SDFG,
-                graph: dace.SDFGState,
-                subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-                **kwargs):
-
-    subgraph = graph if not subgraph else subgraph
-    if not isinstance(subgraph, List):
-        subgraph = [subgraph]
-
-    trafo_expansion = MultiExpansion()
-    for (property, val) in kwargs.items():
-        setattr(trafo_expansion, property, val)
-
-    for sg in subgraph:
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
-        trafo_expansion.expand(sdfg, graph, map_entries)
-
-
-def fusion(sdfg: dace.SDFG,
-           graph: dace.SDFGState,
-           subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-           **kwargs):
-
-    subgraph = graph if not subgraph else subgraph
-    if not isinstance(subgraph, List):
-        subgraph = [subgraph]
-
-    map_fusion = SubgraphFusion()
-    for (property, val) in kwargs.items():
-        setattr(map_fusion, property, val)
-
-    for sg in subgraph:
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
-        # remove map_entries and their corresponding exits from the subgraph
-        # already before applying transformation
-        if isinstance(sg, SubgraphView):
-            for map_entry in map_entries:
-                sg.nodes().remove(map_entry)
-                if graph.exit_node(map_entry) in sg.nodes():
-                    sg.nodes().remove(graph.exit_node(map_entry))
-        print(f"Subgraph Fusion on map entries {map_entries}")
-        map_fusion.fuse(sdfg, graph, map_entries)
-        if isinstance(sg, SubgraphView):
-            sg.nodes().append(map_fusion._global_map_entry)
-
+from util import expand_maps, expand_reduce, fusion
 
 dace_dtype = dace.float32
 H, B, SN, SM = (dace.symbol(s) for s in ('H', 'B', 'SN', 'SM'))
@@ -124,7 +41,6 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
             o = inp / sm
 
     return out
-
 
 
 H.set(10)
@@ -178,6 +94,7 @@ def test_2fuse():
     print("PASS")
     return
 
+
 def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg._name = 'softmax_fused'
@@ -201,6 +118,7 @@ def test_1fuse():
     assert np.allclose(res1, res2)
     print("PASS")
     return
+
 
 if __name__ == "__main__":
     test_2fuse()
