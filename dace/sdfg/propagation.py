@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Functionality relating to Memlet propagation (deducing external memlets
     from internal memory accesses and scope ranges). """
 

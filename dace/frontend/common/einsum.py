@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Classes to handle Einstein-notation sums (einsum) as a library node. """
 from functools import reduce
 from itertools import chain

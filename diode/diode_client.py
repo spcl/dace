@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-# DIODE client using a command line interface
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+""" DIODE client using a command line interface. """
 
 # Usage example: cat ../samples/simple/gemm.py | ./diode_client.py --code --compile
 import argparse, requests, json, sys
