@@ -64,7 +64,7 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
 
     def apply(self, sdfg, map_base_variables=None):
         # get lowest scope map entries and expand
-        subgraph = self.subgraph_view()
+        subgraph = self.subgraph_view(sdfg)
         graph = subgraph.graph
 
         # next, get all the base maps and expand

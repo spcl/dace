@@ -115,7 +115,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         return True
 
     def apply(self, sdfg: SDFG):
-        subgraph = self.subgraph_view()
+        subgraph = self.subgraph_view(sdfg)
         if not self.match(sdfg, subgraph):
             raise Exception('The given subgraph cannot be fused!')
 

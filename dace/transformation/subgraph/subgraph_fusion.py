@@ -423,7 +423,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 invariant_dimensions)
 
     def apply(self, sdfg, do_not_override=None, **kwargs):
-        subgraph = self.subgraph_view()
+        subgraph = self.subgraph_view(sdfg)
         graph = subgraph.graph
 
         map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
