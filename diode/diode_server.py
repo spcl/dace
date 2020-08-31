@@ -1,4 +1,5 @@
 #!flask/bin/python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import aenum
 import dace

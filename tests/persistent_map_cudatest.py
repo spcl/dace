@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import scipy
@@ -28,12 +28,12 @@ def spmv(A_row, A_col, A_val, x, b):
 
 
 def test_persistent_dynamic_map():
-    
+
     print('SPMV with dynamic map')
-    
+
     sdfg = spmv.to_sdfg()
     sdfg.apply_gpu_transformations()
-    
+
     for state in sdfg:
         for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
             if state.scope_dict()[scope] is None:
@@ -42,31 +42,31 @@ def test_persistent_dynamic_map():
                 scope.map.schedule = ScheduleType.GPU_Device
             else:
                 scope.map.schedule = ScheduleType.GPU_ThreadBlock_Dynamic
-            
+
     verify(sdfg)
 
 
 def test_persistent_default():
-    
+
     print('SPMV with default map')
-    
+
     sdfg = spmv.to_sdfg()
     sdfg.apply_gpu_transformations()
-    
+
     for state in sdfg:
         for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
             if state.scope_dict()[scope] is None:
                 scope.map.schedule = ScheduleType.GPU_Persistent
             else:
                 scope.map.schedule = ScheduleType.Default
-    
+
     verify(sdfg)
 
 
 def verify(sdfg):
     height = 1024
     width = 1024
-    
+
     # Fill input data
     # each row has up (including) 256 elements
     A_row = np.random.randint(257, size=height + 1, dtype=dace.uint32.type)
@@ -88,7 +88,7 @@ def verify(sdfg):
 
     x = np.random.rand(width).astype(dace.float32.type)
     b = np.zeros(height, dtype=dace.float32.type)
-    
+
     sdfg(A_row=A_row,
          A_col=A_col,
          A_val=A_val,
@@ -97,7 +97,7 @@ def verify(sdfg):
          H=A_sparse.shape[0],
          W=A_sparse.shape[1],
          nnz=A_sparse.nnz)
-    
+
     assert np.allclose(b, A_sparse.dot(x)), "Result doesn't match!"
     print("Complete.")
 

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace.sdfg import nodes
@@ -64,7 +65,7 @@ def test_quantitatively(sdfg):
     MultiExpansion(subgraph).apply(sdfg)
     assert SubgraphFusion.match(sdfg, subgraph) == True
     SubgraphFusion(subgraph).apply(sdfg)
-    
+
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)
 

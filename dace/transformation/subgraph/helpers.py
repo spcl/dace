@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet

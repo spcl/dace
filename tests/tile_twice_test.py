@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.pattern_matching import match_pattern
 from dace.transformation.dataflow import MapTiling
