@@ -1,7 +1,7 @@
 import os
 import inspect
 import ctypes
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 import numpy as np
 
@@ -47,10 +47,11 @@ def build_checker():
 
 
 class OpChecker:
-    def __init__(self, op_type: str, name: str, check_output_locations=False):
+    def __init__(self, op_type: str, name: str, check_io_locations=False):
 
         self.n_outputs = 0
-        self.check_output_locations = check_output_locations
+        self.n_inputs = 0
+        self.check_io_locations = check_io_locations
         self.name = name.encode("ascii")
         self.op_type = op_type.encode("ascii")
         self.dll = build_checker()
@@ -113,6 +114,8 @@ class OpChecker:
             "ExecutableKernelContext_AddOutput", restype=ctypes.c_void_p)
         self._ExecutableKernelContext_IsOutputOnCpu = self._get_function(
             "ExecutableKernel_IsOutputOnCpu", restype=ctypes.c_void_p)
+        self._ExecutableKernelContext_IsInputOnCpu = self._get_function(
+            "ExecutableKernel_IsInputOnCpu", restype=ctypes.c_void_p)
 
         self._AddAttribute = {
             ONNXAttributeType.Int:
@@ -143,15 +146,16 @@ class OpChecker:
         }
         return self
 
-    def try_create(self, cuda=False) -> Optional[List[bool]]:
+    def try_create(self, cuda=False) -> Optional[Tuple[List[bool], List[bool]]]:
         kernel = ctypes.c_void_p()
         self._check_status(
             self._CreateExecutableKernel(self._session, self._context,
                                          ctypes.c_size_t(1 if cuda else 0),
                                          ctypes.byref(kernel)))
 
-        if self.check_output_locations:
+        if self.check_io_locations:
             outputs_on_cpu = []
+            inputs_on_cpu = []
             for i in range(self.n_outputs):
                 result = ctypes.c_int(-1)
                 self._ExecutableKernelContext_IsOutputOnCpu(kernel, ctypes.c_int(i), ctypes.byref(result))
@@ -159,8 +163,15 @@ class OpChecker:
                     raise ONNXOpValidationError("Could not determine output storage of op")
                 outputs_on_cpu.append(bool(result))
 
+            for i in range(self.n_inputs):
+                result = ctypes.c_int(-1)
+                self._ExecutableKernelContext_IsInputOnCpu(kernel, ctypes.c_int(i), ctypes.byref(result))
+                if result == -1:
+                    raise ONNXOpValidationError("Could not determine output storage of op")
+                inputs_on_cpu.append(bool(result))
+
             self._ReleaseExecutableKernel(kernel)
-            return outputs_on_cpu
+            return inputs_on_cpu, outputs_on_cpu
         else:
             self._ReleaseExecutableKernel(kernel)
 
@@ -196,6 +207,7 @@ class OpChecker:
             self._ReleaseEnv(self._env)
 
     def add_input(self, dtype: dace.typeclass):
+        self.n_outputs += 1
         type = ctypes.c_int(
             getattr(
                 self.dll, "GetONNX_TENSOR_ELEMENT_DATA_TYPE_{}".format(

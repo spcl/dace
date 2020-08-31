@@ -218,7 +218,7 @@ if __name__ == '__main__':
     # test fallback to cpu ops;
     # monkey patch try_create to always fail
     def fail_create(self, cuda=False):
-        if cuda or self.check_output_locations:
+        if cuda or self.check_io_locations:
             raise ONNXOpValidationError("oh no :(")
 
     OpChecker.try_create = types.MethodType(fail_create, OpChecker)

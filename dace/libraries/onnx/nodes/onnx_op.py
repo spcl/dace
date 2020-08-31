@@ -287,23 +287,32 @@ class ONNXOp(nd.LibraryNode):
                       allow_none=True)
 
     def iter_outputs_in_onnx_order(self, state):
-        """ Iterate through the output edges in the same order as they would appear in in an ONNX node proto.
+        """ Iterate through the input edges in the same order as they would appear in an ONNX node proto.
             This assumes that the node has been validated!
         """
-        outputs = list(self.schema.outputs)
-        if outputs[-1].param_type == ONNXParameterType.Variadic:
-            name = outputs[-1].name
-            outputs = itertools.chain([param.name for param in outputs[:-1]],
+        return self._iter_params_in_onnx_order(state, inputs=False)
+
+    def iter_inputs_in_onnx_order(self, state):
+        """ Iterate through the output edges in the same order as they would appear in an ONNX node proto.
+            This assumes that the node has been validated!
+        """
+        return self._iter_params_in_onnx_order(state, inputs=True)
+
+    def _iter_params_in_onnx_order(self, state, inputs=False):
+        parameters = list(self.schema.inputs if inputs else self.schema.outputs)
+        if parameters[-1].param_type == ONNXParameterType.Variadic:
+            name = parameters[-1].name
+            parameters = itertools.chain([param.name for param in parameters[:-1]],
                                       (name + "__" + str(i)
                                        for i in itertools.count()))
         else:
-            outputs = [param.name for param in outputs]
+            parameters = [param.name for param in parameters]
 
-        edges = state.out_edges(self)
-        outputs = list(itertools.islice(outputs, len(edges)))
-        src_conn_to_edge = {edge.src_conn: edge for edge in edges}
+        edges = state.in_edges(self) if inputs else state.out_edges(self)
+        parameters = list(itertools.islice(parameters, len(edges)))
+        conn_to_edge = {edge.dst_conn if inputs else edge.src_conn : edge for edge in edges}
 
-        return [src_conn_to_edge[name] for name in outputs]
+        return [conn_to_edge[name] for name in parameters]
 
     def iter_edges(
             self,
@@ -585,18 +594,19 @@ class ONNXOp(nd.LibraryNode):
 
         # check if ORT supports CUDA for this node
         ##########################################
+
+        # Default: all parameters are on CPU if we execute using cpu
+        outputs_on_host = [True for _ in range(len(outputs))]
+        inputs_on_host = [True for _ in range(len(outputs))]
+
         actual_node_schedule = node.schedule
         if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
             provider_index = 0
-
-            # all outputs are on CPU if we execute using cpu
-            outputs_on_host = [True for _ in range(len(outputs))]
-
         elif node.schedule == ScheduleType.GPU_Device:
             provider_index = 1
             try:
                 # the ith position indicates whether the ith output is in host memory
-                outputs_on_host = check_op(sdfg, state, node, cuda=True)
+                inputs_on_host, outputs_on_host = check_op(sdfg, state, node, cuda=True)
 
             except ONNXOpValidationError as e:
                 # fallback to CPU
@@ -604,9 +614,6 @@ class ONNXOp(nd.LibraryNode):
                     node.name, str(e)))
                 provider_index = 0
                 actual_node_schedule = ScheduleType.Default
-
-                # all outputs are on host if we execute using cpu
-                outputs_on_host = [True for _ in range(len(outputs))]
         else:
             raise NotImplementedError(
                 "ORT expansion for schedule '{}' is not implemented".format(
@@ -643,12 +650,16 @@ class ONNXOp(nd.LibraryNode):
                 output_copy_required[edge.src_conn][
                     'storage'] = StorageType.Default if output_on_host else StorageType.GPU_Global
 
-        # check inputs
-        for edge in state.in_edges(node):
+        # check inputs (same thing again)
+        for edge, input_on_host in zip(node.iter_inputs_in_onnx_order(state), inputs_on_host):
             array = sdfg.arrays[edge.data.data]
 
-            is_device_mismatch = not can_access(actual_node_schedule,
-                                                array.storage)
+            if input_on_host:
+                is_device_mismatch = not can_access(ScheduleType.Default,
+                                                    array.storage)
+            else:
+                is_device_mismatch = not can_access(ScheduleType.GPU_Device,
+                                                    array.storage)
 
             if isinstance(array, dt.Scalar
                           ) and actual_node_schedule == ScheduleType.GPU_Device:

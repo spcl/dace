@@ -107,6 +107,11 @@ DACE_EXPORTED OrtStatus* ExecutableKernel_IsOutputOnCpu(
 	return ort_api->ExecutableKernel_IsOutputOnCpu(kernel, index, is_output_on_cpu);
 }
 
+DACE_EXPORTED OrtStatus* ExecutableKernel_IsInputOnCpu(
+		OrtExecutableKernel* kernel, int index, int* is_input_on_cpu) {
+	return ort_api->ExecutableKernel_IsInputOnCpu(kernel, index, is_input_on_cpu);
+}
+
 DACE_EXPORTED void ReleaseExecutableKernel (OrtExecutableKernel* input) {
 	ort_api->ReleaseExecutableKernel(input);
 }
