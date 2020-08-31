@@ -5,7 +5,6 @@ from __future__ import print_function
 import copy
 import dace
 import inspect
-from typing import Dict, Set, Union
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
 from dace.sdfg.graph import SubgraphView
@@ -15,7 +14,7 @@ from dace.sdfg import graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Dict, List, Tuple, Type, Union
+from typing import Dict, List, Set, Tuple, Type, Union
 
 
 @make_registry
@@ -312,11 +311,15 @@ class SubgraphTransformation(object):
                  subgraph: Union[Set[int], SubgraphView],
                  sdfg_id: int = None,
                  state_id: int = None):
-        if (not isinstance(subgraph, SubgraphView)
+        if (not isinstance(subgraph, (SubgraphView, SDFG, SDFGState))
                 and (sdfg_id is None or state_id is None)):
             raise TypeError(
                 'Subgraph transformation either expects a SubgraphView or a '
                 'set of node IDs, SDFG ID and state ID (or -1).')
+
+        # An entire graph is given as a subgraph
+        if isinstance(subgraph, (SDFG, SDFGState)):
+            subgraph = SubgraphView(subgraph, subgraph.nodes())
 
         if isinstance(subgraph, SubgraphView):
             self.subgraph = set(
@@ -337,6 +340,12 @@ class SubgraphTransformation(object):
             self.sdfg_id = sdfg_id
             self.state_id = state_id
 
+    def subgraph_view(self, sdfg: SDFG) -> SubgraphView:
+        graph = sdfg.sdfg_list[self.sdfg_id]
+        if self.state_id != -1:
+            graph = graph.node(self.state_id)
+        return SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
+
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         """
@@ -353,8 +362,6 @@ class SubgraphTransformation(object):
         """
         Applies the transformation on the given subgraph.
         :param sdfg: The SDFG that includes the subgraph.
-        :param subgraph: The SDFG or state subgraph to apply the
-                         transformation on.
         """
         pass
 

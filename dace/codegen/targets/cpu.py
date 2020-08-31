@@ -469,8 +469,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(vconn)[0]
-                    == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(
+                        vconn)[0] == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -493,8 +493,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset if memlet.data
-                                    == dst_node.data else memlet.other_subset)
+                    array_subset = (memlet.subset
+                                    if memlet.data == dst_node.data else
+                                    memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 

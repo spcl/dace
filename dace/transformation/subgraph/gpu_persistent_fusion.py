@@ -2,7 +2,6 @@ import copy
 import dace
 from dace import dtypes, nodes, registry, Memlet
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
-from dace.sdfg.graph import SubgraphView
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
 from dace.sdfg.utils import find_sink_nodes, concurrent_subgraphs
@@ -69,6 +68,10 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView):
+
+        if not set(subgraph.nodes()).issubset(set(sdfg.nodes())):
+            return False
+
         # All states need to be GPU states
         for state in subgraph:
             if not GPUPersistentKernel.is_gpu_state(sdfg, state):
@@ -112,7 +115,9 @@ class GPUPersistentKernel(SubgraphTransformation):
         return True
 
     def apply(self, sdfg: SDFG):
-        subgraph = SubgraphView(sdfg, [sdfg.node(n) for n in self.subgraph])
+        subgraph = self.subgraph_view(sdfg)
+        if not self.match(sdfg, subgraph):
+            raise Exception('The given subgraph cannot be fused!')
 
         entry_states_in, entry_states_out = self.get_entry_states(
             sdfg, subgraph)
