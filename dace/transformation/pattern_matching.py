@@ -344,7 +344,7 @@ class SubgraphTransformation(object):
         graph = sdfg.sdfg_list[self.sdfg_id]
         if self.state_id != -1:
             graph = graph.node(self.state_id)
-        return SubgraphView(graph, self.subgraph)
+        return SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
 
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
