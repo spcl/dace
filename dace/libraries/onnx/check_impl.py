@@ -271,9 +271,9 @@ class OpChecker:
                                   ctypes.c_size_t(len(attr_value.shape)), type))
 
 
-def check_op(sdfg, state, node, cuda=False) -> List[bool]:
+def check_op(sdfg, state, node, cuda=False) -> Tuple[List[bool], List[bool]]:
     """ Check whether a ONNXOp node has an implementation in ORT """
-    with OpChecker(node.schema.name, node.name, check_output_locations=True) as checker:
+    with OpChecker(node.schema.name, node.name, check_io_locations=True) as checker:
         for attribute, onnx_attribute in node.schema.attributes.items():
             if hasattr(node, attribute):
                 checker.add_attribute(attribute, getattr(node, attribute),
