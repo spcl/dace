@@ -7,6 +7,7 @@ from dace.sdfg.graph import SubgraphView
 
 import sys
 
+from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
