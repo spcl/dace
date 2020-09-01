@@ -790,7 +790,8 @@ python_types = {
 int = typeclass(int)
 float = typeclass(float)
 complex = typeclass(complex)
-bool = typeclass(numpy.bool)
+bool = typeclass(numpy.int8)  # We do not (cannot) support Python bool
+bool_ = typeclass(numpy.int8)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -809,9 +810,9 @@ DTYPE_TO_TYPECLASS = {
     python_types['int']: int,
     python_types['float']: float,
     python_types['complex']: complex,
-    python_types['bool']: uint8,
-    numpy.bool: uint8,
-    numpy.bool_: bool,  # TODO: Fix boolean types
+    python_types['bool']: bool,
+    numpy.bool: bool,  # We do not (cannot) support Python bool
+    numpy.bool_: bool,
     numpy.int8: int8,
     numpy.int16: int16,
     numpy.int32: int32,
