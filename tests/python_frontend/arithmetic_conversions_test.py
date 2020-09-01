@@ -1,6 +1,21 @@
 import dace
 import numpy as np
 
+@dace.program
+def add(A: dace.complex64[5, 5], B: dace.float64[5, 5]):
+    return A + B
+
+
+def test_add():
+    A = np.random.randint(0, high=10, size=(5, 5), dtype=np.uint64).astype(np.complex64)
+    B = np.random.randint(-10, high=0, size=(5, 5), dtype=np.int32).astype(np.float64pty)
+    C = add(A, B)
+    print(A)
+    print(B)
+    print(C)
+    print(A + B)
+    assert(np.linalg.norm(C - A - B) / np.linalg.norm(A + B) < 1e-12)
+
 
 @dace.program
 def complex_conversion(a: dace.complex128[1], b: int):
@@ -29,5 +44,6 @@ def test_float_conversion():
 
 
 if __name__ == "__main__":
+    test_add()
     test_complex_conversion()
     test_float_conversion()

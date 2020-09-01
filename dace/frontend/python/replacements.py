@@ -740,38 +740,108 @@ def _is_scalar(sdfg: SDFG, arrname: str):
     return False
 
 
+def _is_op_arithmetic(op: str):
+    if op in {'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod'}:
+        return True
+    return False
+
+
+def _is_op_bitwise(op: str):
+    if op in {'LShift', 'RShift', 'BitOr', 'BitXor', 'BitAnd'}:
+        return True
+    return False
+
+
 def _is_op_boolean(op: str):
     if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'}:
         return True
     return False
 
 
-def _convert_type(dtype1, dtype2, opcode) -> Tuple[dace.dtypes.typeclass]:
+def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
 
-    complex_types = {np.complex64, np.complex128}
-    float_types = {np.float16, np.float32, np.float64}
+    complex_types = {dace.complex64, dace.complex128,
+                     np.complex64, np.complex128}
+    float_types = {dace.float16, dace.float32, dace.float64,
+                   np.float16, np.float32, np.float64}
+    signed_types = {dace.int8, dace.int16, dace.int32, dace.int64,
+                    np.int8, np.int16, np.int32, np.int64}
+    # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
 
     if dtype1 in complex_types:
-        type1 = 2  # complex
+        type1 = 3  # complex
     elif dtype1 in float_types:
-        type1 = 1  # float
+        type1 = 2  # float
+    elif dtype1 in signed_types:
+        type1 = 1  # signed integer, bool
     else:
-        type1 = 0  # int, bool
+        type1 = 0  # unsigned integer
     
     if dtype2 in complex_types:
-        type2 = 2  # complex
+        type2 = 3  # complex
     elif dtype2 in float_types:
-        type2 = 1  # float
+        type2 = 2  # float
+    elif dtype2 in signed_types:
+        type2 = 1  # signed integer, bool
     else:
-        type2 = 0  # int, bool
+        type2 = 0  # unsigned integer
 
-    if type1 == type2:
-        return None, None
+    left_cast = None
+    right_cast = None
+
+    if _is_op_arithmetic(operator):
+
+        # Float division between integers
+        if operator == 'Div' and max(type1, type2) < 2:
+            max_bytes = max(dtype1.bytes, dtype2.bytes)
+            if type1 == type2 and type1 == 0:  # Unsigned integers
+                result_type = eval('dace.uint{}'.format(4 * max_bytes))
+            else:
+                result_type = eval('dace.int{}'.format(4 * max_bytes))
+        # Floor division with at least one complex argument
+        elif operator == 'FloorDiv' and max(type1, type2) == 3:
+            raise TypeError("can't take floor of complex number")
+        # Floor division with at least one float argument
+        elif operator == 'FloorDiv' and max(type1, type2) == 2:
+            result_type = dace.int64
+        # Floor division between integers
+        elif operator == 'FloorDiv' and max(type1, type2) < 2:
+            max_bytes = max(dtype1.bytes, dtype2.bytes)
+            if type1 == type2 and type1 == 0:  # Unsigned integers
+                result_type = eval('dace.uint{}'.format(4 * max_bytes))
+            else:
+                result_type = eval('dace.int{}'.format(4 * max_bytes))
+            # TODO: Improve this performance-wise?
+            right_cast = dace.float64
+        # Power with base integer and exponent signed integer
+        elif (operator == 'Pow' and max(type1, type2) < 2 and
+                dtype2 in signed_types):
+            result_type = dace.float64
+            left_cast = dace.float64
+            right_cast = dace.float64
+        # All other arithmetic operators and cases of the above operators
+        else:
+            # TODO: Does this always make sense?
+            result_type = dace.DTYPE_TO_TYPECLASS[
+                np.result_type(dtype1.type, dtype2.type).type]
+            if max(type1, type2) == 3:
+                if type1 < 3:
+                    left_cast = dtype2
+                elif type2 < 3:
+                    right_cast = dtype1
     
-    if type1 > type2:
-        return None, dtype1
+    elif _is_op_bitwise(operator):
+        # Only integers may be arguments of bitwise and shifting operations
+        if max(type1, type2) > 1:
+            raise TypeError("unsupported operand type(s) for {}: "
+                            "'{}' and '{}'".format(operator, dtype1, dtype2))
+        max_bytes = max(dtype1.bytes, dtype2.bytes)
+        result_type = eval('dace.int{}'.format(4 * max_bytes))
     
-    return dtype2, None
+    elif _is_op_boolean(operator):
+        result_type = dace.int8
+                
+    return result_type, left_cast, right_cast
 
 
 def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
@@ -796,7 +866,7 @@ def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 
     opstring = ["s1", "s2"]
     if type1 != type2:
-        new_types = _convert_type(type1, type2, opcode)
+        result_type, new_types = _convert_type(type1, type2, op)
         if new_types[0] is not None:
             opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
         if new_types[1] is not None:
@@ -836,9 +906,9 @@ def _python2numpy_type(constant: Union[int, float, complex, bool]):
         raise KeyError("Unknown Python type {}.".format(type(constant)))
 
 
-def _elementwise_binop(visitor: 'ProgramVisitor',
+def _array_array_binop(visitor: 'ProgramVisitor',
                        sdfg: SDFG,
-                       state: SDFGstate,
+                       state: SDFGState,
                        left_operand: str,
                        right_operand: str,
                        operator: str,
@@ -853,18 +923,21 @@ def _elementwise_binop(visitor: 'ProgramVisitor',
 
     # Implicit Python coversion implemented as casting
     tasklet_args = ['__in1', '__in2']
-    if left_type != right_type:
-        new_types = _convert_type(left_type, right_type, opcode)
-        if new_types[0] is not None:
-            tasklet_args[0] = "dace.{}(s1)".format(new_types[0].__name__)
-        if new_types[1] is not None:
-            tasklet_args[1] = "dace.{}(s2)".format(new_types[1].__name__)
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+    if right_cast is not None:
+        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
 
-    if _is_op_boolean(op):
-        restype = dace.bool
-    else:
-        restype = dace.DTYPE_TO_TYPECLASS[
-            np.result_type(left_type, right_type).type]
+    # if _is_op_boolean(operator):
+    #     restype = dace.uint8
+    # elif operator == 'Div':
+    #     bits = 4 * max(left_type.bytes, right_type.bytes)
+    #     restype = eval('dace.float{}'.format(bits))
+    # else:
+    #     restype = dace.DTYPE_TO_TYPECLASS[
+    #         np.result_type(left_type.type, right_type.type).type]
     
     left_shape = left_arr.shape
     right_shape = right_arr.shape
@@ -872,101 +945,121 @@ def _elementwise_binop(visitor: 'ProgramVisitor',
     (out_shape, all_idx_dict, out_idx,
      left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
 
-    out_operand, _ = sdfg.add_temp_transient(out_shape, restype,
-                                             left_arr.storage)
-        
-    state.add_mapped_tasklet("_%s_" % operator,
-                            all_idx_dict, {
-                                '__in1': Memlet.simple(left_operand, left_idx),
-                                '__in2': Memlet.simple(right_operand, left_idx)
-                            },
-                            '__out = {i1} {op} {i2}'.format(
-                                i1=tasklet_args[0], op=opcode,
-                                i2=tasklet_args[1]),
-                            {'__out': Memlet.simple(out_operand, out_idx)},
-                            external_edges=True)
+    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
+                                                   left_arr.storage)
+    
+    if out_shape == [1]:
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            {'__in1', '__in2'},
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
+        )
+        n1 = state.add_read(left_operand)
+        n2 = state.add_read(right_operand)
+        n3 = state.add_write(out_operand)
+        state.add_edge(n1, None, tasklet, '__in1',
+                       dace.Memlet.from_array(left_operand, left_arr))
+        state.add_edge(n2, None, tasklet, '__in2',
+                       dace.Memlet.from_array(right_operand, right_arr))
+        state.add_edge(tasklet, 's3', n3, None,
+                       dace.Memlet.from_array(out_operand, out_arr))
+    else:
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            {
+                '__in1': Memlet.simple(left_operand, left_idx),
+                '__in2': Memlet.simple(right_operand, right_idx)
+            },
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True
+        )
     
     return out_operand
 
 
 
-def _elementwise_binop(visitor: 'ProgramVisitor',
-                       sdfg: SDFG, state: SDFGstate,
-                       left_operand,
-                       right_operand,
-                       operator: str,
-                       opcode: str):
-    left_isdata = isinstance(left_operand, str)
-    right_isdata = isinstance(right_operand, str)
+# def _elementwise_binop(visitor: 'ProgramVisitor',
+#                        sdfg: SDFG, state: SDFGState,
+#                        left_operand,
+#                        right_operand,
+#                        operator: str,
+#                        opcode: str):
+#     left_isdata = isinstance(left_operand, str)
+#     right_isdata = isinstance(right_operand, str)
 
-    tasklet_args = [None, None]
+#     tasklet_args = [None, None]
 
-    if left_isdata:
-        left_type = sdfg.arrays[left_operand].dtype
-        left_shape = sdfg.arrays[left_operand].shape
-        left_isscalar = _is_scalar(sdfg, left_operand)
-        left_node = state.add_read(left_operand)
-        if left_isscalar:
-            left_memlet = dace.Memlet.from_array(left_operand,
-                                                 sdfg.arrays[left_operand])
-        tasklet_args[0] = '__in1'
-        left_conn = '__in1'
-    else:
-        left_type = type(left_operand)
-        left_shape = [1]
-        left_isscalar = True
-        left_node = None
-        left_memlet = None
-        tasklet_args[0] = str(left_operand)
+#     if left_isdata:
+#         left_type = sdfg.arrays[left_operand].dtype
+#         left_shape = sdfg.arrays[left_operand].shape
+#         left_isscalar = _is_scalar(sdfg, left_operand)
+#         left_node = state.add_read(left_operand)
+#         if left_isscalar:
+#             left_memlet = dace.Memlet.from_array(left_operand,
+#                                                  sdfg.arrays[left_operand])
+#         tasklet_args[0] = '__in1'
+#         left_conn = '__in1'
+#     else:
+#         left_type = type(left_operand)
+#         left_shape = [1]
+#         left_isscalar = True
+#         left_node = None
+#         left_memlet = None
+#         tasklet_args[0] = str(left_operand)
     
-    if right_isdata:
-        right_type = sdfg.arrays[right_operand].dtype
-        right_shape = sdfg.arrays[right_operand].shape
-        right_isscalar = _is_scalar(sdfg, right_operand)
-        right_node = state.add_read(right_operand)
-        if right_isscalar:
-            right_memlet = dace.Memlet.from_array(right_operand,
-                                                  sdfg.arrays[right_operand])
-        tasklet_args[1] = '__in2'
-        right_conn = '__in2'
-    else:
-        right_type = type(right_operand)
-        right_shape = [1]
-        right_isscalar = True
-        right_node = None
-        right_memlet = None
-        tasklet_args[1] = str(right_operand)
+#     if right_isdata:
+#         right_type = sdfg.arrays[right_operand].dtype
+#         right_shape = sdfg.arrays[right_operand].shape
+#         right_isscalar = _is_scalar(sdfg, right_operand)
+#         right_node = state.add_read(right_operand)
+#         if right_isscalar:
+#             right_memlet = dace.Memlet.from_array(right_operand,
+#                                                   sdfg.arrays[right_operand])
+#         tasklet_args[1] = '__in2'
+#         right_conn = '__in2'
+#     else:
+#         right_type = type(right_operand)
+#         right_shape = [1]
+#         right_isscalar = True
+#         right_node = None
+#         right_memlet = None
+#         tasklet_args[1] = str(right_operand)
     
-    if left_type != right_type:
-        new_types = _convert_type(left_type, right_type, opcode)
-        if new_types[0] is not None:
-            tasklet_args[0] = "dace.{}(s1)".format(new_types[0].__name__)
-        if new_types[1] is not None:
-            tasklet_args[1] = "dace.{}(s2)".format(new_types[1].__name__)
+#     if left_type != right_type:
+#         new_types = _convert_type(left_type, right_type, opcode)
+#         if new_types[0] is not None:
+#             tasklet_args[0] = "dace.{}(s1)".format(new_types[0].__name__)
+#         if new_types[1] is not None:
+#             tasklet_args[1] = "dace.{}(s2)".format(new_types[1].__name__)
 
-    # TODO: Add exceptions for power operator
-    if _is_op_boolean(op):
-        restype = dace.bool
-    else:
-        restype = dace.DTYPE_TO_TYPECLASS[
-            np.result_type(left_type, right_type).type]
+#     # TODO: Add exceptions for power operator
+#     if _is_op_boolean(op):
+#         restype = dace.bool
+#     else:
+#         restype = dace.DTYPE_TO_TYPECLASS[
+#             np.result_type(left_type, right_type).type]
 
-    if left_isdata or right_isdata:
-        (out_shape, all_idx_dict, out_idx,
-         left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
-        name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
+#     if left_isdata or right_isdata:
+#         (out_shape, all_idx_dict, out_idx,
+#          left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+#         name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
         
-        if out_shape == [1]:
+#         if out_shape == [1]:
 
-        name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
-        state.add_mapped_tasklet("_%s_" % opname,
-                                all_idx_dict, {
-                                    '__in1': Memlet.simple(op1, arr1_idx),
-                                    '__in2': Memlet.simple(op2, arr2_idx)
-                                },
-                                '__out = __in1 %s __in2' % opcode,
-                                {'__out': Memlet.simple(name, all_idx)},
-                                external_edges=True)
+#             name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
+#             state.add_mapped_tasklet("_%s_" % opname,
+#                                     all_idx_dict, {
+#                                         '__in1': Memlet.simple(op1, arr1_idx),
+#                                         '__in2': Memlet.simple(op2, arr2_idx)
+#                                     },
+#                                     '__out = __in1 %s __in2' % opcode,
+#                                     {'__out': Memlet.simple(name, all_idx)},
+#                                     external_edges=True)
 
 
 
@@ -1006,7 +1099,7 @@ def _binop_impl(visitor: 'ProgramVisitor',
             optype2 = type(operand2)  #_python2numpy_type(operand2)
             opstring = [str(operand1), str(operand2)]
             if optype1 != optype2:
-                new_types = _convert_type(optype1, optype2, opcode)
+                result_type, new_types = _convert_type(optype1, optype2, op)
                 if new_types[0] is not None:
                     opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
                 if new_types[1] is not None:
@@ -1025,7 +1118,7 @@ def _binop_impl(visitor: 'ProgramVisitor',
             return operand3
     
     if optype1 != optype2:
-        new_types = _convert_type(optype1, optype2, opcode)
+        result_type, new_types = _convert_type(optype1, optype2, op)
         if new_types[0] is not None:
             opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
         if new_types[1] is not None:
@@ -1062,15 +1155,16 @@ def _binop_impl(visitor: 'ProgramVisitor',
         state.add_edge(tasklet, 's3', n3, None,
                        dace.Memlet.from_array(op3, arr3))
         return op3
-    else:
-        return _binop(sdfg, state, op1, op2, opcode, op, restype)
+    # else:
+    #     return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
 
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        # return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,

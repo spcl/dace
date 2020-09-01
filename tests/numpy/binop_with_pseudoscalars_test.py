@@ -1,6 +1,6 @@
 import dace
 import numpy as np
-import pytest
+# import pytest
 from common import compare_numpy_output
 
 ### Left #####################################################################
