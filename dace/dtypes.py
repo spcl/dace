@@ -403,9 +403,10 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
