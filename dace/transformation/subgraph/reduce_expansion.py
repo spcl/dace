@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the reduce-map transformation.
 """
 
@@ -37,18 +38,18 @@ class ReduceExpansion(pattern_matching.Transformation):
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
     create_in_transient = Property(desc="Create local in-transient"
-                                        "in registers",
+                                   "in registers",
                                    dtype=bool,
                                    default=False)
 
     create_out_transient = Property(desc="Create local out-transient"
-                                         "in registers",
+                                    "in registers",
                                     dtype=bool,
                                     default=False)
 
     reduce_implementation = Property(
         desc="Reduce implementation of inner reduce. If specified,"
-             "overrides any existing implementations",
+        "overrides any existing implementations",
         dtype=str,
         default=None,
         choices=[
@@ -67,7 +68,7 @@ class ReduceExpansion(pattern_matching.Transformation):
         dtypes.ReductionType.Bitwise_Xor: 'out = reduction_in ^ array_in',
         dtypes.ReductionType.Logical_And: 'out = reduction_in and array_in',
         dtypes.ReductionType.Logical_Or: 'out = reduction_in or array_in',
-        dtypes.ReductionType.Logical_Xor: 'out = reduction_in xor array_in'
+        dtypes.ReductionType.Logical_Xor: 'out = reduction_in != array_in'
     }
 
     reduction_type_identity = {

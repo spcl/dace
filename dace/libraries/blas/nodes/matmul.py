@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional

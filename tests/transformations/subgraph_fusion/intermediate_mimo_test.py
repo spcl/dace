@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace.sdfg import nodes
@@ -60,12 +61,10 @@ def test_quantitatively(sdfg):
     csdfg(A=A, B=B, C=C1, D=D1, N=N)
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    expansion = MultiExpansion()
-    fusion = SubgraphFusion()
-    assert expansion.match(sdfg, subgraph) == True
-    expansion.apply(sdfg, subgraph)
-    assert fusion.match(sdfg, subgraph) == True
-    fusion.apply(sdfg, subgraph)
+    assert MultiExpansion.match(sdfg, subgraph) == True
+    MultiExpansion(subgraph).apply(sdfg)
+    assert SubgraphFusion.match(sdfg, subgraph) == True
+    SubgraphFusion(subgraph).apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)

@@ -1,7 +1,6 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion
-from dace.transformation.subgraph import ReduceExpansion
 import dace.sdfg.utils as utils
 import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
@@ -14,35 +13,7 @@ from dace.sdfg.graph import SubgraphView
 from typing import Union, List
 
 import sys
-
-
-def fusion(sdfg: dace.SDFG,
-           graph: dace.SDFGState,
-           subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-           **kwargs):
-
-    subgraph = graph if not subgraph else subgraph
-    if not isinstance(subgraph, List):
-        subgraph = [subgraph]
-
-    map_fusion = SubgraphFusion()
-    for (property, val) in kwargs.items():
-        setattr(map_fusion, property, val)
-
-    for sg in subgraph:
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
-        # remove map_entries and their corresponding exits from the subgraph
-        # already before applying transformation
-        if isinstance(sg, SubgraphView):
-            for map_entry in map_entries:
-                sg.nodes().remove(map_entry)
-                if graph.exit_node(map_entry) in sg.nodes():
-                    sg.nodes().remove(graph.exit_node(map_entry))
-        print(f"Subgraph Fusion on map entries {map_entries}")
-        map_fusion.fuse(sdfg, graph, map_entries)
-        if isinstance(sg, SubgraphView):
-            sg.nodes().append(map_fusion._global_map_entry)
-
+from util import fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
 N.set(50)
@@ -57,7 +28,7 @@ out1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 @dace.program
 def test_program(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
-         C: dace.float64[N, M, O]):
+                 C: dace.float64[N, M, O]):
     for i, j in dace.map[0:N, 0:M]:
         with dace.tasklet:
             in1 << A[i, j, 0]
@@ -154,12 +125,14 @@ def test_quantitatively(sdfg, graph):
     assert np.allclose(C1, C2)
     print('PASS')
 
+
 def test_invariant_dim():
     sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     fix_sdfg(sdfg, graph)
     test_quantitatively(sdfg, graph)
+
 
 if __name__ == '__main__':
     test_invariant_dim()

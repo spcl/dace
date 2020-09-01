@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes and functions related to patterns/transformations.
 """
 
@@ -5,17 +6,16 @@ from __future__ import print_function
 import copy
 import dace
 import inspect
-from typing import Dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, propagation
 from dace.sdfg.graph import SubgraphView
-from dace.properties import make_properties, Property, DictProperty
+from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
 from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Dict, List, Tuple, Type, Union
+from typing import Dict, List, Set, Tuple, Type, Union
 
 
 @make_registry
@@ -292,12 +292,61 @@ class ExpandTransformation(Transformation):
 
 
 @make_registry
+@make_properties
 class SubgraphTransformation(object):
     """
     Base class for transformations that apply on arbitrary subgraphs, rather than
     matching a specific pattern. Subclasses need to implement the `match` and `apply`
     operations.
     """
+
+    sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
+    state_id = Property(
+        dtype=int,
+        desc='ID of state to transform subgraph within, or -1 to transform the '
+        'SDFG')
+    subgraph = SetProperty(element_type=int,
+                           desc='Subgraph in transformation instance')
+
+    def __init__(self,
+                 subgraph: Union[Set[int], SubgraphView],
+                 sdfg_id: int = None,
+                 state_id: int = None):
+        if (not isinstance(subgraph, (SubgraphView, SDFG, SDFGState))
+                and (sdfg_id is None or state_id is None)):
+            raise TypeError(
+                'Subgraph transformation either expects a SubgraphView or a '
+                'set of node IDs, SDFG ID and state ID (or -1).')
+
+        # An entire graph is given as a subgraph
+        if isinstance(subgraph, (SDFG, SDFGState)):
+            subgraph = SubgraphView(subgraph, subgraph.nodes())
+
+        if isinstance(subgraph, SubgraphView):
+            self.subgraph = set(
+                subgraph.graph.node_id(n) for n in subgraph.nodes())
+
+            if isinstance(subgraph.graph, SDFGState):
+                sdfg = subgraph.graph.parent
+                self.sdfg_id = sdfg.sdfg_id
+                self.state_id = sdfg.node_id(subgraph.graph)
+            elif isinstance(subgraph.graph, SDFG):
+                self.sdfg_id = subgraph.graph.sdfg_id
+                self.state_id = -1
+            else:
+                raise TypeError('Unrecognized graph type "%s"' %
+                                type(subgraph.graph).__name__)
+        else:
+            self.subgraph = subgraph
+            self.sdfg_id = sdfg_id
+            self.state_id = state_id
+
+    def subgraph_view(self, sdfg: SDFG) -> SubgraphView:
+        graph = sdfg.sdfg_list[self.sdfg_id]
+        if self.state_id != -1:
+            graph = graph.node(self.state_id)
+        return SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
+
     @staticmethod
     def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         """
@@ -310,14 +359,37 @@ class SubgraphTransformation(object):
         """
         pass
 
-    def apply(self, sdfg: SDFG, subgraph: SubgraphView):
+    def apply(self, sdfg: SDFG):
         """
         Applies the transformation on the given subgraph.
         :param sdfg: The SDFG that includes the subgraph.
-        :param subgraph: The SDFG or state subgraph to apply the
-                         transformation on.
         """
         pass
+
+    def to_json(self, parent=None):
+        props = dace.serialize.all_properties_to_json(self)
+        return {
+            'type': 'SubgraphTransformation',
+            'transformation': type(self).__name__,
+            **props
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        xform = next(ext for ext in SubgraphTransformation.extensions().keys()
+                     if ext.__name__ == json_obj['transformation'])
+
+        # Reconstruct transformation
+        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'],
+                    json_obj['state_id'])
+        context = context or {}
+        context['transformation'] = ret
+        dace.serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'transformation', 'type'})
+        return ret
 
 
 # Module functions ############################################################

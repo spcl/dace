@@ -1,4 +1,7 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import json
+import traceback
+import sys
 from argparse import ArgumentParser
 
 def get_exception_message(exception):
@@ -25,6 +28,8 @@ def load_sdfg_from_json(json):
             sdfg = SDFG.from_json(json)
             error = None
         except Exception as e:
+            print(traceback.format_exc(), file=sys.stderr)
+            sys.stderr.flush()
             error = {
                 'error': {
                     'message': 'Failed to parse the provided SDFG',
@@ -64,6 +69,8 @@ def reapply_history_until(sdfg_json, index):
             original_sdfg.append_transformation(transformation)
             transformation.apply_pattern(original_sdfg)
         except Exception as e:
+            print(traceback.format_exc(), file=sys.stderr)
+            sys.stderr.flush()
             return {
                 'error': {
                     'message': 'Failed to play back the transformation history',
@@ -89,6 +96,8 @@ def apply_transformation(sdfg_json, transformation):
     try:
         revived_transformation = Transformation.from_json(transformation)
     except Exception as e:
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.stderr.flush()
         return {
             'error': {
                 'message': 'Failed to parse the applied transformation',
@@ -104,6 +113,8 @@ def apply_transformation(sdfg_json, transformation):
         sdfg.append_transformation(revived_transformation)
         revived_transformation.apply_pattern(sdfg)
     except Exception as e:
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.stderr.flush()
         return {
             'error': {
                 'message': 'Failed to apply the transformation to the SDFG',

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion
 """
 import dace
@@ -22,7 +23,7 @@ from collections import defaultdict
 from itertools import chain
 
 
-
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class SubgraphFusion(pattern_matching.SubgraphTransformation):
     """ Implements the SubgraphFusion transformation.
@@ -42,13 +43,12 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
     transient_allocation = Property(
         desc="Storage Location to push transients to that are "
-             "fully contained within the subgraph.",
+        "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
         default=dtypes.StorageType.Default)
 
-
     @staticmethod
-    def match(sdfg, subgraph):
+    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
         Fusible if
         1. Maps have the same access sets and ranges in order
@@ -138,7 +138,6 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 if not visit_descendants(graph, forbidden_node, visited,
                                          map_entries):
                     return False
-
 
         # 2.3 memlet feasibility
         # For each intermediate node, look at whether inner adjacent
@@ -424,15 +423,14 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
         return (subgraph_contains_data, transients_created,
                 invariant_dimensions)
 
-    def apply(self, sdfg, subgraph, do_not_override = [], **kwargs):
-        self.subgraph = subgraph
-
+    def apply(self, sdfg, do_not_override=None, **kwargs):
+        subgraph = self.subgraph_view(sdfg)
         graph = subgraph.graph
 
         map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
         self.fuse(sdfg, graph, map_entries, do_not_override, **kwargs)
 
-    def fuse(self, sdfg, graph, map_entries, do_not_override = [], **kwargs):
+    def fuse(self, sdfg, graph, map_entries, do_not_override=None, **kwargs):
         """ takes the map_entries specified and tries to fuse maps.
 
             all maps have to be extended into outer and inner map
@@ -458,27 +456,11 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
         if len(map_entries) == 0:
             return
 
+        do_not_override = do_not_override or []
+
         # get maps and map exits
         maps = [map_entry.map for map_entry in map_entries]
         map_exits = [graph.exit_node(map_entry) for map_entry in map_entries]
-
-        # re-construct the map subgraph if necessary
-        try:
-            self.subgraph
-        except AttributeError:
-            subgraph_nodes = set()
-            scope_dict = graph.scope_dict(node_to_children=True)
-            for node in chain(map_entries, map_exits):
-                subgraph_nodes.add(node)
-                # add all border arrays
-                for e in chain(graph.in_edges(node), graph.out_edges(node)):
-                    subgraph_nodes.add(e.src)
-                    subgraph_nodes.add(e.dst)
-                try:
-                    subgraph_nodes |= set(scope_dict[node])
-                except KeyError:
-                    pass
-            self.subgraph = SubgraphView(graph, subgraph_nodes)
 
         # Nodes that flow into one or several maps but no data is flowed to them from any map
         in_nodes = set()
@@ -517,10 +499,11 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                             out_nodes.add(current_node)
                 for e in graph.in_edges(current_node):
                     if e.src not in map_exits:
-                        raise NotImplementedError("Nodes between two maps to be"
-                                                  "fused with *incoming* edges"
-                                                  "from outside the maps are not"
-                                                  "allowed yet.")
+                        raise NotImplementedError(
+                            "Nodes between two maps to be"
+                            "fused with *incoming* edges"
+                            "from outside the maps are not"
+                            "allowed yet.")
 
         # any intermediate_nodes currently in in_nodes shouldnt be there
         in_nodes -= intermediate_nodes
@@ -715,8 +698,6 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
 
             # end main loop.
 
-
-
         # create a mapping from data arrays to offsets
         # for later memlet adjustments later
         min_offsets = dict()
@@ -786,7 +767,6 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
                 transient_to_transform.offset = new_data_offset
                 transient_to_transform.lifetime = dtypes.AllocationLifetime.Scope
                 transient_to_transform.storage = self.transient_allocation
-
 
             else:
                 # don't modify data container - array is needed outside

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the vectorization transformation. """
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, SDFG, propagation

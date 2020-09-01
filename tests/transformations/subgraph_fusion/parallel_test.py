@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 import dace.sdfg.nodes as nodes
@@ -90,14 +91,14 @@ def test_p1():
           N=N, M=M, O=O, P=P, R=R,Q=Q)
 
     subgraph = SubgraphView(state, [node for node in state.nodes()])
-    expansion = MultiExpansion()
-    fusion = SubgraphFusion()
+    expansion = MultiExpansion(subgraph)
+    fusion = SubgraphFusion(subgraph)
 
     assert MultiExpansion.match(sdfg, subgraph)
-    expansion.apply(sdfg, subgraph)
+    expansion.apply(sdfg)
 
     assert SubgraphFusion.match(sdfg, subgraph)
-    fusion.apply(sdfg, subgraph)
+    fusion.apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\

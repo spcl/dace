@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -529,8 +530,11 @@ class vector(typeclass):
 
     @property
     def ocltype(self):
-        vectype = _OCL_VECTOR_TYPES[self.type]
-        return f"{vectype}{self.veclen}"
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the expansion transformation.
 """
 
@@ -5,6 +6,7 @@ from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
+from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
@@ -17,9 +19,11 @@ from typing import List, Union
 import dace.libraries.standard as stdlib
 
 
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class MultiExpansion(pattern_matching.SubgraphTransformation):
-    ''' Implements the MultiExpansion transformation.
+    ''' 
+    Implements the MultiExpansion transformation.
     Takes all the lowest scope maps in a given subgraph,
     for each of these maps splits it into an outer and inner map,
     where the outer map contains the common ranges of all maps,
@@ -30,11 +34,11 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
     debug = Property(dtype=bool, desc="Debug Mode", default=False)
     sequential_innermaps = Property(dtype=bool,
                                     desc="Make all inner maps that are"
-                                         "created during expansion sequential",
+                                    "created during expansion sequential",
                                     default=False)
 
     @staticmethod
-    def match(sdfg, subgraph) -> bool:
+    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         ### get lowest scope maps of subgraph
         # grab first node and see whether all nodes are in the same graph
         # (or nested sdfgs therein)
@@ -59,9 +63,9 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
 
         return True
 
-    def apply(self, sdfg, subgraph, map_base_variables=None):
+    def apply(self, sdfg, map_base_variables=None):
         # get lowest scope map entries and expand
-
+        subgraph = self.subgraph_view(sdfg)
         graph = subgraph.graph
 
         # next, get all the base maps and expand

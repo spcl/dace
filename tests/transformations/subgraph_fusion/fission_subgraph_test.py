@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from copy import deepcopy as dcpy
 import dace
@@ -11,34 +12,7 @@ from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import SubgraphFusion
 import dace.transformation.subgraph.helpers as helpers
-
-
-def fusion(sdfg: dace.SDFG,
-           graph: dace.SDFGState,
-           subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-           **kwargs):
-
-    subgraph = graph if not subgraph else subgraph
-    if not isinstance(subgraph, List):
-        subgraph = [subgraph]
-
-    map_fusion = SubgraphFusion()
-    for (property, val) in kwargs.items():
-        setattr(map_fusion, property, val)
-
-    for sg in subgraph:
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, sg)
-        # remove map_entries and their corresponding exits from the subgraph
-        # already before applying transformation
-        if isinstance(sg, SubgraphView):
-            for map_entry in map_entries:
-                sg.nodes().remove(map_entry)
-                if graph.exit_node(map_entry) in sg.nodes():
-                    sg.nodes().remove(graph.exit_node(map_entry))
-        print(f"Subgraph Fusion on map entries {map_entries}")
-        map_fusion.fuse(sdfg, graph, map_entries)
-        if isinstance(sg, SubgraphView):
-            sg.nodes().append(map_fusion._global_map_entry)
+from util import fusion
 
 
 def mapfission_sdfg():

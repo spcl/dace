@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import pattern_matching
 from dace import memlet, registry
 from dace.sdfg import nodes
