@@ -19,11 +19,12 @@ import pytest
 import dace
 import dace.libraries.onnx as donnx
 from dace.libraries.onnx.check_impl import OpChecker, ONNXOpValidationError
-from tests.onnx.utils import parameterize_gpu
+from tests.onnx.utils import parameterize_gpu, print_when_started
 
 
 @parameterize_gpu
 @pytest.mark.parametrize("apply_strict", [True, False])
+@print_when_started
 def test_squeeze(gpu, apply_strict):
     sdfg = dace.SDFG("test_expansion")
 
@@ -72,6 +73,7 @@ def test_squeeze(gpu, apply_strict):
 
 @parameterize_gpu
 @pytest.mark.parametrize("apply_strict", [True, False])
+@print_when_started
 def test_shape(gpu, apply_strict):
     sdfg = dace.SDFG("test_expansion")
 
@@ -108,6 +110,7 @@ def test_shape(gpu, apply_strict):
 
 @parameterize_gpu
 @pytest.mark.parametrize("apply_strict", [True, False])
+@print_when_started
 def test_unsqueeze(gpu, apply_strict):
     sdfg = dace.SDFG("test_expansion")
 
@@ -146,6 +149,7 @@ def test_unsqueeze(gpu, apply_strict):
 @parameterize_gpu
 @pytest.mark.parametrize("scalars", [True, False])
 @pytest.mark.parametrize("apply_strict", [True, False])
+@print_when_started
 def test_add(scalars, gpu, apply_strict):
     sdfg = dace.SDFG("test_expansion")
 

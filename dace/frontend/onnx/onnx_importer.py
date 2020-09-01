@@ -90,7 +90,7 @@ class ONNXModel:
             }
 
             if node.HasField("name"):
-                node_name = node.name
+                node_name = clean_onnx_name(node.name)
             else:
                 node_name = node.op_type + "_" + str(i)
 
@@ -330,7 +330,7 @@ class ONNXModel:
                                            dtype=arr.dtype.as_numpy_dtype())
 
         sdfg.expand_library_nodes()
-        sdfg.apply_strict_transformations()
+        #sdfg.apply_strict_transformations()
 
         sdfg(**clean_inputs, **params, **outputs, **inferred_symbols)
 

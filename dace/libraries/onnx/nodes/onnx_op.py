@@ -597,7 +597,7 @@ class ONNXOp(nd.LibraryNode):
 
         # Default: all parameters are on CPU if we execute using cpu
         outputs_on_host = [True for _ in range(len(outputs))]
-        inputs_on_host = [True for _ in range(len(outputs))]
+        inputs_on_host = [True for _ in range(len(inputs))]
 
         actual_node_schedule = node.schedule
         if node.schedule == ScheduleType.CPU_Multicore or node.schedule == ScheduleType.Default:
@@ -625,6 +625,9 @@ class ONNXOp(nd.LibraryNode):
         # maps the connectors for which a copy will be required to the storage type required to be connected to the tasklet
         input_copy_required = defaultdict(dict)
         output_copy_required = defaultdict(dict)
+
+        assert len(node.iter_outputs_in_onnx_order(state)) == len(outputs_on_host)
+        assert len(node.iter_inputs_in_onnx_order(state)) == len(inputs_on_host)
 
         # check outputs
         for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state),
@@ -668,8 +671,9 @@ class ONNXOp(nd.LibraryNode):
                 input_copy_required[edge.dst_conn]['copy_to_array'] = True
 
             if is_device_mismatch:
+                # we need to insert a copy
                 input_copy_required[edge.dst_conn][
-                    'storage'] = StorageType.GPU_Global if provider_index == 1 else StorageType.Default
+                    'storage'] = StorageType.Default if input_on_host else StorageType.GPU_Global
 
         # begin codegen
         ##########################################
@@ -811,6 +815,8 @@ class ONNXOp(nd.LibraryNode):
             "__ort_api->ReleaseExecutableKernel(__ort_kernel_{});\n".format(
                 unique_id))
 
+        tasklet_code += 'fprintf(stderr, "Launching {}\\n");\n'.format(
+            unique_id)
         tasklet_code += "__ort_check_status(__ort_api->ExecutableKernel_Compute(__ort_kernel_{}));\n".format(
             unique_id)
 

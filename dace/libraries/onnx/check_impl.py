@@ -207,7 +207,7 @@ class OpChecker:
             self._ReleaseEnv(self._env)
 
     def add_input(self, dtype: dace.typeclass):
-        self.n_outputs += 1
+        self.n_inputs += 1
         type = ctypes.c_int(
             getattr(
                 self.dll, "GetONNX_TENSOR_ELEMENT_DATA_TYPE_{}".format(
