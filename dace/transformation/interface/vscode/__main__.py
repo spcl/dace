@@ -50,6 +50,10 @@ def reapply_history_until(sdfg_json, index):
     :param sdfg_json:  The SDFG to rewind.
     :param index:      Index of the last history item to apply.
     """
+    from dace import serialize
+    old_meta = serialize.JSON_STORE_METADATA
+    serialize.JSON_STORE_METADATA = False
+
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
         return loaded['error']
@@ -60,13 +64,7 @@ def reapply_history_until(sdfg_json, index):
 
     for i in range(index + 1):
         transformation = history[i]
-        # FIXME: The appending should happen with the call to apply the pattern.
-        # The way it currently stands, the callee must make sure that
-        # append_transformation is called before apply_pattern, because the
-        # original SDFG may be saved incorrectly otherwise. This is not ideal
-        # and needs to be fixed.
         try:
-            original_sdfg.append_transformation(transformation)
             transformation.apply_pattern(original_sdfg)
         except Exception as e:
             print(traceback.format_exc(), file=sys.stderr)
@@ -79,6 +77,7 @@ def reapply_history_until(sdfg_json, index):
             }
 
     new_sdfg = original_sdfg.to_json()
+    serialize.JSON_STORE_METADATA = old_meta
     return {
         'sdfg': new_sdfg,
     }
@@ -87,6 +86,9 @@ def apply_transformation(sdfg_json, transformation):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.transformation.pattern_matching import Transformation
+    from dace import serialize
+    old_meta = serialize.JSON_STORE_METADATA
+    serialize.JSON_STORE_METADATA = False
 
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
@@ -104,13 +106,7 @@ def apply_transformation(sdfg_json, transformation):
                 'details': get_exception_message(e),
             },
         }
-    # FIXME: The appending should happen with the call to apply the pattern. The
-    # way it currently stands, the callee must make sure that
-    # append_transformation is called before apply_pattern, because the original
-    # SDFG may be saved incorrectly otherwise. This is not ideal and needs to be
-    # fixed.
     try:
-        sdfg.append_transformation(revived_transformation)
         revived_transformation.apply_pattern(sdfg)
     except Exception as e:
         print(traceback.format_exc(), file=sys.stderr)
@@ -123,6 +119,7 @@ def apply_transformation(sdfg_json, transformation):
         }
 
     new_sdfg = sdfg.to_json()
+    serialize.JSON_STORE_METADATA = old_meta
     return {
         'sdfg': new_sdfg,
     }
@@ -131,6 +128,13 @@ def get_transformations(sdfg_json):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.transformation.optimizer import SDFGOptimizer
+    from dace import serialize
+    old_meta = serialize.JSON_STORE_METADATA
+    serialize.JSON_STORE_METADATA = False
+    '''
+    from dace.sdfg.graph import SubgraphView
+    from dace.transformation.pattern_matching import SubgraphTransformation
+    '''
 
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
@@ -146,6 +150,24 @@ def get_transformations(sdfg_json):
         transformations.append(transformation.to_json())
         docstrings[type(transformation).__name__] = transformation.__doc__
 
+
+    # selected_states = [n for n in selected_elements if n.type == 'state'] 
+    # selected_nodes = [n for n in selected_elements if n.type == 'node']
+    # if len(selected_states) > 0:
+    #     subgraph = SubgraphView(sdfg, selected_states)
+    # else:
+    #     # TODO: Make sure nodes are selected from the same state
+    #     state = sdfg.node(selected_nodes[0].state_id)
+    #     subgraph = SubgraphView(state, selected_nodes)
+
+    # for xform in SubgraphTransformation.extensions():
+    #     if xform.match(sdfg, subgraph):
+    #         xform_obj = xform(subgraph)
+    #         TODO: Ensure this only goes to the "Selected" list
+    #         transformations.append(xform_obj.to_json())
+    #         docstrings[xform.__name__] = xform_obj.__doc__
+
+    serialize.JSON_STORE_METADATA = old_meta
     return {
         'transformations': transformations,
         'docstrings': docstrings,
