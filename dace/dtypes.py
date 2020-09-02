@@ -1047,6 +1047,36 @@ def validate_name(name):
     return True
 
 
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
+
+
 def can_allocate(storage: StorageType, schedule: ScheduleType):
     """
     Identifies whether a container of a storage type can be allocated in a
