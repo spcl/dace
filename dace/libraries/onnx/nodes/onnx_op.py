@@ -46,37 +46,45 @@ def _add_ort_init_code(sdfg: SDFG):
         OrtKernelSession* __ort_session;
         OrtSessionOptions* __ort_session_options;
 
-        OrtMemoryInfo* __ort_mem_info;
-
-        // End global ORT setup
+        OrtMemoryInfo* __ort_cpu_mem_info;
         """)
 
         sdfg.append_init_code("""
-        __ort_check_status(__ort_api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &__ort_mem_info));
+        __ort_check_status(__ort_api->CreateCpuMemoryInfo(OrtDeviceAllocator, OrtMemTypeDefault, &__ort_cpu_mem_info));
         __ort_check_status(__ort_api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "dace_graph", &__ort_env));
         __ort_check_status(__ort_api->CreateSessionOptions(&__ort_session_options));
         __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CPU(__ort_session_options, /*use_arena=*/0));
         """)
 
-        if any(True for state in sdfg.nodes() for node in state.nodes()
-               if hasattr(node, "schedule")
-               and node.schedule == ScheduleType.GPU_Device):
-            # if the SDFG contains a GPU node, add the CUDA provider
-            sdfg.append_init_code("""
-            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
-            """)
-
-        sdfg.append_init_code("""
-        __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session, 12));
-        """)
 
         session_cleanup_code = """
-        __ort_api->ReleaseMemoryInfo(__ort_mem_info);
+        __ort_api->ReleaseMemoryInfo(__ort_cpu_mem_info);
         __ort_api->ReleaseKernelSession(__ort_session);
         __ort_api->ReleaseSessionOptions(__ort_session_options);
         __ort_api->ReleaseEnv(__ort_env);
         """
+
+        if any(hasattr(node, "schedule")
+               and node.schedule == ScheduleType.GPU_Device for state in sdfg.nodes() for node in state.nodes()):
+            # if the SDFG contains a GPU node, add the CUDA provider and the memory_info
+            sdfg.append_global_code("OrtMemoryInfo* __ort_cuda_mem_info;\n")
+            sdfg.append_global_code("OrtMemoryInfo* __ort_cuda_pinned_mem_info;\n")
+            sdfg.append_init_code("""
+            __ort_check_status(__ort_api->CreateMemoryInfo("Cuda", /*allocator_type=*/OrtDeviceAllocator, /*device=*/0, /*mem_type=*/OrtMemTypeDefault, &__ort_cuda_mem_info));
+            __ort_check_status(__ort_api->CreateMemoryInfo("CudaPinned", /*allocator_type=*/OrtDeviceAllocator, /*device=*/0, /*mem_type=*/OrtMemTypeCPU, &__ort_cuda_pinned_mem_info));
+            __ort_check_status(OrtSessionOptionsAppendExecutionProvider_CUDA(__ort_session_options, /*device=*/0));
+            """)
+            session_cleanup_code = ("""
+            __ort_api->ReleaseMemoryInfo(__ort_cuda_mem_info);
+            __ort_api->ReleaseMemoryInfo(__ort_cuda_pinned_mem_info);
+            """ + session_cleanup_code)
+
+        sdfg.append_global_code("// End global ORT setup\n")
         sdfg.prepend_exit_code(session_cleanup_code)
+        sdfg.append_init_code("""
+        __ort_check_status(__ort_api->CreateKernelSession(__ort_session_options, &__ort_session, 12));
+        """)
+
 
 
 def get_position(schema: ONNXSchema, is_input: bool, parameter_name: str):
@@ -721,6 +729,14 @@ class ONNXOp(nd.LibraryNode):
                  and 'copy_to_array' in output_copy_required[parameter_name])
                 or (parameter_name in input_copy_required
                     and 'copy_to_array' in input_copy_required[parameter_name]))
+            if desc.storage == StorageType.Default:
+                mem_info = "__ort_cpu_mem_info"
+            elif desc.storage == StorageType.GPU_Global:
+                mem_info = "__ort_cuda_mem_info"
+            elif desc.storage == StorageType.CPU_Pinned:
+                mem_info = "__ort_cuda_pinned_mem_info"
+            else:
+                raise ValueError("Unsupported storage type {} for input to ONNX node".format(desc.storage))
             if (isinstance(desc, dt.Scalar) and
                     # when copying to array, the ort value is not a scalar but an array
                     not copy_to_array):
@@ -728,7 +744,7 @@ class ONNXOp(nd.LibraryNode):
                 tasklet_setup_code += """
                 OrtValue* {ort_value_name};
                 __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
-                    __ort_mem_info,
+                    {mem_info},
                     &{edge_connector_name},
                     {data_size} * sizeof({ctype}),
                     nullptr,
@@ -737,6 +753,7 @@ class ONNXOp(nd.LibraryNode):
                     &{ort_value_name}
                 ));
                 """.format(input_output_string=input_output_string,
+                           mem_info=mem_info,
                            edge_connector_name=edge_connector_name,
                            data_size=reduce(lambda x, y: x * y, desc.shape),
                            ctype=desc.dtype.ctype,
@@ -764,7 +781,7 @@ class ONNXOp(nd.LibraryNode):
                 tasklet_setup_code += """
                 OrtValue* {ort_value_name};
                 __ort_check_status(__ort_api->CreateTensorWithDataAsOrtValue(
-                    __ort_mem_info,
+                    {mem_info},
                     {data},
                     {data_size} * sizeof({ctype}),
                     {input_output_string}_{parameter_name}_dims,
@@ -774,6 +791,7 @@ class ONNXOp(nd.LibraryNode):
                 ));
                 """.format(input_output_string=input_output_string,
                            data=data,
+                           mem_info=mem_info,
                            parameter_name=parameter_name,
                            data_size=reduce(lambda x, y: x * y, desc.shape),
                            ctype=desc.dtype.ctype,
