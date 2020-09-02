@@ -124,17 +124,34 @@ def apply_transformation(sdfg_json, transformation):
         'sdfg': new_sdfg,
     }
 
-def get_transformations(sdfg_json):
+def sdfg_find_state(sdfg, element):
+    graph = sdfg.sdfg_list[element['sdfg_id']]
+    if element['id'] >= 0:
+        return graph.nodes()[element['id']]
+    else:
+        return None
+
+def sdfg_find_node(sdfg, element):
+    graph = sdfg.sdfg_list[element['sdfg_id']]
+    if element['state_id'] >= 0:
+        state = graph.nodes()[element['state_id']]
+        node = state.nodes()[element['id']]
+        node.state = state
+        return node
+    else:
+        node = graph.nodes()[element['id']]
+        node.state = None
+        return node
+
+def get_transformations(sdfg_json, selected_elements):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.transformation.optimizer import SDFGOptimizer
     from dace import serialize
     old_meta = serialize.JSON_STORE_METADATA
     serialize.JSON_STORE_METADATA = False
-    '''
     from dace.sdfg.graph import SubgraphView
     from dace.transformation.pattern_matching import SubgraphTransformation
-    '''
 
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
@@ -150,22 +167,30 @@ def get_transformations(sdfg_json):
         transformations.append(transformation.to_json())
         docstrings[type(transformation).__name__] = transformation.__doc__
 
+    selected_states = [sdfg_find_state(sdfg, n) for n in selected_elements if n['type'] == 'state']
+    selected_nodes = [sdfg_find_node(sdfg, n) for n in selected_elements if n['type'] == 'node']
+    subgraph = None
+    if len(selected_states) > 0:
+       subgraph = SubgraphView(sdfg, selected_states)
+    else:
+        violated = False
+        state = None
+        for node in selected_nodes:
+            if state is None:
+                state = node.state
+            elif state != node.state:
+                violated = True
+                break
+        if not violated and state is not None:
+            subgraph = SubgraphView(state, selected_nodes)
 
-    # selected_states = [n for n in selected_elements if n.type == 'state'] 
-    # selected_nodes = [n for n in selected_elements if n.type == 'node']
-    # if len(selected_states) > 0:
-    #     subgraph = SubgraphView(sdfg, selected_states)
-    # else:
-    #     # TODO: Make sure nodes are selected from the same state
-    #     state = sdfg.node(selected_nodes[0].state_id)
-    #     subgraph = SubgraphView(state, selected_nodes)
-
-    # for xform in SubgraphTransformation.extensions():
-    #     if xform.match(sdfg, subgraph):
-    #         xform_obj = xform(subgraph)
-    #         TODO: Ensure this only goes to the "Selected" list
-    #         transformations.append(xform_obj.to_json())
-    #         docstrings[xform.__name__] = xform_obj.__doc__
+    if subgraph is not None:
+        for xform in SubgraphTransformation.extensions():
+            if xform.match(sdfg, subgraph):
+                xform_obj = xform(subgraph)
+                # TODO: Ensure this only goes to the "Selected" list
+                transformations.append(xform_obj.to_json())
+                docstrings[xform.__name__] = xform_obj.__doc__
 
     serialize.JSON_STORE_METADATA = old_meta
     return {
@@ -206,7 +231,8 @@ def run_daemon():
     @daemon.route('/transformations', methods=['POST'])
     def _get_transformations():
         request_json = request.get_json()
-        return get_transformations(request_json['sdfg'])
+        return get_transformations(request_json['sdfg'],
+                                   request_json['selected_elements'])
 
     @daemon.route('/apply_transformation', methods=['POST'])
     def _apply_transformation():
