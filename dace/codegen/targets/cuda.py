@@ -1970,7 +1970,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Optimize conditions if they are always true
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if i >= 3 or (dsym_end[i] < maxel) != False:
+                if i >= 3 or (dsym_end[i] < maxel) != True:
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
