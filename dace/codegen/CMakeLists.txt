@@ -520,10 +520,11 @@ if(DACE_ENABLE_XILINX)
 endif() # DACE_ENABLE_XILINX
 
 
-
+# temporary enable simulator
 set(DACE_ENABLE_RTL ON)
 set(DACE_RTL_FILES "${DACE_SRC_DIR}/rtl/top.v")
 
+# create verilator RTL simulation objects
 if(DACE_ENABLE_RTL)
 
   # find verilator installation
@@ -538,38 +539,20 @@ if(DACE_ENABLE_RTL)
     message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
 
-  # Create a new executable target that will contain all your sources
-  #add_executable( tasklet
-  #sim_main.cpp)
-  # -> we do not build the executable here
-
-  # Add the verilated circuit to the target
-  #verilate( tasklet
-  #          INCLUDE_DIRS "."
-  #          SOURCES top.v
-
-  # add verilated design as shared lib
-  #  add_library(VERILATED_LIB STATIC "/usr/local/share/verilator/include/verilated.cpp")
+  # add verilated design
   add_library(VERILATED_LIB OBJECT)
 
-
   # include verilator
-  set(VERILATOR_INCLUDE "/usr/local/share/verilator/include" "${DACE_SRC_DIR}/rtl/obj_dir")
+  set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir")
   include_directories(${VERILATOR_INCLUDE})
 
+  # verilate design
   verilate(VERILATED_LIB SOURCES ${DACE_RTL_FILES})
 
-  #set(DACE_OBJECTS ${DACE_OBJECTS} ${VERILATED_LIB})
-
-  # add & link library
-  #add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
-  #target_link_libraries(${DACE_PROGRAM_NAME} ${VERILATED_LIB})
-  # do not link here, it is created below, add VERILATED_LIB to the variable instead
+  # add object library for linking
   set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
 
-  # includes: -I obj_dir -I/usr/local/share/verilator/include sim_main.cpp Vtop__ALL.cpp /usr/local/share/verilator/include/verilated.cpp
 endif() # DACE_ENABLE_RTL
-
 
 
 # Create Intel FPGA object files
