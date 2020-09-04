@@ -103,7 +103,7 @@ class DeduplicateAccess(pattern_matching.Transformation):
         subset_set = set(subset_list)
         while True:
             for sa, sb in itertools.product(subset_set, subset_set):
-                if sa == sb:
+                if sa is sb:
                     continue
                 if sa.covers(sb):
                     subset_set.remove(sb)
