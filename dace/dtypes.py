@@ -404,9 +404,10 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -1045,6 +1046,36 @@ def validate_name(name):
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
+
+
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
 
 
 def can_allocate(storage: StorageType, schedule: ScheduleType):

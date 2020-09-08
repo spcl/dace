@@ -126,6 +126,11 @@ class Data(object):
     def veclen(self):
         return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
 
+    
+    @property
+    def ctype(self):
+        return self.dtype.ctype
+
 
 @make_properties
 class Scalar(Data):
