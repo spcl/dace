@@ -35,7 +35,7 @@ def aligned_ndarray(arr, alignment=64):
 # ---------- ----------
 # SDFG
 # ---------- ----------
-def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None):
+def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, veclen=1):
 
     inputs = zip(sources, sizes, types, range(len(sources)))
     outputs = []
@@ -45,10 +45,12 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None):
 
         dest = "f_" + src
 
+        vecType = dace.vector(dtype, veclen)
+
         name, desc = sdfg.add_array(
             dest,
             shape=[size],
-            dtype=dtype,
+            dtype=vecType,
             storage=dtypes.StorageType.FPGA_Global,
             transient=True
         )
@@ -75,7 +77,7 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None):
 
 
 
-def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None):
+def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, veclen=1):
 
     inputs = zip(destinations, sizes, types, range(len(sizes)))
     outputs = []
@@ -85,10 +87,12 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None):
 
         src = "fpga_" + dest
 
+        vecType = dace.vector(dtype, veclen)
+
         name, desc = sdfg.add_array(
             src,
             shape=[size],
-            dtype=dtype,
+            dtype=vecType,
             storage=dtypes.StorageType.FPGA_Global,
             transient=True
         )

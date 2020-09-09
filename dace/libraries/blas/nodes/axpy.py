@@ -20,6 +20,8 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # ---------- ----------
         # SETUP GRAPH
         # ---------- ----------
+        vecType = dace.vector(dtype, vecWidth)
+
         vecAdd_sdfg = dace.SDFG('vecAdd_graph')
         vecAdd_state = vecAdd_sdfg.add_state()
 
@@ -28,9 +30,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # ---------- ----------
         # MEMORY LOCATIONS
         # ---------- ----------
-        vecAdd_sdfg.add_array('_x', shape=[n], dtype=dtype)
-        vecAdd_sdfg.add_array('_y', shape=[n], dtype=dtype)
-        vecAdd_sdfg.add_array('_res', shape=[n], dtype=dtype)
+        vecAdd_sdfg.add_array('_x', shape=[n], dtype=vecType)
+        vecAdd_sdfg.add_array('_y', shape=[n], dtype=vecType)
+        vecAdd_sdfg.add_array('_res', shape=[n], dtype=vecType)
 
         x_in = vecAdd_state.add_read('_x')
         y_in = vecAdd_state.add_read('_y')
@@ -52,8 +54,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
                                      dst_conn='x_con',
                                      memlet=dace.Memlet.simple(
                                          x_in.data,
-                                         'i * {}'.format(vecWidth),
-                                         veclen=int(vecWidth)))
+                                         'i'))
 
         vecAdd_state.add_memlet_path(y_in,
                                      vecMap_entry,
@@ -61,8 +62,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
                                      dst_conn='y_con',
                                      memlet=dace.Memlet.simple(
                                          y_in.data,
-                                         'i * {}'.format(vecWidth),
-                                         veclen=int(vecWidth)))
+                                         'i'))
 
         vecAdd_state.add_memlet_path(vecAdd_tasklet,
                                      vecMap_exit,
@@ -70,8 +70,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
                                      src_conn='z_con',
                                      memlet=dace.Memlet.simple(
                                          z_out.data,
-                                         'i * {}'.format(vecWidth),
-                                         veclen=int(vecWidth)))
+                                         'i'))
 
         return vecAdd_sdfg
 
@@ -96,6 +95,8 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         # ---------- ----------
         # SETUP GRAPH
         # ---------- ----------
+        vecType = dace.vector(dtype, vecWidth)
+
         vecAdd_sdfg = dace.SDFG('vecAdd_graph')
         vecAdd_state = vecAdd_sdfg.add_state()
 
@@ -107,18 +108,15 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         # vecAdd_sdfg.add_scalar('_a', dtype=dtype, storage=dtypes.StorageType.FPGA_Global)
 
         x_in = vecAdd_state.add_stream('_x',
-                                       dtype,
-                                       veclen=vecWidth,
+                                       vecType,
                                        buffer_size=32,
                                        storage=dtypes.StorageType.FPGA_Local)
         y_in = vecAdd_state.add_stream('_y',
-                                       dtype,
-                                       veclen=vecWidth,
+                                       vecType,
                                        buffer_size=32,
                                        storage=dtypes.StorageType.FPGA_Local)
         z_out = vecAdd_state.add_stream('_res',
-                                        dtype,
-                                        veclen=vecWidth,
+                                        vecType,
                                         buffer_size=32,
                                         storage=dtypes.StorageType.FPGA_Local)
 
@@ -139,21 +137,21 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
                                      vecAdd_tasklet,
                                      dst_conn='x_con',
                                      memlet=dace.Memlet.simple(
-                                         x_in.data, '0', veclen=int(vecWidth)))
+                                         x_in.data, '0'))
 
         vecAdd_state.add_memlet_path(y_in,
                                      vecMap_entry,
                                      vecAdd_tasklet,
                                      dst_conn='y_con',
                                      memlet=dace.Memlet.simple(
-                                         y_in.data, '0', veclen=int(vecWidth)))
+                                         y_in.data, '0'))
 
         vecAdd_state.add_memlet_path(vecAdd_tasklet,
                                      vecMap_exit,
                                      z_out,
                                      src_conn='z_con',
                                      memlet=dace.Memlet.simple(
-                                         z_out.data, '0', veclen=int(vecWidth)))
+                                         z_out.data, '0'))
 
         return vecAdd_sdfg
 
@@ -380,7 +378,10 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
         out_memlet = out_edges[0].data
         size = in_memlets[0].subset.size()
-        veclen = in_memlets[0].veclen
+
+        # TODO: check veclen with new native vector types
+        # veclen = in_memlets[0].veclen
+
         if len(size) != 1:
             raise ValueError("axpy only supported on 1-dimensional arrays")
 
@@ -390,9 +391,10 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if size != out_memlet.subset.size():
             raise ValueError("Output of axpy must have same size as input")
 
-        if veclen != in_memlets[1].veclen or veclen != out_memlet.veclen:
-            raise ValueError(
-                "Vector lengths of inputs/outputs to axpy must be identical")
+        # TODO: check veclen with new native vector types
+        # if veclen != in_memlets[1].veclen or veclen != out_memlet.veclen:
+        #     raise ValueError(
+        #         "Vector lengths of inputs/outputs to axpy must be identical")
 
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):

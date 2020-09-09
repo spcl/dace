@@ -54,11 +54,14 @@ def run_test(configs, target, implementation, overwrite_y=False):
 
         ref_norm = 0
         if target == "fpga":
+
+            # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
             queue = Queue()
             p = Process(target=run_program, args=(program, a, b, c, alpha, testN, ref_result, queue))
             p.start()
             p.join()
             ref_norm = queue.get()
+
         elif overwrite_y:
             program(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
             ref_norm = np.linalg.norm(b - ref_result) / testN
@@ -92,11 +95,13 @@ def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
     test_sdfg = dace.SDFG("axpy_test_" + prec + "_v" + str(vecWidth) + "_" + implementation + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
 
+    vecType = dace.vector(precision, vecWidth)
+
     test_sdfg.add_symbol(a.name, precision)
 
-    test_sdfg.add_array('x1', shape=[n], dtype=precision)
-    test_sdfg.add_array('y1', shape=[n], dtype=precision)
-    test_sdfg.add_array('z1', shape=[n], dtype=precision)
+    test_sdfg.add_array('x1', shape=[n], dtype=vecType)
+    test_sdfg.add_array('y1', shape=[n], dtype=vecType)
+    test_sdfg.add_array('z1', shape=[n], dtype=vecType)
 
     x_in = test_state.add_read('x1')
     y_in = test_state.add_read('y1')
@@ -108,23 +113,23 @@ def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
     test_state.add_memlet_path(
         x_in, saxpy_node,
         dst_conn='_x',
-        memlet=Memlet.simple(x_in, "0:n", veclen=vecWidth)
+        memlet=Memlet.simple(x_in, "0:n")
     )
     test_state.add_memlet_path(
         y_in, saxpy_node,
         dst_conn='_y',
-        memlet=Memlet.simple(y_in, "0:n", veclen=vecWidth)
+        memlet=Memlet.simple(y_in, "0:n")
     )
 
     test_state.add_memlet_path(
         saxpy_node, z_out,
         src_conn='_res',
-        memlet=Memlet.simple(z_out, "0:n", veclen=vecWidth)
+        memlet=Memlet.simple(z_out, "0:n")
     )
 
     test_sdfg.expand_library_nodes()
 
-    return test_sdfg.compile(optimizer=False)
+    return test_sdfg.compile()
 
 
 def test_pure():
@@ -135,8 +140,8 @@ def test_pure():
         (1.0, 1, dace.float32, "0"),
         (0.0, 1, dace.float32, "1"),
         (random.random(), 1, dace.float32, "2"),
-        (1.0, 1, dace.float64, "3")
-        # (1.0, 4, dace.float64, "4")
+        (1.0, 1, dace.float64, "3"),
+        (1.0, 4, dace.float64, "4")
     ]
 
     run_test(configs, "pure", "pure")
@@ -190,7 +195,7 @@ def cpu_graph(precision, implementation, testCase="0"):
 
     test_sdfg.expand_library_nodes()
 
-    return test_sdfg.compile(optimizer=False)
+    return test_sdfg.compile()
 
 
 def test_cpu(implementation):
@@ -234,12 +239,14 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     vendor_mark = "x" if vendor == "xilinx" else "i"
     test_sdfg = dace.SDFG("axpy_test_" + vendor_mark + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
+    
+    vecType = dace.vector(precision, vecWidth)
 
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    test_sdfg.add_array('x1', shape=[n], dtype=DATATYPE)
-    test_sdfg.add_array('y1', shape=[n], dtype=DATATYPE)
-    test_sdfg.add_array('z1', shape=[n], dtype=DATATYPE)
+    test_sdfg.add_array('x1', shape=[n], dtype=vecType)
+    test_sdfg.add_array('y1', shape=[n], dtype=vecType)
+    test_sdfg.add_array('z1', shape=[n], dtype=vecType)
 
     saxpy_node = blas.axpy.Axpy("axpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
     saxpy_node.implementation = 'fpga_stream'
@@ -284,7 +291,7 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
 
-    return test_sdfg.compile(optimizer=False)
+    return test_sdfg.compile()
 
 
 def test_fpga(vendor):

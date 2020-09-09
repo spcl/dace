@@ -247,7 +247,8 @@ class streamReadVector(streamReadBase):
             [self.source],
             [self.memSize],
             [self.dtype],
-            bank=bank
+            bank=bank,
+            veclen=self.vecWidth
         )
 
         self.fpga_data = fpga_inputs[0]
@@ -255,6 +256,8 @@ class streamReadVector(streamReadBase):
 
 
     def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+
+        vecType = dace.vector(self.dtype, self.vecWidth)
 
         in_mem, in_name = self.stream(
             state,
@@ -266,8 +269,7 @@ class streamReadVector(streamReadBase):
 
         stream_inp = state.add_stream(
             in_name,
-            self.dtype,
-            veclen=self.vecWidth,
+            vecType,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -278,7 +280,7 @@ class streamReadVector(streamReadBase):
             stream_inp, libNode,
             dst_conn=libConnector,
             memlet=Memlet.simple(
-                stream_inp, "0", num_accesses=self.memSize, veclen=self.vecWidth
+                stream_inp, "0", num_accesses=self.memSize
             )
         )
 
@@ -301,10 +303,11 @@ class streamReadVector(streamReadBase):
         else:
             data_in = state.add_read(src)
 
+        vecType = dace.vector(self.dtype, self.vecWidth)
+
         data_out = state.add_stream(
             dest,
-            self.dtype,
-            veclen=self.vecWidth,
+            vecType,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -339,13 +342,13 @@ class streamReadVector(streamReadBase):
             state.add_memlet_path(
                 data_in, repeatMap_entry, readMap_entry, read_tasklet,
                 dst_conn='inCon',
-                memlet=Memlet.simple(data_in.data, 'i * {}'.format(self.vecWidth), veclen=self.vecWidth)
+                memlet=Memlet.simple(data_in.data, 'i')
             )
 
             state.add_memlet_path(
                 read_tasklet, readMap_exit, repeatMap_exit, data_out,
                 src_conn='outCon',
-                memlet=Memlet.simple(data_out.data, '0', veclen=self.vecWidth)
+                memlet=Memlet.simple(data_out.data, '0')
             )
 
         else:
@@ -353,13 +356,13 @@ class streamReadVector(streamReadBase):
             state.add_memlet_path(
                 data_in, readMap_entry, read_tasklet,
                 dst_conn='inCon',
-                memlet=Memlet.simple(data_in.data, 'i * {}'.format(self.vecWidth), veclen=self.vecWidth)
+                memlet=Memlet.simple(data_in.data, 'i')
             )
 
             state.add_memlet_path(
                 read_tasklet, readMap_exit, data_out,
                 src_conn='outCon',
-                memlet=Memlet.simple(data_out.data, '0', veclen=self.vecWidth)
+                memlet=Memlet.simple(data_out.data, '0')
             )
 
         return data_out, dest
@@ -411,7 +414,8 @@ class streamWriteVector(streamWriteBase):
             [self.destination],
             [self.memSize],
             [self.dtype],
-            bank=bank
+            bank=bank,
+            veclen=self.vecWidth
         )
 
         self.fpga_data = fpga_outputs[0]
@@ -419,6 +423,8 @@ class streamWriteVector(streamWriteBase):
 
 
     def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+
+        vecType = dace.vector(self.dtype, self.vecWidth)
 
         out_mem, out_name = self.stream(
             sdfg,
@@ -432,8 +438,7 @@ class streamWriteVector(streamWriteBase):
 
         stream_out = state.add_stream(
             out_name,
-            self.dtype,
-            veclen=self.vecWidth,
+            vecType,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -444,7 +449,7 @@ class streamWriteVector(streamWriteBase):
             libNode, stream_out,
             src_conn=libConnector,
             memlet=Memlet.simple(
-                stream_out, "0", num_accesses=-1, veclen=self.vecWidth
+                stream_out, "0", num_accesses=-1
             )
         )
 
@@ -461,10 +466,11 @@ class streamWriteVector(streamWriteBase):
             src += srcName + "_" 
         src += "wS"
 
+        vecType = dace.vector(self.dtype, self.vecWidth)
+
         data_in = state.add_stream(
             src,
-            dtype,
-            veclen=self.vecWidth,
+            vecType,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -493,13 +499,13 @@ class streamWriteVector(streamWriteBase):
         state.add_memlet_path(
             data_in, writeMap_entry, write_tasklet,
             dst_conn='inCon',
-            memlet=Memlet.simple(data_in.data, '0', veclen=self.vecWidth)
+            memlet=Memlet.simple(data_in.data, '0')
         )
 
         state.add_memlet_path(
             write_tasklet, writeMap_exit, data_out,
             src_conn='outCon',
-            memlet=Memlet.simple(data_out.data, 'i * {}'.format(self.vecWidth), veclen=self.vecWidth)
+            memlet=Memlet.simple(data_out.data, 'i')
         )
 
         return data_in, src
