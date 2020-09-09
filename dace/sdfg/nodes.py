@@ -1193,4 +1193,4 @@ class LibraryNode(CodeNode):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = cls(match_node_name)
+        transformation_type._match_node = cls
