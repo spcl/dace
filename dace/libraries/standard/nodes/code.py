@@ -99,7 +99,5 @@ class CodeLibraryNode(LibraryNode):
                                self._outputdict,
                                code,
                                language=dtypes.Language.CPP)
-
-        self.implementations['default'] = Expansion
-        Expansion._match_node = self
+        self.register_implementation('default', Expansion)
         self.implementation = 'default'
