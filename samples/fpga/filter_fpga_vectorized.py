@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -100,7 +100,7 @@ def make_compute_state(state):
                               buffer_size=buffer_size,
                               storage=StorageType.FPGA_Global)
     valid_pipe = state.add_stream("_valid_pipe",
-                                  dtype=dtype,
+                                  dtype=dace.bool,
                                   storage=StorageType.FPGA_Global)
     ratio = state.add_scalar("ratio_nested",
                              dtype=dtype,
@@ -116,7 +116,7 @@ constexpr int num_stages = 2 * W;
 using Stage_t = ap_uint<hlslib::ConstLog2(num_stages)>;
 using Count_t = ap_uint<hlslib::ConstLog2(W)>;
 using Vec_t = typename std::remove_reference<decltype(A_pipe_in)>::type::Data_t;
-using Data_t = decltype(ratio);
+using Data_t = decltype(ratio_in);
 
 Vec_t stages[num_stages];
 #pragma HLS ARRAY_PARTITION variable=stages complete
@@ -131,7 +131,7 @@ Vec_t output, next;
 
 Count_t elements_in_output = 0;
 
-unsigned count = 0;
+unsigned _count = 0;
 
 for (unsigned i = 0; i < N / W + 1; ++i) {
   #pragma HLS PIPELINE II=1
@@ -148,7 +148,7 @@ for (unsigned i = 0; i < N / W + 1; ++i) {
   Count_t additional_elements = 0;
   for (unsigned w = 0; w < W; ++w) {
     #pragma HLS UNROLL
-    if (stages[0][w] < ratio) {
+    if (stages[0][w] < ratio_in) {
       ++empty_slots_left;
       non_zero[0][w] = false;
       num_shifts[0][w] = 0;
@@ -216,12 +216,12 @@ for (unsigned i = 0; i < N / W + 1; ++i) {
   if (is_full) {
     output = next;
     next = Vec_t(Data_t(0));
-    ++count;
+    ++_count;
   }
 
 } // End loop
 
-count_out = std::min<unsigned>(W * count + elements_in_output, N);"""
+count_out = std::min<unsigned>(W * _count + elements_in_output, N);"""
 
     tasklet = state.add_tasklet("filter", {"A_pipe_in", "ratio_in"},
                                 {"B_pipe_out", "valid_pipe_out", "count_out"},

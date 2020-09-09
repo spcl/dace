@@ -1,4 +1,5 @@
-# Type inference test with annotated types
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+""" Type inference test with annotated types. """
 
 import dace
 import numpy as np

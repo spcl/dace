@@ -4,10 +4,10 @@ dace.codegen.instrumentation package
 Submodules
 ----------
 
-dace.codegen.instrumentation.cuda\_events module
+dace.codegen.instrumentation.gpu\_events module
 ------------------------------------------------
 
-.. automodule:: dace.codegen.instrumentation.cuda_events
+.. automodule:: dace.codegen.instrumentation.gpu_events
    :members:
    :undoc-members:
    :show-inheritance:

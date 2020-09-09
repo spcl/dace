@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions that implement the GPU transformation
     (with local storage). """
 
@@ -269,7 +270,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
-                        materialize_func=array.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
@@ -341,7 +341,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
-                        materialize_func=array.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from copy import deepcopy as dcpy
 from functools import reduce
@@ -182,12 +183,12 @@ class Memlet(object):
         node.debuginfo = dcpy(self.debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
+        node._is_data_src = self._is_data_src
 
         # Nullify graph references
         node._sdfg = None
         node._state = None
         node._edge = None
-        node._is_data_src = None
 
         return node
 

@@ -1,3 +1,4 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_RUNTIME_H
 #define __DACE_RUNTIME_H
 
@@ -17,12 +18,13 @@
 #include "complex.h"
 #include "pyinterop.h"
 #include "copy.h"
-#include "view.h"
+#include "reduction.h"
 #include "stream.h"
 #include "os.h"
 #include "perf/reporting.h"
 
-#ifdef __CUDACC__
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#include "cuda/cudacommon.cuh"
 #include "cuda/copy.cuh"
 #include "cuda/dynmap.cuh"
 #else

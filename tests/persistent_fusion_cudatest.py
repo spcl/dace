@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import networkx as nx
@@ -316,15 +316,15 @@ def test_persistent_fusion():
 
     sdfg.apply_gpu_transformations()
 
-    tranform = GPUPersistentKernel()
-
     subgraph = SubgraphView(sdfg, [s_reset1, s_update1, s_reset2, s_update2])
-    tranform.kernel_prefix = 'bfs'
-    tranform.apply(sdfg, subgraph)
+    transform = GPUPersistentKernel(subgraph)
+    transform.kernel_prefix = 'bfs'
+    transform.apply(sdfg)
 
     subgraph = SubgraphView(sdfg, [s_init])
-    tranform.kernel_prefix = 'init'
-    tranform.apply(sdfg, subgraph)
+    transform = GPUPersistentKernel(subgraph)
+    transform.kernel_prefix = 'init'
+    transform.apply(sdfg)
 
     sdfg.validate()
 

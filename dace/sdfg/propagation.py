@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Functionality relating to Memlet propagation (deducing external memlets
     from internal memory accesses and scope ranges). """
 
@@ -714,6 +715,7 @@ def propagate_memlet(dfg_state,
                 if new_subset is None:
                     warnings.warn('Subset union failed between %s and %s ' %
                                   (old_subset, tmp_subset))
+                    break
 
         # Some unions failed
         if new_subset is None:

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
 import sympy as sp
@@ -78,7 +79,7 @@ class DetectLoop(pattern_matching.Transformation):
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(sdfg.nx,
                                                        sdfg.start_state)
-        loop_nodes = sdutil.dfs_topological_sort(
+        loop_nodes = sdutil.dfs_conditional(
             sdfg, sources=[begin], condition=lambda _, child: child != guard)
         backedge_found = False
         for node in loop_nodes:
