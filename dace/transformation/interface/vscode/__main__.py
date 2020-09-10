@@ -65,7 +65,9 @@ def reapply_history_until(sdfg_json, index):
     for i in range(index + 1):
         transformation = history[i]
         try:
-            transformation.apply_pattern(original_sdfg)
+            transformation.apply_pattern(
+                original_sdfg.sdfg_list[transformation.sdfg_id]
+            )
         except Exception as e:
             print(traceback.format_exc(), file=sys.stderr)
             sys.stderr.flush()
@@ -107,7 +109,9 @@ def apply_transformation(sdfg_json, transformation):
             },
         }
     try:
-        revived_transformation.apply_pattern(sdfg)
+        revived_transformation.apply_pattern(
+            sdfg.sdfg_list[revived_transformation.sdfg_id]
+        )
     except Exception as e:
         print(traceback.format_exc(), file=sys.stderr)
         sys.stderr.flush()
