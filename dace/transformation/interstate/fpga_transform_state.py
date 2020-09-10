@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import dace
@@ -177,7 +178,6 @@ class FPGATransformState(pattern_matching.Transformation):
                         'fpga_' + node.data,
                         desc.shape,
                         desc.dtype,
-                        materialize_func=desc.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.FPGA_Global,
                         allow_conflicts=desc.allow_conflicts,
@@ -220,7 +220,6 @@ class FPGATransformState(pattern_matching.Transformation):
                         'fpga_' + node.data,
                         desc.shape,
                         desc.dtype,
-                        materialize_func=desc.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.FPGA_Global,
                         allow_conflicts=desc.allow_conflicts,

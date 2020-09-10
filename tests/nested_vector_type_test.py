@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 from dace.memlet import Memlet
@@ -95,7 +95,7 @@ test_state.add_memlet_path(nested_sdfg,
 
 def test_nested_vectorization():
     # Compile
-    compiledSDFG = test_sdfg.compile(optimizer=False)
+    compiledSDFG = test_sdfg.compile()
 
     # Run and verify
     testSize = 96

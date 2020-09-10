@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
 from dace.codegen.compiler import CompilerConfigurationError, CompilationError
@@ -107,7 +108,7 @@ def _test_matmul(implementation,
                  data_layout='CCC',
                  eps=1e-4):
     sdfg = make_sdfg(impl_name, dtype, storage, data_layout)
-    csdfg = sdfg.compile(optimizer=False)
+    csdfg = sdfg.compile()
 
     m, n, k = 32, 31, 30
 
@@ -179,7 +180,7 @@ def test_batchmm():
 
     sdfg = bmmtest.to_sdfg()
     sdfg.apply_gpu_transformations()
-    csdfg = sdfg.compile(optimizer=False)
+    csdfg = sdfg.compile()
 
     b, m, n, k = 3, 32, 31, 30
 

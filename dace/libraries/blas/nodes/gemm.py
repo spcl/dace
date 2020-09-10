@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 from dace.data import Array
@@ -323,14 +324,19 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             gb = nstate.add_access('_b_gpu')
             c = nstate.add_write('_c')
             gc = nstate.add_access('_c_gpu')
+
+            tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
+            tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
+
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
-            nstate.add_edge(ga, None, tasklet, '_a',
+
+            nstate.add_edge(ga, None, tasklet, '_conn_a',
                             dace.Memlet.from_array('_a_gpu', adesc))
-            nstate.add_edge(gb, None, tasklet, '_b',
+            nstate.add_edge(gb, None, tasklet, '_conn_b',
                             dace.Memlet.from_array('_b_gpu', bdesc))
-            nstate.add_edge(tasklet, '_c', gc, None,
+            nstate.add_edge(tasklet, '_conn_c', gc, None,
                             dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 

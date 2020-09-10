@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from io import StringIO
 import os
@@ -87,7 +88,7 @@ class TransformationTester(Optimizer):
                     new_sdfg.generate_code()
 
                 if self.compile:
-                    compiled = new_sdfg.compile(optimizer='')
+                    compiled = new_sdfg.compile()
                     del compiled
 
                 print('PASS', file=self.stdout)

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Simple SDFG command-line compiler. """
 
 import dace
@@ -19,7 +20,7 @@ def main():
     sdfg = dace.SDFG.from_file(filename)
 
     # Compile SDFG
-    sdfg.compile(optimizer=False)
+    sdfg.compile()
 
 
 if __name__ == '__main__':

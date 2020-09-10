@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -171,4 +172,4 @@ if __name__ == '__main__':
     print("=== Generating SDFG ===")
     sdfg = rgf_dense.to_sdfg()
     print("=== Compiling ===")
-    sdfg.compile(optimizer='')
+    sdfg.compile()

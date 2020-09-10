@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation import optimizer
 from dace.transformation.dataflow import GPUTransformMap
@@ -36,8 +37,8 @@ if __name__ == '__main__':
     s2 = prog2.to_sdfg()
     s2.apply_transformations(GPUTransformMap)
 
-    s1func = s1.compile(optimizer='')
-    s2func = s2.compile(optimizer='')
+    s1func = s1.compile()
+    s2func = s2.compile()
 
     s1func(A=A, B=B)
     s2func(A=B, B=C)

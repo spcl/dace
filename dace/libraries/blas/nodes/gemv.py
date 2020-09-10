@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from dace.symbolic import symstr
 from dace.properties import Property

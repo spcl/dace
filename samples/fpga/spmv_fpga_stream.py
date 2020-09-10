@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -676,7 +676,7 @@ def make_main_state(sdfg):
 
     # Receive values of A and x and compute resulting values of b
     row_to_compute_in = state.add_stream("row_to_compute",
-                                         dtype,
+                                         itype,
                                          transient=True,
                                          storage=StorageType.FPGA_Local)
     val_to_compute_in = state.add_stream("val_to_compute",
