@@ -38,16 +38,23 @@ class MemoryPoolCodegen(TargetCodeGenerator):
             if array.transient:
                 original = array.storage
                 if array.storage in self.cpu_storages:
-                    array.lifetime = dace.AllocationLifetime.Pool
-                    self.cpu_size += int((array.total_size * array.dtype.bytes
+                    try:
+                        self.cpu_size += int((array.total_size * array.dtype.bytes
                                           // self._block_size + 1) * self._block_size)
+                    except:
+                        continue
+                    array.lifetime = dace.AllocationLifetime.Pool
                 elif array.storage in self.gpu_storages:
-                    array.lifetime = dace.AllocationLifetime.Pool
-                    self.gpu_size += int((array.total_size * array.dtype.bytes
+                    try:
+                        self.gpu_size += int((array.total_size * array.dtype.bytes
                                           // self._block_size + 1) * self._block_size)
+                    except:
+                        continue
+                    array.lifetime = dace.AllocationLifetime.Pool
+
 
         # Register array allocation/deallocation
-        for dtype in [dace.StorageType.CPU_Heap, dace.StorageType.GPU_Global]:
+        for dtype in [dace.StorageType.CPU_Heap, dace.StorageType.GPU_Global, dace.StorageType.Default]:
             self._dispatcher.register_array_dispatcher(
                 dtype, self,
                 lambda sdfg, node: node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Pool
@@ -59,7 +66,7 @@ class MemoryPoolCodegen(TargetCodeGenerator):
 
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        #callsite_stream.write("//{node}".format(node=node))
+        callsite_stream.write("printf(\"{node}\\n\");".format(node=node))
 
         # state = sdfg.states()[state_id]
         # if state in self.alloc_dealloc_states.keys():
@@ -93,8 +100,8 @@ class MemoryPoolCodegen(TargetCodeGenerator):
         #                         type=array.dtype.ctype
         #                     )
         #                 )
-        '''self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
-                                        function_stream, callsite_stream)'''
+        self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
+                                        function_stream, callsite_stream)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.initialization:
@@ -118,8 +125,17 @@ class MemoryPoolCodegen(TargetCodeGenerator):
                         )
                     )
                 elif array.storage in self.gpu_storages:
+                    #callsite_stream.write(
+                    #    '''{type} *{name} = nullptr;
+                    #        cudaMalloc(&{name}, {size});'''.format(
+                    #        name=t, size=array.total_size * array.dtype.bytes,
+                    #        type=array.dtype.ctype
+                    #    )
+                    #)
+
                     callsite_stream.write(
-                        '''{type} *{name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
+                        '''{type} *{name} = nullptr;
+                            {name} = ({type}*)GPU_Pool.Alloc({size});'''.format(
                             name=t, size=array.total_size * array.dtype.bytes,
                             type=array.dtype.ctype
                         )
@@ -130,11 +146,9 @@ class MemoryPoolCodegen(TargetCodeGenerator):
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         pass
-
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream,
                     callsite_stream):
-        self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge,
-                                      function_stream, callsite_stream)
+        pass
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
         pass
