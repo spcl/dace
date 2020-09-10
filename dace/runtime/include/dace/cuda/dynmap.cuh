@@ -1,31 +1,15 @@
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// * Redistributions of source code must retain the above copyright notice,
-//   this list of conditions and the following disclaimer.
-// * Redistributions in binary form must reproduce the above copyright notice,
-//   this list of conditions and the following disclaimer in the documentation
-//   and/or other materials provided with the distribution.
-// * Neither the names of the copyright holders nor the names of its 
-//   contributors may be used to endorse or promote products derived from this
-//   software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 #ifndef __DACE_DYNMAP_CUH
 #define __DACE_DYNMAP_CUH
 
+#ifdef __CUDACC__
 #include <cooperative_groups.h>
+
+// HIP does not yet support features in cooperative groups used here.
+/*#elif defined(__HIPCC__)
+#include <hip/hip_cooperative_groups.h>
+#endif*/
 
 namespace dace {
 
@@ -55,24 +39,22 @@ namespace dace {
 
         // depending on configuration of scheduler generate smaller union to save space
         template <typename tb_type, typename fg_type>
-        union shared_type {
+        union shared_type_temp {
             tb_type tb; // for tb-level np
             fg_type fg; // fine-grained schedule
         };
 
+        typedef union std::conditional<FINE_GRAINED,
+            shared_type_temp<tb_type, fg_type>,
+            shared_type_temp<tb_type, empty_type>
+        >::type shared_type;
+
 
         template<typename Functor>
-        __device__ static void schedule(index_type localStart, index_type localEnd, index_type localSrc, Functor&& work) {
-
-            typedef union std::conditional<FINE_GRAINED,
-                    shared_type<tb_type, fg_type>,
-                    shared_type<tb_type, empty_type>
-            >::type shared_type;
+        __device__ static void schedule(shared_type& s, index_type localStart, index_type localEnd, index_type localSrc, Functor&& work) {
 
             // defining other local variables
             index_type localSize = localEnd - localStart;
-
-            __shared__ shared_type s;
 
             cg::thread_block block = cg::this_thread_block();
             unsigned int threadRank = block.thread_rank();
@@ -203,5 +185,6 @@ namespace dace {
     };  // struct DynamicMap
 }  // namespace dace
 
+#endif // __CUDACC__
 
 #endif // __DACE_DYNMAP_CUH

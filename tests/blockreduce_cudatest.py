@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from dace.transformation.interstate import GPUTransformSDFG
@@ -28,7 +29,7 @@ state.add_edge(tA, None, red, None, Memlet.simple(tA, '0:2'))
 state.add_edge(red, None, tB, None, Memlet.simple(tB, '0'))
 state.add_edge(tB, None, write_tasklet, 'inp', Memlet.simple(tB, '0'))
 state.add_edge(write_tasklet, 'out', mxi, None,
-               Memlet('B', -1, dace.subsets.Indices(['bi']), 1))
+               Memlet.simple('B', 'bi', num_accesses=-1))
 state.add_edge(mxi, None, mx, None, Memlet.simple(B, 'bi'))
 state.add_edge(mx, None, B, None, Memlet.simple(B, '0:2'))
 sdfg.fill_scope_connectors()

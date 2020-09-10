@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from setuptools import setup, find_packages
 import glob
 import os
@@ -22,8 +23,7 @@ cub_files = [
 ] + [dace_path + 'external/cub/LICENSE.TXT']
 hlslib_files = [
     f[len(dace_path):]
-    for f in glob.glob(dace_path + 'external/hlslib/cmake/**/*',
-                       recursive=True)
+    for f in glob.glob(dace_path + 'external/hlslib/cmake/**/*', recursive=True)
 ] + [
     f[len(dace_path):]
     for f in glob.glob(dace_path + 'external/hlslib/include/**/*',
@@ -35,7 +35,7 @@ with open("README.md", "r") as fp:
 
 setup(
     name='dace',
-    version='0.9.5',
+    version='0.10.0a',
     url='https://github.com/spcl/dace',
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',
@@ -59,13 +59,15 @@ setup(
     },
     include_package_data=True,
     install_requires=[
-        'numpy', 'networkx >= 2.2', 'astunparse', 'sympy == 1.5.1', 'pyyaml', 'ply',
-        'websockets', 'requests', 'flask', 'scikit-build', 'cmake', 'aenum'
+        'numpy', 'networkx >= 2.2', 'astunparse', 'sympy == 1.5.1', 'pyyaml',
+        'ply', 'websockets', 'requests', 'flask', 'scikit-build', 'cmake',
+        'aenum'
     ],
     extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},
     entry_points={
         'console_scripts': [
             'dacelab = dace.frontend.octave.dacelab:main',
-            'diode = diode.diode_server:main', 'sdfv = diode.sdfv:main'
+            'diode = diode.diode_server:main', 'sdfv = diode.sdfv:main',
+            'sdfgcc = dace.codegen.sdfgcc:main'
         ],
     })

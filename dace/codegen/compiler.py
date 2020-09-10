@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Handles compilation of code objects. Creates the proper folder structure,
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
@@ -18,7 +18,7 @@ import warnings
 
 import dace
 from dace.frontend import operations
-from dace import symbolic, data as dt
+from dace import symbolic, data as dt, dtypes
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
@@ -215,11 +215,11 @@ class CompiledSDFG(object):
 
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
-            if not _is_array(arg) and isinstance(atype, dt.Array):
+            if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an object (type %s) to an array in argument "%s"' %
                     (type(arg).__name__, a))
-            elif _is_array(arg) and not isinstance(atype, dt.Array):
+            elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
                     (atype.dtype.ctype, a))
@@ -235,11 +235,14 @@ class CompiledSDFG(object):
                     print(
                         'WARNING: Casting scalar argument "%s" from %s to %s' %
                         (a, type(arg).__name__, atype.dtype.type))
-            elif isinstance(
-                    atype,
-                    dt.Array) and atype.dtype.as_numpy_dtype() != arg.dtype:
-                print('WARNING: Passing %s array argument "%s" to a %s array' %
-                      (arg.dtype, a, atype.dtype.type.__name__))
+            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
+                  and atype.dtype.as_numpy_dtype() != arg.dtype):
+                # Make exception for vector types
+                if (isinstance(atype.dtype, dtypes.vector)
+                        and atype.dtype.vtype.as_numpy_dtype() != arg.dtype):
+                    print(
+                        'WARNING: Passing %s array argument "%s" to a %s array'
+                        % (arg.dtype, a, atype.dtype.type.__name__))
 
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
@@ -271,7 +274,7 @@ class CompiledSDFG(object):
         # Replace arrays with their base host/device pointers
         newargs = tuple(
             (ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
-             atype) if _is_array(arg) else (arg, actype, atype)
+             atype) if dtypes.is_array(arg) else (arg, actype, atype)
             for arg, actype, atype in callparams)
 
         newargs = tuple(
@@ -463,8 +466,9 @@ def generate_program_folder(sdfg,
     else:
         Config.save(os.path.join(out_path, "dace.conf"))
 
-    # Save the SDFG itself
-    sdfg.save(os.path.join(out_path, "program.sdfg"))
+    if sdfg is not None:
+        # Save the SDFG itself
+        sdfg.save(os.path.join(out_path, "program.sdfg"))
 
     return out_path
 
@@ -749,26 +753,11 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
                                             output.getvalue())
 
 
-def _is_array(obj: Any) -> bool:
-    """
-    Returns True if an object implements the ``data_ptr()``,
-    ``__array_interface__`` or ``__cuda_array_interface__`` standards
-    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
-    supported, pointers can be directly obtained using the
-    ``_array_interface_ptr`` function.
-    :param obj: The given object.
-    :return: True iff the object implements the array interface.
-    """
-    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
-            or hasattr(obj, '__cuda_array_interface__')):
-        return hasattr(obj, 'shape') and len(obj.shape) > 0
-    return False
-
-
 def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
     """
-    If the given array implements ``__array_interface__`` (see ``_is_array``),
-    returns the base host or device pointer to the array's allocated memory.
+    If the given array implements ``__array_interface__`` (see
+    ``dtypes.is_array``), returns the base host or device pointer to the
+    array's allocated memory.
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Data descriptor of the array (used to get storage
                        location to determine whether it's a host or GPU device

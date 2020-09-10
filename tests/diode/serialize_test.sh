@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 DIODEBASEPATH="$SCRIPTPATH/../../diode/"

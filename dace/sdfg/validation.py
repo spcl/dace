@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
 import os
@@ -154,7 +155,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise
         except Exception as ex:
             raise InvalidSDFGNodeError("Node validation failed: " + str(ex),
-                                       sdfg, state_id, nid)
+                                       sdfg, state_id, nid) from ex
 
         # Isolated nodes
         ########################################
@@ -262,11 +263,24 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Connector tests
         ########################################
         # Check for duplicate connector names (unless it's a nested SDFG)
-        if (len(node.in_connectors & node.out_connectors) > 0
+        if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
                 and not isinstance(node, nd.NestedSDFG)):
-            dups = node.in_connectors & node.out_connectors
+            dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
+
+        # Check for connectors that are also array/symbol names
+        if isinstance(node, nd.Tasklet):
+            for conn in node.in_connectors.keys():
+                if conn in sdfg.arrays or conn in symbols:
+                    raise InvalidSDFGNodeError(
+                        f"Input connector {conn} already "
+                        "defined as array or symbol", sdfg, state_id, nid)
+            for conn in node.out_connectors.keys():
+                if conn in sdfg.arrays or conn in symbols:
+                    raise InvalidSDFGNodeError(
+                        f"Output connector {conn} already "
+                        "defined as array or symbol", sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
@@ -498,8 +512,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)
              and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            if (e.data.subset.num_elements() !=
-                    e.data.other_subset.num_elements()):
+            if (e.data.src_subset.num_elements() *
+                    sdfg.arrays[src_node.data].veclen !=
+                    e.data.dst_subset.num_elements() *
+                    sdfg.arrays[dst_node.data].veclen):
                 raise InvalidSDFGEdgeError(
                     'Dimensionality mismatch between src/dst subsets', sdfg,
                     state_id, eid)

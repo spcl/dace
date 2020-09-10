@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -97,8 +98,7 @@ class Property:
                         raise TypeError(
                             'Default not properly defined for property')
                 else:
-                    raise TypeError(
-                        'Default not properly defined for property')
+                    raise TypeError('Default not properly defined for property')
 
         if choices is not None:
             for choice in choices:
@@ -208,6 +208,12 @@ class Property:
         if isinstance(val, np.number):
             val = val.item()
 
+        # Edge cases for integer and float types
+        if isinstance(val, int) and self.dtype == float:
+            val = float(val)
+        if isinstance(val, float) and self.dtype == int and val == int(val):
+            val = int(val)
+
         # Check if type matches before setting
         if (self.dtype is not None and not isinstance(val, self.dtype)
                 and not (val is None and self.allow_none)):
@@ -222,8 +228,9 @@ class Property:
                     type(val).__name__, self.attr_name, self.dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None and isinstance(self.choices,
-                                                   (list, tuple, set)):
+        if self.choices is not None \
+                and isinstance(self.choices,(list, tuple, set)) \
+                and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(
                     val, self.choices))
@@ -387,10 +394,9 @@ def make_properties(cls):
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
             if hasattr(obj, name):
-                raise PropertyError(
-                    "Property {} already assigned in {}".format(
-                        name,
-                        type(obj).__name__))
+                raise PropertyError("Property {} already assigned in {}".format(
+                    name,
+                    type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
                     setattr(obj, name, prop.default)
@@ -442,9 +448,8 @@ def indirect_property(cls, f, prop, override):
 
     # Add the property to the class
     if not override and hasattr(cls, prop_name):
-        raise TypeError(
-            "Property \"{}\" already exists in class \"{}\"".format(
-                prop_name, cls.__name__))
+        raise TypeError("Property \"{}\" already exists in class \"{}\"".format(
+            prop_name, cls.__name__))
     setattr(cls, prop_name, prop_indirect)
 
 
@@ -549,6 +554,37 @@ class ListProperty(Property):
             return [self.element_type.from_json(elem) for elem in data]
         # Type-checks (casts) to the element type
         return list(map(self.element_type, data))
+
+
+class TransformationHistProperty(Property):
+    """ Property type for transformation histories.
+    """
+    def __init__(self, *args, **kwargs):
+        """
+        Create a List property with element type Transformation.
+        :param args: Other arguments (inherited from Property).
+        :param kwargs: Other keyword arguments (inherited from Property).
+        """
+
+        kwargs['dtype'] = list
+        super().__init__(*args, **kwargs)
+
+    def __set__(self, obj, val):
+        super(TransformationHistProperty, self).__set__(obj, val)
+
+    def to_json(self, hist):
+        if hist is None:
+            return None
+        return [elem.to_json() for elem in hist]
+
+    def from_json(self, data, sdfg=None):
+        if data is None:
+            return data
+        if not isinstance(data, list):
+            raise TypeError(
+                'TransformationHistProperty expects a list input, got %s' % data
+            )
+        return [dace.serialize.from_json(elem) for elem in data]
 
 
 class DictProperty(Property):
@@ -875,24 +911,9 @@ class LambdaProperty(Property):
         super(LambdaProperty, self).__set__(obj, val)
 
 
-class SubgraphProperty(Property):
-    """ Property class that provides read-only (loading from json value is disabled)
-        access to a dict value. Intended for Transformation.subgraph.
-    """
-    def __set__(self, obj, val):
-        if val is not None:
-            super(SubgraphProperty, self).__set__(obj, val)
-
-    def to_json(self, obj):
-        return str(obj)
-
-    def from_json(self, s, sdfg=None):
-        return None
-
-
 class CodeBlock(object):
-    """ Helper class that represents code blocks with language. 
-        Used in `CodeProperty`, implemented as a list of AST statements if 
+    """ Helper class that represents code blocks with language.
+        Used in `CodeProperty`, implemented as a list of AST statements if
         language is Python, or a string otherwise.
     """
     def __init__(self,
@@ -916,7 +937,7 @@ class CodeBlock(object):
             self.code = code
 
     def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
-        """ 
+        """
         Returns the set of free symbol names in this code block, excluding
         the given symbol names.
         """

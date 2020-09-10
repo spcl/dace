@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python decorators for DaCe functions. """
 
 from __future__ import print_function
@@ -17,6 +18,8 @@ def program(f, *args, **kwargs) -> parser.DaceProgram:
     # be translated
     return parser.DaceProgram(f, args, kwargs)
 
+
+function = program
 
 # Internal DaCe decorators, these are not actually run, but rewritten
 

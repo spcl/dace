@@ -71,6 +71,14 @@ dace.serialize module
    :undoc-members:
    :show-inheritance:
 
+dace.sdfg module
+---------------------
+
+.. automodule:: dace.sdfg
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.subsets module
 -------------------
 

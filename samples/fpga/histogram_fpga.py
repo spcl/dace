@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -101,7 +101,7 @@ def make_init_buffer_state(sdfg):
 
     entry, exit = state.add_map("init_map", {"i": "0:num_bins"})
     tasklet = state.add_tasklet("zero", {}, {"out"}, "out = 0")
-    state.add_nedge(entry, tasklet, dace.memlet.EmptyMemlet())
+    state.add_nedge(entry, tasklet, dace.memlet.Memlet())
     state.add_memlet_path(tasklet,
                           exit,
                           hist_buffer,

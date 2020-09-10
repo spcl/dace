@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
@@ -30,7 +31,11 @@ def function_to_ast(f):
     # TypeError: X is not a module, class, method, function, traceback, frame,
     # or code object; OR OSError: could not get source code
     except (TypeError, OSError):
-        raise TypeError('cannot obtain source code for dace program')
+        raise TypeError('Cannot obtain source code for dace program. This may '
+                        'happen if you are using the "python" default '
+                        'interpreter. Please either use the "ipython" '
+                        'interpreter, a Jupyter or Colab notebook, or place '
+                        'the source code in a file and import it.')
 
     src_file = inspect.getfile(f)
     _, src_line = inspect.findsource(f)
@@ -49,6 +54,8 @@ def rname(node):
         return str(node.n)
     if isinstance(node, ast.Name):  # form x
         return node.id
+    if isinstance(node, ast.Constant):
+        return str(node.value)
     if isinstance(node, ast.Subscript):  # form A[a:b,...,c:d]
         return rname(node.value)
     if isinstance(node, ast.Attribute):  # form @dace.attr_noparams
@@ -255,8 +262,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                                 or field == 'orelse') and isinstance(
                                     value, ast.Expr):
                             clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname,
-                                       False):
+                            if getattr(self, "visit_TopLevel" + clsname, False):
                                 value = getattr(self, "visit_TopLevel" +
                                                 clsname)(value)
                             else:
@@ -298,10 +304,8 @@ class ExtNodeVisitor(ast.NodeVisitor):
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field == 'orelse'):
                             clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname,
-                                       False):
-                                getattr(self,
-                                        "visit_TopLevel" + clsname)(value)
+                            if getattr(self, "visit_TopLevel" + clsname, False):
+                                getattr(self, "visit_TopLevel" + clsname)(value)
                             else:
                                 self.visit(value)
                         else:
@@ -351,7 +355,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
+                and isinstance(node.id, str)):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)

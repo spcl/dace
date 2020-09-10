@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions that implement copying a nested SDFG
     and its dependencies to a given device. """
 
@@ -28,7 +29,7 @@ class CopyToDevice(pattern_matching.Transformation):
         the nested SDFG to that storage.
     """
 
-    _nested_sdfg = nodes.NestedSDFG("", graph.OrderedDiGraph(), set(), set())
+    _nested_sdfg = nodes.NestedSDFG("", graph.OrderedDiGraph(), {}, {})
 
     storage = properties.Property(dtype=dtypes.StorageType,
                                   desc="Nested SDFG storage",

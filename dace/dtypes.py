@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -6,6 +7,7 @@ import inspect
 import numpy
 import re
 from functools import wraps
+from typing import Any
 from dace.config import Config
 from dace.registry import extensible_enum
 
@@ -15,7 +17,6 @@ class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
-    Immaterial = ()  # Data that is materialized on access
     Register = ()  # Local data on registers, stack, or equivalent memory
     CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
     CPU_Heap = ()  # Host memory allocated on heap
@@ -42,6 +43,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_Device = ()  # Kernel
     GPU_ThreadBlock = ()  # Thread-block code
     GPU_ThreadBlock_Dynamic = ()  # Allows rescheduling work within a block
+    GPU_Persistent = ()
     FPGA_Device = ()
 
 
@@ -50,6 +52,7 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
+    ScheduleType.GPU_Persistent,
 ]
 
 
@@ -69,6 +72,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+    Exchange = ()  # Set new value, return old value
 
     # Only supported in OpenMP
     Sub = ()  # Subtraction
@@ -111,7 +115,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
-    CUDA_Events = ()
+    GPU_Events = ()
 
 
 # Maps from ScheduleType to default StorageType
@@ -120,6 +124,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
+    ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
@@ -132,17 +137,16 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
+    ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
 }
 
-# Identifier for dynamic number of Memlet accesses.
-DYNAMIC = -1
-
 # Translation of types to C types
 _CTYPES = {
+    None: "void",
     int: "int",
     float: "float",
     bool: "bool",
@@ -162,8 +166,47 @@ _CTYPES = {
     numpy.complex128: "dace::complex128",
 }
 
+# Translation of types to OpenCL types
+_OCL_TYPES = {
+    None: "void",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    numpy.bool: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
+# Translation of types to OpenCL vector types
+_OCL_VECTOR_TYPES = {
+    numpy.int8: "char",
+    numpy.uint8: "uchar",
+    numpy.int16: "short",
+    numpy.uint16: "ushort",
+    numpy.int32: "int",
+    numpy.uint32: "uint",
+    numpy.int64: "long",
+    numpy.uint64: "ulong",
+    numpy.float16: "half",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
 # Translation of types to ctypes types
 _FFI_CTYPES = {
+    None: ctypes.c_void_p,
     int: ctypes.c_int,
     float: ctypes.c_float,
     bool: ctypes.c_bool,
@@ -185,6 +228,7 @@ _FFI_CTYPES = {
 
 # Number of bytes per data type
 _BYTES = {
+    None: 0,
     int: 4,
     float: 4,
     bool: 1,
@@ -211,7 +255,7 @@ class typeclass(object):
         These types are defined for three reasons:
             1. Controlling DaCe types
             2. Enabling declaration syntax: `dace.float32[M,N]`
-            3. Enabling extensions such as `dace.struct` and `dace.immaterial`
+            3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
     def __init__(self, wrapped_type):
         # Convert python basic types
@@ -248,10 +292,9 @@ class typeclass(object):
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
-        self.materialize_func = None  # Materialize function for immaterial types
 
     def __hash__(self):
-        return hash((self.type, self.ctype, self.materialize_func))
+        return hash((self.type, self.ctype))
 
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
@@ -270,10 +313,14 @@ class typeclass(object):
         return False
 
     def to_json(self):
+        if self.type is None:
+            return None
         return self.type.__name__
 
     @staticmethod
     def from_json(json_obj, context=None):
+        if json_obj is None:
+            return typeclass(None)
         return json_to_typeclass(json_obj, context)
 
     # Create a new type
@@ -299,6 +346,21 @@ class typeclass(object):
 
     def __repr__(self):
         return self.ctype
+
+    @property
+    def base_type(self):
+        return self
+
+    @property
+    def veclen(self):
+        return 1
+
+    @property
+    def ocltype(self):
+        return _OCL_TYPES[self.type]
+
+    def as_arg(self, name):
+        return self.ctype + ' ' + name
 
 
 def max_value(dtype: typeclass):
@@ -328,8 +390,8 @@ def min_value(dtype: typeclass):
 
 
 def result_type_of(lhs, *rhs):
-    """ 
-    Returns the largest between two or more types (dace.types.typeclass) 
+    """
+    Returns the largest between two or more types (dace.types.typeclass)
     according to C semantics.
     """
     if len(rhs) == 0:
@@ -342,16 +404,27 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
-    if lhs == None:
+    if lhs is None or lhs.type is None:
         return rhs  # Use RHS even if it's None
-    if rhs == None:
+    if rhs is None or rhs.type is None:
         return lhs  # Use LHS
+
+    # Vector types take precedence, largest vector size first
+    if isinstance(lhs, vector) and not isinstance(rhs, vector):
+        return lhs
+    elif not isinstance(lhs, vector) and isinstance(rhs, vector):
+        return rhs
+    elif isinstance(lhs, vector) and isinstance(rhs, vector):
+        if lhs.veclen == rhs.veclen:
+            return vector(result_type_of(lhs.vtype, rhs.vtype), lhs.veclen)
+        return lhs if lhs.veclen > rhs.veclen else rhs
 
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
@@ -398,7 +471,6 @@ class pointer(typeclass):
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
-        self.materialize_func = None
 
     def to_json(self):
         return {'type': 'pointer', 'dtype': self._typeclass.to_json()}
@@ -417,13 +489,75 @@ class pointer(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
+    @property
+    def base_type(self):
+        return self._typeclass
 
-def immaterial(dace_data, materialize_func):
-    """ A data type with a materialize/serialize function. Data objects with
-        this type do not allocate new memory. Whenever it is accessed, the
-        materialize/serialize function is invoked instead. """
-    dace_data.materialize_func = materialize_func
-    return dace_data
+    @property
+    def ocltype(self):
+        return f"{self.type.ocltype}*"
+
+
+class vector(typeclass):
+    """
+    A data type for a vector-type of an existing typeclass.
+
+    Example use: `dace.vector(dace.float32, 4)` becomes float4.
+    """
+    def __init__(self, dtype: typeclass, vector_length: int):
+        self.vtype = dtype
+        self.type = dtype.type
+        self._veclen = vector_length
+        self.bytes = dtype.bytes * vector_length
+        self.dtype = self
+
+    def to_json(self):
+        return {
+            'type': 'vector',
+            'dtype': self.vtype.to_json(),
+            'elements': str(self.veclen)
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic
+        return vector(json_to_typeclass(json_obj['dtype'], context),
+                      pystr_to_symbolic(json_obj['elements']))
+
+    @property
+    def ctype(self):
+        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+
+    @property
+    def ocltype(self):
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type] * self.veclen
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
+    @property
+    def base_type(self):
+        return self.vtype
+
+    @property
+    def veclen(self):
+        return self._veclen
+
+    @veclen.setter
+    def veclen(self, val):
+        self._veclen = val
 
 
 class struct(typeclass):
@@ -440,7 +574,6 @@ class struct(typeclass):
         self.ctype = name
         self.ctype_unaligned = name
         self.dtype = self
-        self.materialize_func = None
         self._parse_field_and_types(**fields_and_types)
 
     @property
@@ -566,7 +699,6 @@ class callback(typeclass):
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
         self.bytes = int64.bytes
-        self.materialize_func = None
         self.type = self
         self.ctype = self
 
@@ -591,7 +723,7 @@ class callback(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
-    def signature(self, name):
+    def as_arg(self, name):
         from dace import data
 
         return_type_cstring = (self.return_type.ctype
@@ -635,8 +767,7 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i],
-                                                     data_type,
+                list_of_other_inputs[i] = ptrtonumpy(other_inputs[i], data_type,
                                                      non_symbolic_sizes)
             return orig_function(*list_of_other_inputs)
 
@@ -836,12 +967,12 @@ class DebugInfo:
         IDE and debugging purposes. """
     def __init__(self,
                  start_line,
-                 start_column,
-                 end_line,
-                 end_column,
+                 start_column=0,
+                 end_line=-1,
+                 end_column=0,
                  filename=None):
         self.start_line = start_line
-        self.end_line = end_line
+        self.end_line = end_line if end_line >= 0 else start_line
         self.start_column = start_column
         self.end_column = end_column
         self.filename = filename
@@ -917,11 +1048,41 @@ def validate_name(name):
     return True
 
 
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
+
+
 def can_allocate(storage: StorageType, schedule: ScheduleType):
-    """ 
+    """
     Identifies whether a container of a storage type can be allocated in a
-    specific schedule. Used to determine arguments to subgraphs by the 
-    innermost scope that a container can be allocated in. For example, 
+    specific schedule. Used to determine arguments to subgraphs by the
+    innermost scope that a container can be allocated in. For example,
     FPGA_Global memory cannot be allocated from within the FPGA scope, or
     GPU shared memory cannot be allocated outside of device-level code.
 
@@ -947,9 +1108,27 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
-            ScheduleType.GPU_ThreadBlock_Dynamic
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic,
+            ScheduleType.GPU_Persistent,
         ]
 
     # The rest (Registers) can be allocated everywhere
     return True
+
+
+def is_array(obj: Any) -> bool:
+    """
+    Returns True if an object implements the ``data_ptr()``,
+    ``__array_interface__`` or ``__cuda_array_interface__`` standards
+    (supported by NumPy, Numba, CuPy, PyTorch, etc.). If the interface is
+    supported, pointers can be directly obtained using the
+    ``_array_interface_ptr`` function.
+    :param obj: The given object.
+    :return: True iff the object implements the array interface.
+    """
+    if (hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__')
+            or hasattr(obj, '__cuda_array_interface__')):
+        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    return False

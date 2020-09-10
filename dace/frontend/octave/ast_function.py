@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import copy
 
@@ -212,11 +213,11 @@ class AST_BuiltInFunCall(AST_Node):
             if self.funname.get_name() == "zeros":
                 tasklet = sdfg.nodes()[state].add_tasklet(
                     'zero', {}, {'out'}, "out=0")
-                s.add_edge(men, None, tasklet, None, dace.memlet.EmptyMemlet())
+                s.add_edge(men, None, tasklet, None, dace.memlet.Memlet())
             elif self.funname.get_name() == "rand":
                 tasklet = sdfg.nodes()[state].add_tasklet(
                     'rand', {}, {'out'}, "out=drand48()")
-                s.add_edge(men, None, tasklet, None, dace.memlet.EmptyMemlet())
+                s.add_edge(men, None, tasklet, None, dace.memlet.Memlet())
             elif self.funname.get_name() == "sqrt":
                 A = self.args[0].get_datanode(sdfg, state)
                 tasklet = sdfg.nodes()[state].add_tasklet(
