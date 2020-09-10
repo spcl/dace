@@ -204,7 +204,7 @@ if __name__ == '__main__':
                 times[i] = time.time()
                 sess_run(feed_dict={output_backprop: test_grads, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"time": times[i], "version": "cudnn", "sample": num}
+                dict1 = {"time": times[i], "version": "DaCe + cuDNN", "sample": num}
                 rows_list.append(dict1)
 
         start = time.time()
@@ -216,11 +216,12 @@ if __name__ == '__main__':
                 times[i] = time.time()
                 sess_tf.run(input_gradients, feed_dict={output_backprop: test_grads, filter: test_filter})
                 times[i] = time.time() - times[i]
-                dict1 = {"time": times[i], "version": "tf", "sample": num}
+                dict1 = {"time": times[i], "version": "TensorFlow", "sample": num}
                 rows_list.append(dict1)
 
     panda_set_1 = pd.DataFrame(rows_list)
     ax = sns.barplot(x="sample", y="time", hue='version', data=panda_set_1, ci=95, estimator=np.median)
+    ax.set(xlabel="Configuration", ylabel="Time [s]")
     plt.show()
     ax.figure.savefig("backpropimg.png")
 
@@ -257,7 +258,7 @@ if __name__ == '__main__':
                 times[i] = time.time()
                 sess_run(feed_dict={input: test_input, output_backprop: test_grads})
                 times[i] = time.time() - times[i]
-                dict1 = {"time": times[i], "version": "cudnn", "sample": num}
+                dict1 = {"time": times[i], "version": "DaCe + cuDNN", "sample": num}
                 rows_list.append(dict1)
 
 
@@ -270,10 +271,11 @@ if __name__ == '__main__':
                 times[i] = time.time()
                 sess_tf.run(filter_gradients, feed_dict={input: test_input, output_backprop: test_grads})
                 times[i] = time.time() - times[i]
-                dict1 = {"time": times[i], "version": "tf", "sample": num}
+                dict1 = {"time": times[i], "version": "TensorFlow", "sample": num}
                 rows_list.append(dict1)
 
     panda_set_1 = pd.DataFrame(rows_list)
     ax = sns.barplot(x="sample", y="time", hue='version', data=panda_set_1, ci=95, estimator=np.median)
+    ax.set(xlabel="Configuration", ylabel="Time [s]")
     plt.show()
     ax.figure.savefig("backpropfltr.png")
