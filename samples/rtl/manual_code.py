@@ -23,10 +23,7 @@ sdfg.append_global_code(cpp_code='''
         // include common routines
         #include <verilated.h>
         
-        
-
-#include <iostream>
-
+        #include <iostream>
         
         // include model header, generated from verilating "top.v"
         #include "Vtop.h"
@@ -100,7 +97,7 @@ tasklet = state.add_tasklet(
         delete top;
         top = NULL;
         ''',
-    language=dace.Language.CPP)
+    language=dace.Language.RTL)
 
 # add input/output array
 A = state.add_read('A')
