@@ -260,7 +260,7 @@ if(DACE_ENABLE_HIP)
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
     # Compile and run a test program
-    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o 
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
       "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
       OUTPUT_VARIABLE _arch_compout
       RESULT_VARIABLE _arch_res)
@@ -294,7 +294,53 @@ if(DACE_ENABLE_HIP)
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
-  
+
+  set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
+  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
+  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
+endif() # DACE_ENABLE_HIP
+
+
+# Create HIP object files
+if(DACE_ENABLE_HIP)
+  # Get local AMD architectures
+  if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
+    # Compile and run a test program
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
+      "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+      OUTPUT_VARIABLE _arch_compout
+      RESULT_VARIABLE _arch_res)
+    if(_arch_res EQUAL 0)
+      execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+	OUTPUT_VARIABLE _arch_out
+	RESULT_VARIABLE _arch_runres)
+    endif()
+
+    if((_arch_res EQUAL 0) AND (_arch_runres EQUAL 0))
+      string(REGEX REPLACE "\n" ";" _arch_out "${_arch_out}")
+      list(GET _arch_out -1 _local_arch)
+      string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
+      set(LOCAL_HIP_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local AMD GPUs for compilation")
+      message(STATUS "Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
+    else()
+      if(_arch_res EQUAL 0)
+	set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
+      endif()
+      message(STATUS "No local HIP-capable GPUs found")
+    endif()
+  endif()
+
+  # Add flags to compile for local AMD architectures
+  foreach(var ${LOCAL_HIP_ARCHITECTURES})
+    list(APPEND HIP_HIPCC_FLAGS --offload-arch=gfx${var})
+  endforeach()
+
+  # Add flags from dace config
+  list(APPEND HIP_HIPCC_FLAGS ${EXTRA_HIP_FLAGS})
+
+  # Add include directories for other files
+  set(DACE_LIBS ${DACE_LIBS} hip::host)
+
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
@@ -519,6 +565,42 @@ if(DACE_ENABLE_XILINX)
   endif()
 
 endif() # DACE_ENABLE_XILINX
+
+
+
+set(DACE_ENABLE_RTL ON)
+set(DACE_RTL_FILES "${DACE_SRC_DIR}/rtl/top.v")
+
+if(DACE_ENABLE_RTL)
+
+  # find verilator installation
+  find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
+  if (NOT verilator_FOUND)
+    message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
+  endif()
+
+  # check minimal version requirements
+  set(VERILATOR_MIN_VERSION "4.039")
+  if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
+    message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
+  endif()
+
+  # add verilated design
+  add_library(VERILATED_LIB OBJECT)
+
+  # include verilator
+  set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir")
+  include_directories(${VERILATOR_INCLUDE})
+
+  # verilate design
+  verilate(VERILATED_LIB SOURCES ${DACE_RTL_FILES})
+
+  # add object library for linking
+  set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
+
+endif() # DACE_ENABLE_RTL
+
+
 
 
 # temporary enable simulator

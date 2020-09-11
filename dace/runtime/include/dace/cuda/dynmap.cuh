@@ -11,6 +11,11 @@
 #include <hip/hip_cooperative_groups.h>
 #endif*/
 
+// HIP does not yet support features in cooperative groups used here.
+/*#elif defined(__HIPCC__)
+#include <hip/hip_cooperative_groups.h>
+#endif*/
+
 namespace dace {
 
     namespace cg = cooperative_groups;
