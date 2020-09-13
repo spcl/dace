@@ -87,7 +87,6 @@ def reapply_history_until(sdfg_json, index):
 def apply_transformation(sdfg_json, transformation):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
-    from dace.transformation.pattern_matching import Transformation
     from dace import serialize
     old_meta = serialize.JSON_STORE_METADATA
     serialize.JSON_STORE_METADATA = False
@@ -98,7 +97,7 @@ def apply_transformation(sdfg_json, transformation):
     sdfg = loaded['sdfg']
 
     try:
-        revived_transformation = Transformation.from_json(transformation)
+        revived_transformation = serialize.from_json(transformation)
     except Exception as e:
         print(traceback.format_exc(), file=sys.stderr)
         sys.stderr.flush()
