@@ -502,6 +502,11 @@ class SDFG(OrderedDiGraph):
         initial state of the SDFG to return to and play back the history.
         :param transformation: The transformation to append.
         """
+        # Make sure the transformation is appended to the root SDFG.
+        if self.sdfg_id != 0:
+            self.sdfg_list[0].append_transformation(transformation)
+            return
+
         if not self.orig_sdfg:
             clone = copy.deepcopy(self)
             clone.transformation_hist = []
