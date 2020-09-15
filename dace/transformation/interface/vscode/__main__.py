@@ -191,7 +191,6 @@ def get_transformations(sdfg_json, selected_elements):
         for xform in SubgraphTransformation.extensions():
             if xform.match(sdfg, subgraph):
                 xform_obj = xform(subgraph)
-                # TODO: Ensure this only goes to the "Selected" list
                 transformations.append(xform_obj.to_json())
                 docstrings[xform.__name__] = xform_obj.__doc__
 
