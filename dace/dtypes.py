@@ -813,6 +813,39 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
+# Helper function to determine whether a global variable is a constant
+_CONSTANT_TYPES = [
+    int,
+    float,
+    complex,
+    str,
+    bool,
+    numpy.bool_,
+    numpy.intc,
+    numpy.intp,
+    numpy.int8,
+    numpy.int16,
+    numpy.int32,
+    numpy.int64,
+    numpy.uint8,
+    numpy.uint16,
+    numpy.uint32,
+    numpy.uint64,
+    numpy.float16,
+    numpy.float32,
+    numpy.float64,
+    numpy.complex64,
+    numpy.complex128,
+    typeclass,  # , type
+]
+
+
+def isconstant(var):
+    """ Returns True if a variable is designated a constant (i.e., that can be
+        directly generated in code). """
+    return type(var) in _CONSTANT_TYPES
+
+
 bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -867,37 +900,6 @@ TYPECLASS_STRINGS = [
 
 #######################################################
 # Allowed types
-
-# Helper function to determine whether a global variable is a constant
-_CONSTANT_TYPES = [
-    int,
-    float,
-    complex,
-    str,
-    numpy.intc,
-    numpy.intp,
-    numpy.int8,
-    numpy.int16,
-    numpy.int32,
-    numpy.int64,
-    numpy.uint8,
-    numpy.uint16,
-    numpy.uint32,
-    numpy.uint64,
-    numpy.float16,
-    numpy.float32,
-    numpy.float64,
-    numpy.complex64,
-    numpy.complex128,
-    typeclass,  # , type
-]
-
-
-def isconstant(var):
-    """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code). """
-    return type(var) in _CONSTANT_TYPES
-
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
 _ALLOWED_MODULES = {
