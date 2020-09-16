@@ -66,9 +66,9 @@ those datatypes.
 **NOTE: This is an experimental feature**  
 The arithmetic conversions for most binary operators are implemented with casting:
 - If any of the operands is of complex type, but the other operand is a float,
-  int or bool, then it is casted to the same complex type.
+  int or bool, then it is cast to the same complex type.
 - If any of the operands is of float type, but the other operand is int or bool,
-  the it is casted to the same float type.
+  the it is cast to the same float type.
 Some binary operations are handled differently, as described in the sections below.
 
 ### 6.2 Atoms
@@ -97,7 +97,7 @@ Unsupported
 
 ### 6.5 The power operator
 Supported. If the base is an integer and the exponent a signed integer, both
-operands are casted to float64 and the result is also of type float64.
+operands are cast to float64 and the result is also of type float64.
 
 ### 6.6 Unary arithmetic and bitwise operations
 Supported
