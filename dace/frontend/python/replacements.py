@@ -946,6 +946,12 @@ def _array_array_binop(visitor: 'ProgramVisitor',
     (out_shape, all_idx_dict, out_idx,
      left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
 
+    # Fix for Scalars
+    if isinstance(left_arr, data.Scalar):
+        left_idx = subsets.Range([(0, 0, 1)])
+    if isinstance(right_arr, data.Scalar):
+        right_idx = subsets.Range([(0, 0, 1)])
+
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    left_arr.storage)
     
@@ -1004,7 +1010,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
     else:
         left_arr = None
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-        left_shape = left_arr.shape
+        left_shape = [1]
         right_arr = sdfg.arrays[right_operand]
         right_type = right_arr.dtype
         right_shape = right_arr.shape
@@ -1334,8 +1340,27 @@ def _const_const_binop(visitor: 'ProgramVisitor',
                        opcode: str):
     '''Both operands are Constants (or Symbols)'''
 
+    if isinstance(left_operand, Number):
+        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+    else:
+        left_type = left_operand.dtype
+    if isinstance(right_operand, Number):
+        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    else:
+        right_type = right_operand.dtype
+    _, left_cast, right_cast = _convert_type(left_type, right_type, operator)
+
+    if isinstance(left_operand, Number) and left_cast is not None:
+        left = left_cast(left_operand)
+    else:
+        left = left_operand
+    if isinstance(right_operand, Number) and right_cast is not None:
+        right = right_cast(right_operand)
+    else:
+        right = right_operand
+
     expr = 'l {o} r'.format(o=opcode)
-    vars = {'l': left_operand, 'r': right_operand}
+    vars = {'l': left, 'r': right}
     return eval(expr, vars)
 
 
