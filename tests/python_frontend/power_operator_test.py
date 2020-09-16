@@ -25,14 +25,13 @@ def test_pow_op_preced():
 
 
 @dace.program
-def pow_neg_exp(a: dace.int64[1]):
+def pow_neg_exp(a: dace.float64[1]):
     a[0] = 10 ** -2
 
 
 def test_pow_neg_exp():
-    res = np.zeros((1,), dtype=np.int64)
+    res = np.zeros((1,), dtype=np.float64)
     pow_neg_exp(a=res)
-    print(res)
     assert(res[0] == 0.01)
 
 
