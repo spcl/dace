@@ -4,10 +4,11 @@ This document describes in detail which features of Python are supported by the 
 The comparison is made against the [Python Language Reference](https://docs.python.org/3/reference/).
 
 ## 2 Lexical Analysis
+
 ### 2.1 Line Structure
 The DaCe Python-Frontend uses the Python AST module to parse code.
 Therefore, full support of the line structure section is expected.
-However, we explicitly tests for the following subsections (`tests/python_fronted/line_structure_test.py`):
+However, we explicitly test for the following subsections (`tests/python_fronted/line_structure_test.py`):
 - 2.1.3 Comments
 - 2.1.5 Explicit Line Joining
 - 2.1.6 Implicit Line Joining
@@ -19,6 +20,7 @@ However, for a generated SDFG to compile to a target architecture, the identifie
 must be valid in the output language (e.g., C/C++). We currently provide no automatic
 transformation of identifiers used as variable names. Therefore, it is the responsibility
 of the user to ensure that the variable names are compatible.
+
 #### 2.3.1 Keywords
 The following keywords are recognized (for at least a subset of their Python functionality):
 - True, False, None
@@ -48,7 +50,7 @@ or byte literal.
 ### 2.5 Operators
 The DaCe Python-Frontend supports all Python operators.
 The operators are only supported in the context of arithmetic/logical operations among
-scalar values and DaCe (Numpy-compatible) arrays. For example, it is not possible
+scalar values and DaCe (NumPy-compatible) arrays. For example, it is not possible
 to concatenate 2 strings with the `+` operator.
 The `:=` operator (Named Expression) is parsed as an assignment statement.
 
@@ -59,14 +61,15 @@ dictionaries. Therefore, the delimiters `[, ], {, }` cannot be used to define
 those datatypes.
 
 ## 6 Expressions
-### 6.1 Arithmetic Conversions
 
-The arithmetic conversions for binary operators (except the power operator)
-are implemented with explicit casting:
+### 6.1 Arithmetic Conversions
+**NOTE: This is an experimental feature**  
+The arithmetic conversions for most binary operators are implemented with casting:
 - If any of the operands is of complex type, but the other operand is a float,
   int or bool, then it is casted to the same complex type.
 - If any of the operands is of float type, but the other operand is int or bool,
   the it is casted to the same float type.
+Some binary operations are handled differently, as described in the sections below.
 
 ### 6.2 Atoms
 All Python atoms are parsed. However, their intended usage may not be supported:
@@ -93,20 +96,22 @@ DaCe and Numpy modules
 Unsupported  
 
 ### 6.5 The power operator
-Supported, but the case where both operands are integers and the exponent is
-negative doesn't return the expected result.
+Supported. If the base is an integer and the exponent a signed integer, both
+operands are casted to float64 and the result is also of type float64.
 
 ### 6.6 Unary arithmetic and bitwise operations
 Supported
 
 ### 6.7 Binary arithmetic operations
-Supported
+Supported. Notable differences compared to the expected Python result:
+- Division between integers returns an integer (like in C/C++)
+- Modulo operator always returns a natural number (like in C/C++)
 
 ### 6.8 Shifting operations
-Supported
+Only integral types supported.
 
 ### 6.9 Binary bitwise operations
-Supported
+Only integral types supported.
 
 ### 6.10 Comparisons
 Supported
@@ -133,6 +138,7 @@ Supported
 Supported
 
 ## 7 Simple Statements
+
 ### 7.1 Expression statements
 Partially supported, as described in the previous section. Python interactive
 mode is not supported.
@@ -169,10 +175,12 @@ Unsupported
 Unsusupported
 
 ### 7.9 The break statement
-(TODO: Should be supported, but currently leads to an incorrect SDFG)
+Supported for for/while loops, as long as the break statement is in the same
+SDFG-level as the for/while statement.
 
 ### 7.10 The continue statement
-(TODO: Should be supported, but currently leads to an incorrect SDFG)
+Supported for for/while loops, as long as the continue statement is in the same
+SDFG-level as the for/while statement.
 
 ### 7.11 The import statement
 Unsupported, inclduing 7.11.1 Future statements
@@ -203,12 +211,10 @@ def single_target(a: dace.float32[1]):
 ```
 
 ### 8.2 The while statement
-Supported (TODO: Practically broken due to continue/break resulting in wrong
-control-flow in the SDFG)
+Supported
 
 ### 8.3 The for statement
-Supported (TODO: Partially broken due to continue/break resulting in wrong
-control-flow in the SDFG)
+Supported
 
 ### 8.4 The try statement
 Unsupported
