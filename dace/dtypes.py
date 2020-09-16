@@ -778,19 +778,7 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
-# Save original Python types
-python_types = {
-    'int': int,
-    'float': float,
-    'complex': complex,
-    'bool': bool
-}
-
-# Create dace types
-int = typeclass(int)
-float = typeclass(float)
-complex = typeclass(complex)
-bool = typeclass(numpy.int8)  # We do not (cannot) support Python bool
+bool = typeclass(numpy.bool)
 bool_ = typeclass(numpy.int8)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -807,12 +795,8 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 DTYPE_TO_TYPECLASS = {
-    python_types['int']: int,
-    python_types['float']: float,
-    python_types['complex']: complex,
-    python_types['bool']: bool,
-    numpy.bool: bool,  # We do not (cannot) support Python bool
-    numpy.bool_: bool,
+    numpy.bool: bool,
+    numpy.bool_: bool_,
     numpy.int8: int8,
     numpy.int16: int16,
     numpy.int32: int32,
@@ -827,12 +811,6 @@ DTYPE_TO_TYPECLASS = {
     numpy.complex64: complex64,
     numpy.complex128: complex128
 }
-
-# Restore original Python types
-int = python_types['int']
-float = python_types['float']
-complex = python_types['complex']
-bool = python_types['bool']
 
 TYPECLASS_STRINGS = [
     "int8",
