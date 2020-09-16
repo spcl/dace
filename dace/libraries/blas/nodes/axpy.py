@@ -281,8 +281,8 @@ class ExpandAxpyCuBLAS(ExpandTransformation):
             "cublasSetStream(__dace_cublas_handle, dace::cuda::__streams[0]);\n"
             "cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);\n"
             "{dtype} alpha = {a};\n"
-            "cublas{func}(__dace_cublas_handle, {n}, &alpha, __xDev.ptr<1>(), 1, "
-            "__res_axpyDev.ptr<1>(), 1);".format(
+            "cublas{func}(__dace_cublas_handle, {n}, &alpha, xDev, 1, "
+            "res_axpyDev, 1);".format(
                 func=func, n=n, a=a, dtype=dtype))
 
         task = axpy_state.add_tasklet('axpy_blas_task', ['xDev'],
