@@ -795,6 +795,9 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 DTYPE_TO_TYPECLASS = {
+    int: typeclass(int),
+    float: typeclass(float),
+    complex: typeclass(complex),
     numpy.bool: bool,
     numpy.bool_: bool_,
     numpy.int8: int8,
