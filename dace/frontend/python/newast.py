@@ -2517,11 +2517,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data = None
             if result not in self.sdfg.arrays:
-                if not isinstance(result,
-                                  tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
-                    raise DaceSyntaxError(self, result,
-                                          "In assignments, the rhs may only be "
-                                          "data or numerical/boolean constants")
+                if (not (symbolic.issymbolic(result) or isinstance(
+                        result, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())))):
+                    raise DaceSyntaxError(
+                        self, result, "In assignments, the rhs may only be "
+                                      "data, numerical/boolean constants "
+                                      "and symbols")
             if not true_name:
                 if result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
