@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from setuptools import setup, find_packages
 import glob
 import os
@@ -34,7 +35,7 @@ with open("README.md", "r") as fp:
 
 setup(
     name='dace',
-    version='0.9.5',
+    version='0.10.0a',
     url='https://github.com/spcl/dace',
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',

@@ -1,9 +1,11 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 
+DACE_optimizer_transform_on_call=1
 DACE_optimizer_interface="dace.transformation.testing.TransformationTester"
 DACE_TEST_NAME="Transformations"
 

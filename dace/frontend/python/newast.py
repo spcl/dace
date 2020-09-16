@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -513,9 +514,7 @@ def add_indirection_subgraph(sdfg: SDFG,
     #                         indirectRange, num_accesses=memlet.num_accesses)
     # graph.add_edge(tasklet, 'lookup', dataNode, None, indirectMemlet)
 
-    valueMemlet = Memlet.simple(tmp_name,
-                                indirectRange,
-                                num_accesses=1)
+    valueMemlet = Memlet.simple(tmp_name, indirectRange, num_accesses=1)
     if output:
         path = [src] + inp_base_path
         if isinstance(src, nodes.AccessNode):
@@ -912,9 +911,13 @@ class TaskletTransformer(ExtNodeTransformer):
 
         return node
 
-
-# TODO: Take care of recursive SDFG generation w.r.t. temporary transient creation (maybe there
-#  is no need if the temporary transients from the parent SDFG are added to the current SDFG arrays)
+    def visit_Name(self, node: ast.Name):
+        # If accessing a symbol, add it to the SDFG symbol list
+        if (isinstance(node.ctx, ast.Load) and node.id in self.defined
+                and isinstance(self.defined[node.id], symbolic.symbol)):
+            if node.id not in self.sdfg.symbols:
+                self.sdfg.add_symbol(node.id, self.defined[node.id].dtype)
+        return self.generic_visit(node)
 
 
 class ProgramVisitor(ExtNodeVisitor):
@@ -1873,7 +1876,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for sym in mv.free_symbols:
                 if (sym.name not in self.sdfg.symbols
                         and sym.name in self.globals):
-                    self.sdfg.add_symbol(sym.name, sym.dtype)
+                    self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
 
     def _recursive_visit(self,
                          body: List[ast.AST],
@@ -2127,7 +2130,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         target: Union[str, Tuple[str, subsets.Range]],
                         operand: Union[str, Tuple[str, subsets.Range]],
                         op: str = None):
-
         if isinstance(target, tuple):
             target_name, target_subset = target
         else:
@@ -2144,6 +2146,12 @@ class ProgramVisitor(ExtNodeVisitor):
             op_name = None
             op_array = None
             op_subset = subsets.Range([(0, 0, 1)])
+            if symbolic.issymbolic(operand):
+                for sym in operand.free_symbols:
+                    if str(sym) not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(str(sym),
+                                             self.globals[str(sym)].dtype)
+                operand = symbolic.symstr(operand)
 
         state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
                                                         c=node.col_offset))
@@ -2233,6 +2241,12 @@ class ProgramVisitor(ExtNodeVisitor):
             op_name = None
             op_array = None
             op_subset = subsets.Range([(0, 0, 1)])
+            if symbolic.issymbolic(operand):
+                for sym in operand.free_symbols:
+                    if str(sym) not in self.sdfg.symbols:
+                        self.sdfg.add_symbol(str(sym),
+                                             self.globals[str(sym)].dtype)
+                operand = symbolic.symstr(operand)
 
         state = self._add_state("augassign_{l}_{c}".format(l=node.lineno,
                                                            c=node.col_offset))

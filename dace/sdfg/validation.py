@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
 import os
@@ -154,7 +155,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise
         except Exception as ex:
             raise InvalidSDFGNodeError("Node validation failed: " + str(ex),
-                                       sdfg, state_id, nid)
+                                       sdfg, state_id, nid) from ex
 
         # Isolated nodes
         ########################################
@@ -267,6 +268,19 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
+
+        # Check for connectors that are also array/symbol names
+        if isinstance(node, nd.Tasklet):
+            for conn in node.in_connectors.keys():
+                if conn in sdfg.arrays or conn in symbols:
+                    raise InvalidSDFGNodeError(
+                        f"Input connector {conn} already "
+                        "defined as array or symbol", sdfg, state_id, nid)
+            for conn in node.out_connectors.keys():
+                if conn in sdfg.arrays or conn in symbols:
+                    raise InvalidSDFGNodeError(
+                        f"Output connector {conn} already "
+                        "defined as array or symbol", sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:

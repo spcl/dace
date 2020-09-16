@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement transformations relating to streams
     and transient nodes. """
 

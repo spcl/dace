@@ -1,5 +1,8 @@
 pipeline {
   agent any
+  environment {
+    CODECOV_TOKEN = credentials('codecov-token')
+  }
   stages {
     stage('Setup') {
       steps {
@@ -15,6 +18,7 @@ pipeline {
                     pip3 install --upgrade --user ".[testing]" .
                     pip3 install --user cmake
                     pip3 install --user coverage
+                    pip3 install --user mpi4py
                 '''
       }
     }

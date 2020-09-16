@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -1192,4 +1193,4 @@ class LibraryNode(CodeNode):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = cls(match_node_name)
+        transformation_type._match_node = cls

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -7,6 +8,7 @@ PYTHONPATH=$SCRIPTPATH/..
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
+DACE_optimizer_transform_on_call=${DACE_optimizer_transform_on_call:-1}
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0

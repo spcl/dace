@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tries to allocate a symbolically-sized array on a register and makes
     sure that it is allocated on the heap instead.
 """
