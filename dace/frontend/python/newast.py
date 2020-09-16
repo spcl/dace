@@ -1004,6 +1004,11 @@ class ProgramVisitor(ExtNodeVisitor):
         for stmt in _DISALLOWED_STMTS:
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
+        # Loop status
+        self.loop_idx = -1
+        self.continue_states = []
+        self.break_states = []
+
     def visit(self, node: ast.AST):
         """Visit a node."""
         self.current_lineinfo = dtypes.DebugInfo(node.lineno, node.col_offset,
@@ -1968,6 +1973,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
+            self.loop_idx += 1
+            self.continue_states.append([])
+            self.break_states.append([])
             laststate, first_loop_state, last_loop_state = self._recursive_visit(
                 node.body, 'for', node.lineno, extra_symbols=extra_syms)
             end_loop_state = self.last_state
@@ -1975,11 +1983,28 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add loop to SDFG
             loop_cond = '>' if ((
                 pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
-            self.sdfg.add_loop(
+            _, loop_guard, loop_end = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0],
                 ranges[0][0],
                 '%s %s %s' % (indices[0], loop_cond, ranges[0][1]),
                 '%s + %s' % (indices[0], ranges[0][2]), last_loop_state)
+            incr = {indices[0]: '%s + %s' % (indices[0], ranges[0][2])}
+            continue_states = self.continue_states.pop()
+            while continue_states:
+                next_state = continue_states.pop()
+                out_edges = self.sdfg.out_edges(next_state)
+                for e in out_edges:
+                    self.sdfg.remove_edge(e)
+                self.sdfg.add_edge(next_state, loop_guard,
+                                   dace.InterstateEdge(assignments=incr))
+            break_states = self.break_states.pop()
+            while break_states:
+                next_state = break_states.pop()
+                out_edges = self.sdfg.out_edges(next_state)
+                for e in out_edges:
+                    self.sdfg.remove_edge(e)
+                self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
+            self.loop_idx -= 1
         else:
             raise DaceSyntaxError(
                 self, node, 'Unsupported for-loop iterator "%s"' % iterator)
@@ -1987,14 +2012,55 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_While(self, node: ast.While):
         # Add an initial loop state with a None last_state (so as to not
         # create an interstate edge)
+        self.loop_idx += 1
+        self.continue_states.append([])
+        self.break_states.append([])
         laststate, first_loop_state, last_loop_state = \
             self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
         # Add loop to SDFG
         loop_cond = astutils.unparse(node.test)
-        self.sdfg.add_loop(laststate, first_loop_state, end_loop_state, None,
-                           None, loop_cond, None, last_loop_state)
+        _, loop_guard, loop_end = self.sdfg.add_loop(
+            laststate, first_loop_state, end_loop_state, None,
+            None, loop_cond, None, last_loop_state)
+        
+        continue_states = self.continue_states.pop()
+        while continue_states:
+            next_state = continue_states.pop()
+            out_edges = self.sdfg.out_edges(next_state)
+            for e in out_edges:
+                self.sdfg.remove_edge(e)
+            self.sdfg.add_edge(next_state, loop_guard, dace.InterstateEdge())
+        break_states = self.break_states.pop()
+        while break_states:
+            next_state = break_states.pop()
+            out_edges = self.sdfg.out_edges(next_state)
+            for e in out_edges:
+                self.sdfg.remove_edge(e)
+            self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
+        self.loop_idx -= 1
+
+    def visit_Break(self, node: ast.Break):
+        if self.loop_idx < 0:
+            error_msg = "'break' is only supported inside for and while loops "
+            if self.nested:
+                error_msg += ("('break' is not supported in Maps and cannot be "
+                              " used in nested DaCe program calls to break out "
+                              " of loops of outer scopes)")
+            raise DaceSyntaxError(self, node, error_msg)
+        self.break_states[self.loop_idx].append(self.last_state)
+    
+    def visit_Continue(self, node: ast.Continue):
+        if self.loop_idx < 0:
+            error_msg = ("'continue' is only supported inside for and while "
+                         "loops ")
+            if self.nested:
+                error_msg += ("('continue' is not supported in Maps and cannot "
+                              " be used in nested DaCe program calls to "
+                              " continue loops of outer scopes)")
+            raise DaceSyntaxError(self, node, error_msg)
+        self.continue_states[self.loop_idx].append(self.last_state)
 
     def visit_If(self, node: ast.If):
         # Add a guard state
@@ -2070,10 +2136,14 @@ class ProgramVisitor(ExtNodeVisitor):
             target_subset = subsets.Range.from_array(target_array)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
-        else:
+        elif operand in self.sdfg.arrays:
             op_name = operand
             op_array = self.sdfg.arrays[op_name]
             op_subset = subsets.Range.from_array(op_array)
+        else:
+            op_name = None
+            op_array = None
+            op_subset = subsets.Range([(0, 0, 1)])
 
         state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
                                                         c=node.col_offset))
@@ -2093,13 +2163,20 @@ class ProgramVisitor(ExtNodeVisitor):
                 if op:
                     memlet.wcr = LambdaProperty.from_string(
                         'lambda x, y: x {} y'.format(op))
+                if op_name:
+                    inp_memlet = {'__inp': Memlet.simple(
+                        op_name, '%s' % op_subset)}  # TODO: Why [0][0]???
+                        # op_name, '%s' % op_subset[0][0])}
+                    tasklet_code = '__out = __inp'
+                else:
+                    inp_memlet = dict()
+                    tasklet_code = '__out = {}'.format(operand)
                 state.add_mapped_tasklet(
                     state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
                     },
-                    {'__inp': Memlet.simple(op_name, '%s' % op_subset[0][0])},
-                    '__out = __inp', {'__out': memlet},
+                    inp_memlet, tasklet_code, {'__out': memlet},
                     external_edges=True,
                     debuginfo=self.current_lineinfo)
         else:
@@ -2107,16 +2184,25 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(
                     self, node, "Incompatible subsets %s and %s" %
                     (target_subset, op_subset))
-            op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+            if op_name:
+                op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+                inp_conn = {'__inp'}
+                tasklet_code = '__out = __inp'
+            else:
+                inp_conn = dict()
+                tasklet_code = '__out = {}'.format(operand)
             op2 = state.add_write(target_name, debuginfo=self.current_lineinfo)
             tasklet = state.add_tasklet(name=state.label,
-                                        inputs={'__inp'},
+                                        inputs=inp_conn,
                                         outputs={'__out'},
-                                        code='__out = __inp',
+                                        code=tasklet_code,
                                         debuginfo=self.current_lineinfo)
-            inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
-            out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
-            state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
+            if op_name:
+                inp_memlet = Memlet.simple(op_name, '%s' % op_subset)  # TODO: Why [0][0]???
+                # inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
+            out_memlet = Memlet.simple(target_name, '%s' % target_subset)  # TODO: Why [0][0]???
+            # out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
@@ -2139,10 +2225,14 @@ class ProgramVisitor(ExtNodeVisitor):
             wtarget_subset = subsets.Range.from_array(wtarget_array)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
-        else:
+        elif operand in self.sdfg.arrays:
             op_name = operand
             op_array = self.sdfg.arrays[op_name]
             op_subset = subsets.Range.from_array(op_array)
+        else:
+            op_name = None
+            op_array = None
+            op_subset = subsets.Range([(0, 0, 1)])
 
         state = self._add_state("augassign_{l}_{c}".format(l=node.lineno,
                                                            c=node.col_offset))
@@ -2197,7 +2287,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         '__i%d + %d' % (i, s)
                         for i, (s, _, _) in enumerate(in1_subset)
                     ]))
-                in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                if op_name:
+                    in2_memlet = Memlet.simple(op_name, '%s' % op_subset)  # TODO: Why [0][0]???
+                    # in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                    inp_memlets = {'__in1': in1_memlet, '__in2': in2_memlet}
+                    tasklet_code = '__out = __in1 {op} __in2'.format(op=op)
+                else:
+                    inp_memlets = {'__in1': in1_memlet}
+                    tasklet_code = '__out = __in1 {op} {n}'.format(op=op,
+                                                                   n=operand)
                 out_memlet = Memlet.simple(
                     wtarget_name,
                     ','.join(['__i%d' % i for i in range(len(wtarget_subset))]))
@@ -2205,12 +2303,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(wtarget_subset)
-                    }, {
-                        '__in1': in1_memlet,
-                        '__in2': in2_memlet
-                    },
-                    '__out = __in1 {op} __in2'.format(op=op),
-                    {'__out': out_memlet},
+                    }, inp_memlets, tasklet_code, {'__out': out_memlet},
                     external_edges=True,
                     debuginfo=self.current_lineinfo)
         else:
@@ -2221,22 +2314,32 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 op1 = state.add_read(rtarget_name,
                                      debuginfo=self.current_lineinfo)
-                op2 = state.add_read(op_name, debuginfo=self.current_lineinfo)
+                if op_name:
+                    op2 = state.add_read(op_name,
+                                         debuginfo=self.current_lineinfo)
+                    inp_conns = {'__in1', '__in2'}
+                    tasklet_code = '__out = __in1 {op} __in2'.format(op=op)
+                else:
+                    inp_conns = {'__in1'}
+                    tasklet_code = '__out = __in1 {op} {n}'.format(op=op,
+                                                                   n=operand)
                 op3 = state.add_write(wtarget_name,
                                       debuginfo=self.current_lineinfo)
                 tasklet = state.add_tasklet(
                     name=state.label,
-                    inputs={'__in1', '__in2'},
+                    inputs=inp_conns,
                     outputs={'__out'},
-                    code='__out = __in1 {op} __in2'.format(op=op),
+                    code=tasklet_code,
                     debuginfo=self.current_lineinfo)
-                in1_memlet = Memlet.simple(rtarget_name,
-                                           '%s' % rtarget_subset[0][0])
-                in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
-                out_memlet = Memlet.simple(wtarget_name,
-                                           '%s' % wtarget_subset[0][0])
+                in1_memlet = Memlet.simple(rtarget_name, '%s' % rtarget_subset)  # TODO: Why [0][0]???
+                                        #    '%s' % rtarget_subset[0][0])
+                if op_name:
+                    in2_memlet = Memlet.simple(op_name, '%s' % op_subset)  # TODO: Why [0][0]???
+                    # in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                    state.add_edge(op2, None, tasklet, '__in2', in2_memlet)
+                out_memlet = Memlet.simple(wtarget_name, '%s' % wtarget_subset)  # TODO: Why [0][0]???
+                                        #    '%s' % wtarget_subset[0][0])
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
-                state.add_edge(op2, None, tasklet, '__in2', in2_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
     def _get_variable_name(self, node, name):
@@ -2356,15 +2459,19 @@ class ProgramVisitor(ExtNodeVisitor):
         results = []
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
-                if isinstance(n, (ast.Num, ast.Constant)):
-                    results.append(self._convert_num_to_array(n))
-                else:
-                    results.extend(self._gettype(n))
+                results.extend(self._gettype(n))
+                # if isinstance(n, (ast.Num, ast.Constant)):
+                #     # results.append(self._convert_num_to_array(n))
+                #     results.extend(self.visit(n))
+                # else:
+                #     results.extend(self._gettype(n))
         else:
-            if isinstance(node.value, (ast.Constant, ast.Num)):
-                results.append(self._convert_num_to_array(node.value))
-            else:
-                results.extend(self._gettype(node.value))
+            results.extend(self._gettype(node.value))
+            # if isinstance(node.value, (ast.Constant, ast.Num)):
+            #     # results.append(self._convert_num_to_array(node.value))
+            #     results.extend(self.visit(node.value))
+            # else:
+            #     results.extend(self._gettype(node.value))
 
         if len(results) != len(elts):
             raise DaceSyntaxError(
@@ -2395,18 +2502,41 @@ class ProgramVisitor(ExtNodeVisitor):
                     'Variable "{}" used before definition'.format(name))
 
             new_data = None
+            if result not in self.sdfg.arrays:
+                if not isinstance(result,
+                                  tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
+                    raise DaceSyntaxError(self, result,
+                                          "In assignments, the rhs may only be "
+                                          "data or numerical/boolean constants")
             if not true_name:
-                if (result in self.sdfg.arrays
-                        and not self.sdfg.arrays[result].transient):
+                if result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
-                    true_name, new_data = _add_transient_data(
-                        self.sdfg, result_data)
+                    if (target.id.startswith('__return') and
+                            isinstance(result_data, data.Scalar)):
+                        true_name, new_data = self.sdfg.add_temp_transient(
+                            [1], result_data.dtype)
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                    elif not result_data.transient:
+                        true_name, new_data = _add_transient_data(
+                            self.sdfg, result_data)
+                        self.variables[name] = true_name
+                        defined_vars[name] = true_name
+                    else:
+                        self.variables[name] = result
+                        defined_vars[name] = result
+                        continue
+                else:
+                    if target.id.startswith('__return'):
+                        true_name, new_data = self.sdfg.add_temp_transient(
+                            [1], type(result))
+                    else:
+                        true_name = self.sdfg.temp_data_name()
+                        _, new_data = self.sdfg.add_scalar(
+                            true_name, type(result), transient=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
-                else:
-                    self.variables[name] = result
-                    defined_vars[name] = result
-                    continue
+
 
             if new_data:
                 rng = dace.subsets.Range.from_array(new_data)
@@ -3186,12 +3316,12 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             operand2, op2type = None, None
 
-        if isinstance(node, ast.BinOp):
-            if op1type == 'Array' and isinstance(op2, (ast.Constant, ast.Num)):
-                operand2, op2type = self._convert_num_to_array(op2)
-            elif op2type == 'Array' and isinstance(op1,
-                                                   (ast.Constant, ast.Num)):
-                operand1, op1type = self._convert_num_to_array(op1)
+        # if isinstance(node, ast.BinOp):
+        #     if op1type == 'Array' and isinstance(op2, (ast.Constant, ast.Num)):
+        #         operand2, op2type = self._convert_num_to_array(op2)
+        #     elif op2type == 'Array' and isinstance(op1,
+        #                                            (ast.Constant, ast.Num)):
+        #         operand1, op1type = self._convert_num_to_array(op1)
 
         func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
         if func is None:
