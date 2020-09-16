@@ -30,9 +30,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # ---------- ----------
         # MEMORY LOCATIONS
         # ---------- ----------
-        vecAdd_sdfg.add_array('_x', shape=[n], dtype=vecType)
-        vecAdd_sdfg.add_array('_y', shape=[n], dtype=vecType)
-        vecAdd_sdfg.add_array('_res', shape=[n], dtype=vecType)
+        vecAdd_sdfg.add_array('_x', shape=[n/vecWidth], dtype=vecType)
+        vecAdd_sdfg.add_array('_y', shape=[n/vecWidth], dtype=vecType)
+        vecAdd_sdfg.add_array('_res', shape=[n/vecWidth], dtype=vecType)
 
         x_in = vecAdd_state.add_read('_x')
         y_in = vecAdd_state.add_read('_y')

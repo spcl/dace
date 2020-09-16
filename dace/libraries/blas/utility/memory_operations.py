@@ -49,7 +49,7 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
 
         name, desc = sdfg.add_array(
             dest,
-            shape=[size],
+            shape=[size/veclen],
             dtype=vecType,
             storage=dtypes.StorageType.FPGA_Global,
             transient=True
@@ -67,7 +67,7 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
         
         state.add_memlet_path(
             cpu_in, fpga_out,
-            memlet=Memlet.simple(cpu_in.data, "0:{}".format(size))
+            memlet=Memlet.simple(cpu_in.data, "0:{}/{}".format(size, veclen))
         )
 
         outputs.append(fpga_out)
@@ -91,7 +91,7 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, 
 
         name, desc = sdfg.add_array(
             src,
-            shape=[size],
+            shape=[size/veclen],
             dtype=vecType,
             storage=dtypes.StorageType.FPGA_Global,
             transient=True
@@ -108,7 +108,7 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, 
 
         state.add_memlet_path(
             fpga_in, cpu_out,
-            memlet=Memlet.simple(cpu_out.data, "0:{}".format(size))
+            memlet=Memlet.simple(cpu_out.data, "0:{}/{}".format(size, veclen))
         )
 
         outputs.append(fpga_in)

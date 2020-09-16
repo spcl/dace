@@ -99,9 +99,9 @@ def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
 
     test_sdfg.add_symbol(a.name, precision)
 
-    test_sdfg.add_array('x1', shape=[n], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[n], dtype=vecType)
+    test_sdfg.add_array('x1', shape=[n/vecWidth], dtype=vecType)
+    test_sdfg.add_array('y1', shape=[n/vecWidth], dtype=vecType)
+    test_sdfg.add_array('z1', shape=[n/vecWidth], dtype=vecType)
 
     x_in = test_state.add_read('x1')
     y_in = test_state.add_read('y1')
@@ -113,18 +113,18 @@ def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
     test_state.add_memlet_path(
         x_in, saxpy_node,
         dst_conn='_x',
-        memlet=Memlet.simple(x_in, "0:n")
+        memlet=Memlet.simple(x_in, "0:n/{}".format(vecWidth))
     )
     test_state.add_memlet_path(
         y_in, saxpy_node,
         dst_conn='_y',
-        memlet=Memlet.simple(y_in, "0:n")
+        memlet=Memlet.simple(y_in, "0:n/{}".format(vecWidth))
     )
 
     test_state.add_memlet_path(
         saxpy_node, z_out,
         src_conn='_res',
-        memlet=Memlet.simple(z_out, "0:n")
+        memlet=Memlet.simple(z_out, "0:n/{}".format(vecWidth))
     )
 
     test_sdfg.expand_library_nodes()
@@ -244,9 +244,9 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
 
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    test_sdfg.add_array('x1', shape=[n], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[n], dtype=vecType)
+    test_sdfg.add_array('x1', shape=[n/vecWidth], dtype=vecType)
+    test_sdfg.add_array('y1', shape=[n/vecWidth], dtype=vecType)
+    test_sdfg.add_array('z1', shape=[n/vecWidth], dtype=vecType)
 
     saxpy_node = blas.axpy.Axpy("axpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
     saxpy_node.implementation = 'fpga_stream'
