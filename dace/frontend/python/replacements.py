@@ -956,7 +956,7 @@ def _array_array_binop(visitor: 'ProgramVisitor',
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    left_arr.storage)
     
-    if out_shape == [1]:
+    if list(out_shape) == [1]:
         tasklet = state.add_tasklet(
             '_%s_' % operator,
             {'__in1', '__in2'},
@@ -1033,7 +1033,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    storage)
     
-    if out_shape == [1]:
+    if list(out_shape) == [1]:
         if left_arr:
             inp_conn = {'__in1'}
             n1 = state.add_read(left_operand)
@@ -1117,7 +1117,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    storage)
     
-    if out_shape == [1]:
+    if list(out_shape) == [1]:
         if left_arr:
             inp_conn = {'__in1'}
             n1 = state.add_read(left_operand)
