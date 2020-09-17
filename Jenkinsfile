@@ -1,5 +1,8 @@
 pipeline {
   agent any
+  environment {
+    CODECOV_TOKEN = credentials('codecov-token')
+  }
   stages {
     stage('Setup') {
       steps {

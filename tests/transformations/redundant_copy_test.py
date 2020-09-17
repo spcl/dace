@@ -21,10 +21,10 @@ def test_out():
     trans = Transpose("transpose", dtype=dace.float32)
     D = state.add_access("D")
 
-    state.add_edge(A, None, B, None, sdfg.get_array_memlet("A"))
-    state.add_edge(B, None, C, None, sdfg.get_array_memlet("B"))
-    state.add_edge(C, None, trans, "_inp", sdfg.get_array_memlet("C"))
-    state.add_edge(trans, "_out", D, None, sdfg.get_array_memlet("D"))
+    state.add_edge(A, None, B, None, sdfg.make_array_memlet("A"))
+    state.add_edge(B, None, C, None, sdfg.make_array_memlet("B"))
+    state.add_edge(C, None, trans, "_inp", sdfg.make_array_memlet("C"))
+    state.add_edge(trans, "_out", D, None, sdfg.make_array_memlet("D"))
 
     sdfg.apply_strict_transformations()
     assert len(state.nodes()) == 3
@@ -54,10 +54,10 @@ def test_in():
     C = state.add_access("C")
     D = state.add_access("D")
 
-    state.add_edge(A, None, trans, "_inp", sdfg.get_array_memlet("A"))
-    state.add_edge(trans, "_out", B, None, sdfg.get_array_memlet("B"))
-    state.add_edge(B, None, C, None, sdfg.get_array_memlet("B"))
-    state.add_edge(C, None, D, None, sdfg.get_array_memlet("C"))
+    state.add_edge(A, None, trans, "_inp", sdfg.make_array_memlet("A"))
+    state.add_edge(trans, "_out", B, None, sdfg.make_array_memlet("B"))
+    state.add_edge(B, None, C, None, sdfg.make_array_memlet("B"))
+    state.add_edge(C, None, D, None, sdfg.make_array_memlet("C"))
 
     sdfg.apply_strict_transformations()
     assert len(state.nodes()) == 3

@@ -502,6 +502,11 @@ class SDFG(OrderedDiGraph):
         initial state of the SDFG to return to and play back the history.
         :param transformation: The transformation to append.
         """
+        # Make sure the transformation is appended to the root SDFG.
+        if self.sdfg_id != 0:
+            self.sdfg_list[0].append_transformation(transformation)
+            return
+
         if not self.orig_sdfg:
             clone = copy.deepcopy(self)
             clone.transformation_hist = []
@@ -1847,10 +1852,10 @@ class SDFG(OrderedDiGraph):
                                    states=states)
 
     def expand_library_nodes(self, recursive=True):
-        """ 
+        """
         Recursively expand all unexpanded library nodes in the SDFG,
         resulting in a "pure" SDFG that the code generator can handle.
-        :param recursive: If True, expands all library nodes recursively, 
+        :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
         """
 
@@ -1899,7 +1904,7 @@ class SDFG(OrderedDiGraph):
 
         return program_code
 
-    def get_array_memlet(self, array: str):
+    def make_array_memlet(self, array: str):
         """Convenience method to generate a Memlet that transfers a full array.
 
            :param array: the name of the array
