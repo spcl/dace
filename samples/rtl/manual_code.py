@@ -27,10 +27,6 @@ sdfg.append_global_code(cpp_code='''
         
         // include model header, generated from verilating "top.v"
         #include "Vtop.h"
-        #include "Vtop.cpp"
-        #include "Vtop__Slow.cpp"
-        #include "Vtop__Syms.cpp"
-        #include "verilated.cpp"
 
         // current simulation time (64-bit unsigned, cycles, global)
         vluint64_t main_time = 0;
@@ -97,7 +93,7 @@ tasklet = state.add_tasklet(
         delete top;
         top = NULL;
         ''',
-    language=dace.Language.RTL)
+    language=dace.Language.CPP)
 
 # add input/output array
 A = state.add_read('A')

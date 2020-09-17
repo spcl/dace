@@ -566,42 +566,6 @@ if(DACE_ENABLE_XILINX)
 endif() # DACE_ENABLE_XILINX
 
 
-
-set(DACE_ENABLE_RTL ON)
-set(DACE_RTL_FILES "${DACE_SRC_DIR}/rtl/top.v")
-
-if(DACE_ENABLE_RTL)
-
-  # find verilator installation
-  find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
-  if (NOT verilator_FOUND)
-    message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
-  endif()
-
-  # check minimal version requirements
-  set(VERILATOR_MIN_VERSION "4.039")
-  if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
-    message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
-  endif()
-
-  # add verilated design
-  add_library(VERILATED_LIB OBJECT)
-
-  # include verilator
-  set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir")
-  include_directories(${VERILATOR_INCLUDE})
-
-  # verilate design
-  verilate(VERILATED_LIB SOURCES ${DACE_RTL_FILES})
-
-  # add object library for linking
-  set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
-
-endif() # DACE_ENABLE_RTL
-
-
-
-
 # temporary enable simulator
 set(DACE_ENABLE_RTL ON)
 set(DACE_RTL_FILES "${DACE_SRC_DIR}/rtl/top.v")
@@ -620,6 +584,13 @@ if(DACE_ENABLE_RTL)
   if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
     message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
+
+  # add verilated .cpp files
+  set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir/Vtop.cpp")
+  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir/Vtop__Slow.cpp")
+  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir/Vtop__Syms.cpp")
+  set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
+  set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
   # add verilated design
   add_library(VERILATED_LIB OBJECT)
