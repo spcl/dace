@@ -105,7 +105,7 @@ class LoopPeeling(LoopUnroll):
                     loop_subgraph,
                     itervar,
                     rng[0] + i * rng[2],
-                    f"start_{i*rng[2]}",
+                    "start_" + itervar + str(i * rng[2]),
                 )
 
                 # Connect states to before the loop with unconditional edges
@@ -169,8 +169,8 @@ class LoopPeeling(LoopUnroll):
                     loop_states,
                     loop_subgraph,
                     itervar,
-                    str(rng[1] - i * rng[2]),
-                    f"end_{i * rng[2]}",
+                    itervar_sym + i * rng[2],
+                    "end_" + itervar + str(-i * rng[2]),
                 )
 
                 # Connect states to before the loop with unconditional edges
