@@ -58,7 +58,7 @@ def make_copy_to_host_state(sdfg):
     return state
 
 
-def make_fpga_state(sdfg):
+def make_fpga_state(sdfg, vectorize_connector):
 
     state = sdfg.add_state("fpga_state")
 
@@ -80,8 +80,14 @@ def make_fpga_state(sdfg):
         "outer_map", {"i": "0:N/W"}, schedule=dace.ScheduleType.FPGA_Device)
 
     # Test read from packed memory to an unpacked buffer
-    unpack_tasklet = state.add_tasklet("unpack_tasklet", {"a"}, {"a_unpacked"},
-                                       "a_unpacked = a")
+    if vectorize_connector:
+        outputs = {"a_unpacked": dace.vector(DTYPE, VECTOR_LENGTH.get())}
+    else:
+        outputs = {"a_unpacked"}  # Infers an array
+    unpack_tasklet = state.add_tasklet(
+        "unpack_tasklet", {"a"},
+        outputs,
+        "a_unpacked = a")
     state.add_memlet_path(read_input,
                           outer_entry,
                           unpack_tasklet,
@@ -118,7 +124,11 @@ def make_fpga_state(sdfg):
                                                     num_accesses=1))
 
     # Test writing from unpacked to packed from inside tasklet
-    pack_tasklet = state.add_tasklet("pack_tasklet", {"b"}, {"b_packed"},
+    if vectorize_connector:
+        outputs = {"b": dace.vector(DTYPE, VECTOR_LENGTH.get())}
+    else:
+        outputs = {"b"}
+    pack_tasklet = state.add_tasklet("pack_tasklet", outputs, {"b_packed"},
                                      "b_packed = b")
     state.add_memlet_path(write_buffer,
                           pack_tasklet,
@@ -137,7 +147,7 @@ def make_fpga_state(sdfg):
     return state
 
 
-def make_sdfg(name=None):
+def make_sdfg(name=None, vectorize_connector=False):
 
     if name is None:
         name = "veclen_conversion"
@@ -146,7 +156,7 @@ def make_sdfg(name=None):
 
     pre_state = make_copy_to_fpga_state(sdfg)
     post_state = make_copy_to_host_state(sdfg)
-    compute_state = make_fpga_state(sdfg)
+    compute_state = make_fpga_state(sdfg, vectorize_connector)
 
     sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
@@ -169,10 +179,9 @@ if __name__ == "__main__":
             "Size {} must be divisible by vector length {}.".format(
                 args.size, args.vector_length))
 
-    sdfg = make_sdfg()
+    sdfg = make_sdfg(vectorize_connector=False)
     sdfg.specialize({"W": args.vector_length})
 
-    # Initialize arrays: Randomize A and B, zero C
     A = np.arange(args.size, dtype=np.float64)
     B = np.zeros((args.size, ), dtype=np.float64)
 

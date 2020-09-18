@@ -165,6 +165,44 @@ _CTYPES = {
     numpy.complex128: "dace::complex128",
 }
 
+# Translation of types to OpenCL types
+_OCL_TYPES = {
+    None: "void",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    numpy.bool: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
+# Translation of types to OpenCL vector types
+_OCL_VECTOR_TYPES = {
+    numpy.int8: "char",
+    numpy.uint8: "uchar",
+    numpy.int16: "short",
+    numpy.uint16: "ushort",
+    numpy.int32: "int",
+    numpy.uint32: "uint",
+    numpy.int64: "long",
+    numpy.uint64: "ulong",
+    numpy.float16: "half",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
 # Translation of types to ctypes types
 _FFI_CTYPES = {
     None: ctypes.c_void_p,
@@ -316,7 +354,11 @@ class typeclass(object):
     def veclen(self):
         return 1
 
-    def signature(self, name):
+    @property
+    def ocltype(self):
+        return _OCL_TYPES[self.type]
+
+    def as_arg(self, name):
         return self.ctype + ' ' + name
 
 
@@ -449,6 +491,10 @@ class pointer(typeclass):
     def base_type(self):
         return self._typeclass
 
+    @property
+    def ocltype(self):
+        return f"{self.type.ocltype}*"
+
 
 class vector(typeclass):
     """
@@ -479,6 +525,14 @@ class vector(typeclass):
     @property
     def ctype(self):
         return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+
+    @property
+    def ocltype(self):
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -667,7 +721,7 @@ class callback(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
-    def signature(self, name):
+    def as_arg(self, name):
         from dace import data
 
         return_type_cstring = (self.return_type.ctype
