@@ -1343,13 +1343,23 @@ def _const_const_binop(visitor: 'ProgramVisitor',
 
     if isinstance(left_operand, Number):
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    else:
+    elif isinstance(left_operand, dace.symbolic.symbol):
         left_type = left_operand.dtype
+    else:
+        left_type = None
     if isinstance(right_operand, Number):
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
-    else:
+    elif isinstance(right_operand, dace.symbolic.symbol):
         right_type = right_operand.dtype
-    _, left_cast, right_cast = _convert_type(left_type, right_type, operator)
+    else:
+        right_type = None
+
+    if left_type and right_type:
+        _, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                 operator)
+    else:
+        left_cast = None
+        right_cast = None
 
     if isinstance(left_operand, Number) and left_cast is not None:
         left = left_cast(left_operand)
