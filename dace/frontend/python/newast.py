@@ -3273,6 +3273,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     result.append((operand, 'BoolConstant'))
                 else:
                     result.append((operand, 'NumConstant'))
+            elif isinstance(operand, sympy.Basic):
+                result.append((operand, 'symbol'))
             else:
                 result.append((operand, type(operand).__name__))
 
