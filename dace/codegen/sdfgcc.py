@@ -15,7 +15,7 @@ def main():
     parser.add_argument('SDFGfile', help='<PATH TO SDFG FILE>', type=str)
 
     # Optional argument for output location
-    parser.add_argument('-o','--out', type=str, help='If provided, save output to path or filename')
+    parser.add_argument('-o','--out', type=str, help='If provided, save output to path or filename.\nDirectories in path already need to exist.')
 
     args = parser.parse_args()
 
