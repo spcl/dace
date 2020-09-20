@@ -4,24 +4,31 @@
 import dace
 import os
 import sys
+import argparse
 
 
 def main():
-    if len(sys.argv) != 2:
-        print('USAGE: sdfgcc <PATH TO SDFG FILE>')
-        exit(1)
+    # Command line options parser
+    parser = argparse.ArgumentParser(description='Simple SDFG command-line compiler.')
 
-    filename = sys.argv[1]
+    # Required argument for SDGF file path
+    parser.add_argument('SDFGfile', help='<PATH TO SDFG FILE>', type=str)
+
+    # Optional argument for output location
+    parser.add_argument('-o','--out', type=str, help='If provided, save output to path or filename')
+
+    args = parser.parse_args()
+
+    filename = args.SDFGfile
     if not os.path.isfile(filename):
         print('SDFG file', filename, 'not found')
-        exit(2)
+        exit(1)
 
     # Load SDFG
     sdfg = dace.SDFG.from_file(filename)
 
     # Compile SDFG
-    sdfg.compile()
-
+    sdfg.compile(args.out)
 
 if __name__ == '__main__':
     main()
