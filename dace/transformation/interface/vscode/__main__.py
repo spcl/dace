@@ -50,6 +50,10 @@ def reapply_history_until(sdfg_json, index):
     :param sdfg_json:  The SDFG to rewind.
     :param index:      Index of the last history item to apply.
     """
+    from dace import serialize
+    old_meta = serialize.JSON_STORE_METADATA
+    serialize.JSON_STORE_METADATA = False
+
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
         return loaded['error']
@@ -60,14 +64,10 @@ def reapply_history_until(sdfg_json, index):
 
     for i in range(index + 1):
         transformation = history[i]
-        # FIXME: The appending should happen with the call to apply the pattern.
-        # The way it currently stands, the callee must make sure that
-        # append_transformation is called before apply_pattern, because the
-        # original SDFG may be saved incorrectly otherwise. This is not ideal
-        # and needs to be fixed.
         try:
-            original_sdfg.append_transformation(transformation)
-            transformation.apply_pattern(original_sdfg)
+            transformation.apply_pattern(
+                original_sdfg.sdfg_list[transformation.sdfg_id]
+            )
         except Exception as e:
             print(traceback.format_exc(), file=sys.stderr)
             sys.stderr.flush()
@@ -79,6 +79,7 @@ def reapply_history_until(sdfg_json, index):
             }
 
     new_sdfg = original_sdfg.to_json()
+    serialize.JSON_STORE_METADATA = old_meta
     return {
         'sdfg': new_sdfg,
     }
@@ -86,7 +87,9 @@ def reapply_history_until(sdfg_json, index):
 def apply_transformation(sdfg_json, transformation):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
-    from dace.transformation.pattern_matching import Transformation
+    from dace import serialize
+    old_meta = serialize.JSON_STORE_METADATA
+    serialize.JSON_STORE_METADATA = False
 
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
@@ -94,7 +97,7 @@ def apply_transformation(sdfg_json, transformation):
     sdfg = loaded['sdfg']
 
     try:
-        revived_transformation = Transformation.from_json(transformation)
+        revived_transformation = serialize.from_json(transformation)
     except Exception as e:
         print(traceback.format_exc(), file=sys.stderr)
         sys.stderr.flush()
@@ -104,14 +107,10 @@ def apply_transformation(sdfg_json, transformation):
                 'details': get_exception_message(e),
             },
         }
-    # FIXME: The appending should happen with the call to apply the pattern. The
-    # way it currently stands, the callee must make sure that
-    # append_transformation is called before apply_pattern, because the original
-    # SDFG may be saved incorrectly otherwise. This is not ideal and needs to be
-    # fixed.
     try:
-        sdfg.append_transformation(revived_transformation)
-        revived_transformation.apply_pattern(sdfg)
+        revived_transformation.apply_pattern(
+            sdfg.sdfg_list[revived_transformation.sdfg_id]
+        )
     except Exception as e:
         print(traceback.format_exc(), file=sys.stderr)
         sys.stderr.flush()
@@ -123,14 +122,39 @@ def apply_transformation(sdfg_json, transformation):
         }
 
     new_sdfg = sdfg.to_json()
+    serialize.JSON_STORE_METADATA = old_meta
     return {
         'sdfg': new_sdfg,
     }
 
-def get_transformations(sdfg_json):
+def sdfg_find_state(sdfg, element):
+    graph = sdfg.sdfg_list[element['sdfg_id']]
+    if element['id'] >= 0:
+        return graph.nodes()[element['id']]
+    else:
+        return None
+
+def sdfg_find_node(sdfg, element):
+    graph = sdfg.sdfg_list[element['sdfg_id']]
+    if element['state_id'] >= 0:
+        state = graph.nodes()[element['state_id']]
+        node = state.nodes()[element['id']]
+        node.state = state
+        return node
+    else:
+        node = graph.nodes()[element['id']]
+        node.state = None
+        return node
+
+def get_transformations(sdfg_json, selected_elements):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
     from dace.transformation.optimizer import SDFGOptimizer
+    from dace import serialize
+    old_meta = serialize.JSON_STORE_METADATA
+    serialize.JSON_STORE_METADATA = False
+    from dace.sdfg.graph import SubgraphView
+    from dace.transformation.pattern_matching import SubgraphTransformation
 
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
@@ -146,6 +170,31 @@ def get_transformations(sdfg_json):
         transformations.append(transformation.to_json())
         docstrings[type(transformation).__name__] = transformation.__doc__
 
+    selected_states = [sdfg_find_state(sdfg, n) for n in selected_elements if n['type'] == 'state']
+    selected_nodes = [sdfg_find_node(sdfg, n) for n in selected_elements if n['type'] == 'node']
+    subgraph = None
+    if len(selected_states) > 0:
+       subgraph = SubgraphView(sdfg, selected_states)
+    else:
+        violated = False
+        state = None
+        for node in selected_nodes:
+            if state is None:
+                state = node.state
+            elif state != node.state:
+                violated = True
+                break
+        if not violated and state is not None:
+            subgraph = SubgraphView(state, selected_nodes)
+
+    if subgraph is not None:
+        for xform in SubgraphTransformation.extensions():
+            if xform.match(sdfg, subgraph):
+                xform_obj = xform(subgraph)
+                transformations.append(xform_obj.to_json())
+                docstrings[xform.__name__] = xform_obj.__doc__
+
+    serialize.JSON_STORE_METADATA = old_meta
     return {
         'transformations': transformations,
         'docstrings': docstrings,
@@ -184,7 +233,8 @@ def run_daemon():
     @daemon.route('/transformations', methods=['POST'])
     def _get_transformations():
         request_json = request.get_json()
-        return get_transformations(request_json['sdfg'])
+        return get_transformations(request_json['sdfg'],
+                                   request_json['selected_elements'])
 
     @daemon.route('/apply_transformation', methods=['POST'])
     def _apply_transformation():

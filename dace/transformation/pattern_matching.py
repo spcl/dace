@@ -161,6 +161,7 @@ class Transformation(object):
 
     def apply_pattern(self, sdfg):
         """ Applies this transformation on the given SDFG. """
+        sdfg.append_transformation(self)
         self.apply(sdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(sdfg)
