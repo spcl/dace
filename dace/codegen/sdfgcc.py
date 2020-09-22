@@ -23,8 +23,7 @@ def main():
         type=str,
         help=
         'If provided, saves library as the given file or in the specified path, '
-        'together with a header file.'
-    )
+        'together with a header file.')
 
     args = parser.parse_args()
 
@@ -42,10 +41,13 @@ def main():
     sdfg.compile(outpath)
 
     # Copying header file to optional path
-    if args.out:
+    if outpath is not None:
         source = os.path.join(sdfg.build_folder, 'src', 'cpu', sdfg.name + '.h')
-        destination = os.path.join(os.path.dirname(outpath), sdfg.name + '.h')
-        shutil.copyfile(source, destination)
+        if os.path.isdir(outpath):
+            outpath = os.path.join(outpath, sdfg.name + '.h')
+        else:
+            outpath = os.path.join(os.path.dirname(outpath), sdfg.name + '.h')
+        shutil.copyfile(source, outpath)
 
 
 if __name__ == '__main__':
