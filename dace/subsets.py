@@ -172,7 +172,7 @@ class Range(Subset):
         return Range(sum_ranges)
 
     def num_elements(self):
-        return reduce(sp.mul.Mul, self.size(), 1)
+        return reduce(sp.Mul, self.size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """

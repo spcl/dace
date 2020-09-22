@@ -289,7 +289,7 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     ]
 
     new_strides = [0] * len(reshaped_copy)
-    elements_remaining = functools.reduce(sp.mul.Mul, copy_shape, 1)
+    elements_remaining = functools.reduce(sp.Mul, copy_shape, 1)
     tiledim = 0
     for i in range(len(copy_shape)):
         new_strides[i] = elements_remaining / reshaped_copy[i]

@@ -1127,7 +1127,7 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (not isinstance(val, sp.expr.Expr) and not isinstance(val, int)
+        if (not isinstance(val, sp.Expr) and not isinstance(val, int)
                 and not isinstance(val, str)):
             raise TypeError(
                 "Property {} must an int or symbolic expression".format(
