@@ -231,15 +231,6 @@ class ModuleResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-def _targets(node: ast.Assign):
-    for target in node.targets:
-        if isinstance(target, (ast.Tuple, ast.List)):
-            for elt in target.elts:
-                yield elt
-        else:
-            yield target
-
-
 # AST node types that are disallowed in DaCe programs
 _DISALLOWED_STMTS = [
     'Global', 'Delete', 'Import', 'ImportFrom', 'Assert', 'Pass', 'Exec',
