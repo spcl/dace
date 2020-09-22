@@ -10,31 +10,40 @@ import shutil
 
 def main():
     # Command line options parser
-    parser = argparse.ArgumentParser(description='Simple SDFG command-line compiler.')
+    parser = argparse.ArgumentParser(
+        description='Simple SDFG command-line compiler.')
 
     # Required argument for SDFG file path
-    parser.add_argument('SDFGfilepath', help='<PATH TO SDFG FILE>', type=str)
+    parser.add_argument('filepath', help='<PATH TO SDFG FILE>', type=str)
 
     # Optional argument for output location
-    parser.add_argument('-o','--out', type=str, help='If provided, saves lib and header file to path. Directories in path need to exist beforehand.')
+    parser.add_argument(
+        '-o',
+        '--out',
+        type=str,
+        help=
+        'If provided, saves lib and header file to path. Directories in path need to exist beforehand.'
+    )
 
     args = parser.parse_args()
 
-    filepath = args.SDFGfilepath
+    filepath = args.filepath
     if not os.path.isfile(filepath):
         print('SDFG file', filepath, 'not found')
         exit(1)
+
+    outpath = args.out
 
     # Load SDFG
     sdfg = dace.SDFG.from_file(filepath)
 
     # Compile SDFG
-    sdfg.compile(args.out)
+    sdfg.compile(outpath)
 
     # Copying header file to optional path
     if args.out:
-        source = os.path.join(sdfg.build_folder, 'src', 'cpu', sdfg.name+'.h')
-        destination = os.path.join(args.out,sdfg.name+'.h')
+        source = os.path.join(sdfg.build_folder, 'src', 'cpu', sdfg.name + '.h')
+        destination = os.path.join(os.path.dirname(outpath), sdfg.name + '.h')
         shutil.copyfile(source, destination)
 
 
