@@ -35,3 +35,6 @@ from .mpi import MPITransformMap
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
+
+# FPGA
+from .pipeline_fusion import PipelineFusion

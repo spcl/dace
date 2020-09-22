@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import copy
+import itertools
 from typing import List, Optional
 
 from dace.sdfg import nodes
@@ -322,3 +323,29 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     new_exit.map = new_entry.map
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
+
+def is_cut_vertex(graph, cut_vertex):
+    """ Returns true if removing this node would cut the graph into one or more
+        new disconnected components).
+    """
+    seen_before = {cut_vertex}
+    seen_after = {cut_vertex}
+    q = list(graph.predecessors(cut_vertex))
+    while len(q) > 0:
+        node = q.pop()
+        for n in itertools.chain(graph.predecessors(node),
+                                 graph.successors(node)):
+            if n in seen_before:
+                continue
+            q.append(n)
+            seen_before.add(n)
+    q = list(graph.successors(cut_vertex))
+    while len(q) > 0:
+        node = q.pop()
+        for n in itertools.chain(graph.predecessors(node),
+                                 graph.successors(node)):
+            if n in seen_after:
+                continue
+            q.append(n)
+            seen_after.add(n)
+    return len(seen_before & seen_after) == 1
