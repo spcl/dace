@@ -22,7 +22,8 @@ def main():
         '--out',
         type=str,
         help=
-        'If provided, saves lib and header file to path. Directories in path need to exist beforehand.'
+        'If provided, saves library as the given file or in the specified path, '
+        'together with a header file.'
     )
 
     args = parser.parse_args()
