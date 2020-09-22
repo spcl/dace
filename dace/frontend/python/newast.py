@@ -2465,18 +2465,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
-                # if isinstance(n, (ast.Num, ast.Constant)):
-                #     # results.append(self._convert_num_to_array(n))
-                #     results.extend(self.visit(n))
-                # else:
-                #     results.extend(self._gettype(n))
         else:
             results.extend(self._gettype(node.value))
-            # if isinstance(node.value, (ast.Constant, ast.Num)):
-            #     # results.append(self._convert_num_to_array(node.value))
-            #     results.extend(self.visit(node.value))
-            # else:
-            #     results.extend(self._gettype(node.value))
 
         if len(results) != len(elts):
             raise DaceSyntaxError(
@@ -3271,38 +3261,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def _convert_num_to_array(self, node: Union[ast.Num, ast.Constant]):
-        name = None
-        if node.n not in self.numbers:
-            dtype = None
-            if isinstance(node.n, int):
-                dtype = dace.int64
-            elif isinstance(node.n, float):
-                dtype = dace.float64
-            elif isinstance(node.n, complex):
-                dtype = dace.complex128
-            else:
-                raise NotImplementedError
-            name, _ = self.sdfg.add_temp_transient(
-                [1], dtype, lifetime=dtypes.AllocationLifetime.SDFG)
-            self.numbers[node.n] = name
-            init_state = None
-            if not self.sdfg.nodes():
-                init_state = self.sdfg.add_state('init')
-                self.last_state = init_state
-            else:
-                init_state = self.sdfg.nodes()[0]
-            tasklet = init_state.add_tasklet('init_{}'.format(name), {},
-                                             {'out'},
-                                             'out = {}'.format(node.n),
-                                             debuginfo=self.current_lineinfo)
-            access = init_state.add_write(name, debuginfo=self.current_lineinfo)
-            init_state.add_edge(tasklet, 'out', access, None,
-                                dace.Memlet.simple(name, '0'))
-        else:
-            name = self.numbers[node.n]
-        return name, 'Array'
-
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp],
                   op1: ast.AST, op2: ast.AST):
         opname = None
@@ -3323,13 +3281,6 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = op2_parsed[0]
         else:
             operand2, op2type = None, None
-
-        # if isinstance(node, ast.BinOp):
-        #     if op1type == 'Array' and isinstance(op2, (ast.Constant, ast.Num)):
-        #         operand2, op2type = self._convert_num_to_array(op2)
-        #     elif op2type == 'Array' and isinstance(op1,
-        #                                            (ast.Constant, ast.Num)):
-        #         operand1, op1type = self._convert_num_to_array(op1)
 
         func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
         if func is None:
