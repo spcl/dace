@@ -12,7 +12,7 @@ def main():
     # Command line options parser
     parser = argparse.ArgumentParser(description='Simple SDFG command-line compiler.')
 
-    # Required argument for SDGF file path
+    # Required argument for SDFG file path
     parser.add_argument('SDFGfilepath', help='<PATH TO SDFG FILE>', type=str)
 
     # Optional argument for output location
@@ -33,7 +33,7 @@ def main():
 
     # Copying header file to optional path
     if args.out:
-        source = os.path.join(sdfg.build_folder, 'src/cpu', sdfg.name+'.h')
+        source = os.path.join(sdfg.build_folder, 'src', 'cpu', sdfg.name+'.h')
         destination = os.path.join(args.out,sdfg.name+'.h')
         shutil.copyfile(source, destination)
 
