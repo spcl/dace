@@ -38,8 +38,8 @@ class PipelineFusion(pattern_matching.Transformation):
         if (not isinstance(array_desc, Array) or not array_desc.transient):
             return False
 
-        scope_dict = graph.scope_dict(array_node)
-        if array_node not in scope_dict[None]:
+        scope_dict = graph.scope_dict()
+        if scope_dict[array_node] is not None:
             return False  # Must be in outermost scope
 
         if len([n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
