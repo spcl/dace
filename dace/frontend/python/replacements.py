@@ -1415,24 +1415,6 @@ def _makebinop(op, opcode):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
 
-# Define all standard Python augmented assignment operators
-for op, opcode in [
-    ('None', None),
-    ('Add', '+'),
-    ('Sub', '-'),
-    ('Mult', '*'),
-    ('Div', '/'),
-    ('FloorDiv', '//'),
-    ('Mod', '%'),
-    ('Pow', '**'),
-    ('LShift', '<<'),
-    ('RShift', '>>'),
-    ('BitOr', '|'),
-    ('BitXor', '^'),
-    ('BitAnd', '&'),
-]:
-    _makeassignop(op, opcode)
-
 # Define all standard Python unary operators
 for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'),
                    ('Invert', '~')]:
