@@ -531,34 +531,6 @@ def _argminmax(sdfg: SDFG,
 # Python operation replacements ##############################################
 ##############################################################################
 
-
-def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
-    """ Implements a general element-wise array assignment operator. """
-    arr1 = sdfg.arrays[op1]
-
-    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
-    write_memlet = None
-    if opcode:
-        write_memlet = Memlet.simple(
-            name,
-            ','.join(['__i%d' % i for i in range(len(arr1.shape))]),
-            wcr_str='lambda x, y: x %s y' % opcode)
-    else:
-        write_memlet = Memlet.simple(
-            name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
-    state.add_mapped_tasklet(
-        "_%s_" % opname,
-        {'__i%d' % i: '0:%s' % s
-         for i, s in enumerate(arr1.shape)}, {
-             '__in1':
-             Memlet.simple(
-                 op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
-         },
-        '__out = __in1', {'__out': write_memlet},
-        external_edges=True)
-    return name
-
-
 def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
