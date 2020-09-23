@@ -635,16 +635,6 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
 
 
 # Defined as a function in order to include the op and the opcode in the closure
-def _makeassignop(op, opcode):
-    @oprepo.replaces_operator('Array', op)
-    def _op(visitor: 'ProgramVisitor',
-            sdfg: SDFG,
-            state: SDFGState,
-            op1: str,
-            op2=None):
-        return _assignop(sdfg, state, op1, opcode, op)
-
-
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
     def _op(visitor: 'ProgramVisitor',
@@ -838,55 +828,6 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
         result_type = dace.int8
                 
     return result_type, left_cast, right_cast
-
-
-def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-                   op1: str, op2: str, op: str, opcode: str):
-
-    arr1 = sdfg.arrays[op1]
-    type1 = arr1.dtype.type
-    isscal1 = _is_scalar(sdfg, op1)
-    isnum1 = isscal1 and (op1 in visitor.numbers.values())
-    if isnum1:
-        type1 = inverse_dict_lookup(visitor.numbers, op1)
-    arr2 = sdfg.arrays[op2]
-    type2 = arr2.dtype.type
-    isscal2 = _is_scalar(sdfg, op2)
-    isnum2 = isscal2 and (op2 in visitor.numbers.values())
-    if isnum2:
-        type2 = inverse_dict_lookup(visitor.numbers, op2)
-    if _is_op_boolean(op):
-        restype = dace.bool
-    else:
-        restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
-
-    opstring = ["s1", "s2"]
-    if type1 != type2:
-        result_type, new_types = _convert_type(type1, type2, op)
-        if new_types[0] is not None:
-            opstring[0] = "dace.{}(s1)".format(new_types[0].__name__)
-        if new_types[1] is not None:
-            opstring[1] = "dace.{}(s2)".format(new_types[1].__name__)
-
-
-    if isscal1 and isscal2:
-        arr1 = sdfg.arrays[op1]
-        arr2 = sdfg.arrays[op2]
-        op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
-        tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'}, {'s3'},
-                                    's3 = {0} {1} {2}'.format(opstring[0], opcode, opstring[1]))
-        n1 = state.add_read(op1)
-        n2 = state.add_read(op2)
-        n3 = state.add_write(op3)
-        state.add_edge(n1, None, tasklet, 's1',
-                       dace.Memlet.from_array(op1, arr1))
-        state.add_edge(n2, None, tasklet, 's2',
-                       dace.Memlet.from_array(op2, arr2))
-        state.add_edge(tasklet, 's3', n3, None,
-                       dace.Memlet.from_array(op3, arr3))
-        return op3
-    else:
-        return _binop(sdfg, state, op1, op2, opcode, op, restype)
 
 
 def _array_array_binop(visitor: 'ProgramVisitor',
