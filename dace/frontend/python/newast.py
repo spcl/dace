@@ -2102,14 +2102,6 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_edge(laststate, end_if_state,
                                dace.InterstateEdge(cond_else))
 
-    def _parse_index(self, node: ast.Index):
-
-        indices = []
-        for idx in node.value.elts:
-            indices.append(self._parse_value(idx))
-
-        return indices
-
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
         ttrans = TaskletTransformer(self.defined,
                                     self.sdfg,
