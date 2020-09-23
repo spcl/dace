@@ -2354,15 +2354,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
-    def _get_variable_name(self, node, name):
-        if name in self.variables:
-            return self.variables[name]
-        elif name in self.scope_vars:
-            return self.scope_vars[name]
-        else:
-            raise DaceSyntaxError(self, node,
-                                  'Array "%s" used before definition' % name)
-
     def _add_access(
             self,
             name: str,
