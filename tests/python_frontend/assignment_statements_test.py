@@ -94,10 +94,24 @@ def test_attribute_reference():
     assert(a[0]['b'] == np.float32(6))
 
 
+@dace.program
+def ann_assign_supported_type():
+    a : dace.uint16 = 5
+    return a
+
+
+def test_ann_assign_supported_type():
+    a = ann_assign_supported_type()
+    assert(a.dtype == np.uint16)
+
+
 if __name__ == "__main__":
     test_single_target()
     test_single_target_parentheses()
     test_multiple_targets()
     test_multiple_targets_parentheses()
+    
     # test_starred_target()
     # test_attribute_reference()
+
+    test_ann_assign_supported_type()
