@@ -5,6 +5,7 @@ import copy
 import itertools
 import re
 import sys
+import warnings
 from typing import Any, Dict, List, Tuple, Union, Callable, Optional
 
 import dace
@@ -76,44 +77,46 @@ class AddTransientMethods(object):
 
 
 @dtypes.paramdec
-def specifies_datatype(func: Callable[[Any, data.Data], Tuple[str, data.Data]],
-                       datatype=None):
+def specifies_datatype(func: Callable[[Any, data.Data, Any],
+                       Tuple[str, data.Data]], datatype=None):
     AddTransientMethods._methods[datatype] = func
     return func
 
 
 @specifies_datatype(datatype=data.Scalar)
-def _method(sdfg: SDFG, sample_data: data.Scalar):
+def _method(sdfg: SDFG, sample_data: data.Scalar, dtype):
     name = sdfg.temp_data_name()
-    _, new_data = sdfg.add_scalar(name, sample_data.dtype, transient=True)
+    _, new_data = sdfg.add_scalar(name, dtype, transient=True)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Array)
-def _method(sdfg: SDFG, sample_data: data.Array):
-    name, new_data = sdfg.add_temp_transient(sample_data.shape,
-                                             sample_data.dtype)
+def _method(sdfg: SDFG, sample_data: data.Array, dtype):
+    name, new_data = sdfg.add_temp_transient(sample_data.shape, dtype)
     return name, new_data
 
 
 @specifies_datatype(datatype=data.Stream)
-def _method(sdfg: SDFG, sample_data: data.Stream):
+def _method(sdfg: SDFG, sample_data: data.Stream, dtype):
     name = sdfg.temp_data_name()
     new_data = sdfg.add_stream(name,
-                               sample_data.dtype,
+                               dtype,
                                buffer_size=sample_data.buffer_size,
                                shape=sample_data.shape,
                                transient=True)
     return name, new_data
 
 
-def _add_transient_data(sdfg: SDFG, sample_data: data.Data):
+def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype=None):
     """ Adds to the sdfg transient data of the same dtype, shape and other
         parameters as sample_data. """
     func = AddTransientMethods.get(type(sample_data))
     if func is None:
         raise NotImplementedError
-    return func(sdfg, sample_data)
+    if dtype is None:
+        return func(sdfg, sample_data, sample_data.dtype)
+    else:
+        return func(sdfg, sample_data, dtype)
     # try:
     #     func = AddTransientMethods._methods[type(sample_data)]
     #     return func(sdfg, sample_data)
@@ -2447,10 +2450,20 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
-
         self._visit_assign(node, node.targets[0], None)
+    
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        type_name = rname(node.annotation)
+        try:
+            dtype = eval(type_name)
+            if not isinstance(dtype, dtypes.typeclass):
+                raise NotImplementedError
+        except:
+            dtype = None
+            warnings.warn('typeclass {} is not supported'.format(type_name))
+        self._visit_assign(node, node.target, None, dtype=dtype)
 
-    def _visit_assign(self, node, node_target, op):
+    def _visit_assign(self, node, node_target, op, dtype=None):
         # Get targets (elts) and results
         elts = None
         results = None
@@ -2513,7 +2526,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         defined_vars[name] = true_name
                     elif not result_data.transient:
                         true_name, new_data = _add_transient_data(
-                            self.sdfg, result_data)
+                            self.sdfg, result_data, dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                     else:
@@ -2526,8 +2539,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             [1], type(result))
                     else:
                         true_name = self.sdfg.temp_data_name()
+                        if dtype:
+                            ttype = dtype
+                        else:
+                            ttype = type(result)
                         _, new_data = self.sdfg.add_scalar(
-                            true_name, type(result), transient=True)
+                            true_name, ttype, transient=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
 
