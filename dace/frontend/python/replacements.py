@@ -1002,12 +1002,12 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         left_shape = left_arr.shape
         storage = left_arr.storage
         right_arr = None
-        right_type = dtypes.DTYPE_TO_TYPECLASS[right_operand.dtype]
+        right_type = right_operand.dtype  # dtypes.DTYPE_TO_TYPECLASS[right_operand.dtype]
         right_shape = [1]
         tasklet_args = ['__in1', str(right_operand)]
     else:
         left_arr = None
-        left_type = dtypes.DTYPE_TO_TYPECLASS[left_operand.dtype]
+        left_type = left_operand.dtype  # dtypes.DTYPE_TO_TYPECLASS[left_operand.dtype]
         left_shape = left_arr.shape
         right_arr = sdfg.arrays[right_operand]
         right_type = right_arr.dtype
@@ -1196,11 +1196,11 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         left_type = left_scal.dtype
         storage = left_scal.storage
         right_scal = None
-        right_type = dtypes.DTYPE_TO_TYPECLASS[right_operand.dtype]
+        right_type = right_operand.dtype  # dtypes.DTYPE_TO_TYPECLASS[right_operand.dtype]
         tasklet_args = ['__in1', str(right_operand)]
     else:
         left_scal = None
-        left_type = dtypes.DTYPE_TO_TYPECLASS[left_operand.dtype]
+        left_type = left_operand.dtype  # dtypes.DTYPE_TO_TYPECLASS[left_operand.dtype]
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
