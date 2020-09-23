@@ -110,11 +110,15 @@ def _method(sdfg: SDFG, sample_data: data.Stream):
 def _add_transient_data(sdfg: SDFG, sample_data: data.Data):
     """ Adds to the sdfg transient data of the same dtype, shape and other
         parameters as sample_data. """
-    try:
-        func = AddTransientMethods._methods[type(sample_data)]
-        return func(sdfg, sample_data)
-    except KeyError:
+    func = AddTransientMethods.get(type(sample_data))
+    if func is None:
         raise NotImplementedError
+    return func(sdfg, sample_data)
+    # try:
+    #     func = AddTransientMethods._methods[type(sample_data)]
+    #     return func(sdfg, sample_data)
+    # except KeyError:
+    #     raise NotImplementedError
 
 
 def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
@@ -2059,6 +2063,17 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_If(self, node: ast.If):
         # Add a guard state
         self._add_state('if_guard')
+        if (isinstance(node.test, ast.Compare) and
+                isinstance(node.test.left, ast.Subscript)):
+            cond = self.visit(node.test)
+            if cond in self.sdfg.arrays:
+                cond_dt = self.sdfg.arrays[cond]
+                if isinstance(cond_dt, data.Array):
+                    cond += '[0]'
+            cond_else = 'not ({})'.format(cond)
+        else:
+            cond = astutils.unparse(node.test)
+            cond_else = astutils.unparse(astutils.negate_expr(node.test))
 
         # Visit recursively
         laststate, first_if_state, last_if_state = \
@@ -2066,8 +2081,8 @@ class ProgramVisitor(ExtNodeVisitor):
         end_if_state = self.last_state
 
         # Connect the states
-        cond = astutils.unparse(node.test)
-        cond_else = astutils.unparse(astutils.negate_expr(node.test))
+        # cond = astutils.unparse(node.test)
+        # cond_else = astutils.unparse(astutils.negate_expr(node.test))
         self.sdfg.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
         self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
 
@@ -3084,13 +3099,24 @@ class ProgramVisitor(ExtNodeVisitor):
 
             rnode = state.add_read(src_name, debuginfo=self.current_lineinfo)
             wnode = state.add_write(dst_name, debuginfo=self.current_lineinfo)
-            state.add_nedge(
-                rnode, wnode,
-                Memlet.simple(src_name,
-                              subsets.Range.from_array(
-                                  self.sdfg.arrays[src_name]),
-                              num_accesses=src_expr.accesses,
-                              wcr_str=dst_expr.wcr))
+            if isinstance(self.sdfg.arrays[dst_name], data.Stream):
+                mem = Memlet.simple(
+                    dst_name,
+                    subsets.Range.from_array(self.sdfg.arrays[dst_name]),
+                    num_accesses=dst_expr.accesses, wcr_str = dst_expr.wcr)
+            else:
+                mem = Memlet.simple(
+                    src_name,
+                    subsets.Range.from_array(self.sdfg.arrays[src_name]),
+                    num_accesses=src_expr.accesses, wcr_str = dst_expr.wcr)
+            state.add_nedge(rnode, wnode, mem)
+            # state.add_nedge(
+            #     rnode, wnode,
+            #     Memlet.simple(src_name,
+            #                   subsets.Range.from_array(
+            #                       self.sdfg.arrays[src_name]),
+            #                   num_accesses=src_expr.accesses,
+            #                   wcr_str=dst_expr.wcr))
             return
 
         # Calling reduction or other SDFGs / functions
