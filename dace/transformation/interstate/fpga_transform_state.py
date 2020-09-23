@@ -56,8 +56,8 @@ class FPGATransformState(pattern_matching.Transformation):
                 return False
 
             # Streams have strict conditions due to code generator limitations
-            if (isinstance(node, nodes.AccessNode)
-                    and isinstance(sdfg.arrays[node.data], data.Stream)):
+            if (isinstance(node, nodes.AccessNode) and isinstance(
+                    graph.parent.arrays[node.data], data.Stream)):
                 nodedesc = graph.parent.arrays[node.data]
                 sdict = graph.scope_dict()
                 if nodedesc.storage in [
@@ -99,8 +99,8 @@ class FPGATransformState(pattern_matching.Transformation):
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
                     or candidate_map.schedule == dtypes.ScheduleType.GPU_Device
                     or candidate_map.schedule == dtypes.ScheduleType.FPGA_Device
-                    or candidate_map.schedule ==
-                    dtypes.ScheduleType.GPU_ThreadBlock):
+                    or candidate_map.schedule
+                    == dtypes.ScheduleType.GPU_ThreadBlock):
                 return False
 
             # Recursively check parent for FPGA schedules
@@ -108,10 +108,10 @@ class FPGATransformState(pattern_matching.Transformation):
             current_node = map_entry
             while current_node is not None:
                 if (current_node.map.schedule == dtypes.ScheduleType.GPU_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.FPGA_Device
-                        or current_node.map.schedule ==
-                        dtypes.ScheduleType.GPU_ThreadBlock):
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.FPGA_Device
+                        or current_node.map.schedule
+                        == dtypes.ScheduleType.GPU_ThreadBlock):
                     return False
                 current_node = sdict[current_node]
 
