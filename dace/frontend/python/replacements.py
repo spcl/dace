@@ -705,25 +705,25 @@ def _makeunop(op, opcode):
 #     return -op1
 
 
-@oprepo.replaces_operator('symbol', 'Add', 'int')
-@oprepo.replaces_operator('symbol', 'Add', 'float')
-def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-            op1: symbolic.symbol, op2: Union[int, float]):
-    return op1 + op2
+# @oprepo.replaces_operator('symbol', 'Add', 'int')
+# @oprepo.replaces_operator('symbol', 'Add', 'float')
+# def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+#             op1: symbolic.symbol, op2: Union[int, float]):
+#     return op1 + op2
 
 
-@oprepo.replaces_operator('symbol', 'Gt', 'symbol')
-def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-           op1: symbolic.symbol, op2: Union[int, float]):
-    return op1 > op2
+# @oprepo.replaces_operator('symbol', 'Gt', 'symbol')
+# def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+#            op1: symbolic.symbol, op2: Union[int, float]):
+#     return op1 > op2
 
 
-def _is_scalar(sdfg: SDFG, arrname: str):
-    """ Checks whether array is pseudo-scalar (shape=(1,)). """
-    shape = sdfg.arrays[arrname].shape
-    if len(shape) == 1 and shape[0] == 1:
-        return True
-    return False
+# def _is_scalar(sdfg: SDFG, arrname: str):
+#     """ Checks whether array is pseudo-scalar (shape=(1,)). """
+#     shape = sdfg.arrays[arrname].shape
+#     if len(shape) == 1 and shape[0] == 1:
+#         return True
+#     return False
 
 
 def _is_op_arithmetic(op: str):
