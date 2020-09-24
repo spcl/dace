@@ -259,6 +259,28 @@ def test_sym_num():
 
 
 @dace.program
+def bool_sym(tmp: dace.int64[N]):
+    return False or N
+
+
+def test_bool_sym():
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    A = bool_sym(tmp)
+    assert(A[0] == np.logical_or(False, N.get()))
+
+
+@dace.program
+def sym_bool(tmp: dace.int64[N]):
+    return N or False
+
+
+def test_sym_bool():
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    A = sym_bool(tmp)
+    assert(A[0] == np.logical_or(N.get(), False))
+
+
+@dace.program
 def sym_sym(tmp: dace.int64[M, N]):
     return M + N
 
@@ -267,6 +289,19 @@ def test_sym_sym():
     tmp = np.zeros((M.get(), N.get()), dtype=np.int64)
     A = sym_sym(tmp)
     assert(A[0] == M.get() + N.get())
+
+
+@dace.program
+def mixed(A: dace.int64[M, N], B:dace.int64):
+    return 5j + M + A[0, 0] + 32 + A[0, 1] + B + 2 + M + N
+
+
+def test_mixed():
+    A = np.random.randint(10, size=(M.get(), N.get()), dtype=np.int64)
+    B = np.random.randint(10, size=(1, ), dtype=np.int64)[0]
+    C = mixed(A, B)
+    ref = 5j + M.get() + A[0, 0] + 32 + A[0, 1] + B + 2 + M.get() + N.get()
+    assert(C[0] == ref)
 
 
 if __name__ == "__main__":
@@ -290,6 +325,9 @@ if __name__ == "__main__":
     test_scal_sym()
     test_sym_scal()
     test_num_num()
-    # test_num_sym()
-    # test_sym_num()
-    # test_sym_sym()
+    test_num_sym()
+    test_sym_num()
+    test_bool_sym()
+    test_sym_bool()
+    test_sym_sym()
+    # test_mixed()
