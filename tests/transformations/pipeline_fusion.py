@@ -14,7 +14,7 @@ N = dace.symbol("N")
 @dace.program
 def add_four_vectors(v0: DTYPE[N], v1: DTYPE[N], v2: DTYPE[N], v3: DTYPE[N],
                      res: DTYPE[N]):
-    res[:] = v0[:] + v1[:] + v2[:] + v3[:]
+    res[:] = (v0[:] + v1[:] + v2[:] + v3[:]) / 2
 
 
 if __name__ == "__main__":
@@ -41,5 +41,5 @@ if __name__ == "__main__":
 
     sdfg(v0=v0, v1=v1, v2=v2, v3=v3, res=res, N=np.int32(args.N))
 
-    if not all(res == 10):
+    if not all(res == 5):
         raise ValueError("Unexpected result.")

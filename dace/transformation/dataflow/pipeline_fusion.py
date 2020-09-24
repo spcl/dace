@@ -15,6 +15,19 @@ class PipelineFusion(pattern_matching.Transformation):
         This is useful for SDFGs targeting FPGAs, where the two components will
         be scheduled as asynchronous, pipeline parallel components, scheduled in
         parallel.
+
+        This transformation looks for the following pattern:
+
+        () --(N)--> (arr) --(N)--> ()
+
+        Where (arr) is a transient array node that is not read or written in
+        any other context, and that is a cut vertex (i.e., removing it would
+        split the graph into two disjoint components). Furthermore, the volume
+        N on both memlets must be the same.
+
+        This transformation is NOT necessarily safe to apply: no checks or
+        changes are done for the input and output nodes, meaning they will break
+        if they cannot accept streams as input/output.
     """
     _node_before = nodes.Node()
     _array_node = nodes.AccessNode("_")
@@ -50,12 +63,22 @@ class PipelineFusion(pattern_matching.Transformation):
         node_after = graph.nodes()[candidate[PipelineFusion._node_after]]
 
         # Don't allow any other edges going into/out of the array node
+        volume_produced = 0
         for e in graph.in_edges(array_node):
             if e.src != node_before:
                 return False
+            if e.data.wcr:
+                return False
+            volume_produced += e.data.volume
+        volume_consumed = 0
         for e in graph.out_edges(array_node):
             if e.dst != node_after:
                 return False
+            if e.data.wcr:
+                return False
+            volume_consumed += e.data.volume
+        if volume_produced != volume_consumed:
+            return False
 
         if not helpers.is_cut_vertex(graph, array_node):
             return False  # Node must cut the graph into two or more components
