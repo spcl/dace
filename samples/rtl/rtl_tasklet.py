@@ -21,28 +21,27 @@ tasklet = state.add_tasklet(
     name='rtl_tasklet',
     inputs={'a'},
     outputs={'b'},
-    code='''
+    code='''            
             module top
               #(
                 parameter  WIDTH = 32
               ) 
-              ( input                  clk_i
-              , input                  rst_i
+              ( input                  clk_i  // convention: clk_i clocks the design
+              , input                  rst_i  // convention: rst_i resets the design
               , input      [WIDTH-1:0] a
               , output reg [WIDTH-1:0] b
               );
             
-              always_ff @(posedge clk_i) begin
+              always@(posedge clk_i) begin
                 if (rst_i)
                   b <= a;
                 else
                   b <= b + 1;
               end    
             
-              always@ (*) begin
-                  if (b >= 10) begin
-                    $display ("I have been added as raw SystemVerilog code\n");
-                    $finish;
+              always@(*) begin
+                  if (b >= 100) begin
+                    $finish; // convention: $finish; must eventually be called
                   end
                end
                     
