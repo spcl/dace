@@ -67,17 +67,9 @@ class FPGATransformState(pattern_matching.Transformation):
                 ]:
                     return False
 
-                # Cannot allocate FIFO from CPU code
-                if sdict[node] is None:
-                    return False
-
                 # Arrays of streams cannot have symbolic size on FPGA
                 if dace.symbolic.issymbolic(nodedesc.total_size,
                                             graph.parent.constants):
-                    return False
-
-                # Streams cannot be unbounded on FPGA
-                if nodedesc.buffer_size < 1:
                     return False
 
         for node in state.nodes():

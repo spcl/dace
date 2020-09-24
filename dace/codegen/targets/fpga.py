@@ -374,10 +374,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise dace.codegen.codegen.CodegenError(
                     "Arrays of streams cannot have dynamic size on FPGA")
 
-            if nodedesc.buffer_size < 1:
-                raise dace.codegen.codegen.CodegenError(
-                    "Streams cannot be unbounded on FPGA")
-
             buffer_length_dynamically_sized = (dace.symbolic.issymbolic(
                 nodedesc.buffer_size, sdfg.constants))
 
