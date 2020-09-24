@@ -7,7 +7,7 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic
+from dace import data as ddata, memlet, registry, sdfg as sd, Memlet, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -65,9 +65,9 @@ class InlineSDFG(pattern_matching.Transformation):
     def _check_strides(inner_strides: List[symbolic.SymbolicType],
                        outer_strides: List[symbolic.SymbolicType],
                        memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
-        """ 
+        """
         Returns True if the strides of the inner array can be matched
-        to the strides of the outer array upon inlining. Takes into 
+        to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
@@ -519,16 +519,16 @@ class NestSDFG(pattern_matching.Transformation):
             if self.promote_global_trans:
                 scope_dict = state.scope_dict()
                 for node in state.nodes():
-                    if (isinstance(node, nodes.AccessNode)
-                            and node.desc(nested_sdfg).transient):
-
-                        arrname = node.data
-                        if arrname not in transients and not scope_dict[node]:
-                            arrobj = nested_sdfg.arrays[arrname]
-                            nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
-                            outer_sdfg.arrays[arrname] = dc(arrobj)
-                            transients[arrname] = '__' + arrname + '_out'
-                        node.data = '__' + arrname + '_out'
+                    if isinstance(node, nodes.AccessNode):
+                        desc = node.desc(nested_sdfg)
+                        if desc.transient and isinstance(desc, ddata.Array):
+                            arrname = node.data
+                            if arrname not in transients and not scope_dict[node]:
+                                arrobj = nested_sdfg.arrays[arrname]
+                                nested_sdfg.arrays['__' + arrname + '_out'] = arrobj
+                                outer_sdfg.arrays[arrname] = dc(arrobj)
+                                transients[arrname] = '__' + arrname + '_out'
+                            node.data = '__' + arrname + '_out'
 
         for arrname in inputs.keys():
             nested_sdfg.arrays.pop(arrname)
