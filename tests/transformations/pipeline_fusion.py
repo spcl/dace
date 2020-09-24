@@ -3,6 +3,10 @@ import argparse
 import dace
 import numpy as np
 
+# This test transforms a sequence of vector addition kernels created with the
+# numpy frontend into to multiple, pipeline parallel kernels executed on the
+# FPGA, by using pipeline fusion.
+
 DTYPE = dace.float32
 N = dace.symbol("N")
 
