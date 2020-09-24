@@ -21,6 +21,14 @@ if __name__ == "__main__":
 
     sdfg = add_four_vectors.to_sdfg()
 
+    # Transform intermediate buffers into pipelines
+    sdfg.apply_transformations_repeated(
+        dace.transformation.dataflow.PipelineFusion)
+
+    # Transform to run on the FPGA
+    sdfg.apply_transformations_repeated(
+        dace.transformation.interstate.FPGATransformState)
+
     v0 = 1 * np.ones((args.N, ), dtype=DTYPE.type)
     v1 = 2 * np.ones((args.N, ), dtype=DTYPE.type)
     v2 = 3 * np.ones((args.N, ), dtype=DTYPE.type)
