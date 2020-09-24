@@ -77,7 +77,7 @@ run_all() {
     run_sample fpga/fpga_stencil fpga_stencil_test "\n"
 
     # Test pipeline fusion transformation from numpy frontend
-    run_sample transformations/pipeline_fusion "\n"
+    run_sample ../samples/fpga/pipeline_fusion "\n"
 
     ### MAP TILING ####
     # First tile then transform
