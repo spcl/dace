@@ -14,7 +14,7 @@ N = dace.symbol("N")
 @dace.program
 def add_four_vectors(v0: DTYPE[N], v1: DTYPE[N], v2: DTYPE[N], v3: DTYPE[N],
                      res: DTYPE[N]):
-    res[:] = (v0[:] + v1[:] + v2[:] + v3[:]) / 2
+    res[:] = (v0 + v1 + v2 + v3) / 2
 
 
 if __name__ == "__main__":

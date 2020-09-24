@@ -76,6 +76,9 @@ run_all() {
     # Test shift register abstraction with stencil code
     run_sample fpga/fpga_stencil fpga_stencil_test "\n"
 
+    # Test pipeline fusion transformation from numpy frontend
+    run_sample transformations/pipeline_fusion "\n"
+
     ### MAP TILING ####
     # First tile then transform
     run_sample intel_fpga/dot dot "MapTiling\$0\nFPGATransformSDFG\$0\n"
