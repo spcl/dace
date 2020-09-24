@@ -3218,6 +3218,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Name(self, node: ast.Name):
         # If visiting a name, check if it is a defined variable or a global
         return self._visitname(node.id, node)
+    
+    def visit_NameConstant(self, node: ast.NameConstant):
+        return self.visit_Constant(node)
 
     def visit_Attribute(self, node: ast.Attribute):
         # If visiting an attribute, return attribute value if it's of an array or global
