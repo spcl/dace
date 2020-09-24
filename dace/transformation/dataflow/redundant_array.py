@@ -3,6 +3,7 @@
 """
 
 import functools
+from copy import deepcopy as dcpy
 
 from dace import registry, subsets
 from dace.sdfg import nodes
@@ -206,11 +207,15 @@ class RedundantSecondArray(pm.Transformation):
         graph = sdfg.nodes()[self.state_id]
         in_array = gnode(RedundantSecondArray._in_array)
         out_array = gnode(RedundantSecondArray._out_array)
+
+        # 1. Extract the input (first) and output (second) array subsets.
         memlet = graph.edges_between(in_array, out_array)[0].data
         if memlet.data == in_array.data:
-            subset = memlet.subset
+            inp_subset = memlet.subset
+            out_subset = memlet.other_subset
         else:
-            subset = memlet.other_subset
+            inp_subset = memlet.other_subset
+            out_subset = memlet.subset
 
         for e in graph.out_edges(out_array):
             # Modify all outgoing edges to point to in_array
@@ -218,16 +223,21 @@ class RedundantSecondArray(pm.Transformation):
             for pe in path:
                 if pe.data.data == out_array.data:
                     pe.data.data = in_array.data
-                    if isinstance(subset, subsets.Indices):
-                        pe.data.subset.offset(subset, False)
-                    else:
-                        pe.data.subset = subset.compose(pe.data.subset)
+                    subset = pe.data.subset
+                    subset.offset(out_subset, negative=True)
+                    pe.data.subset = dcpy(inp_subset)
+                    pe.data.subset.offset(subset, negative=False)
+                    # if isinstance(subset, subsets.Indices):
+                    #     pe.data.subset.offset(subset, False)
+                    # else:
+                    #     pe.data.subset = subset.compose(pe.data.subset)
                 elif pe.data.other_subset:
-                    if isinstance(subset, subsets.Indices):
-                        pe.data.other_subset.offset(subset, False)
-                    else:
-                        pe.data.other_subset = subset.compose(
-                            pe.data.other_subset)
+                    raise NotImplementedError
+                    # if isinstance(subset, subsets.Indices):
+                    #     pe.data.other_subset.offset(subset, False)
+                    # else:
+                    #     pe.data.other_subset = subset.compose(
+                    #         pe.data.other_subset)
 
             # Redirect edge to out_array
             graph.remove_edge(e)
