@@ -14,10 +14,12 @@ def fpga_update(sdfg, state, depth):
         if (isinstance(node, nodes.AccessNode)
                 and node.desc(sdfg).storage == dtypes.StorageType.Default):
             nodedesc = node.desc(sdfg)
+            is_stream = isinstance(nodedesc, data.Stream)
             if depth >= 2:
                 nodedesc.storage = dtypes.StorageType.FPGA_Local
             else:
-                if scope_dict[node]:
+                # Streams cannot reside in global memory
+                if scope_dict[node] or is_stream:
                     nodedesc.storage = dtypes.StorageType.FPGA_Local
                 else:
                     nodedesc.storage = dtypes.StorageType.FPGA_Global
