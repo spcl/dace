@@ -1252,7 +1252,7 @@ def _const_const_binop(visitor: 'ProgramVisitor',
                        right_operand: str,
                        operator: str,
                        opcode: str):
-    '''Both operands are Constants (or Symbols)'''
+    '''Both operands are Constants'''
 
     if isinstance(left_operand, Number):
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
@@ -1286,6 +1286,65 @@ def _const_const_binop(visitor: 'ProgramVisitor',
     expr = 'l {o} r'.format(o=opcode)
     vars = {'l': left, 'r': right}
     return eval(expr, vars)
+
+
+def _sym_sym_binop(visitor: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   left_operand: str,
+                   right_operand: str,
+                   operator: str,
+                   opcode: str):
+    '''At least one operand is a Symbol. If only one operand is a Symbol,
+    the other one is a Constant.'''
+
+    tasklet_args = [str(left_operand), str(right_operand)]
+
+    if isinstance(left_operand, Number):
+        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+    elif isinstance(left_operand, dace.symbolic.symbol):
+        left_type = left_operand.dtype
+    else:
+        left_type = None
+    if isinstance(right_operand, Number):
+        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    elif isinstance(right_operand, dace.symbolic.symbol):
+        right_type = right_operand.dtype
+    else:
+        right_type = None
+
+    # if left_type and right_type:
+    assert(left_type)
+    assert(right_type)
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    # else:
+    #     left_cast = None
+    #     right_cast = None
+
+    if left_cast is not None:
+        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
+                                            o=tasklet_args[0])
+    if right_cast is not None:
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+                                            o=tasklet_args[1])
+    
+    out_operand = sdfg.temp_data_name()
+    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+                                  storage=dtypes.StorageType.Default)
+    
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        {},
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode,
+                                        i2=tasklet_args[1])
+    )
+    n3 = state.add_write(out_operand)
+    state.add_edge(tasklet, '__out', n3, None,
+                   dace.Memlet.from_array(out_operand, out_scal))
+    
+    return out_operand
 
 
 def _makebinop(op, opcode):
@@ -1362,7 +1421,7 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _sym_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
     
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -1387,7 +1446,7 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('BoolConstant', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _sym_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
     
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -1402,17 +1461,17 @@ def _makebinop(op, opcode):
     @oprepo.replaces_operator('symbol', op, otherclass='NumConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _sym_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
     
     @oprepo.replaces_operator('symbol', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _sym_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
     
     @oprepo.replaces_operator('symbol', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _sym_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
 
 # Define all standard Python unary operators
