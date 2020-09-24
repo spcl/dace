@@ -2,6 +2,8 @@
 """ Contains classes that implement a redundant array removal transformation.
 """
 
+import functools
+
 from dace import registry, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -159,12 +161,35 @@ class RedundantSecondArray(pm.Transformation):
         if len(occurrences) > 1:
             return False
 
-        # Only apply if arrays are of same shape (no need to modify memlet subset)
-        # if len(in_desc.shape) != len(
-        #         out_desc.shape) or any(i != o for i, o in zip(
-        #             in_desc.shape,
-        #             out_desc.shape)):
-        #     return False
+        # Check whether the data copied from the first datanode cover
+        # the subsets of all the output edges of the second datanode.
+        # 1. Extract the input (first) and output (second) array subsets.
+        memlet = graph.edges_between(in_array, out_array)[0].data
+        if memlet.data == in_array.data:
+            inp_subset = memlet.subset
+            out_subset = memlet.other_subset
+        else:
+            inp_subset = memlet.other_subset
+            out_subset = memlet.subset
+
+        def _prod(sequence):
+            return functools.reduce(lambda a, b: a * b, sequence, 1)
+
+        # 2. If the data copied from the first array are equal in size
+        # to the second array, then all subsets are covered.
+        if (inp_subset.num_elements() == _prod(out_desc.shape)):
+            return True
+
+        # 3. Check each output edge of the second array
+        for e in graph.out_edges(out_array):
+            # 3a. Extract the output edge subset
+            if e.data.data == out_array.data:
+                subset = memlet.subset
+            else:
+                subset = memlet.other_subset
+            # 3b. Check subset coverage
+            if not out_subset.covers(subset):
+                return False
 
         return True
 
