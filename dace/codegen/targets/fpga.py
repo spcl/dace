@@ -180,7 +180,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 # that are thus not gonna be allocated
                 if data.storage == dace.dtypes.StorageType.FPGA_Global:
                     raise dace.codegen.codegen.CodegenError(
-                        "Cannot allocate global memory from device code.")
+                        "Cannot allocate global array"
+                        f" {node.data} from device code.")
                 allocated.add(node.data)
                 # Allocate transients
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
@@ -1142,9 +1143,9 @@ class FPGACodeGen(TargetCodeGenerator):
                          subgraph_parameters, scalar_parameters,
                          symbol_parameters, module_stream, entry_stream,
                          host_stream):
-        """Main entry function for generating a Xilinx kernel."""
 
         # Module generation
+        module_names = {}
         for subgraph in subgraphs:
             # Traverse to find first tasklets reachable in topological order
             to_traverse = subgraph.source_nodes()
@@ -1174,6 +1175,12 @@ class FPGACodeGen(TargetCodeGenerator):
             if len(labels) == 0:
                 raise RuntimeError("Expected at least one tasklet or data node")
             module_name = "_".join(labels)
+            # Resolve name clashes by
+            if module_name in module_names:
+                module_names[module_name] += 1
+                module_name += "_" + str(module_names[module_name])
+            else:
+                module_names[module_name] = 0
             self.generate_module(
                 sdfg, state, module_name, subgraph,
                 subgraph_parameters[subgraph] + scalar_parameters,
