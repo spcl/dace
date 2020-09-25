@@ -5,6 +5,7 @@ from dace import data, registry, memlet as mm
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.cpp import *
+from dace.codegen.targets.rtl import RTLCodeGen
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.sdfg import nodes
@@ -1252,9 +1253,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         inner_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
 
-        unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                        inner_stream, self._locals, self._ldepth,
-                        self._toplevel_schedule, self)
+        if (node.language == dace.Language.RTL):
+            RTLCodeGen.unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream, inner_stream, self._locals, self._ldepth, self._toplevel_schedule, self)
+        else:
+            unparse_tasklet(sdfg, state_id, dfg, node, function_stream, inner_stream, self._locals, self._ldepth, self._toplevel_schedule, self)
 
         inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
 
