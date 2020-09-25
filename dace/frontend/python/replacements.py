@@ -1268,11 +1268,11 @@ def _const_const_binop(visitor: 'ProgramVisitor',
     if isinstance(left_operand, Number):
         left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
     else:
-        left_type = _sym_type(left_operand)
+        left_type = None
     if isinstance(right_operand, Number):
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
     else:
-        right_type = _sym_type(right_operand)
+        right_type = None
 
     if left_type and right_type:
         _, left_cast, right_cast = _convert_type(left_type, right_type,
