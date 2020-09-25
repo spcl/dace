@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import re, json
 import copy as cp
@@ -105,7 +106,7 @@ class Data(object):
         """ Check for equivalence (shape and type) of two data descriptors. """
         raise NotImplementedError
 
-    def signature(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
 
@@ -124,6 +125,11 @@ class Data(object):
     @property
     def veclen(self):
         return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+
+    
+    @property
+    def ctype(self):
+        return self.dtype.ctype
 
 
 @make_properties
@@ -185,12 +191,10 @@ class Scalar(Data):
             return False
         return True
 
-    def signature(self, with_types=True, for_call=False, name=None):
-        if not with_types or for_call: return name
-        if isinstance(self.dtype, dtypes.callback):
-            assert name is not None
-            return self.dtype.signature(name)
-        return str(self.dtype.ctype) + ' ' + name
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if not with_types or for_call:
+            return name
+        return self.dtype.as_arg(name)
 
     def sizes(self):
         return None
@@ -394,7 +398,7 @@ class Array(Data):
                 return False
         return True
 
-    def signature(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None):
         arrname = name
 
         if not with_types or for_call:
@@ -513,7 +517,7 @@ class Stream(Data):
                 return False
         return True
 
-    def signature(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
         if self.storage in [
                 dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared

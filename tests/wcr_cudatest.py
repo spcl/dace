@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from dace.transformation.interstate import GPUTransformSDFG

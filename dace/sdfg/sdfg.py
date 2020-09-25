@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -31,6 +32,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
 from dace.properties import (make_properties, Property, CodeProperty,
+                             TransformationHistProperty, SDFGReferenceProperty,
                              DictProperty, OrderedDictProperty, CodeBlock)
 
 
@@ -202,6 +204,9 @@ class SDFG(OrderedDiGraph):
     exit_code = DictProperty(
         str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
 
+    orig_sdfg = SDFGReferenceProperty(allow_none=True)
+    transformation_hist = TransformationHistProperty()
+
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
@@ -241,6 +246,8 @@ class SDFG(OrderedDiGraph):
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.orig_sdfg = None
+        self.transformation_hist = []
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -473,6 +480,34 @@ class SDFG(OrderedDiGraph):
         if location not in self.exit_code:
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.exit_code[location].code += cpp_code
+
+    def prepend_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """
+        Prepends C++ code that will be generated in the __dace_exit_* functions on
+        one of the generated code files.
+        :param cpp_code: The code to prepend.
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.exit_code:
+            self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.exit_code[location].code = cpp_code + self.exit_code[location].code
+
+    def append_transformation(self, transformation):
+        """
+        Appends a transformation to the treansformation history of this SDFG.
+        If this is the first transformation being applied, it also saves the
+        initial state of the SDFG to return to and play back the history.
+        :param transformation: The transformation to append.
+        """
+        if not self.orig_sdfg:
+            clone = copy.deepcopy(self)
+            clone.transformation_hist = []
+            clone.orig_sdfg = None
+            self.orig_sdfg = clone
+        self.transformation_hist.append(transformation)
 
     ##########################################
     # Instrumentation-related methods
@@ -846,7 +881,7 @@ class SDFG(OrderedDiGraph):
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
-            v.signature(name=k, with_types=with_types, for_call=for_call)
+            v.as_arg(name=k, with_types=with_types, for_call=for_call)
             for k, v in self.arglist().items()
         ]
 

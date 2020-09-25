@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -6,8 +7,8 @@ state = sdfg.add_state()
 
 # Add nodes
 t = state.add_tasklet('do', {'a'}, {'b'}, 'b = 2*a')
-a = state.add_array('A', [31], dace.float32)
-b = state.add_array('B', [1], dace.float32)
+a = state.add_array('A', [31], dace.float64)
+b = state.add_array('B', [1], dace.float64)
 me, mx = state.add_map('m', dict(i='0:31'))
 
 # Add edges
@@ -24,8 +25,8 @@ state.add_edge_pair(mx,
                     scope_connector='o')
 
 if __name__ == '__main__':
-    A = np.random.rand(31).astype(np.float32)
-    B = np.array([0.], dtype=np.float32)
+    A = np.random.rand(31).astype(np.float64)
+    B = np.array([0.], dtype=np.float64)
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(B[0] - np.sum(2 * A))

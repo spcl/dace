@@ -1,4 +1,5 @@
-''' Example that defines a CUBLAS C++ tasklet. '''
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+""" Example that defines a CUBLAS C++ tasklet. """
 import dace as dp
 import numpy as np
 import os

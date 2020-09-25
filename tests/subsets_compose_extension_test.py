@@ -1,4 +1,6 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.subsets import Range, Indices
+
 
 def test_compose():
     a1 = Range.from_string('0, 0:N, 10:20')
@@ -30,5 +32,3 @@ def test_compose():
 
 if __name__ == '__main__':
     test_compose()
-  
-  

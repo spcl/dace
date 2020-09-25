@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -9,6 +10,7 @@ DACE_debugprint="${DACE_debugprint:-0}"
 DACE_testing_serialization="${DACE_testing_serialization:-1}"
 DACE_testing_single_cache="${DACE_testing_single_cache:-1}"
 DACE_optimizer_interface="${DACE_optimizer_interface:-dace.transformation.optimizer.SDFGOptimizer}"
+DACE_optimizer_transform_on_call="${DACE_optimizer_transform_on_call:-1}"
 NOSTATUSBAR="${NOSTATUSBAR:-0}"
 ERRORS=0
 FAILED_TESTS=""

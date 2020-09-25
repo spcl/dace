@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -166,6 +167,44 @@ _CTYPES = {
     numpy.complex128: "dace::complex128",
 }
 
+# Translation of types to OpenCL types
+_OCL_TYPES = {
+    None: "void",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    numpy.bool: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
+# Translation of types to OpenCL vector types
+_OCL_VECTOR_TYPES = {
+    numpy.int8: "char",
+    numpy.uint8: "uchar",
+    numpy.int16: "short",
+    numpy.uint16: "ushort",
+    numpy.int32: "int",
+    numpy.uint32: "uint",
+    numpy.int64: "long",
+    numpy.uint64: "ulong",
+    numpy.float16: "half",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
 # Translation of types to ctypes types
 _FFI_CTYPES = {
     None: ctypes.c_void_p,
@@ -317,6 +356,13 @@ class typeclass(object):
     def veclen(self):
         return 1
 
+    @property
+    def ocltype(self):
+        return _OCL_TYPES[self.type]
+
+    def as_arg(self, name):
+        return self.ctype + ' ' + name
+
 
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
@@ -359,9 +405,10 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -447,6 +494,10 @@ class pointer(typeclass):
     def base_type(self):
         return self._typeclass
 
+    @property
+    def ocltype(self):
+        return f"{self.type.ocltype}*"
+
 
 class vector(typeclass):
     """
@@ -477,6 +528,14 @@ class vector(typeclass):
     @property
     def ctype(self):
         return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+
+    @property
+    def ocltype(self):
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -665,7 +724,7 @@ class callback(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
-    def signature(self, name):
+    def as_arg(self, name):
         from dace import data
 
         return_type_cstring = (self.return_type.ctype
@@ -988,6 +1047,36 @@ def validate_name(name):
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
+
+
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
 
 
 def can_allocate(storage: StorageType, schedule: ScheduleType):

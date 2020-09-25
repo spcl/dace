@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
@@ -354,7 +355,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
+                and isinstance(node.id, str)):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)
