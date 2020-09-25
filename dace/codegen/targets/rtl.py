@@ -119,7 +119,7 @@ class RTLCodeGen(TargetCodeGenerator):
         if os.path.isdir(absolut_path):
             shutil.rmtree(absolut_path)
         os.makedirs(absolut_path)
-        with open(os.path.join(absolut_path, "{}.v".format(unique_name)), "w") as file:
+        with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
             file.writelines(tasklet.code.code)
 
         sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
