@@ -3,10 +3,6 @@ import dace
 
 import numpy as np
 
-# add symbol
-#N = dace.symbol('N')
-#BIT_WIDTH = dace.symbol('BIT_WIDTH')
-
 # add sdfg
 sdfg = dace.SDFG('rtl_tasklet_demo')
 
@@ -22,34 +18,23 @@ tasklet = state.add_tasklet(
     name='rtl_tasklet',
     inputs={'a'},
     outputs={'b'},
-    code=
-'''
-module top
-  #(
-    parameter  WIDTH = 32
-  ) 
-  ( input                  clk_i  // convention: clk_i clocks the design
-  , input                  rst_i  // convention: rst_i resets the design
-  , input      [WIDTH-1:0] a
-  , output reg [WIDTH-1:0] b
-  );
-
-  always@(posedge clk_i) begin
-    if (rst_i)
-      b <= a;
-    else
-      b <= b + 1;
-  end    
-
-
-  always@(*) begin
-      if (b >= 100) begin
-        $finish; // convention: $finish; must eventually be called
-      end
-   end
-
-endmodule
-''',
+    code='''
+    /*
+        Convention:
+        - clk_i is the global clock
+        - rst_i is the reset input (rst on high) 
+        - valid_o signals valid output data (end of simulation)
+    */
+    
+    always@(posedge clk_i) begin
+        if (rst_i)
+            b <= a;
+        else
+            b <= b + 1;
+    end    
+      
+    assign valid_o = (b >= 100) ? 1'b1:1'b0;
+    ''',
     language=dace.Language.RTL)
 
 # add input/output array
