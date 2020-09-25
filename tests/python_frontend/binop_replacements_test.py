@@ -137,13 +137,35 @@ def test_array_sym():
 
 @dace.program
 def sym_array(A: dace.int64[N]):
-    return A + N
+    return N + A
 
 
 def test_sym_array():
     A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
     B = sym_array(A)
     assert(np.array_equal(N.get() + A, B))
+
+
+@dace.program
+def array_symexpr(A: dace.int64[N]):
+    return A + (N + 1)
+
+
+def test_array_symexpr():
+    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
+    B = array_symexpr(A)
+    assert(np.array_equal(A + (N.get() + 1), B))
+
+
+@dace.program
+def symexpr_array(A: dace.int64[N]):
+    return (N + 1) + A
+
+
+def test_symexpr_array():
+    A = np.random.randint(0, high=2, size=(N.get(), ), dtype=np.int64)
+    B = symexpr_array(A)
+    assert(np.array_equal((N.get() + 1) + A, B))
 
 
 @dace.program
@@ -216,7 +238,7 @@ def test_scal_sym():
 
 @dace.program
 def sym_scal(A: dace.int64, tmp: dace.int64[N]):
-    return A + N
+    return N + A
 
 
 def test_sym_scal():
@@ -224,6 +246,30 @@ def test_sym_scal():
     tmp = np.zeros((N.get(), ), dtype=np.int64)
     B = sym_scal(A, tmp)
     assert(np.array_equal(N.get() + A, B[0]))
+
+
+@dace.program
+def scal_symexpr(A: dace.int64, tmp: dace.int64[N]):
+    return A + (N + 1)
+
+
+def test_scal_symexpr():
+    A = np.random.randint(0, high=2, size=(1, ), dtype=np.int64)[0]
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    B = scal_symexpr(A, tmp)
+    assert(np.array_equal(A + (N.get() + 1), B[0]))
+
+
+@dace.program
+def symexpr_scal(A: dace.int64, tmp: dace.int64[N]):
+    return (N + 1) + A
+
+
+def test_symexpr_scal():
+    A = np.random.randint(0, high=2, size=(1, ), dtype=np.int64)[0]
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    B = symexpr_scal(A, tmp)
+    assert(np.array_equal((N.get() + 1) + A, B[0]))
 
 
 @dace.program
@@ -259,6 +305,38 @@ def test_sym_num():
 
 
 @dace.program
+def num_symexpr(tmp: dace.int64[N]):
+    return 5 + (N + 1)
+
+
+def test_num_symexpr():
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    A = num_symexpr(tmp)
+    assert(A[0] == 5 + (N.get() + 1))
+
+
+@dace.program
+def symexpr_num(tmp: dace.int64[N]):
+    return (N + 1) + 5
+
+
+def test_symexpr_num():
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    A = symexpr_num(tmp)
+    assert(A[0] == (N.get() + 1) + 5)
+
+
+@dace.program
+def bool_bool():
+    return True or False
+
+
+def test_bool_bool():
+    A = bool_bool()
+    assert(A[0] == True or False)
+
+
+@dace.program
 def bool_sym(tmp: dace.int64[N]):
     return False or N
 
@@ -266,7 +344,7 @@ def bool_sym(tmp: dace.int64[N]):
 def test_bool_sym():
     tmp = np.zeros((N.get(), ), dtype=np.int64)
     A = bool_sym(tmp)
-    assert(A[0] == np.logical_or(False, N.get()))
+    assert(A[0] == False or N.get())
 
 
 @dace.program
@@ -277,7 +355,29 @@ def sym_bool(tmp: dace.int64[N]):
 def test_sym_bool():
     tmp = np.zeros((N.get(), ), dtype=np.int64)
     A = sym_bool(tmp)
-    assert(A[0] == np.logical_or(N.get(), False))
+    assert(A[0] == N.get() or False)
+
+
+@dace.program
+def bool_symexpr(tmp: dace.int64[N]):
+    return False or (N + 1)
+
+
+def test_bool_symexpr():
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    A = bool_symexpr(tmp)
+    assert(A[0] == False or (N.get() + 1))
+
+
+@dace.program
+def symexpr_bool(tmp: dace.int64[N]):
+    return (N + 1) or False
+
+
+def test_symexpr_bool():
+    tmp = np.zeros((N.get(), ), dtype=np.int64)
+    A = symexpr_bool(tmp)
+    assert(A[0] == (N.get() + 1) or False)
 
 
 @dace.program
@@ -317,6 +417,8 @@ if __name__ == "__main__":
     test_bool_array()
     test_array_sym()
     test_sym_array()
+    test_array_symexpr()
+    test_symexpr_array()
     test_scal_scal()
     test_scal_num()
     test_num_scal()
@@ -324,10 +426,16 @@ if __name__ == "__main__":
     test_bool_scal()
     test_scal_sym()
     test_sym_scal()
+    test_scal_symexpr()
+    test_symexpr_scal()
     test_num_num()
     test_num_sym()
     test_sym_num()
+    test_num_symexpr()
+    test_symexpr_num()
     test_bool_sym()
     test_sym_bool()
+    test_bool_symexpr()
+    test_symexpr_bool()
     test_sym_sym()
     # test_mixed()

@@ -6,6 +6,7 @@ import itertools
 import re
 import sys
 import warnings
+from numbers import Number
 from typing import Any, Dict, List, Tuple, Union, Callable, Optional
 
 import dace
@@ -32,6 +33,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
+from dace.frontend.python.replacements import _sym_type
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -2508,15 +2510,38 @@ class ProgramVisitor(ExtNodeVisitor):
                     'Variable "{}" used before definition'.format(name))
 
             new_data = None
-            if result not in self.sdfg.arrays:
-                if (not (symbolic.issymbolic(result) or isinstance(
-                        result, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())))):
+            dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
+            if not (symbolic.issymbolic(result)
+                    or isinstance(result, dtype_keys)
+                    or result in self.sdfg.arrays):
+            # if result not in self.sdfg.arrays:
+            #     if (not (symbolic.issymbolic(result) or isinstance(
+            #             result, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())))):
                     raise DaceSyntaxError(
                         self, result, "In assignments, the rhs may only be "
                                       "data, numerical/boolean constants "
                                       "and symbols")
             if not true_name:
-                if result in self.sdfg.arrays:
+                if (symbolic.issymbolic(result)
+                        or isinstance(result, dtype_keys)):
+                    if symbolic.issymbolic(result):
+                        rtype = _sym_type(result)
+                    else:
+                        rtype = type(result)
+                    if target.id.startswith('__return'):
+                        true_name, new_data = self.sdfg.add_temp_transient(
+                            [1], rtype)
+                    else:
+                        true_name = self.sdfg.temp_data_name()
+                        if dtype:
+                            ttype = dtype
+                        else:
+                            ttype = rtype
+                        _, new_data = self.sdfg.add_scalar(
+                            true_name, ttype, transient=True)
+                    self.variables[name] = true_name
+                    defined_vars[name] = true_name
+                elif result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
                     if (target.id.startswith('__return') and
                             isinstance(result_data, data.Scalar)):
@@ -2533,20 +2558,20 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.variables[name] = result
                         defined_vars[name] = result
                         continue
-                else:
-                    if target.id.startswith('__return'):
-                        true_name, new_data = self.sdfg.add_temp_transient(
-                            [1], type(result))
-                    else:
-                        true_name = self.sdfg.temp_data_name()
-                        if dtype:
-                            ttype = dtype
-                        else:
-                            ttype = type(result)
-                        _, new_data = self.sdfg.add_scalar(
-                            true_name, ttype, transient=True)
-                    self.variables[name] = true_name
-                    defined_vars[name] = true_name
+                # else:
+                #     if target.id.startswith('__return'):
+                #         true_name, new_data = self.sdfg.add_temp_transient(
+                #             [1], type(result))
+                #     else:
+                #         true_name = self.sdfg.temp_data_name()
+                #         if dtype:
+                #             ttype = dtype
+                #         else:
+                #             ttype = type(result)
+                #         _, new_data = self.sdfg.add_scalar(
+                #             true_name, ttype, transient=True)
+                #     self.variables[name] = true_name
+                #     defined_vars[name] = true_name
 
 
             if new_data:
