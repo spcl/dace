@@ -1,27 +1,13 @@
-from six import StringIO
-import ast
-import ctypes
-import functools
-import os
-import sympy
-import warnings
-
 import dace
-from dace.frontend import operations
-from dace import registry, subsets, symbolic, dtypes, data as dt
+from dace import registry
 from dace.config import Config
-from dace.sdfg import nodes
-from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel_gpu, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
-from dace.codegen.codeobject import CodeObject
-from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute, DefinedType)
-from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
-                                      cpp_array_expr, synchronize_streams,
-                                      memlet_copy_to_absolute_strides,
-                                      codeblock_to_cpp)
-from dace.codegen import cppunparse
-from dace.codegen.targets.cpu import CPUCodeGen
+from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.targets.cpp import unparse_tasklet
+import dace.codegen.prettycode
+
+import os
+import shutil
+
 
 # class RTLCodeGen(CPUCodeGen):
 @registry.autoregister_params(name='rtl')
@@ -32,11 +18,118 @@ class RTLCodeGen(TargetCodeGenerator):
     target_name = 'rtl'
     language = 'rtl'
 
-    def __init__(self, frame_codegen, *args, **kwargs):
+    def __init__(self, frame_codegen, sdfg, *args, **kwargs):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         # register dispatchers
-        self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
+        self.codegen = self._dispatcher.get_generic_node_dispatcher()
+        self.sdfg = sdfg
+
+
+    # define cpp code templates
+    header_template = """
+                            // generic includes
+                            #include <iostream>
+                    
+                            // verilator includes
+                            #include <verilated.h>
+                            
+                            // include model header, generated from verilating the sv design
+                            #include "V{name}.h"
+                            
+                            // global simulation time cycle counter
+                            vluint64_t main_time = 0;
+                            //long main_time = 0;
+                            
+                            // set debug level
+                            bool DEBUG = {debug};
+                            """
+    main_template = """
+                        // instantiate model
+                        V{name}* model = new V{name};
+                    
+                        // apply initial input values
+                        model->rst_i = 0;
+                        model->clk_i = 0;
+                        model->a = a; // TODO: make generic for all types of inputs (and multiple)
+                        model->eval();
+                    
+                        // reset design
+                        model->rst_i = 1;
+                        model->clk_i = !model->clk_i;
+                        model->eval();
+                        model->clk_i = !model->clk_i;
+                        model->eval();
+                        model->rst_i = 0;
+                        model->eval();
+                        model->clk_i = !model->clk_i;
+                        model->eval();
+                    
+                        // simulate until $finish
+                        while (!Verilated::gotFinish()) {{
+                    
+                            // increment time
+                            main_time++;
+                    
+                            // positive clock edge
+                            model->clk_i = !model->clk_i;
+                            model->eval();
+                    
+                            // report internal state
+                            if(false){{
+                                VL_PRINTF("[%lx] clk_i=%x rst_i=%x a=%x b=%x\\n", main_time, model->clk_i, model->rst_i, model->a, model->b);
+                            }}
+                            
+                            // negative clock edge
+                            model->clk_i = !model->clk_i;
+                            model->eval();
+                        }}
+                    
+                        // write result TODO: make generic for all type of outputs
+                        int b_local = (int)model->b;
+                        b = b_local;
+
+                        // report result
+                        if(DEBUG){{
+                            std::cout << b_local << std::endl;
+                        }}
+                    
+                        // final model cleanup
+                        model->final();
+                    
+                        // clean up resources
+                        delete model;
+                        model = NULL;
+                        """
+
+    @staticmethod
+    def unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream: dace.codegen.prettycode.CodeIOStream,
+                    locals, ldepth, toplevel_schedule, codegen):
+
+        # extract data
+        state = sdfg.nodes()[state_id]
+        tasklet = node
+
+        # construct paths
+        unique_name = "top" # TODO: use "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+        base_path = os.path.join(".dacecache", sdfg.name, "src", "rtl")
+        absolut_path = os.path.abspath(base_path)
+
+        # write verilog to file
+        if os.path.isdir(absolut_path):
+            shutil.rmtree(absolut_path)
+        os.makedirs(absolut_path)
+        with open(os.path.join(absolut_path, "{}.v".format(unique_name)), "w") as file:
+            file.writelines(tasklet.code.code)
+
+        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
+                                                                           debug="true"))
+
+        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name),
+                              sdfg=sdfg,
+                              state_id=state_id,
+                              node_id=node)
+
 
     @staticmethod
     def cmake_options():
@@ -48,23 +141,3 @@ class RTLCodeGen(TargetCodeGenerator):
             "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags)
         ]
         return options
-
-    def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        method_name = "_generate_" + type(node).__name__
-        # Fake inheritance... use this class' method if it exists,
-        # otherwise fall back on CPU codegen
-        if hasattr(self, method_name):
-
-            if hasattr(node, "schedule") and node.schedule not in [
-                    dace.dtypes.ScheduleType.Default,
-                    dace.dtypes.ScheduleType.FPGA_Device
-            ]:
-                warnings.warn("Found schedule {} on {} node in FPGA code. "
-                              "Ignoring.".format(node.schedule,
-                                                 type(node).__name__))
-
-            getattr(self, method_name)(sdfg, dfg, state_id, node,
-                                       function_stream, callsite_stream)
-        else:
-            self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
-                                            function_stream, callsite_stream)
