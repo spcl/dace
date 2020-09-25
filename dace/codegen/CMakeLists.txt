@@ -582,28 +582,32 @@ if(DACE_ENABLE_RTL)
   endif()
 
 
-  get_filename_component(RTL_FILE "${DACE_RTL_FILES}" NAME_WE)
+  foreach(RTL_FILE "${DACE_RTL_FILES}")
 
+    # extract design name
+    get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
 
-  # add verilated .cpp files
-  set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir/V${RTL_FILE}.cpp")
-  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir/V${RTL_FILE}__Slow.cpp")
-  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir/V${RTL_FILE}__Syms.cpp")
-  set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
-  set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
+    # add verilated .cpp files
+    set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
+    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Slow.cpp")
+    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
+    set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
+    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
-  # add verilated design
-  add_library(VERILATED_LIB OBJECT)
+    # add verilated design
+    add_library(VERILATED_LIB OBJECT)
 
-  # include verilator
-  set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir")
-  include_directories(${VERILATOR_INCLUDE})
+    # include verilator
+    set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir")
+    include_directories(${VERILATOR_INCLUDE})
 
-  # verilate design
-  verilate(VERILATED_LIB SOURCES ${DACE_RTL_FILES})
+    # verilate design
+    verilate(VERILATED_LIB SOURCES ${RTL_FILE})
 
-  # add object library for linking
-  set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
+    # add object library for linking
+    set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
+
+  endforeach()
 
 endif() # DACE_ENABLE_RTL
 
