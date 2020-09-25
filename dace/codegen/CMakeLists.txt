@@ -566,11 +566,6 @@ if(DACE_ENABLE_XILINX)
 
 endif() # DACE_ENABLE_XILINX
 
-
-# temporary enable simulator
-set(DACE_ENABLE_RTL ON)
-set(DACE_RTL_FILES "${DACE_SRC_DIR}/rtl/top.v")
-
 # create verilator RTL simulation objects
 if(DACE_ENABLE_RTL)
 
