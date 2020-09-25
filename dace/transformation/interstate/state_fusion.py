@@ -6,12 +6,12 @@ import networkx as nx
 from dace import dtypes, registry, sdfg
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.config import Config
 
 
 @registry.autoregister_params(strict=True)
-class StateFusion(pattern_matching.Transformation):
+class StateFusion(transformation.Transformation):
     """ Implements the state-fusion transformation.
         
         State-fusion takes two states that are connected through a single edge,

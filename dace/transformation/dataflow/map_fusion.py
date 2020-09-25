@@ -8,13 +8,13 @@ from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from typing import List, Union
 import networkx as nx
 
 
 @registry.autoregister_params(singlestate=True)
-class MapFusion(pattern_matching.Transformation):
+class MapFusion(transformation.Transformation):
     """ Implements the MapFusion transformation.
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
         based on the following rules, fuse them and remove the transient in
@@ -93,8 +93,7 @@ class MapFusion(pattern_matching.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         first_map_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
-        second_map_entry = graph.nodes()[candidate[
-            MapFusion._second_map_entry]]
+        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
 
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
@@ -216,8 +215,7 @@ class MapFusion(pattern_matching.Transformation):
         graph = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
         first_entry = graph.entry_node(first_exit)
-        second_entry = graph.nodes()[self.subgraph[
-            MapFusion._second_map_entry]]
+        second_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
         second_exit = graph.exit_node(second_entry)
 
         intermediate_nodes = set()

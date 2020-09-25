@@ -1666,7 +1666,7 @@ class SDFG(OrderedDiGraph):
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
         # This is imported here to avoid an import loop
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         strict_transformations = [
             k for k, v in Transformation.extensions().items()
@@ -1709,7 +1709,7 @@ class SDFG(OrderedDiGraph):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         applied_transformations = collections.defaultdict(int)
 
@@ -1779,7 +1779,7 @@ class SDFG(OrderedDiGraph):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         applied_transformations = collections.defaultdict(int)
 

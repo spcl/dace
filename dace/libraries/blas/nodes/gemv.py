@@ -4,7 +4,7 @@ from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
 import dace.sdfg.nodes
-from dace.transformation.pattern_matching import ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
 import numpy as np

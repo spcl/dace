@@ -10,7 +10,7 @@ from dace.properties import make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 import sympy
 
 
@@ -118,7 +118,7 @@ def calc_set_union(set_a, set_b):
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class StripMining(pattern_matching.Transformation):
+class StripMining(transformation.Transformation):
     """ Implements the strip-mining transformation.
 
         Strip-mining takes as input a map dimension and splits it into

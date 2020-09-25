@@ -7,7 +7,7 @@ from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
 from dace.sdfg.graph import SubgraphView
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
@@ -21,7 +21,7 @@ import dace.libraries.standard as stdlib
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MultiExpansion(pattern_matching.SubgraphTransformation):
+class MultiExpansion(transformation.SubgraphTransformation):
     ''' 
     Implements the MultiExpansion transformation.
     Takes all the lowest scope maps in a given subgraph,

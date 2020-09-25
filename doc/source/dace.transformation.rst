@@ -37,6 +37,14 @@ dace.transformation.testing module
    :show-inheritance:
 
 
+dace.transformation.transformation module
+--------------------------------------------
+
+.. automodule:: dace.transformation.transformation
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Module contents
 ---------------
 

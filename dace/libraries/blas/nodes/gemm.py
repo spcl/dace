@@ -6,7 +6,7 @@ from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
 import dace.sdfg.nodes
-from dace.transformation.pattern_matching import ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
@@ -325,8 +325,14 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             c = nstate.add_write('_c')
             gc = nstate.add_access('_c_gpu')
 
-            tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
-            tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
+            tasklet.in_connectors = {
+                "_conn" + k: None
+                for k in tasklet.in_connectors
+            }
+            tasklet.out_connectors = {
+                "_conn" + k: None
+                for k in tasklet.out_connectors
+            }
 
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))

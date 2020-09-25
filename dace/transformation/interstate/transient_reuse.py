@@ -1,14 +1,14 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import registry, sdfg as sd
 from dace.sdfg import nodes
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties
 import networkx as nx
 
 
 @registry.autoregister
 @make_properties
-class TransientReuse(pattern_matching.Transformation):
+class TransientReuse(transformation.Transformation):
     """ Implements the TransientReuse transformation.
         Finds all possible reuses of arrays,
         decides for a valid combination and changes sdfg accordingly.
