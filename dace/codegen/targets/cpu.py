@@ -9,7 +9,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.cpp import *
-from dace.codegen.targets.rtl import RTLCodeGen
+from dace.codegen.targets import rtl
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
@@ -1316,10 +1316,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         inner_stream, locals, ldepth, toplevel_schedule):
-        # Call the generic CPP unparse_tasklet method
-        cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                            inner_stream, locals, ldepth, toplevel_schedule,
-                            self)
+
+        if (node.language == dace.Language.RTL):
+            rtl.RTLCodeGen.unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream, inner_stream, self._locals, self._ldepth, self._toplevel_schedule, self)
+        else:
+            # Call the generic CPP unparse_tasklet method
+            cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
+                                inner_stream, locals, ldepth, toplevel_schedule,
+                                self)
 
     def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
                           edge, function_stream, callsite_stream):
