@@ -101,6 +101,27 @@ class RTLCodeGen(TargetCodeGenerator):
                         delete model;
                         model = NULL;
                         """
+    rtl_header = """
+      module top
+      #(
+        parameter  WIDTH = 32
+      ) 
+      ( input                  clk_i  // convention: clk_i clocks the design
+      , input                  rst_i  // convention: rst_i resets the design
+      , input      [WIDTH-1:0] a
+      , output reg [WIDTH-1:0] b
+      );
+      
+      logic valid_o;
+    """
+
+    rtl_footer = """
+          always@(*) begin
+            if (valid_o)
+              $finish; // convention: $finish; must eventually be called
+        end
+        endmodule
+    """
 
     @staticmethod
     def unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream: dace.codegen.prettycode.CodeIOStream,
@@ -111,7 +132,7 @@ class RTLCodeGen(TargetCodeGenerator):
         tasklet = node
 
         # construct paths
-        unique_name = "top" # TODO: use "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+        unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
         base_path = os.path.join(".dacecache", sdfg.name, "src", "rtl")
         absolut_path = os.path.abspath(base_path)
 
@@ -120,7 +141,9 @@ class RTLCodeGen(TargetCodeGenerator):
             shutil.rmtree(absolut_path)
         os.makedirs(absolut_path)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
+            file.writelines(RTLCodeGen.rtl_header)
             file.writelines(tasklet.code.code)
+            file.writelines(RTLCodeGen.rtl_footer)
 
         sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
                                                                            debug="true"))
