@@ -581,10 +581,14 @@ if(DACE_ENABLE_RTL)
     message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
 
+
+  get_filename_component(RTL_FILE "${DACE_RTL_FILES}" NAME_WE)
+
+
   # add verilated .cpp files
-  set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir/Vtop.cpp")
-  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir/Vtop__Slow.cpp")
-  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir/Vtop__Syms.cpp")
+  set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir/V${RTL_FILE}.cpp")
+  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir/V${RTL_FILE}__Slow.cpp")
+  set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir/V${RTL_FILE}__Syms.cpp")
   set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
   set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
@@ -592,7 +596,7 @@ if(DACE_ENABLE_RTL)
   add_library(VERILATED_LIB OBJECT)
 
   # include verilator
-  set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/Vtop.dir")
+  set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE}.dir")
   include_directories(${VERILATOR_INCLUDE})
 
   # verilate design
