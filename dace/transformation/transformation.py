@@ -80,7 +80,7 @@ class Transformation(object):
             candidate subgraph. Used when identifying matches in the console
             UI.
         """
-        raise NotImplementedError
+        return str(list(candidate.values()))
 
     def __init__(self, sdfg_id, state_id, subgraph, expr_index):
         """ Initializes an instance of Transformation.
