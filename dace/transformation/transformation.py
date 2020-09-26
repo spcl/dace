@@ -163,9 +163,6 @@ class Transformation(object):
     def __str__(self):
         return type(self).__name__
 
-    def modifies_graph(self):
-        return True
-
     def print_match(self, sdfg):
         """ Returns a string representation of the pattern match on the
             given SDFG. Used for printing matches in the console UI.

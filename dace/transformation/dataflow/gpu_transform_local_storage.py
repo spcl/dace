@@ -527,6 +527,3 @@ class GPUTransformLocalStorage(transformation.Transformation):
             for edge in scope_subgraph.edges():
                 if edge.data.data is not None and edge.data.data in cloned_arrays:
                     edge.data.data = cloned_arrays[edge.data.data]
-
-    def modifies_graph(self):
-        return True

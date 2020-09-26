@@ -202,9 +202,6 @@ class StripMining(transformation.Transformation):
         gentry = candidate[self.entry]
         return str(gentry.map.params[-1])
 
-    def modifies_graph(self):
-        return True
-
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry,
                       prefix: str, target_dim: str):
         """ Finds a variable that is not already defined in scope. """

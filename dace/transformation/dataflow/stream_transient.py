@@ -149,9 +149,6 @@ class StreamTransient(transformation.Transformation):
 
         return
 
-    def modifies_graph(self):
-        return True
-
 
 @registry.autoregister_params(singlestate=True)
 @make_properties

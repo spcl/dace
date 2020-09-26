@@ -95,9 +95,6 @@ class GPUTransformSDFG(transformation.Transformation):
     def match_to_str(graph, candidate):
         return graph.label
 
-    def modifies_graph(self):
-        return True
-
     def apply(self, sdfg: sd.SDFG):
 
         #######################################################
