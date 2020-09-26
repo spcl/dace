@@ -177,11 +177,11 @@ def get_transformations(sdfg_json, selected_elements):
 
     selected_states = [
         sdfg_find_state(sdfg, n) for n in selected_elements
-        if n['type'] == 'state'
+        if 'type' in n and n['type'] == 'state'
     ]
     selected_nodes = [
         sdfg_find_node(sdfg, n) for n in selected_elements
-        if n['type'] == 'node'
+        if 'type' in n and n['type'] == 'node'
     ]
     subgraph = None
     if len(selected_states) > 0:
