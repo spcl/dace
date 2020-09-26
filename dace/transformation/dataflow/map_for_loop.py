@@ -31,7 +31,7 @@ class MapToForLoop(transformation.Transformation):
         return [sdutil.node_path_graph(MapToForLoop._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         # Only uni-dimensional maps are accepted.
         map_entry = graph.nodes()[candidate[MapToForLoop._map_entry]]
         if len(map_entry.map.params) > 1:

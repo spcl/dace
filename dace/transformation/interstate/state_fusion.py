@@ -36,7 +36,7 @@ class StateFusion(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         first_state = graph.nodes()[candidate[StateFusion._first_state]]
         second_state = graph.nodes()[candidate[StateFusion._second_state]]
 

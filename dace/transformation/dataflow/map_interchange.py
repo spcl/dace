@@ -29,7 +29,7 @@ class MapInterchange(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         # TODO: Assuming that the subsets on the edges between the two map
         # entries/exits are the union of separate inner subsets, is it possible
         # that inverting these edges breaks the continuity of union? What about

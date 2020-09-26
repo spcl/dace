@@ -50,14 +50,14 @@ class Transformation(object):
     def expressions():
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
-            `can_be_applied`.
-            @see Transformation.can_be_applied
+            `match`.
+            @see Transformation.match
         """
 
         raise NotImplementedError
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
             :param graph: SDFGState object if this Transformation is
@@ -225,11 +225,11 @@ class ExpandTransformation(Transformation):
         return [sdutil.node_path_graph(clc._match_node)]
 
     @staticmethod
-    def can_be_applied(graph: gr.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[nd.Node, int],
-                       expr_index: int,
-                       sdfg,
-                       strict: bool = False):
+    def match(graph: gr.OrderedMultiDiConnectorGraph,
+              candidate: Dict[nd.Node, int],
+              expr_index: int,
+              sdfg,
+              strict: bool = False):
         # All we need is the correct node
         return True
 

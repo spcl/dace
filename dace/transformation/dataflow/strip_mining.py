@@ -164,7 +164,7 @@ class StripMining(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         return True
 
     @staticmethod

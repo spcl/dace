@@ -84,7 +84,7 @@ class ReduceExpansion(transformation.Transformation):
         return [utils.node_path_graph(ReduceExpansion._reduce)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
         inedge = graph.in_edges(reduce_node)[0]
         input_dims = inedge.data.subset.data_dims()

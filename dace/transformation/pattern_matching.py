@@ -97,13 +97,13 @@ def match_pattern(state: SDFGState,
                 for (i, j) in subgraph.items()
             }
             try:
-                match_found = pattern.can_be_applied(state,
-                                                     subgraph,
-                                                     idx,
-                                                     sdfg,
-                                                     strict=strict)
+                match_found = pattern.match(state,
+                                            subgraph,
+                                            idx,
+                                            sdfg,
+                                            strict=strict)
             except Exception as e:
-                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+                print('WARNING: {p}::match triggered a {c} exception:'
                       ' {e}'.format(p=pattern.__name__,
                                     c=e.__class__.__name__,
                                     e=e))
@@ -154,10 +154,9 @@ def match_stateflow_pattern(sdfg,
                 for (i, j) in subgraph.items()
             }
             try:
-                match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
-                                                     strict)
+                match_found = pattern.match(sdfg, subgraph, idx, sdfg, strict)
             except Exception as e:
-                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+                print('WARNING: {p}::match triggered a {c} exception:'
                       ' {e}'.format(p=pattern.__name__,
                                     c=e.__class__.__name__,
                                     e=e))

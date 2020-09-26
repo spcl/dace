@@ -30,11 +30,11 @@ class MapExpansion(pm.Transformation):
         return [sdutil.node_path_graph(MapExpansion._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[dace.sdfg.nodes.Node, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       strict: bool = False):
+    def match(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
+              candidate: Dict[dace.sdfg.nodes.Node, int],
+              expr_index: int,
+              sdfg: dace.SDFG,
+              strict: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
         map_entry = graph.nodes()[candidate[MapExpansion._map_entry]]

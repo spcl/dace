@@ -49,7 +49,7 @@ class MapReduceFusion(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         tmap_exit = graph.nodes()[candidate[MapReduceFusion._tmap_exit]]
         in_array = graph.nodes()[candidate[MapReduceFusion._in_array]]
         reduce_node = graph.nodes()[candidate[MapReduceFusion._reduce]]
@@ -197,7 +197,7 @@ class MapWCRFusion(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         tmap_exit = graph.nodes()[candidate[MapWCRFusion._tmap_exit]]
         in_array = graph.nodes()[candidate[MapWCRFusion._in_array]]
         rmap_entry = graph.nodes()[candidate[MapWCRFusion._rmap_out_entry]]

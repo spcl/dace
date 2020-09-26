@@ -27,7 +27,7 @@ class RedundantArray(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         in_array = graph.nodes()[candidate[RedundantArray._in_array]]
         out_array = graph.nodes()[candidate[RedundantArray._out_array]]
 
@@ -126,7 +126,7 @@ class RedundantSecondArray(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         in_array = graph.nodes()[candidate[RedundantSecondArray._in_array]]
         out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
 

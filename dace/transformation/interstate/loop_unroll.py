@@ -78,9 +78,8 @@ class LoopUnroll(DetectLoop):
         return start, end, stride
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
+        if not DetectLoop.match(graph, candidate, expr_index, sdfg, strict):
             return False
 
         guard = graph.node(candidate[DetectLoop._loop_guard])

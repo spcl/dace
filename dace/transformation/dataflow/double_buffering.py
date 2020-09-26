@@ -34,7 +34,7 @@ class DoubleBuffering(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         map_entry = graph.nodes()[candidate[DoubleBuffering._map_entry]]
         transient = graph.nodes()[candidate[DoubleBuffering._transient]]
 
@@ -43,7 +43,7 @@ class DoubleBuffering(transformation.Transformation):
             return False
 
         # Verify the map can be transformed to a for-loop
-        if not MapToForLoop.can_be_applied(
+        if not MapToForLoop.match(
                 graph,
             {MapToForLoop._map_entry: candidate[DoubleBuffering._map_entry]},
                 expr_index, sdfg, strict):

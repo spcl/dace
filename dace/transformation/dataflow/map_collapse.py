@@ -32,7 +32,7 @@ class MapCollapse(transformation.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         # Check the edges between the entries of the two maps.
         outer_map_entry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
         inner_map_entry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]

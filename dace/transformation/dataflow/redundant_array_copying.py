@@ -30,7 +30,7 @@ class RedundantArrayCopyingIn(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
@@ -115,7 +115,7 @@ class RedundantArrayCopying(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
         med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
@@ -220,7 +220,7 @@ class RedundantArrayCopying2(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         in_array = graph.nodes()[candidate[RedundantArrayCopying2._in_array]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying2._out_array]]
 
@@ -279,7 +279,7 @@ class RedundantArrayCopying3(pm.Transformation):
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         map_entry = graph.nodes()[candidate[RedundantArrayCopying3._map_entry]]
         out_array = graph.nodes()[candidate[RedundantArrayCopying3._out_array]]
 

@@ -14,7 +14,7 @@ class TransientReuse(transformation.Transformation):
         decides for a valid combination and changes sdfg accordingly.
     """
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def match(graph, candidate, expr_index, sdfg, strict=False):
         return True
 
     @staticmethod
