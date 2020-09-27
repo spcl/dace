@@ -21,15 +21,15 @@ tasklet = state.add_tasklet(
     code='''
     /*
         Convention:
-           |-------------------------------------------------|
-        -->| clk_i (clock input)                             |
-        -->| rst_i (reset input, rst on high)                |
-           |                                                 |
-        -->| {inputs}                          reg {outputs} |-->
-           |                                                 |
-        <--| ready_o (ready for new data)           () valid_o|-->
-        -->| valid_i (new data avail)              () yumi_i |<--
-           |-------------------------------------------------|
+           |----------------------------------------------------|
+        -->| clk_i (clock input)                                |
+        -->| rst_i (reset input, rst on high)                   |
+           |                                                    |
+        -->| {inputs}                             reg {outputs} |-->
+           |                                                    |
+        <--| ready_o (ready for data)       (data avail) valid_o|-->
+        -->| valid_i (new data avail)    (data consumed) yumi_i |<--
+           |----------------------------------------------------|
     */
     
     always@(posedge clk_i) begin
