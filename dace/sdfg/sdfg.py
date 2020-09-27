@@ -901,7 +901,6 @@ class SDFG(OrderedDiGraph):
         """
         return ", ".join(self.signature_arglist(with_types, for_call))
 
-    # TODO(later): Also implement the "_repr_svg_" method for static output
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
@@ -910,6 +909,10 @@ class SDFG(OrderedDiGraph):
         result = ''
         if not isnotebook():
             result = preamble()
+
+        # Make sure to not store metadata (saves space)
+        old_meta = dace.serialize.JSON_STORE_METADATA
+        dace.serialize.JSON_STORE_METADATA = False
 
         # Create renderer canvas and load SDFG
         result += """
@@ -923,6 +926,9 @@ class SDFG(OrderedDiGraph):
             # recursively
             sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
+
+        # Reset metadata state
+        dace.serialize.JSON_STORE_METADATA = old_meta
 
         return result
 
