@@ -40,7 +40,7 @@ class MapFusion(transformation.Transformation):
              the first map entry.
     """
     _first_map_exit = nodes.ExitNode()
-    _some_array = nodes.AccessNode("_")
+    _array = nodes.AccessNode("_")
     _second_map_entry = nodes.EntryNode()
 
     @staticmethod
@@ -52,7 +52,7 @@ class MapFusion(transformation.Transformation):
         return [
             sdutil.node_path_graph(
                 MapFusion._first_map_exit,
-                MapFusion._some_array,
+                MapFusion._array,
                 MapFusion._second_map_entry,
             )
         ]
