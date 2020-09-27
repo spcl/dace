@@ -21,9 +21,15 @@ tasklet = state.add_tasklet(
     code='''
     /*
         Convention:
-        - clk_i is the global clock
-        - rst_i is the reset input (rst on high) 
-        - valid_o signals valid output data (end of simulation)
+           |-------------------------------------------------|
+        -->| clk_i (clock input)                             |
+        -->| rst_i (reset input, rst on high)                |
+           |                                                 |
+        -->| {inputs}                          reg {outputs} |-->
+           |                                                 |
+        <--| ready_o (ready for new data)           () valid_o|-->
+        -->| valid_i (new data avail)              () yumi_i |<--
+           |-------------------------------------------------|
     */
     
     always@(posedge clk_i) begin
