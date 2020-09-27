@@ -8,9 +8,38 @@ Subpackages
 
    dace.transformation.dataflow
    dace.transformation.interstate
+   dace.transformation.subgraph
 
 Submodules
 ----------
+
+
+dace.transformation.transformation module
+--------------------------------------------
+
+.. automodule:: dace.transformation.transformation
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+dace.transformation.helpers module
+--------------------------------------------
+
+.. automodule:: dace.transformation.helpers
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+dace.transformation.pattern\_matching module
+--------------------------------------------
+
+.. automodule:: dace.transformation.pattern_matching
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 
 dace.transformation.optimizer module
 ------------------------------------
@@ -20,13 +49,6 @@ dace.transformation.optimizer module
    :undoc-members:
    :show-inheritance:
 
-dace.transformation.pattern\_matching module
---------------------------------------------
-
-.. automodule:: dace.transformation.pattern_matching
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
 dace.transformation.testing module
 ----------------------------------
@@ -37,13 +59,6 @@ dace.transformation.testing module
    :show-inheritance:
 
 
-dace.transformation.transformation module
---------------------------------------------
-
-.. automodule:: dace.transformation.transformation
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
 Module contents
 ---------------
