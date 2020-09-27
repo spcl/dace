@@ -9,7 +9,7 @@ from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation
 from dace.sdfg.graph import SubgraphView
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
-from typing import Dict, List, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 
 @make_registry
@@ -43,7 +43,6 @@ class Transformation(object):
             or modifies with the appropriate memlets. This determines
             whether to apply memlet propagation after the transformation.
         """
-
         return False
 
     @staticmethod
@@ -53,7 +52,6 @@ class Transformation(object):
             `match`.
             @see Transformation.match
         """
-
         raise NotImplementedError
 
     @staticmethod
@@ -116,6 +114,19 @@ class Transformation(object):
     def subgraph(self):
         return self._subgraph_user
 
+    def query_node(
+        self, sdfg: SDFG, pattern_node: Union[nd.Node, SDFGState]
+    ) -> Union[nd.Node, SDFGState]:
+        """ 
+        Returns the matched node object (from a subgraph pattern node) in its
+        original graph.
+        :param sdfg: The SDFG on which this transformation is applied.
+        :param pattern_node: The node object in the transformation properties.
+        :return: The node object in the matched graph.
+        """
+        graph = sdfg if self.state_id == -1 else sdfg.node(self.state_id)
+        return graph.node(self.subgraph[pattern_node])
+
     def __lt__(self, other):
         """ Comparing two transformations by their class name and node IDs
             in match. Used for ordering transformations consistently.
@@ -159,6 +170,79 @@ class Transformation(object):
         self.apply(sdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(sdfg)
+
+    @classmethod
+    def apply_to(cls,
+                 sdfg: SDFG,
+                 options: Optional[Dict[str, Any]] = None,
+                 expr_index: int = 0,
+                 verify: bool = True,
+                 strict: bool = False,
+                 **where: Union[nd.Node, SDFGState]):
+        """
+        Applies this transformation to a given subgraph, defined by a set of
+        nodes. Raises an error if arguments are invalid or transformation is
+        not applicable.
+        :param sdfg: The SDFG to apply the transformation to.
+        :param options: A set of parameters to use for applying the 
+                        transformation.
+        :param expr_index: The pattern expression index to try to match with.
+        :param verify: Check that `match` returns True before applying.
+        :param strict: Apply transformation in strict mode.
+        :param where: A dictionary of node names (from the transformation) to
+                      nodes in the SDFG or a single state.
+        """
+        if len(where) == 0:
+            raise ValueError('At least one node is required')
+        options = options or {}
+
+        # Check that all keyword arguments are nodes and if interstate or not
+        sample_node = next(iter(where.values()))
+
+        if isinstance(sample_node, SDFGState):
+            graph = sdfg
+            state_id = -1
+        elif isinstance(sample_node, nd.Node):
+            graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
+            state_id = sdfg.node_id(graph)
+        else:
+            raise TypeError('Invalid node type "%s"' %
+                            type(sample_node).__name__)
+
+        # Check that all nodes in the pattern are set
+        required_nodes = cls.expressions()[expr_index].nodes()
+        required_node_names = {
+            pname[1:]: pval
+            for pname, pval in cls.__dict__.items()
+            if pname.startswith('_') and pval in required_nodes
+        }
+        required = set(required_node_names.keys())
+        intersection = required & set(where.keys())
+        if len(required - intersection) > 0:
+            raise ValueError('Missing nodes for transformation subgraph: %s' %
+                             (required - intersection))
+
+        # Construct subgraph and instantiate transformation
+        subgraph = {
+            required_node_names[k]: graph.node_id(where[k])
+            for k in required
+        }
+        instance = cls(sdfg.sdfg_id, state_id, subgraph, expr_index)
+
+        # Construct transformation parameters
+        for optname, optval in options.items():
+            if not optname in cls.__properties__:
+                raise ValueError('Property "%s" not found in transformation' %
+                                 optname)
+            setattr(instance, optname, optval)
+
+        if verify:
+            if not cls.match(graph, subgraph, expr_index, sdfg, strict=strict):
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("match" failed)')
+
+        # Apply to SDFG
+        instance.apply_pattern(sdfg)
 
     def __str__(self):
         return type(self).__name__
@@ -357,6 +441,68 @@ class SubgraphTransformation(object):
         :param sdfg: The SDFG that includes the subgraph.
         """
         pass
+
+    @classmethod
+    def apply_to(cls,
+                 sdfg: SDFG,
+                 *where: Union[nd.Node, SDFGState, SubgraphView],
+                 verify: bool = True,
+                 **options: Any):
+        """
+        Applies this transformation to a given subgraph, defined by a set of
+        nodes. Raises an error if arguments are invalid or transformation is
+        not applicable.
+        :param sdfg: The SDFG to apply the transformation to.
+        :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
+        :param verify: Check that `match` returns True before applying.
+        :param options: A set of parameters to use for applying the 
+                        transformation.
+        """
+        subgraph = None
+        if len(where) == 1:
+            if isinstance(where[0], (list, tuple)):
+                where = where[0]
+            elif isinstance(where[0], SubgraphView):
+                subgraph = where[0]
+        if len(where) == 0:
+            raise ValueError('At least one node is required')
+
+        # Check that all keyword arguments are nodes and if interstate or not
+        if subgraph is None:
+            sample_node = where[0]
+
+            if isinstance(sample_node, SDFGState):
+                graph = sdfg
+                state_id = -1
+            elif isinstance(sample_node, nd.Node):
+                graph = next(s for s in sdfg.nodes()
+                             if sample_node in s.nodes())
+                state_id = sdfg.node_id(graph)
+            else:
+                raise TypeError('Invalid node type "%s"' %
+                                type(sample_node).__name__)
+
+            # Construct subgraph and instantiate transformation
+            subgraph = SubgraphView(graph, where)
+            instance = cls(subgraph, sdfg.sdfg_id, state_id)
+        else:
+            # Construct instance from subgraph directly
+            instance = cls(subgraph)
+
+        # Construct transformation parameters
+        for optname, optval in options.items():
+            if not optname in cls.__properties__:
+                raise ValueError('Property "%s" not found in transformation' %
+                                 optname)
+            setattr(instance, optname, optval)
+
+        if verify:
+            if not cls.match(sdfg, subgraph):
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("match" failed)')
+
+        # Apply to SDFG
+        instance.apply(sdfg)
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
