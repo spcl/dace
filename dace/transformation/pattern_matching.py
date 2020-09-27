@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functions related to pattern matching in transformations. """
 
+from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
 import networkx as nx
@@ -103,6 +104,8 @@ def match_pattern(state: SDFGState,
                                             sdfg,
                                             strict=strict)
             except Exception as e:
+                if Config.get_bool('optimizer', 'match_exception'):
+                    raise
                 print('WARNING: {p}::match triggered a {c} exception:'
                       ' {e}'.format(p=pattern.__name__,
                                     c=e.__class__.__name__,
@@ -156,6 +159,8 @@ def match_stateflow_pattern(sdfg,
             try:
                 match_found = pattern.match(sdfg, subgraph, idx, sdfg, strict)
             except Exception as e:
+                if Config.get_bool('optimizer', 'match_exception'):
+                    raise
                 print('WARNING: {p}::match triggered a {c} exception:'
                       ' {e}'.format(p=pattern.__name__,
                                     c=e.__class__.__name__,
