@@ -65,14 +65,21 @@ def type_match(node_a, node_b):
 
 
 def type_or_class_match(node_a, node_b):
-    """ Checks whether the node types of the inputs match.
-        :param node_a: First node.
-        :param node_b: Second node.
-        :return: True if the object types of the nodes match, False otherwise.
-        :raise TypeError: When at least one of the inputs is not a dictionary
-                          or does not have a 'node' attribute.
-        :raise KeyError: When at least one of the inputs is a dictionary,
-                         but does not have a 'node' key.
+    """
+    Checks whether `node_a` is an instance of the same type as `node_b`, or
+    if either `node_a`/`node_b` is a type and the other is an instance of that
+    type. This is used in subgraph matching to allow the subgraph pattern to
+    be either a graph of instantiated nodes, or node types.
+
+    :param node_a: First node.
+    :param node_b: Second node.
+    :return: True if the object types of the nodes match according to the
+             description, False otherwise.
+    :raise TypeError: When at least one of the inputs is not a dictionary
+                        or does not have a 'node' attribute.
+    :raise KeyError: When at least one of the inputs is a dictionary,
+                        but does not have a 'node' key.
+    :see: enumerate_matches
     """
     if isinstance(node_b['node'], type):
         return issubclass(type(node_a['node']), node_b['node'])
