@@ -12,6 +12,7 @@ def dbladd(A: dace.float64[100, 100], B: dace.float64[100, 100]):
 
 def test_applyto_pattern():
     sdfg = dbladd.to_sdfg()
+    sdfg.apply_strict_transformations()
 
     # Since there is only one state (thanks to StateFusion), we can use the
     # first one in the SDFG
@@ -42,6 +43,7 @@ def test_applyto_pattern():
 
 def test_applyto_subgraph():
     sdfg = dbladd.to_sdfg()
+    sdfg.apply_strict_transformations()
     state = sdfg.node(0)
     # Apply to subgraph
     SubgraphFusion.apply_to(sdfg, state.nodes())
