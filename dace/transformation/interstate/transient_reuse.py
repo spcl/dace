@@ -33,9 +33,9 @@ class TransientReuse(transformation.Transformation):
         memory_before = 0
         arrays = {}
         for a in sdfg.arrays:
+            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
-                memory_before += sdfg.arrays[a].total_size
 
         # only consider transients appearing in one single state
         for state in sdfg.states():
@@ -172,8 +172,7 @@ class TransientReuse(transformation.Transformation):
         # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
-            if sdfg.arrays[a].transient:
-                memory_after += sdfg.arrays[a].total_size
+            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')
