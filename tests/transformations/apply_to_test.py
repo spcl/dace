@@ -1,8 +1,10 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the `apply_to` transformation API. """
 import dace
+from dace.sdfg import utils as sdutil
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.subgraph import SubgraphFusion
+from dace.transformation.pattern_matching import enumerate_matches
 
 
 @dace.function
@@ -42,6 +44,21 @@ def test_applyto_pattern():
                        second_map_entry=add_entry)
 
 
+def test_applyto_enumerate():
+    sdfg = dbladd.to_sdfg()
+    sdfg.apply_strict_transformations()
+
+    # Construct subgraph pattern
+    pattern = sdutil.node_path_graph(dace.nodes.MapExit, dace.nodes.AccessNode,
+                                     dace.nodes.MapEntry)
+    for subgraph in enumerate_matches(sdfg, pattern):
+        MapFusion.apply_to(sdfg,
+                           first_map_exit=subgraph.source_nodes()[0],
+                           array=next(n for n in subgraph.nodes()
+                                      if isinstance(n, dace.nodes.AccessNode)),
+                           second_map_entry=subgraph.sink_nodes()[0])
+
+
 def test_applyto_subgraph():
     sdfg = dbladd.to_sdfg()
     sdfg.apply_strict_transformations()
@@ -52,4 +69,5 @@ def test_applyto_subgraph():
 
 if __name__ == '__main__':
     test_applyto_pattern()
+    test_applyto_enumerate()
     test_applyto_subgraph()

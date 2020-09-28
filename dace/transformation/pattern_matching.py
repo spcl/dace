@@ -6,7 +6,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Dict, List, Tuple, Type, Union
+from typing import Dict, Iterator, List, Tuple, Type, Union
 from dace.transformation.transformation import Transformation
 
 
@@ -61,6 +61,23 @@ def type_match(node_a, node_b):
         :raise KeyError: When at least one of the inputs is a dictionary,
                          but does not have a 'node' key.
     """
+    return isinstance(node_a['node'], type(node_b['node']))
+
+
+def type_or_class_match(node_a, node_b):
+    """ Checks whether the node types of the inputs match.
+        :param node_a: First node.
+        :param node_b: Second node.
+        :return: True if the object types of the nodes match, False otherwise.
+        :raise TypeError: When at least one of the inputs is not a dictionary
+                          or does not have a 'node' attribute.
+        :raise KeyError: When at least one of the inputs is a dictionary,
+                         but does not have a 'node' key.
+    """
+    if isinstance(node_b['node'], type):
+        return issubclass(type(node_a['node']), node_b['node'])
+    elif isinstance(node_a['node'], type):
+        return issubclass(type(node_b['node']), node_a['node'])
     return isinstance(node_a['node'], type(node_b['node']))
 
 
@@ -176,3 +193,48 @@ def match_stateflow_pattern(sdfg,
                 yield from match_stateflow_pattern(node.sdfg,
                                                    pattern,
                                                    strict=strict)
+
+
+def enumerate_matches(sdfg: SDFG,
+                      pattern: gr.Graph,
+                      node_match=type_or_class_match,
+                      edge_match=None) -> Iterator[gr.SubgraphView]:
+    """
+    Returns a generator of subgraphs that match the given subgraph pattern.
+    :param sdfg: The SDFG to search in.
+    :param pattern: A subgraph to look for.
+    :param node_match: An optional function to use for matching nodes.
+    :param node_match: An optional function to use for matching edges.
+    :return: Yields SDFG subgraph view objects.
+    """
+    if len(pattern.nodes()) == 0:
+        raise ValueError('Subgraph pattern cannot be empty')
+
+    # Find if the subgraph is within states or SDFGs
+    is_interstate = (isinstance(pattern.node(0), SDFGState)
+                     or (isinstance(pattern.node(0), type)
+                         and pattern.node(0) is SDFGState))
+
+    # Collapse multigraphs into directed graphs
+    pattern_digraph = collapse_multigraph_to_nx(pattern)
+
+    # Find matches in all SDFGs and nested SDFGs
+    for graph in sdfg.all_sdfgs_recursive():
+        if is_interstate:
+            graph_matcher = iso.DiGraphMatcher(collapse_multigraph_to_nx(graph),
+                                               pattern_digraph,
+                                               node_match=node_match,
+                                               edge_match=edge_match)
+            for subgraph in graph_matcher.subgraph_isomorphisms_iter():
+                yield gr.SubgraphView(graph,
+                                      [graph.node(i) for i in subgraph.keys()])
+        else:
+            for state in graph.nodes():
+                graph_matcher = iso.DiGraphMatcher(
+                    collapse_multigraph_to_nx(state),
+                    pattern_digraph,
+                    node_match=node_match,
+                    edge_match=edge_match)
+                for subgraph in graph_matcher.subgraph_isomorphisms_iter():
+                    yield gr.SubgraphView(
+                        state, [state.node(i) for i in subgraph.keys()])
