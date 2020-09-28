@@ -54,7 +54,7 @@ class Vectorization(transformation.Transformation):
         ]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
         tasklet = graph.nodes()[candidate[Vectorization._tasklet]]
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])

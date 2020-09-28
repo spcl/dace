@@ -72,7 +72,7 @@ class GPUTransformLocalStorage(transformation.Transformation):
         ]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         if expr_index == 0:
             map_entry = graph.nodes()[candidate[
                 GPUTransformLocalStorage._map_entry]]

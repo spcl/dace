@@ -40,7 +40,7 @@ class FPGATransformState(transformation.Transformation):
         return [sdutil.node_path_graph(FPGATransformState._state)]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[FPGATransformState._state]]
 
         # TODO: Support most of these cases

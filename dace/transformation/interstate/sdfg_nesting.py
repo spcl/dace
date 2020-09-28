@@ -99,7 +99,7 @@ class InlineSDFG(transformation.Transformation):
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
@@ -473,7 +473,7 @@ class NestSDFG(transformation.Transformation):
         return [nx.DiGraph()]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         return True
 
     @staticmethod

@@ -32,7 +32,7 @@ class InMergeArrays(transformation.Transformation):
         return [g]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         arr1_id = candidate[InMergeArrays._array1]
         arr2_id = candidate[InMergeArrays._array2]
 
@@ -147,7 +147,7 @@ class OutMergeArrays(transformation.Transformation):
         return [g]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         arr1_id = candidate[OutMergeArrays._array1]
         arr2_id = candidate[OutMergeArrays._array2]
 

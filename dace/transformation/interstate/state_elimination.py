@@ -24,7 +24,7 @@ class EndStateElimination(transformation.Transformation):
         return [sdutil.node_path_graph(EndStateElimination._end_state)]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[EndStateElimination._end_state]]
 
         out_edges = graph.out_edges(state)
@@ -71,7 +71,7 @@ class StateAssignElimination(transformation.Transformation):
         return [sdutil.node_path_graph(StateAssignElimination._end_state)]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         state = graph.nodes()[candidate[StateAssignElimination._end_state]]
 
         out_edges = graph.out_edges(state)

@@ -200,7 +200,7 @@ def get_transformations(sdfg_json, selected_elements):
 
     if subgraph is not None:
         for xform in SubgraphTransformation.extensions():
-            if xform.match(sdfg, subgraph):
+            if xform.can_be_applied(sdfg, subgraph):
                 xform_obj = xform(subgraph)
                 transformations.append(xform_obj.to_json())
                 docstrings[xform.__name__] = xform_obj.__doc__

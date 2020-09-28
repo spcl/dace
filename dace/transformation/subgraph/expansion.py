@@ -38,7 +38,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                                     default=False)
 
     @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         ### get lowest scope maps of subgraph
         # grab first node and see whether all nodes are in the same graph
         # (or nested sdfgs therein)

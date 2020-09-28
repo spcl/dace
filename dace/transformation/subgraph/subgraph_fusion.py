@@ -48,7 +48,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         default=dtypes.StorageType.Default)
 
     @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
         Fusible if
         1. Maps have the same access sets and ranges in order

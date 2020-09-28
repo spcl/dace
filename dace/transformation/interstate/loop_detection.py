@@ -46,7 +46,7 @@ class DetectLoop(transformation.Transformation):
         return [sdfg, msdfg]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         guard = graph.node(candidate[DetectLoop._loop_guard])
         begin = graph.node(candidate[DetectLoop._loop_begin])
 

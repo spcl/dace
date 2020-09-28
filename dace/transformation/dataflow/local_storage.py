@@ -122,7 +122,7 @@ class InLocalStorage(LocalStorage):
         data node between two scope entry nodes.
     """
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
         if (isinstance(node_a, nodes.EntryNode)
@@ -141,7 +141,7 @@ class OutLocalStorage(LocalStorage):
         data node between two scope exit nodes.
     """
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         node_a = graph.nodes()[candidate[LocalStorage._node_a]]
         node_b = graph.nodes()[candidate[LocalStorage._node_b]]
 

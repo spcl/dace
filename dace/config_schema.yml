@@ -88,9 +88,9 @@ required:
             match_exception:
                 type: bool
                 default: false
-                title: Treat exceptions in "match" as errors
+                title: Treat exceptions in "can_be_applied" as errors
                 description: >
-                    When an exception is raised in a transformation "match"
+                    When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
     compiler:

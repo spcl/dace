@@ -21,14 +21,15 @@ class FPGATransformSDFG(transformation.Transformation):
         return [nx.DiGraph()]
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # Avoid import loops
         from dace.transformation.interstate import FPGATransformState
 
         # Condition match depends on matching FPGATransformState for each state
         for state_id, state in enumerate(sdfg.nodes()):
             candidate = {FPGATransformState._state: state_id}
-            if not FPGATransformState.match(sdfg, candidate, expr_index, sdfg):
+            if not FPGATransformState.can_be_applied(sdfg, candidate,
+                                                     expr_index, sdfg):
                 return False
 
         return True

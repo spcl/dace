@@ -24,15 +24,15 @@ def expand_reduce(sdfg: dace.SDFG,
         reduce_nodes = []
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
-                if not ReduceExpansion.match(graph=graph,
-                                             candidate={
-                                                 ReduceExpansion._reduce:
-                                                 graph.node_id(node)
-                                             },
-                                             expr_index=0,
-                                             sdfg=sdfg):
+                if not ReduceExpansion.can_be_applied(
+                        graph=graph,
+                        candidate={
+                            ReduceExpansion._reduce: graph.node_id(node)
+                        },
+                        expr_index=0,
+                        sdfg=sdfg):
                     print(f"WARNING: Cannot expand reduce node {node}:"
-                          "match() failed.")
+                          "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 

@@ -90,7 +90,7 @@ class MapFusion(transformation.Transformation):
         return result
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         first_map_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]

@@ -14,7 +14,7 @@ class TransientReuse(transformation.Transformation):
         decides for a valid combination and changes sdfg accordingly.
     """
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         return True
 
     @staticmethod
@@ -33,7 +33,8 @@ class TransientReuse(transformation.Transformation):
         memory_before = 0
         arrays = {}
         for a in sdfg.arrays:
-            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[
+                a].dtype.bytes
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
 
@@ -172,7 +173,8 @@ class TransientReuse(transformation.Transformation):
         # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
-            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
+            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[
+                a].dtype.bytes
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')

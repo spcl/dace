@@ -48,7 +48,7 @@ def test_p1():
         if isinstance(node, dace.libraries.standard.nodes.Reduce):
             reduce_node = node
 
-    assert ReduceExpansion.match(state, \
+    assert ReduceExpansion.can_be_applied(state, \
                                           {ReduceExpansion._reduce: state.nodes().index(reduce_node)}, \
                                           0, \
                                           sdfg) == True

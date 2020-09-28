@@ -49,13 +49,13 @@ class Transformation(object):
     def expressions():
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
-            `match`.
-            @see Transformation.match
+            `can_be_applied`.
+            :see: Transformation.can_be_applied
         """
         raise NotImplementedError
 
     @staticmethod
-    def match(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
             :param graph: SDFGState object if this Transformation is
@@ -187,7 +187,7 @@ class Transformation(object):
         :param options: A set of parameters to use for applying the 
                         transformation.
         :param expr_index: The pattern expression index to try to match with.
-        :param verify: Check that `match` returns True before applying.
+        :param verify: Check that `can_be_applied` returns True before applying.
         :param strict: Apply transformation in strict mode.
         :param where: A dictionary of node names (from the transformation) to
                       nodes in the SDFG or a single state.
@@ -237,9 +237,10 @@ class Transformation(object):
             setattr(instance, optname, optval)
 
         if verify:
-            if not cls.match(graph, subgraph, expr_index, sdfg, strict=strict):
+            if not cls.can_be_applied(
+                    graph, subgraph, expr_index, sdfg, strict=strict):
                 raise ValueError('Transformation cannot be applied on the '
-                                 'given subgraph ("match" failed)')
+                                 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         instance.apply_pattern(sdfg)
@@ -306,11 +307,11 @@ class ExpandTransformation(Transformation):
         return [sdutil.node_path_graph(clc._match_node)]
 
     @staticmethod
-    def match(graph: gr.OrderedMultiDiConnectorGraph,
-              candidate: Dict[nd.Node, int],
-              expr_index: int,
-              sdfg,
-              strict: bool = False):
+    def can_be_applied(graph: gr.OrderedMultiDiConnectorGraph,
+                       candidate: Dict[nd.Node, int],
+                       expr_index: int,
+                       sdfg,
+                       strict: bool = False):
         # All we need is the correct node
         return True
 
@@ -372,7 +373,7 @@ class ExpandTransformation(Transformation):
 class SubgraphTransformation(object):
     """
     Base class for transformations that apply on arbitrary subgraphs, rather than
-    matching a specific pattern. Subclasses need to implement the `match` and `apply`
+    matching a specific pattern. Subclasses need to implement the `can_be_applied` and `apply`
     operations.
     """
 
@@ -424,7 +425,7 @@ class SubgraphTransformation(object):
         return SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
 
     @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         """
         Tries to match the transformation on a given subgraph, returning
         True if this transformation can be applied.
@@ -454,7 +455,7 @@ class SubgraphTransformation(object):
         not applicable.
         :param sdfg: The SDFG to apply the transformation to.
         :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
-        :param verify: Check that `match` returns True before applying.
+        :param verify: Check that `can_be_applied` returns True before applying.
         :param options: A set of parameters to use for applying the 
                         transformation.
         """
@@ -497,9 +498,9 @@ class SubgraphTransformation(object):
             setattr(instance, optname, optval)
 
         if verify:
-            if not cls.match(sdfg, subgraph):
+            if not cls.can_be_applied(sdfg, subgraph):
                 raise ValueError('Transformation cannot be applied on the '
-                                 'given subgraph ("match" failed)')
+                                 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         instance.apply(sdfg)
