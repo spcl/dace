@@ -6,10 +6,10 @@ import networkx as nx
 
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
-class DetectLoop(pattern_matching.Transformation):
+class DetectLoop(transformation.Transformation):
     """ Detects a for-loop construct from an SDFG. """
 
     _loop_guard = sd.SDFGState()

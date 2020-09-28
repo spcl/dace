@@ -6,7 +6,7 @@ from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 
@@ -23,7 +23,7 @@ import timeit
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class ReduceExpansion(pattern_matching.Transformation):
+class ReduceExpansion(transformation.Transformation):
     """ Implements the ReduceExpansion transformation.
         Expands a Reduce node into inner and outer map components,
         where the outer map consists of the axes not being reduced.

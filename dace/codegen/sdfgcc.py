@@ -25,6 +25,14 @@ def main():
         'If provided, saves library as the given file or in the specified path, '
         'together with a header file.')
 
+    parser.add_argument('-O',
+                        '--optimize',
+                        dest='optimize',
+                        action='store_true',
+                        help="If set, invokes the command-line optimization"
+                        " interface",
+                        default=False)
+
     args = parser.parse_args()
 
     filepath = args.filepath
@@ -36,6 +44,9 @@ def main():
 
     # Load SDFG
     sdfg = dace.SDFG.from_file(filepath)
+
+    if args.optimize:
+        sdfg.optimize()
 
     # Compile SDFG
     sdfg.compile(outpath)

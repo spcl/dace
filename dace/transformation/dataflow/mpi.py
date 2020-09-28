@@ -5,13 +5,13 @@ from dace import dtypes, registry
 from dace.sdfg import has_dynamic_map_inputs
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MPITransformMap(pattern_matching.Transformation):
+class MPITransformMap(transformation.Transformation):
     """ Implements the MPI parallelization pattern.
 
         Takes a map and makes it an MPI-scheduled map, introduces transients

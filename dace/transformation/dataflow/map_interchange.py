@@ -6,13 +6,13 @@ from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import symlist
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MapInterchange(pattern_matching.Transformation):
+class MapInterchange(transformation.Transformation):
     """ Implements the map-interchange transformation.
     
         Map-interchange takes two nested maps and interchanges their position.
