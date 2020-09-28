@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the `apply_to` transformation API. """
 import dace
 from dace.transformation.dataflow import MapFusion
