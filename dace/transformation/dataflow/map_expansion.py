@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-expansion transformation. """
 
 from typing import Dict
@@ -6,7 +7,7 @@ from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 
 
 @registry.autoregister_params(singlestate=True)

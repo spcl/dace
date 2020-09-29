@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
@@ -30,7 +31,11 @@ def function_to_ast(f):
     # TypeError: X is not a module, class, method, function, traceback, frame,
     # or code object; OR OSError: could not get source code
     except (TypeError, OSError):
-        raise TypeError('cannot obtain source code for dace program')
+        raise TypeError('Cannot obtain source code for dace program. This may '
+                        'happen if you are using the "python" default '
+                        'interpreter. Please either use the "ipython" '
+                        'interpreter, a Jupyter or Colab notebook, or place '
+                        'the source code in a file and import it.')
 
     src_file = inspect.getfile(f)
     _, src_line = inspect.findsource(f)
@@ -350,7 +355,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
+                and isinstance(node.id, str)):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)

@@ -1,4 +1,8 @@
-# Simple systolic array of P processing element, each one increments by 1 the incoming element
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Simple systolic array of P processing element, each one increments by 1 the 
+incoming element.
+"""
 
 import argparse
 import dace

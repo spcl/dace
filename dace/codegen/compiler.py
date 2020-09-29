@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Handles compilation of code objects. Creates the proper folder structure,
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
@@ -237,8 +237,12 @@ class CompiledSDFG(object):
                         (a, type(arg).__name__, atype.dtype.type))
             elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
-                print('WARNING: Passing %s array argument "%s" to a %s array' %
-                      (arg.dtype, a, atype.dtype.type.__name__))
+                # Make exception for vector types
+                if (isinstance(atype.dtype, dtypes.vector)
+                        and atype.dtype.vtype.as_numpy_dtype() != arg.dtype):
+                    print(
+                        'WARNING: Passing %s array argument "%s" to a %s array'
+                        % (arg.dtype, a, atype.dtype.type.__name__))
 
         # Call a wrapper function to make NumPy arrays from pointers.
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
@@ -462,8 +466,9 @@ def generate_program_folder(sdfg,
     else:
         Config.save(os.path.join(out_path, "dace.conf"))
 
-    # Save the SDFG itself
-    sdfg.save(os.path.join(out_path, "program.sdfg"))
+    if sdfg is not None:
+        # Save the SDFG itself
+        sdfg.save(os.path.join(out_path, "program.sdfg"))
 
     return out_path
 
@@ -750,8 +755,8 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
 
 def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
     """
-    If the given array implements ``__array_interface__`` (see 
-    ``dtypes.is_array``), returns the base host or device pointer to the 
+    If the given array implements ``__array_interface__`` (see
+    ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Data descriptor of the array (used to get storage

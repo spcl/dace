@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -31,6 +32,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
 from dace.properties import (make_properties, Property, CodeProperty,
+                             TransformationHistProperty, SDFGReferenceProperty,
                              DictProperty, OrderedDictProperty, CodeBlock)
 from dace.distributions import ProcessGrid
 from dace.symbolic import symbol
@@ -127,8 +129,8 @@ class InterstateEdge(object):
         return result - set(self.assignments.keys())
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
-        """ 
-        Returns a mapping between symbols defined by this edge (i.e., 
+        """
+        Returns a mapping between symbols defined by this edge (i.e.,
         assignments) to their type.
         """
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -213,6 +215,9 @@ class SDFG(OrderedDiGraph):
     exit_code = DictProperty(
         str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
 
+    orig_sdfg = SDFGReferenceProperty(allow_none=True)
+    transformation_hist = TransformationHistProperty()
+
     def __init__(self,
                  name: str,
                  arg_types: Dict[str, dt.Data] = None,
@@ -253,6 +258,8 @@ class SDFG(OrderedDiGraph):
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
+        self.orig_sdfg = None
+        self.transformation_hist = []
 
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
@@ -263,7 +270,7 @@ class SDFG(OrderedDiGraph):
 
     @property
     def sdfg_id(self):
-        """ 
+        """
         Returns the unique index of the current SDFG within the current
         tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
         """
@@ -274,6 +281,10 @@ class SDFG(OrderedDiGraph):
             :return: A string representing the JSON-serialized SDFG.
         """
         tmp = super().to_json()
+
+        # Ensure properties are serialized correctly
+        tmp['attributes']['constants_prop'] = json.loads(
+            dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
         # Location in the SDFG list
         self.reset_sdfg_list()
@@ -415,12 +426,12 @@ class SDFG(OrderedDiGraph):
         self._start_state = states[state_id]
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Sets C++ code that will be generated in a global scope on 
+        """
+        Sets C++ code that will be generated in a global scope on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -428,36 +439,36 @@ class SDFG(OrderedDiGraph):
                                                dace.dtypes.Language.CPP)
 
     def set_init_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Sets C++ code that will be generated in the __dace_init_* functions on 
+        """
+        Sets C++ code that will be generated in the __dace_init_* functions on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
         self.init_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
 
     def set_exit_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Sets C++ code that will be generated in the __dace_exit_* functions on 
+        """
+        Sets C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
         self.exit_code[location] = CodeBlock(cpp_code, dtypes.Language.CPP)
 
     def append_global_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Appends C++ code that will be generated in a global scope on 
+        """
+        Appends C++ code that will be generated in a global scope on
         one of the generated code files.
         :param cpp_code: The code to set.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -466,12 +477,12 @@ class SDFG(OrderedDiGraph):
         self.global_code[location].code += cpp_code
 
     def append_init_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Appends C++ code that will be generated in the __dace_init_* functions on 
+        """
+        Appends C++ code that will be generated in the __dace_init_* functions on
         one of the generated code files.
         :param cpp_code: The code to append.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
@@ -480,18 +491,51 @@ class SDFG(OrderedDiGraph):
         self.init_code[location].code += cpp_code
 
     def append_exit_code(self, cpp_code: str, location: str = 'frame'):
-        """ 
-        Appends C++ code that will be generated in the __dace_exit_* functions on 
+        """
+        Appends C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
         :param cpp_code: The code to append.
-        :param location: The file/backend in which to generate the code. 
-                         Options are None (all files), "frame", "openmp", 
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
                          "cuda", "xilinx", "intel_fpga", or any code generator
                          name.
         """
         if location not in self.exit_code:
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.exit_code[location].code += cpp_code
+
+    def prepend_exit_code(self, cpp_code: str, location: str = 'frame'):
+        """
+        Prepends C++ code that will be generated in the __dace_exit_* functions on
+        one of the generated code files.
+        :param cpp_code: The code to prepend.
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.exit_code:
+            self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.exit_code[location].code = cpp_code + self.exit_code[location].code
+
+    def append_transformation(self, transformation):
+        """
+        Appends a transformation to the treansformation history of this SDFG.
+        If this is the first transformation being applied, it also saves the
+        initial state of the SDFG to return to and play back the history.
+        :param transformation: The transformation to append.
+        """
+        # Make sure the transformation is appended to the root SDFG.
+        if self.sdfg_id != 0:
+            self.sdfg_list[0].append_transformation(transformation)
+            return
+
+        if not self.orig_sdfg:
+            clone = copy.deepcopy(self)
+            clone.transformation_hist = []
+            clone.orig_sdfg = None
+            self.orig_sdfg = clone
+        self.transformation_hist.append(transformation)
 
     ##########################################
     # Instrumentation-related methods
@@ -782,8 +826,8 @@ class SDFG(OrderedDiGraph):
 
     @property
     def free_symbols(self) -> Set[str]:
-        """ 
-        Returns a set of symbol names that are used by the SDFG, but not 
+        """
+        Returns a set of symbol names that are used by the SDFG, but not
         defined within it. This property is used to determine the symbolic
         parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
         :note: Assumes that the graph is valid (i.e., without undefined or
@@ -815,19 +859,19 @@ class SDFG(OrderedDiGraph):
         return free_syms - defined_syms
 
     def arglist(self) -> Dict[str, dt.Data]:
-        """ 
-        Returns an ordered dictionary of arguments (names and types) required 
+        """
+        Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
-        
-        The arguments follow the following order: 
+
+        The arguments follow the following order:
         <sorted data arguments>, <sorted scalar arguments>.
-        Data arguments are all the non-transient data containers in the 
-        SDFG; and scalar arguments are all the non-transient scalar data 
+        Data arguments are all the non-transient data containers in the
+        SDFG; and scalar arguments are all the non-transient scalar data
         containers and free symbols (see ``SDFG.free_symbols``). This structure
         will create a sorted list of pointers followed by a sorted list of PoDs
         and structs.
 
-        :return: An ordered dictionary of (name, data descriptor type) of all 
+        :return: An ordered dictionary of (name, data descriptor type) of all
                  the arguments, sorted as defined here.
         """
         # Start with data descriptors
@@ -861,13 +905,11 @@ class SDFG(OrderedDiGraph):
             formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
-                             calling the SDFG. This means that immaterial data
-                             will generate "nullptr" arguments instead of the
-                             argument names.
+                             calling the SDFG.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
-            v.signature(name=k, with_types=with_types, for_call=for_call)
+            v.as_arg(name=k, with_types=with_types, for_call=for_call)
             for k, v in self.arglist().items()
         ]
 
@@ -878,13 +920,10 @@ class SDFG(OrderedDiGraph):
                                include argument names (can be used for function
                                calls).
             :param for_call: If True, returns arguments that can be used when
-                             calling the SDFG. This means that immaterial data
-                             will generate "nullptr" arguments instead of the
-                             argument names.
+                             calling the SDFG.
         """
         return ", ".join(self.signature_arglist(with_types, for_call))
 
-    # TODO(later): Also implement the "_repr_svg_" method for static output
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
@@ -893,6 +932,10 @@ class SDFG(OrderedDiGraph):
         result = ''
         if not isnotebook():
             result = preamble()
+
+        # Make sure to not store metadata (saves space)
+        old_meta = dace.serialize.JSON_STORE_METADATA
+        dace.serialize.JSON_STORE_METADATA = False
 
         # Create renderer canvas and load SDFG
         result += """
@@ -906,6 +949,9 @@ class SDFG(OrderedDiGraph):
             # recursively
             sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
+
+        # Reset metadata state
+        dace.serialize.JSON_STORE_METADATA = old_meta
 
         return result
 
@@ -1123,7 +1169,6 @@ class SDFG(OrderedDiGraph):
                   shape,
                   dtype,
                   storage=dtypes.StorageType.Default,
-                  materialize_func=None,
                   transient=False,
                   strides=None,
                   offset=None,
@@ -1151,7 +1196,6 @@ class SDFG(OrderedDiGraph):
         desc = dt.Array(dtype,
                         shape,
                         storage=storage,
-                        materialize_func=materialize_func,
                         allow_conflicts=allow_conflicts,
                         transient=transient,
                         strides=strides,
@@ -1167,7 +1211,6 @@ class SDFG(OrderedDiGraph):
     def add_stream(self,
                    name: str,
                    dtype,
-                   veclen=1,
                    buffer_size=1,
                    shape=(1, ),
                    storage=dtypes.StorageType.Default,
@@ -1182,9 +1225,8 @@ class SDFG(OrderedDiGraph):
             dtype = dtypes.typeclass(dtype)
 
         desc = dt.Stream(
-            dtype,
-            veclen,
-            buffer_size,
+            dtype=dtype,
+            buffer_size=buffer_size,
             shape=shape,
             storage=storage,
             transient=transient,
@@ -1223,7 +1265,6 @@ class SDFG(OrderedDiGraph):
                       shape,
                       dtype,
                       storage=dtypes.StorageType.Default,
-                      materialize_func=None,
                       strides=None,
                       offset=None,
                       lifetime=dace.dtypes.AllocationLifetime.Scope,
@@ -1239,7 +1280,6 @@ class SDFG(OrderedDiGraph):
                               shape,
                               dtype,
                               storage,
-                              materialize_func,
                               True,
                               strides,
                               offset,
@@ -1266,7 +1306,6 @@ class SDFG(OrderedDiGraph):
                            shape,
                            dtype,
                            storage=dtypes.StorageType.Default,
-                           materialize_func=None,
                            strides=None,
                            offset=None,
                            lifetime=dace.dtypes.AllocationLifetime.Scope,
@@ -1281,7 +1320,6 @@ class SDFG(OrderedDiGraph):
                               shape,
                               dtype,
                               storage,
-                              materialize_func,
                               True,
                               strides,
                               offset,
@@ -1470,12 +1508,34 @@ class SDFG(OrderedDiGraph):
         for k, v in syms.items():
             self.add_constant(k, v)
 
-    def compile(self, optimizer=None, output_file=None) -> \
+    def optimize(self, optimizer=None) -> 'SDFG':
+        """ 
+        Optimize an SDFG using the CLI or external hooks. 
+        :param optimizer: If defines a valid class name, it will be called
+                          during compilation to transform the SDFG as
+                          necessary. If None, uses configuration setting.
+        :return: An SDFG (returns self if optimizer is in place)
+        """
+        # Fill in scope entry/exit connectors
+        self.fill_scope_connectors()
+
+        optclass = _get_optimizer_class(optimizer)
+        if optclass is not None:
+            # Propagate memlets in the graph
+            if self._propagate:
+                propagate_memlets_sdfg(self)
+
+            opt = optclass(self)
+            sdfg = opt.optimize()
+        else:
+            sdfg = self
+
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+        return sdfg
+
+    def compile(self, output_file=None) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
-            :param optimizer: If defines a valid class name, it will be called
-                              during compilation to transform the SDFG as
-                              necessary. If None, uses configuration setting.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :return: A callable CompiledSDFG object.
@@ -1500,18 +1560,6 @@ class SDFG(OrderedDiGraph):
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
-
-        # Optimize SDFG using the CLI or external hooks
-        optclass = _get_optimizer_class(optimizer)
-        if optclass is not None:
-            # Propagate memlets in the graph
-            if self._propagate:
-                propagate_memlets_sdfg(sdfg)
-
-            opt = optclass(sdfg)
-            sdfg = opt.optimize()
-
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Recursively expand library nodes that haven't been expanded yet
         sdfg.expand_library_nodes()
@@ -1619,12 +1667,16 @@ class SDFG(OrderedDiGraph):
 
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
+        if Config.get_bool('optimizer', 'transform_on_call'):
+            sdfg = self.optimize()
+        else:
+            sdfg = self
 
-        binaryobj = self.compile()
+        binaryobj = sdfg.compile()
 
         # Verify passed arguments (unless disabled by the user)
         if dace.config.Config.get_bool("execution", "general", "check_args"):
-            self.argument_typecheck(args, kwargs)
+            sdfg.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
     def fill_scope_connectors(self):
@@ -1676,7 +1728,7 @@ class SDFG(OrderedDiGraph):
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
         # This is imported here to avoid an import loop
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         strict_transformations = [
             k for k, v in Transformation.extensions().items()
@@ -1719,7 +1771,7 @@ class SDFG(OrderedDiGraph):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         applied_transformations = collections.defaultdict(int)
 
@@ -1789,7 +1841,7 @@ class SDFG(OrderedDiGraph):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         applied_transformations = collections.defaultdict(int)
 
@@ -1861,9 +1913,12 @@ class SDFG(OrderedDiGraph):
                                    strict=strict,
                                    states=states)
 
-    def expand_library_nodes(self):
-        """ Recursively expand all unexpanded library nodes in the SDFG,
-            resulting in a "pure" SDFG that the code generator can handle.
+    def expand_library_nodes(self, recursive=True):
+        """
+        Recursively expand all unexpanded library nodes in the SDFG,
+        resulting in a "pure" SDFG that the code generator can handle.
+        :param recursive: If True, expands all library nodes recursively,
+                          including library nodes that expand to library nodes.
         """
 
         states = list(self.states())
@@ -1879,7 +1934,8 @@ class SDFG(OrderedDiGraph):
                           "\".")
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
-                    expanded_something = True
+                    if recursive:
+                        expanded_something = True
             if expanded_something:
                 states.append(state)  # Nodes have changed. Check state again
 
@@ -1910,7 +1966,7 @@ class SDFG(OrderedDiGraph):
 
         return program_code
 
-    def get_array_memlet(self, array: str):
+    def make_array_memlet(self, array: str):
         """Convenience method to generate a Memlet that transfers a full array.
 
            :param array: the name of the array

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 
@@ -49,7 +50,7 @@ if __name__ == '__main__':
     X = np.array([1, 2, 3, 4, 5], dtype=np.float32)
     Y = np.zeros(X.shape, dtype=np.float32)
 
-    dace_softmax.compile(strict=False)
+    dace_softmax.compile()
     dace_softmax(X_in=X, X_out=Y, N=X.shape[0])
 
     if not np.allclose(softmax(X), Y):

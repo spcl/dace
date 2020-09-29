@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Type inference: traverses code and returns types for all undefined symbols according to C semantics
     infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
@@ -57,10 +58,10 @@ def infer_expr_type(code, symbols=None):
         parsed_ast = ast.parse(symstr(code))
 
     # The parsed AST must only contain one expression
-    if isinstance(parsed_ast.body[0], ast.Expr):
+    if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
         return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
     else:
-        raise TypeError("Expected an expression")
+        raise TypeError("Expected expression, got: {}".format(type(code)))
 
 
 def _dispatch(tree, symbols, inferred_symbols):

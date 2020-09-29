@@ -1,21 +1,22 @@
-#!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import dace
 import numpy as np
 
 SIZE = dace.symbol("N")
 VECTOR_LENGTH = dace.symbol("W")
-DTYPE = np.float64
+DTYPE = dace.float64
 
 
 def make_copy_to_fpga_state(sdfg):
 
     state = sdfg.add_state("copy_to_device")
 
-    A_host = sdfg.add_array("A", [SIZE], dtype=DTYPE)
+    A_host = sdfg.add_array("A", [SIZE // VECTOR_LENGTH.get()],
+                            dtype=dace.vector(DTYPE, VECTOR_LENGTH.get()))
 
     A_device = sdfg.add_array("A_device", [SIZE],
-                              dtype=DTYPE,
+                              dtype=dace.vector(DTYPE, VECTOR_LENGTH.get()),
                               transient=True,
                               storage=dace.dtypes.StorageType.FPGA_Global)
 
@@ -26,9 +27,8 @@ def make_copy_to_fpga_state(sdfg):
                           write,
                           memlet=dace.memlet.Memlet.simple(
                               "A_device",
-                              "0:N",
-                              veclen=VECTOR_LENGTH.get(),
-                              num_accesses=SIZE))
+                              "0:N//{}".format(VECTOR_LENGTH.get()),
+                              num_accesses=SIZE // VECTOR_LENGTH.get()))
 
     return state
 
@@ -38,11 +38,12 @@ def make_copy_to_host_state(sdfg):
     state = sdfg.add_state("copy_to_host")
 
     B_device = sdfg.add_array("B_device", [SIZE],
-                              dtype=DTYPE,
+                              dtype=dace.vector(DTYPE, VECTOR_LENGTH.get()),
                               transient=True,
                               storage=dace.dtypes.StorageType.FPGA_Global)
 
-    B_host = sdfg.add_array("B", [SIZE], dtype=DTYPE)
+    B_host = sdfg.add_array("B", [SIZE // VECTOR_LENGTH.get()],
+                            dtype=dace.vector(DTYPE, VECTOR_LENGTH.get()))
 
     read = state.add_read("B_device")
     write = state.add_write("B")
@@ -51,25 +52,24 @@ def make_copy_to_host_state(sdfg):
                           write,
                           memlet=dace.memlet.Memlet.simple(
                               "B",
-                              "0:N",
-                              veclen=VECTOR_LENGTH.get(),
-                              num_accesses=SIZE))
+                              "0:N//{}".format(VECTOR_LENGTH.get()),
+                              num_accesses=SIZE // VECTOR_LENGTH.get()))
 
     return state
 
 
-def make_fpga_state(sdfg):
+def make_fpga_state(sdfg, vectorize_connector):
 
     state = sdfg.add_state("fpga_state")
 
-    input_buffer = sdfg.add_array("input_buffer", (VECTOR_LENGTH, ),
-                                  DTYPE,
-                                  transient=True,
-                                  storage=dace.StorageType.FPGA_Registers)
-    output_buffer = sdfg.add_array("output_buffer", (VECTOR_LENGTH, ),
-                                   DTYPE,
-                                   transient=True,
-                                   storage=dace.StorageType.FPGA_Registers)
+    sdfg.add_array("input_buffer", (VECTOR_LENGTH.get(), ),
+                   DTYPE,
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Registers)
+    sdfg.add_array("output_buffer", (VECTOR_LENGTH.get(), ),
+                   DTYPE,
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Registers)
 
     read_input = state.add_read("A_device")
     read_buffer = state.add_access("input_buffer")
@@ -80,25 +80,25 @@ def make_fpga_state(sdfg):
         "outer_map", {"i": "0:N/W"}, schedule=dace.ScheduleType.FPGA_Device)
 
     # Test read from packed memory to an unpacked buffer
-    unpack_tasklet = state.add_tasklet("unpack_tasklet", {"a"}, {"a_unpacked"},
-                                       "a_unpacked = a")
+    if vectorize_connector:
+        outputs = {"a_unpacked": dace.vector(DTYPE, VECTOR_LENGTH.get())}
+    else:
+        outputs = {"a_unpacked"}  # Infers an array
+    unpack_tasklet = state.add_tasklet(
+        "unpack_tasklet", {"a"},
+        outputs,
+        "a_unpacked = a")
     state.add_memlet_path(read_input,
                           outer_entry,
                           unpack_tasklet,
                           dst_conn="a",
-                          memlet=dace.Memlet.simple(
-                              "A_device",
-                              "i*W",
-                              veclen=VECTOR_LENGTH.get(),
-                              num_accesses=VECTOR_LENGTH))
+                          memlet=dace.Memlet.simple("A_device", "i"))
     state.add_memlet_path(unpack_tasklet,
                           read_buffer,
                           src_conn="a_unpacked",
                           memlet=dace.Memlet.simple(
-                              "input_buffer",
-                              "0",
-                              veclen=VECTOR_LENGTH.get(),
-                              num_accesses=VECTOR_LENGTH))
+                              read_buffer.data,
+                              "0:{}".format(VECTOR_LENGTH.get())))
 
     unroll_entry, unroll_exit = state.add_map(
         "shuffle_map", {"w": "0:W"},
@@ -113,7 +113,6 @@ def make_fpga_state(sdfg):
                           dst_conn="a",
                           memlet=dace.Memlet.simple("input_buffer",
                                                     "(w + W // 2) % W",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     state.add_memlet_path(tasklet,
@@ -122,36 +121,33 @@ def make_fpga_state(sdfg):
                           src_conn="b",
                           memlet=dace.Memlet.simple("output_buffer",
                                                     "w",
-                                                    veclen=1,
                                                     num_accesses=1))
 
     # Test writing from unpacked to packed from inside tasklet
-    pack_tasklet = state.add_tasklet("pack_tasklet", {"b"}, {"b_packed"},
+    if vectorize_connector:
+        outputs = {"b": dace.vector(DTYPE, VECTOR_LENGTH.get())}
+    else:
+        outputs = {"b"}
+    pack_tasklet = state.add_tasklet("pack_tasklet", outputs, {"b_packed"},
                                      "b_packed = b")
     state.add_memlet_path(write_buffer,
                           pack_tasklet,
                           dst_conn="b",
                           memlet=dace.Memlet.simple(
-                              write_buffer,
-                              "0",
-                              veclen=VECTOR_LENGTH.get(),
-                              num_accesses=VECTOR_LENGTH))
+                              write_buffer.data,
+                              "0:{}".format(VECTOR_LENGTH.get())))
 
     # Write back out to memory from unpacked to packed memory
     state.add_memlet_path(pack_tasklet,
                           outer_exit,
                           write_output,
                           src_conn="b_packed",
-                          memlet=dace.Memlet.simple(
-                              "B_device",
-                              "W*i",
-                              veclen=VECTOR_LENGTH.get(),
-                              num_accesses=VECTOR_LENGTH))
+                          memlet=dace.Memlet.simple("B_device", "i"))
 
     return state
 
 
-def make_sdfg(name=None):
+def make_sdfg(name=None, vectorize_connector=False):
 
     if name is None:
         name = "veclen_conversion"
@@ -160,7 +156,7 @@ def make_sdfg(name=None):
 
     pre_state = make_copy_to_fpga_state(sdfg)
     post_state = make_copy_to_host_state(sdfg)
-    compute_state = make_fpga_state(sdfg)
+    compute_state = make_fpga_state(sdfg, vectorize_connector)
 
     sdfg.add_edge(pre_state, compute_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(compute_state, post_state, dace.sdfg.InterstateEdge())
@@ -183,10 +179,9 @@ if __name__ == "__main__":
             "Size {} must be divisible by vector length {}.".format(
                 args.size, args.vector_length))
 
-    sdfg = make_sdfg()
+    sdfg = make_sdfg(vectorize_connector=False)
     sdfg.specialize({"W": args.vector_length})
 
-    # Initialize arrays: Randomize A and B, zero C
     A = np.arange(args.size, dtype=np.float64)
     B = np.zeros((args.size, ), dtype=np.float64)
 

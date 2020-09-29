@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions that implement the GPU transformation
     (with local storage). """
 
@@ -6,7 +7,7 @@ import copy
 from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import Property, make_properties
 from dace.config import Config
 
@@ -34,7 +35,7 @@ def in_path(path, edge, nodetype, forward=True):
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class GPUTransformLocalStorage(pattern_matching.Transformation):
+class GPUTransformLocalStorage(transformation.Transformation):
     """Implements the GPUTransformLocalStorage transformation.
 
         Similar to GPUTransformMap, but takes multiple maps leading from the
@@ -110,8 +111,8 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             for node in subgraph.nodes():
                 if (isinstance(node, nodes.AccessNode) and
                         node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and node.desc(sdfg).storage !=
-                        dtypes.StorageType.Register):
+                        and
+                        node.desc(sdfg).storage != dtypes.StorageType.Register):
                     return False
 
             # If one of the outputs is a stream, do not match
@@ -269,7 +270,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
-                        materialize_func=array.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
@@ -341,7 +341,6 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         name=cloned_name,
                         shape=[full_shape[d] for d in actual_dims],
                         dtype=array.dtype,
-                        materialize_func=array.materialize_func,
                         transient=True,
                         storage=dtypes.StorageType.GPU_Global,
                         allow_conflicts=array.allow_conflicts,
@@ -432,8 +431,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                         memlet.data = node.data
 
                     if self.fullcopy:
-                        edge.data.subset = sbs.Range.from_array(
-                            node.desc(sdfg))
+                        edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
                     edge.data.other_subset = newmemlet.subset
                     graph.add_edge(edge.src, edge.src_conn, node, None,
                                    edge.data)
@@ -487,8 +485,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
                             continue
                         path = graph.memlet_path(e)
                         if not isinstance(path[0].dst, nodes.CodeNode):
-                            if in_path(path, e, nodes.EntryNode,
-                                       forward=False):
+                            if in_path(path, e, nodes.EntryNode, forward=False):
                                 if isinstance(parent, nodes.CodeNode):
                                     # Output edge
                                     break
@@ -518,8 +515,7 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
 
                     edge.data.wcr = None
                     if self.fullcopy:
-                        edge.data.subset = sbs.Range.from_array(
-                            node.desc(sdfg))
+                        edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
                     edge.data.other_subset = newmemlet.subset
                     graph.add_edge(node, None, edge.dst, edge.dst_conn,
                                    edge.data)
@@ -531,6 +527,3 @@ class GPUTransformLocalStorage(pattern_matching.Transformation):
             for edge in scope_subgraph.edges():
                 if edge.data.data is not None and edge.data.data in cloned_arrays:
                     edge.data.data = cloned_arrays[edge.data.data]
-
-    def modifies_graph(self):
-        return True

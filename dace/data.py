@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import re, json
 import copy as cp
@@ -107,7 +108,7 @@ class Data(object):
         """ Check for equivalence (shape and type) of two data descriptors. """
         raise NotImplementedError
 
-    def signature(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
 
@@ -122,6 +123,15 @@ class Data(object):
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
+
+    @property
+    def veclen(self):
+        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+
+    
+    @property
+    def ctype(self):
+        return self.dtype.ctype
 
 
 @make_properties
@@ -177,10 +187,6 @@ class Scalar(Data):
     def offset(self):
         return [0]
 
-    @property
-    def materialize_func(self):
-        return None
-
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -188,12 +194,10 @@ class Scalar(Data):
             return False
         return True
 
-    def signature(self, with_types=True, for_call=False, name=None):
-        if not with_types or for_call: return name
-        if isinstance(self.dtype, dtypes.callback):
-            assert name is not None
-            return self.dtype.signature(name)
-        return str(self.dtype.ctype) + ' ' + name
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if not with_types or for_call:
+            return name
+        return self.dtype.as_arg(name)
 
     def sizes(self):
         return None
@@ -215,19 +219,6 @@ class Scalar(Data):
         return True
 
 
-def set_materialize_func(obj, val):
-    """ Change the storage type of an array with a materialize function to
-        immaterial.
-    """
-    if val is not None:
-        if (obj.storage != dtypes.StorageType.Default
-                and obj.storage != dtypes.StorageType.Immaterial):
-            raise ValueError("Immaterial array must have immaterial storage, "
-                             "but has: {}".format(obj.storage))
-        obj.storage = dtypes.StorageType.Immaterial
-    obj._materialize_func = val
-
-
 def _prod(sequence):
     return functools.reduce(lambda a, b: a * b, sequence, 1)
 
@@ -243,11 +234,6 @@ class Array(Data):
         desc='If enabled, allows more than one '
         'memlet to write to the same memory location without conflict '
         'resolution.')
-
-    # TODO: Should we use a Code property here?
-    materialize_func = Property(dtype=str,
-                                allow_none=True,
-                                setter=set_materialize_func)
 
     strides = ShapeProperty(
         # element_type=symbolic.pystr_to_symbolic,
@@ -277,7 +263,6 @@ class Array(Data):
                  dtype,
                  shape,
                  dist_shape=[],
-                 materialize_func=None,
                  transient=False,
                  allow_conflicts=False,
                  storage=dtypes.StorageType.Default,
@@ -297,7 +282,6 @@ class Array(Data):
             raise IndexError('Shape must not be None')
 
         self.allow_conflicts = allow_conflicts
-        self.materialize_func = materialize_func
         self.may_alias = may_alias
         self.alignment = alignment
 
@@ -319,8 +303,7 @@ class Array(Data):
         return 'Array (dtype=%s, shape=%s)' % (self.dtype, self.shape)
 
     def clone(self):
-        return Array(self.dtype, self.shape, self.dist_shape,
-                     self.materialize_func, self.transient,
+        return Array(self.dtype, self.shape, self.dist_shape, self.transient,
                      self.allow_conflicts, self.storage, self.location,
                      self.strides, self.offset, self.may_alias, self.lifetime,
                      self.alignment, self.debuginfo, self.total_size)
@@ -356,8 +339,7 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol,
-                                  symbolic.sympy.Basic))
-               for s in self.strides):
+                                  symbolic.sympy.Basic)) for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer '
                             'values or symbols')
 
@@ -426,14 +408,8 @@ class Array(Data):
                 return False
         return True
 
-    def signature(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None):
         arrname = name
-        if self.materialize_func is not None:
-            if for_call:
-                return 'nullptr'
-            if not with_types:
-                return arrname
-            arrname = '/* ' + arrname + ' (immaterial) */'
 
         if not with_types or for_call:
             return arrname
@@ -469,12 +445,9 @@ class Stream(Data):
     # Properties
     offset = ListProperty(element_type=symbolic.pystr_to_symbolic)
     buffer_size = SymbolicProperty(desc="Size of internal buffer.", default=0)
-    veclen = Property(dtype=int,
-                      desc="Vector length. Memlets must adhere to this.")
 
     def __init__(self,
                  dtype,
-                 veclen,
                  buffer_size,
                  shape=None,
                  dist_shape=[],
@@ -488,7 +461,6 @@ class Stream(Data):
         if shape is None:
             shape = (1, )
 
-        self.veclen = veclen
         self.buffer_size = buffer_size
 
         if offset is not None:
@@ -514,7 +486,7 @@ class Stream(Data):
             raise TypeError("Invalid data type")
 
         # Create dummy object
-        ret = Stream(dtypes.int8, 1, 1)
+        ret = Stream(dtypes.int8, 1)
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
         # Check validity now
@@ -533,7 +505,7 @@ class Stream(Data):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
 
     def clone(self):
-        return Stream(self.dtype, self.veclen, self.buffer_size, self.shape,
+        return Stream(self.dtype, self.buffer_size, self.shape,
                       self.dist_shape, self.transient, self.storage,
                       self.location, self.offset, self.lifetime, self.debuginfo)
 
@@ -561,7 +533,7 @@ class Stream(Data):
                 return False
         return True
 
-    def signature(self, with_types=True, for_call=False, name=None):
+    def as_arg(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
         if self.storage in [
                 dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared

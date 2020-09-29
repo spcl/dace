@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -373,6 +374,7 @@ class Tasklet(CodeNode):
         # Get symbols defined at beginning of node, and infer all types in
         # tasklet
         syms = state.symbols_defined_at(self)
+        syms.update(self.in_connectors)
         new_syms = infer_types(self.code.code, syms)
         for cname, oconn in self.out_connectors.items():
             if oconn.type is None:
@@ -1191,4 +1193,4 @@ class LibraryNode(CodeNode):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = cls(match_node_name)
+        transformation_type._match_node = cls

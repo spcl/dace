@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python decorators for DaCe functions. """
 
 from __future__ import print_function

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -75,14 +76,9 @@ runone() {
     echo "Running $PYTHON_BINARY"
     
     # Use cache (do not recompile every rank) in distributed test
-    runtestopt immaterial_test.py $1 'MPITransformMap$0'
+    runtestopt codegen/mpi_axpy.py $1 ''
     DACE_compiler_use_cache=1
-    runmpitestopt immaterial_test.py $1
-    DACE_compiler_use_cache=0
-    
-    runtestopt immaterial_range_test.py $1 'MPITransformMap$0'
-    DACE_compiler_use_cache=1
-    runmpitestopt immaterial_range_test.py $1
+    runmpitestopt codegen/mpi_axpy.py $1
     DACE_compiler_use_cache=0
 }
 

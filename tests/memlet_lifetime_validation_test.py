@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace as dp
@@ -17,35 +17,8 @@ if __name__ == '__main__':
     output[:] = dp.int32(0)
 
     # Construct SDFG 1
-    # sdfg1 = SDFG('shouldntwork1')
-    # state = sdfg1.add_state()
-    # B = state.add_array('B', [N], dp.int32)
-    # T = state.add_transient('T', [1], dp.int32)
-    #
-    # tasklet_gen = state.add_tasklet('mytasklet', {}, {'b'}, 'b = 5')
-    # map_entry, map_exit = state.add_map('mymap', dict(k='0:N'))
-    #
-    # map_entry.add_in_connector('IN_1')
-    # map_entry.add_out_connector('OUT_1')
-    # map_exit.add_in_connector('IN_1')
-    # map_exit.add_out_connector('OUT_1')
-    #
-    # state.add_edge(tasklet_gen, 'b', map_entry, 'IN_1', Memlet.simple(T, '0'))
-    # state.add_edge(map_entry, 'OUT_1', T, None, Memlet.simple(T, '0'))
-    # state.add_edge(T, None, map_exit, 'IN_1', Memlet.simple(B, '0'))
-    # state.add_edge(map_exit, 'OUT_1', B, None, Memlet.simple(B, '0'))
-    #
-    #
-    # try:
-    #     sdfg1.validate()
-    #     print("SDFG 1 passed validation, test FAILED")
-    #     exit(1)
-    # except InvalidSDFGError:
-    #     print("Test 1 passed, exception successfully caught")
-
-    # Construct SDFG 2
-    sdfg2 = SDFG('shouldntwork2')
-    state = sdfg2.add_state()
+    sdfg1 = SDFG('shouldntwork1')
+    state = sdfg1.add_state()
     A = state.add_array('A', [N], dp.int32)
     B = state.add_array('B', [N], dp.int32)
     T = state.add_transient('T', [1], dp.int32)
@@ -65,15 +38,15 @@ if __name__ == '__main__':
     state.add_edge(tasklet_gen, 'b', A, None, Memlet.simple(A, '0'))
 
     try:
-        sdfg2.validate()
-        print("SDFG 2 passed validation, test FAILED")
+        sdfg1.validate()
+        print("SDFG passed validation, test FAILED")
         exit(1)
     except InvalidSDFGError:
-        print("Test 2 passed, exception successfully caught")
+        print("Test passed, exception successfully caught")
 
     # Construct SDFG 3
-    sdfg3 = SDFG('shouldntwork2')
-    state = sdfg3.add_state()
+    sdfg2 = SDFG('shouldntwork2')
+    state = sdfg2.add_state()
     A = state.add_array('A', [N], dp.int32)
     B = state.add_array('B', [N], dp.int32)
     T = state.add_transient('T', [N], dp.int32)
@@ -101,10 +74,10 @@ if __name__ == '__main__':
     state.add_edge(map2_exit, 'OUT_1', B, None, Memlet.simple(B, '0:N'))
 
     try:
-        sdfg3.validate()
-        print("SDFG 3 passed validation, test FAILED")
+        sdfg2.validate()
+        print("SDFG passed validation, test FAILED")
         exit(1)
     except InvalidSDFGError:
-        print("Test 3 passed, exception successfully caught")
+        print("Test passed, exception successfully caught")
 
     exit(0)

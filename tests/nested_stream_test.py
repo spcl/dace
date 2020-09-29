@@ -1,10 +1,11 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from dace.memlet import Memlet
 
 # Create nested SDFG
 nsdfg = dace.SDFG('nested')
-nsdfg.add_scalar('nout', dace.int32)
+nsdfg.add_stream('nout', dace.int32)
 state = nsdfg.add_state()
 t = state.add_tasklet('task', set(), {'o'}, 'o = 2')
 w = state.add_write('nout')

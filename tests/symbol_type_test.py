@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
 import numpy as np
@@ -31,7 +32,7 @@ def test_nested_symbol_type():
                                 src_conn='output',
                                 memlet=Memlet.simple(data.data, "0"))
 
-    compiledSDFG = outer_sdfg.compile(optimizer=False)
+    compiledSDFG = outer_sdfg.compile()
 
     res = np.zeros(1, dtype=np.float32)
     compiledSDFG(data=res, s=np.float32(1.5))

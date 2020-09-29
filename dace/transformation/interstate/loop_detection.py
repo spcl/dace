@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
 import sympy as sp
@@ -5,10 +6,10 @@ import networkx as nx
 
 from dace import sdfg as sd
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
-class DetectLoop(pattern_matching.Transformation):
+class DetectLoop(transformation.Transformation):
     """ Detects a for-loop construct from an SDFG. """
 
     _loop_guard = sd.SDFGState()
@@ -78,7 +79,7 @@ class DetectLoop(pattern_matching.Transformation):
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(sdfg.nx,
                                                        sdfg.start_state)
-        loop_nodes = sdutil.dfs_topological_sort(
+        loop_nodes = sdutil.dfs_conditional(
             sdfg, sources=[begin], condition=lambda _, child: child != guard)
         backedge_found = False
         for node in loop_nodes:

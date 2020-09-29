@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -16,7 +17,6 @@ class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
     Default = ()  # Scope-default storage location
-    Immaterial = ()  # Data that is materialized on access
     Register = ()  # Local data on registers, stack, or equivalent memory
     CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
     CPU_Heap = ()  # Host memory allocated on heap
@@ -73,6 +73,7 @@ class ReductionType(aenum.AutoNumberEnum):
     Bitwise_Xor = ()  # Bitwise XOR (^)
     Min_Location = ()  # Minimum value and its location
     Max_Location = ()  # Maximum value and its location
+    Exchange = ()  # Set new value, return old value
 
     # Only supported in OpenMP
     Sub = ()  # Subtraction
@@ -115,7 +116,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
-    CUDA_Events = ()
+    GPU_Events = ()
 
 
 # Maps from ScheduleType to default StorageType
@@ -164,6 +165,44 @@ _CTYPES = {
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
     numpy.complex128: "dace::complex128",
+}
+
+# Translation of types to OpenCL types
+_OCL_TYPES = {
+    None: "void",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    numpy.bool: "bool",
+    numpy.int8: "char",
+    numpy.int16: "short",
+    numpy.int32: "int",
+    numpy.int64: "long long",
+    numpy.uint8: "unsigned char",
+    numpy.uint16: "unsigned short",
+    numpy.uint32: "unsigned int",
+    numpy.uint64: "unsigned long long",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
+}
+
+# Translation of types to OpenCL vector types
+_OCL_VECTOR_TYPES = {
+    numpy.int8: "char",
+    numpy.uint8: "uchar",
+    numpy.int16: "short",
+    numpy.uint16: "ushort",
+    numpy.int32: "int",
+    numpy.uint32: "uint",
+    numpy.int64: "long",
+    numpy.uint64: "ulong",
+    numpy.float16: "half",
+    numpy.float32: "float",
+    numpy.float64: "double",
+    numpy.complex64: "complex float",
+    numpy.complex128: "complex double",
 }
 
 # Translation of types to ctypes types
@@ -217,7 +256,7 @@ class typeclass(object):
         These types are defined for three reasons:
             1. Controlling DaCe types
             2. Enabling declaration syntax: `dace.float32[M,N]`
-            3. Enabling extensions such as `dace.struct` and `dace.immaterial`
+            3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
     def __init__(self, wrapped_type):
         # Convert python basic types
@@ -254,10 +293,9 @@ class typeclass(object):
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
-        self.materialize_func = None  # Materialize function for immaterial types
 
     def __hash__(self):
-        return hash((self.type, self.ctype, self.materialize_func))
+        return hash((self.type, self.ctype))
 
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
@@ -310,6 +348,21 @@ class typeclass(object):
     def __repr__(self):
         return self.ctype
 
+    @property
+    def base_type(self):
+        return self
+
+    @property
+    def veclen(self):
+        return 1
+
+    @property
+    def ocltype(self):
+        return _OCL_TYPES[self.type]
+
+    def as_arg(self, name):
+        return self.ctype + ' ' + name
+
 
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
@@ -338,8 +391,8 @@ def min_value(dtype: typeclass):
 
 
 def result_type_of(lhs, *rhs):
-    """ 
-    Returns the largest between two or more types (dace.types.typeclass) 
+    """
+    Returns the largest between two or more types (dace.types.typeclass)
     according to C semantics.
     """
     if len(rhs) == 0:
@@ -352,9 +405,10 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -362,6 +416,16 @@ def result_type_of(lhs, *rhs):
         return rhs  # Use RHS even if it's None
     if rhs is None or rhs.type is None:
         return lhs  # Use LHS
+
+    # Vector types take precedence, largest vector size first
+    if isinstance(lhs, vector) and not isinstance(rhs, vector):
+        return lhs
+    elif not isinstance(lhs, vector) and isinstance(rhs, vector):
+        return rhs
+    elif isinstance(lhs, vector) and isinstance(rhs, vector):
+        if lhs.veclen == rhs.veclen:
+            return vector(result_type_of(lhs.vtype, rhs.vtype), lhs.veclen)
+        return lhs if lhs.veclen > rhs.veclen else rhs
 
     # Extract the numpy type so we can call issubdtype on them
     lhs_ = lhs.type if isinstance(lhs, typeclass) else lhs
@@ -408,7 +472,6 @@ class pointer(typeclass):
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
-        self.materialize_func = None
 
     def to_json(self):
         return {'type': 'pointer', 'dtype': self._typeclass.to_json()}
@@ -427,13 +490,75 @@ class pointer(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
+    @property
+    def base_type(self):
+        return self._typeclass
 
-def immaterial(dace_data, materialize_func):
-    """ A data type with a materialize/serialize function. Data objects with
-        this type do not allocate new memory. Whenever it is accessed, the
-        materialize/serialize function is invoked instead. """
-    dace_data.materialize_func = materialize_func
-    return dace_data
+    @property
+    def ocltype(self):
+        return f"{self.type.ocltype}*"
+
+
+class vector(typeclass):
+    """
+    A data type for a vector-type of an existing typeclass.
+
+    Example use: `dace.vector(dace.float32, 4)` becomes float4.
+    """
+    def __init__(self, dtype: typeclass, vector_length: int):
+        self.vtype = dtype
+        self.type = dtype.type
+        self._veclen = vector_length
+        self.bytes = dtype.bytes * vector_length
+        self.dtype = self
+
+    def to_json(self):
+        return {
+            'type': 'vector',
+            'dtype': self.vtype.to_json(),
+            'elements': str(self.veclen)
+        }
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic
+        return vector(json_to_typeclass(json_obj['dtype'], context),
+                      pystr_to_symbolic(json_obj['elements']))
+
+    @property
+    def ctype(self):
+        return "dace::vec<%s, %s>" % (self.vtype.ctype, self.veclen)
+
+    @property
+    def ocltype(self):
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type] * self.veclen
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
+    @property
+    def base_type(self):
+        return self.vtype
+
+    @property
+    def veclen(self):
+        return self._veclen
+
+    @veclen.setter
+    def veclen(self, val):
+        self._veclen = val
 
 
 class struct(typeclass):
@@ -450,7 +575,6 @@ class struct(typeclass):
         self.ctype = name
         self.ctype_unaligned = name
         self.dtype = self
-        self.materialize_func = None
         self._parse_field_and_types(**fields_and_types)
 
     @property
@@ -576,7 +700,6 @@ class callback(typeclass):
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
         self.bytes = int64.bytes
-        self.materialize_func = None
         self.type = self
         self.ctype = self
 
@@ -601,7 +724,7 @@ class callback(typeclass):
     def as_numpy_dtype(self):
         return numpy.dtype(self.as_ctypes())
 
-    def signature(self, name):
+    def as_arg(self, name):
         from dace import data
 
         return_type_cstring = (self.return_type.ctype
@@ -691,6 +814,39 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
+# Helper function to determine whether a global variable is a constant
+_CONSTANT_TYPES = [
+    int,
+    float,
+    complex,
+    str,
+    bool,
+    numpy.bool_,
+    numpy.intc,
+    numpy.intp,
+    numpy.int8,
+    numpy.int16,
+    numpy.int32,
+    numpy.int64,
+    numpy.uint8,
+    numpy.uint16,
+    numpy.uint32,
+    numpy.uint64,
+    numpy.float16,
+    numpy.float32,
+    numpy.float64,
+    numpy.complex64,
+    numpy.complex128,
+    typeclass,  # , type
+]
+
+
+def isconstant(var):
+    """ Returns True if a variable is designated a constant (i.e., that can be
+        directly generated in code). """
+    return type(var) in _CONSTANT_TYPES
+
+
 bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -745,37 +901,6 @@ TYPECLASS_STRINGS = [
 
 #######################################################
 # Allowed types
-
-# Helper function to determine whether a global variable is a constant
-_CONSTANT_TYPES = [
-    int,
-    float,
-    complex,
-    str,
-    numpy.intc,
-    numpy.intp,
-    numpy.int8,
-    numpy.int16,
-    numpy.int32,
-    numpy.int64,
-    numpy.uint8,
-    numpy.uint16,
-    numpy.uint32,
-    numpy.uint64,
-    numpy.float16,
-    numpy.float32,
-    numpy.float64,
-    numpy.complex64,
-    numpy.complex128,
-    typeclass,  # , type
-]
-
-
-def isconstant(var):
-    """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code). """
-    return type(var) in _CONSTANT_TYPES
-
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
 _ALLOWED_MODULES = {
@@ -926,11 +1051,41 @@ def validate_name(name):
     return True
 
 
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
+
+
 def can_allocate(storage: StorageType, schedule: ScheduleType):
-    """ 
+    """
     Identifies whether a container of a storage type can be allocated in a
-    specific schedule. Used to determine arguments to subgraphs by the 
-    innermost scope that a container can be allocated in. For example, 
+    specific schedule. Used to determine arguments to subgraphs by the
+    innermost scope that a container can be allocated in. For example,
     FPGA_Global memory cannot be allocated from within the FPGA scope, or
     GPU shared memory cannot be allocated outside of device-level code.
 
@@ -956,7 +1111,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
         ]

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
 from copy import deepcopy as dc
@@ -6,18 +7,18 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet
+from dace import memlet, registry, sdfg as sd, Memlet, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching, helpers
+from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
-class InlineSDFG(pattern_matching.Transformation):
+class InlineSDFG(transformation.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -59,6 +60,43 @@ class InlineSDFG(pattern_matching.Transformation):
                 return edge
         raise NameError('Edge with connector %s not found on node %s' %
                         (connector, node))
+
+    @staticmethod
+    def _check_strides(inner_strides: List[symbolic.SymbolicType],
+                       outer_strides: List[symbolic.SymbolicType],
+                       memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
+        """ 
+        Returns True if the strides of the inner array can be matched
+        to the strides of the outer array upon inlining. Takes into 
+        consideration memlet (un)squeeze and nested SDFG symbol mapping.
+        :param inner_strides: The strides of the array inside the nested SDFG.
+        :param outer_strides: The strides of the array in the external SDFG.
+        :param nested_sdfg: Nested SDFG node with symbol mapping.
+        :return: True if all strides match, False otherwise.
+        """
+        # Take unsqueezing into account
+        dims_to_ignore = [
+            i for i, s in enumerate(memlet.subset.size()) if s == 1
+        ]
+        ostrides = [
+            os for i, os in enumerate(outer_strides) if i not in dims_to_ignore
+        ]
+        if len(ostrides) == 0:
+            ostrides = [1]
+        if len(ostrides) != len(inner_strides):
+            return False
+
+        # Replace all inner symbols based on symbol mapping
+        repldict = {
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+            for k, v in nested_sdfg.symbol_mapping.items()
+        }
+        istrides = [
+            istr.subs(repldict) if symbolic.issymbolic(istr) else istr
+            for istr in inner_strides
+        ]
+
+        return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -104,6 +142,10 @@ class InlineSDFG(pattern_matching.Transformation):
                     continue
                 edge = InlineSDFG._find_edge(graph, nested_sdfg, aname)
                 if len(array.shape) > len(edge.data.subset):
+                    return False
+                if not InlineSDFG._check_strides(
+                        array.strides, sdfg.arrays[edge.data.data].strides,
+                        edge.data, nested_sdfg):
                     return False
 
         return True
@@ -412,7 +454,7 @@ class InlineSDFG(pattern_matching.Transformation):
 
 @registry.autoregister
 @make_properties
-class NestSDFG(pattern_matching.Transformation):
+class NestSDFG(transformation.Transformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
 

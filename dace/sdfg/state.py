@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import collections
@@ -532,13 +533,11 @@ class StateGraphView(object):
             subgraph, formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
-                             calling the SDFG. This means that immaterial data
-                             will generate "nullptr" arguments instead of the
-                             argument names.
+                             calling the SDFG.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
-            v.signature(name=k, with_types=with_types, for_call=for_call)
+            v.as_arg(name=k, with_types=with_types, for_call=for_call)
             for k, v in self.arglist().items()
         ]
 
@@ -650,6 +649,17 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
     def nodes(self) -> List[nd.Node]:  # Added for type hints
         return super().nodes()
+
+    def all_edges_and_connectors(self, *nodes):
+        """
+        Returns an iterable to incoming and outgoing Edge objects, along
+        with their connector types.
+        """
+        for node in nodes:
+            for e in self.in_edges(node):
+                yield e, (node.in_connectors[e.dst_conn] if e.dst_conn else None)
+            for e in self.out_edges(node):
+                yield e, (node.out_connectors[e.src_conn] if e.src_conn else None)
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):
@@ -1120,14 +1130,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         # Create appropriate dictionaries from inputs
-        tinputs = {
-            k: self.parent.arrays[v.data].dtype
-            for k, v in inputs.items()
-        }
-        toutputs = {
-            k: self.parent.arrays[v.data].dtype
-            for k, v in outputs.items()
-        }
+        tinputs = {k: None for k, v in inputs.items()}
+        toutputs = {k: None for k, v in outputs.items()}
 
         tasklet = nd.Tasklet(
             name,
@@ -1517,6 +1521,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                     if propagate:
                         cur_memlet = propagate_memlet(self, cur_memlet, snode,
                                                       True)
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
 
     # DEPRECATED FUNCTIONS
     ######################################
@@ -1525,7 +1532,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                   shape,
                   dtype,
                   storage=dtypes.StorageType.Default,
-                  materialize_func=None,
                   transient=False,
                   strides=None,
                   offset=None,
@@ -1546,7 +1552,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                               shape,
                               dtype,
                               storage,
-                              materialize_func,
                               transient,
                               strides,
                               offset,
@@ -1561,7 +1566,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self,
         name,
         dtype,
-        veclen=1,
         buffer_size=1,
         shape=(1, ),
         storage=dtypes.StorageType.Default,
@@ -1581,7 +1585,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self.parent.add_stream(
             name,
             dtype,
-            veclen,
             buffer_size,
             shape,
             storage,
@@ -1618,7 +1621,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                       shape,
                       dtype,
                       storage=dtypes.StorageType.Default,
-                      materialize_func=None,
                       strides=None,
                       offset=None,
                       lifetime=dtypes.AllocationLifetime.Scope,
@@ -1630,7 +1632,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                               shape,
                               dtype,
                               storage,
-                              materialize_func,
                               True,
                               strides,
                               offset,
