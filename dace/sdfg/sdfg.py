@@ -1386,6 +1386,8 @@ class SDFG(OrderedDiGraph):
                 newpgrid.append(int(s))
             except:
                 newpgrid.append(dace.symbolic.pystr_to_symbolic(s))
+                if s not in self.symbols:
+                    self.add_symbol(str(s), int)
         pgrid = newpgrid
 
         grid = ProcessGrid(pgrid)

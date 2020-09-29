@@ -67,6 +67,11 @@ class BlockCyclicData(pattern_matching.Transformation):
         data = sdfg.arrays[node.data]
         data.process_grid = self.gridname
 
+        # Add block sizes to symbols
+        for bsize in self.block:
+            if symbolic.issymbolic(bsize) and bsize not in sdfg.symbols:
+                sdfg.add_symbol(str(bsize), int)
+
         pgrid = sdfg.process_grids[self.gridname]
         dims = len(data.shape)
         pdims = len(pgrid.grid)
@@ -161,10 +166,14 @@ class BlockCyclicMap(pattern_matching.Transformation):
         midx = mentry.map.params
         mspace = mentry.map.range
 
+        # Add block sizes to symbols
+        for bsize in self.block:
+            if symbolic.issymbolic(bsize) and bsize not in sdfg.symbols:
+                sdfg.add_symbol(str(bsize), int)
+
         pgrid = sdfg.process_grids[self.gridname]
         dims = len(mspace)
         pdims = len(pgrid.grid)
-
 
         pidx = ['p_' + idx for idx in midx]
         lidx = ['l_' + idx for idx in midx]
