@@ -270,6 +270,10 @@ class SDFG(OrderedDiGraph):
         """
         tmp = super().to_json()
 
+        # Ensure properties are serialized correctly
+        tmp['attributes']['constants_prop'] = json.loads(
+            dace.serialize.dumps(tmp['attributes']['constants_prop']))
+
         # Location in the SDFG list
         self.reset_sdfg_list()
         tmp['sdfg_list_id'] = int(self.sdfg_id)
@@ -901,7 +905,6 @@ class SDFG(OrderedDiGraph):
         """
         return ", ".join(self.signature_arglist(with_types, for_call))
 
-    # TODO(later): Also implement the "_repr_svg_" method for static output
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
             notebooks. """
@@ -910,6 +913,10 @@ class SDFG(OrderedDiGraph):
         result = ''
         if not isnotebook():
             result = preamble()
+
+        # Make sure to not store metadata (saves space)
+        old_meta = dace.serialize.JSON_STORE_METADATA
+        dace.serialize.JSON_STORE_METADATA = False
 
         # Create renderer canvas and load SDFG
         result += """
@@ -923,6 +930,9 @@ class SDFG(OrderedDiGraph):
             # recursively
             sdfg=dace.serialize.dumps(dace.serialize.dumps(self.to_json())),
             uid=random.randint(0, sys.maxsize - 1))
+
+        # Reset metadata state
+        dace.serialize.JSON_STORE_METADATA = old_meta
 
         return result
 
@@ -1666,7 +1676,7 @@ class SDFG(OrderedDiGraph):
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
         # This is imported here to avoid an import loop
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         strict_transformations = [
             k for k, v in Transformation.extensions().items()
@@ -1709,7 +1719,7 @@ class SDFG(OrderedDiGraph):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         applied_transformations = collections.defaultdict(int)
 
@@ -1779,7 +1789,7 @@ class SDFG(OrderedDiGraph):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.pattern_matching import Transformation
+        from dace.transformation.transformation import Transformation
 
         applied_transformations = collections.defaultdict(int)
 

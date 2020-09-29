@@ -4,8 +4,10 @@ import traceback
 import sys
 from argparse import ArgumentParser
 
+
 def get_exception_message(exception):
     return '%s: %s' % (type(exception).__name__, exception)
+
 
 def load_sdfg_from_json(json):
     # We lazy import SDFGs, not to break cyclic imports, but to avoid any large
@@ -42,6 +44,7 @@ def load_sdfg_from_json(json):
         'sdfg': sdfg,
     }
 
+
 def reapply_history_until(sdfg_json, index):
     """
     Rewind a given SDFG back to a specific point in its history by reapplying
@@ -66,8 +69,7 @@ def reapply_history_until(sdfg_json, index):
         transformation = history[i]
         try:
             transformation.apply_pattern(
-                original_sdfg.sdfg_list[transformation.sdfg_id]
-            )
+                original_sdfg.sdfg_list[transformation.sdfg_id])
         except Exception as e:
             print(traceback.format_exc(), file=sys.stderr)
             sys.stderr.flush()
@@ -83,6 +85,7 @@ def reapply_history_until(sdfg_json, index):
     return {
         'sdfg': new_sdfg,
     }
+
 
 def apply_transformation(sdfg_json, transformation):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
@@ -109,8 +112,7 @@ def apply_transformation(sdfg_json, transformation):
         }
     try:
         revived_transformation.apply_pattern(
-            sdfg.sdfg_list[revived_transformation.sdfg_id]
-        )
+            sdfg.sdfg_list[revived_transformation.sdfg_id])
     except Exception as e:
         print(traceback.format_exc(), file=sys.stderr)
         sys.stderr.flush()
@@ -127,12 +129,14 @@ def apply_transformation(sdfg_json, transformation):
         'sdfg': new_sdfg,
     }
 
+
 def sdfg_find_state(sdfg, element):
     graph = sdfg.sdfg_list[element['sdfg_id']]
     if element['id'] >= 0:
         return graph.nodes()[element['id']]
     else:
         return None
+
 
 def sdfg_find_node(sdfg, element):
     graph = sdfg.sdfg_list[element['sdfg_id']]
@@ -146,6 +150,7 @@ def sdfg_find_node(sdfg, element):
         node.state = None
         return node
 
+
 def get_transformations(sdfg_json, selected_elements):
     # We lazy import DaCe, not to break cyclic imports, but to avoid any large
     # delays when booting in daemon mode.
@@ -154,7 +159,7 @@ def get_transformations(sdfg_json, selected_elements):
     old_meta = serialize.JSON_STORE_METADATA
     serialize.JSON_STORE_METADATA = False
     from dace.sdfg.graph import SubgraphView
-    from dace.transformation.pattern_matching import SubgraphTransformation
+    from dace.transformation.transformation import SubgraphTransformation
 
     loaded = load_sdfg_from_json(sdfg_json)
     if loaded['error'] is not None:
@@ -170,11 +175,17 @@ def get_transformations(sdfg_json, selected_elements):
         transformations.append(transformation.to_json())
         docstrings[type(transformation).__name__] = transformation.__doc__
 
-    selected_states = [sdfg_find_state(sdfg, n) for n in selected_elements if n['type'] == 'state']
-    selected_nodes = [sdfg_find_node(sdfg, n) for n in selected_elements if n['type'] == 'node']
+    selected_states = [
+        sdfg_find_state(sdfg, n) for n in selected_elements
+        if 'type' in n and n['type'] == 'state'
+    ]
+    selected_nodes = [
+        sdfg_find_node(sdfg, n) for n in selected_elements
+        if 'type' in n and n['type'] == 'node'
+    ]
     subgraph = None
     if len(selected_states) > 0:
-       subgraph = SubgraphView(sdfg, selected_states)
+        subgraph = SubgraphView(sdfg, selected_states)
     else:
         violated = False
         state = None
@@ -189,7 +200,7 @@ def get_transformations(sdfg_json, selected_elements):
 
     if subgraph is not None:
         for xform in SubgraphTransformation.extensions():
-            if xform.match(sdfg, subgraph):
+            if xform.can_be_applied(sdfg, subgraph):
                 xform_obj = xform(subgraph)
                 transformations.append(xform_obj.to_json())
                 docstrings[xform.__name__] = xform_obj.__doc__
@@ -200,6 +211,7 @@ def get_transformations(sdfg_json, selected_elements):
         'docstrings': docstrings,
     }
 
+
 def run_daemon():
     from logging.config import dictConfig
     from flask import Flask, request
@@ -209,14 +221,19 @@ def run_daemon():
     # https://stackoverflow.com/questions/56905756
     dictConfig({
         'version': 1,
-        'formatters': {'default': {
-            'format': '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
-        }},
-        'handlers': {'wsgi': {
-            'class': 'logging.StreamHandler',
-            'stream': 'ext://sys.stdout',
-            'formatter': 'default',
-        }},
+        'formatters': {
+            'default': {
+                'format':
+                '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+            }
+        },
+        'handlers': {
+            'wsgi': {
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',
+                'formatter': 'default',
+            }
+        },
         'root': {
             'level': 'INFO',
             'handlers': ['wsgi'],
@@ -250,16 +267,15 @@ def run_daemon():
 
     daemon.run()
 
+
 if __name__ == '__main__':
     parser = ArgumentParser()
-
     '''
     parser.add_argument('-d',
                         '--daemon',
                         action='store_true',
                         help='Run as a daemon')
                         '''
-
     '''
     parser.add_argument('-p',
                         '--port',

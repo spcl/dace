@@ -12,10 +12,10 @@ dace.transformation.dataflow.copy\_to\_device module
    :undoc-members:
    :show-inheritance:
 
-dace.transformation.dataflow.fpga\_transform module
----------------------------------------------------
+dace.transformation.dataflow.double\_buffering module
+----------------------------------------------------
 
-.. automodule:: dace.transformation.dataflow.fpga_transform
+.. automodule:: dace.transformation.dataflow.double_buffering
    :members:
    :undoc-members:
    :show-inheritance:
@@ -36,6 +36,14 @@ dace.transformation.dataflow.gpu\_transform\_local\_storage module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.dataflow.local\_storage module
+-------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.local_storage
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.dataflow.map\_collapse module
 -------------------------------------------------
 
@@ -44,18 +52,18 @@ dace.transformation.dataflow.map\_collapse module
    :undoc-members:
    :show-inheritance:
 
-dace.transformation.dataflow.map\_dim\_interchange module
----------------------------------------------------------
-
-.. automodule:: dace.transformation.dataflow.map_dim_interchange
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.transformation.dataflow.map\_expansion module
 --------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.map_expansion
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.dataflow.map\_fission module
+-----------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.map_fission
    :members:
    :undoc-members:
    :show-inheritance:
@@ -92,6 +100,14 @@ dace.transformation.dataflow.mapreduce module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.dataflow.matrix\_product\_transpose module
+-------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.matrix_product_transpose
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.dataflow.merge\_arrays module
 -------------------------------------------------
 
@@ -104,14 +120,6 @@ dace.transformation.dataflow.mpi module
 ---------------------------------------
 
 .. automodule:: dace.transformation.dataflow.mpi
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-dace.transformation.dataflow.reduce\_expansion module
------------------------------------------------------
-
-.. automodule:: dace.transformation.dataflow.reduce_expansion
    :members:
    :undoc-members:
    :show-inheritance:
@@ -144,14 +152,6 @@ dace.transformation.dataflow.strip\_mining module
 -------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.strip_mining
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-dace.transformation.dataflow.tensorflow\_redundant\_array module
-----------------------------------------------------------------
-
-.. automodule:: dace.transformation.dataflow.tensorflow_redundant_array
    :members:
    :undoc-members:
    :show-inheritance:

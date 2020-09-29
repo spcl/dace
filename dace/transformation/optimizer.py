@@ -12,6 +12,7 @@ from dace.config import Config
 from dace.sdfg import propagation
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
+from dace.transformation.transformation import Transformation
 
 # This import is necessary since it registers all the patterns
 from dace.transformation import dataflow, interstate, subgraph
@@ -35,11 +36,10 @@ class Optimizer(object):
             self.sdfg = copy.deepcopy(sdfg)
 
         # Initialize patterns to search for
-        self.patterns = set(
-            k for k, v in pattern_matching.Transformation.extensions().items()
-            if v.get('singlestate', False))
-        self.stateflow_patterns = set(pattern_matching.Transformation.
-                                      extensions().keys()) - self.patterns
+        self.patterns = set(k for k, v in Transformation.extensions().items()
+                            if v.get('singlestate', False))
+        self.stateflow_patterns = set(
+            Transformation.extensions().keys()) - self.patterns
         self.applied_patterns = set()
 
     def optimize(self):
