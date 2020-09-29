@@ -1318,11 +1318,31 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
                 scope_entry)
 
-        self._localcode.write(
-            '''
-void  *{kname}_args[] = {{ {kargs} }};
-{backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
-            .format(kname=kernel_name,
+        if (scope_entry.map.instrument is dtypes.InstrumentationType.GPU_Events
+                and self.backend == 'hip'):
+            # Special case for instrumentation with HIP: hipExtLaunchKernelGGL
+            # can be called
+            node_uid = '%d_%d_%d' % (sdfg.sdfg_id, state_id,
+                                     state.node_id(scope_entry))
+            self._localcode.write(
+                '''hipExtLaunchKernelGGL((void*){kname}, dim3({gdims}), dim3({bdims}), {dynsmem}, {stream}, {bevent}, {eevent}, 0, {kargs});'''
+                .format(kname=kernel_name,
+                        kargs=', '.join(kernel_args + extra_kernel_args),
+                        gdims=('dace_number_blocks, 1, 1' if is_persistent else
+                               ', '.join(_topy(grid_dims))),
+                        bdims=', '.join(_topy(block_dims)),
+                        dynsmem=_topy(dynsmem_size),
+                        stream=cudastream,
+                        bevent='__dace_ev_b%s' % node_uid,
+                        eevent='__dace_ev_e%s' % node_uid), sdfg, state_id,
+                scope_entry)
+        else:
+            self._localcode.write(
+                '''
+    void  *{kname}_args[] = {{ {kargs} }};
+    {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
+                .format(
+                    kname=kernel_name,
                     kargs=', '.join(['(void *)&' + arg for arg in kernel_args] +
                                     extra_kernel_args),
                     gdims='dace_number_blocks, 1, 1'

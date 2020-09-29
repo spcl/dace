@@ -7,7 +7,6 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
 class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
-
     def __init__(self):
         self.backend = config.Config.get('compiler', 'cuda', 'backend')
         super().__init__()
@@ -103,6 +102,8 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
 
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
                        global_stream):
+        if self.backend == 'hip':  # Handled separately in GPU codegen
+            return
         state_id = sdfg.node_id(state)
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
@@ -121,8 +122,9 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(sdfg, state, entry_node)
-            outer_stream.write(self._record_event(idstr, node._cuda_stream),
-                               sdfg, state_id, node)
+            if self.backend != 'hip':  # Handled separately in GPU codegen
+                outer_stream.write(self._record_event(idstr, node._cuda_stream),
+                                   sdfg, state_id, node)
             outer_stream.write(
                 self._report('%s %s' % (type(s).__name__, s.label), sdfg, state,
                              entry_node), sdfg, state_id, node)
