@@ -1,6 +1,7 @@
 """ Block-cyclic distribution of data and maps. """
 
 import copy
+import functools
 import warnings
 from abc import ABC
 import random
@@ -12,6 +13,10 @@ from dace.properties import (LambdaProperty, Property, ShapeProperty, DictProper
 from dace.sdfg import nodes, utils
 from dace.transformation import pattern_matching
 from dace.symbolic import pystr_to_symbolic as strsym
+
+
+def _prod(sequence):
+    return functools.reduce(lambda a, b: a * b, sequence, 1)
 
 
 @registry.autoregister_params(singlestate=True)
@@ -86,8 +91,11 @@ class BlockCyclicData(pattern_matching.Transformation):
             new_shape[i] = ceiling(data.shape[i] / (pgrid.grid[i] * self.block[i]))
             new_shape[i + dims] = self.block[i]
 
+        # Change data properties
+        data.storage = dtypes.StorageType.Distributed
         data.dist_shape = new_dist_shape
         data.shape = new_shape
+        data.total_size = _prod(new_shape)
 
         # TODO: What happens if subset of edge is true range instead of index?
         edges = set()
@@ -187,7 +195,8 @@ class BlockCyclicMap(pattern_matching.Transformation):
             lspace[i] = (0, ceiling((mspace[i][1] - mspace[i][0] + 1) / (self.block[i] * pgrid.grid[i])) - 1, 1)
             ospace[i] = (mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i])) * self.block[i],
                          mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i]) + 1) * self.block[i] - 1, 1)
-        pmap = nodes.Map('p_' + mname, pidx, subsets.Range(pspace))
+        pmap = nodes.Map('p_' + mname, pidx, subsets.Range(pspace),
+                         schedule=dtypes.ScheduleType.MPI)
         pentry = nodes.MapEntry(pmap)
         pexit = nodes.MapExit(pmap)
         lmap = nodes.Map('l_' + mname, lidx, subsets.Range(lspace))

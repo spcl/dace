@@ -196,11 +196,11 @@ if __name__ == "__main__":
                 assert(node.map.range == rng)
                 print('OK!')
 
-    # sdfg(A=A, B=B, C=C, S0=S0, S1=S1, S2=S2,
-    #      P0A=P0A, P1A=P1A, P0B=P0B, P1B=P1B, P0C=P0C, P1C=P1C,
-    #      P0I=P0I, P1I=P1I, P2I=P2I,
-    #      B0A=B0A, B1A=B1A, B0B=B0B, B1B=B1B, B0C=B0C, B1C=B1C,
-    #      B0I=B0I, B1I=B1I, B2I=B2I)
+    sdfg(A=A, B=B, C=C, S0=S0, S1=S1, S2=S2,
+         P0A=P0A, P1A=P1A, P0B=P0B, P1B=P1B, P0C=P0C, P1C=P1C,
+         P0I=P0I, P1I=P1I, P2I=P2I,
+         B0A=B0A, B1A=B1A, B0B=B0B, B1B=B1B, B0C=B0C, B1C=B1C,
+         B0I=B0I, B1I=B1I, B2I=B2I)
 
     # C_regression = A @ B
 
