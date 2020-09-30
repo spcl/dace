@@ -266,6 +266,14 @@ def nest_state_subgraph(sdfg: SDFG,
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
 
+    # Remove newly isolated nodes due to memlet consolidation
+    for edge in inputs:
+        if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
+            state.remove_node(edge.src)
+    for edge in outputs:
+        if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
+            state.remove_node(edge.dst)
+
     return nested_sdfg
 
 
