@@ -172,6 +172,13 @@ class RedundantSecondArray(pm.Transformation):
         else:
             inp_subset = memlet.other_subset
             out_subset = memlet.subset
+        
+        if not inp_subset:
+            inp_subset = dcpy(out_subset)
+            inp_subset.offset(out_subset, negative=True)
+        if not out_subset:
+            out_subset = dcpy(inp_subset)
+            out_subset.offset(inp_subset, negative=True)
 
         def _prod(sequence):
             return functools.reduce(lambda a, b: a * b, sequence, 1)
@@ -185,9 +192,13 @@ class RedundantSecondArray(pm.Transformation):
         for e in graph.out_edges(out_array):
             # 3a. Extract the output edge subset
             if e.data.data == out_array.data:
-                subset = memlet.subset
+                subset = e.data.subset
             else:
-                subset = memlet.other_subset
+                if e.data.other_subset:
+                    subset = e.data.other_subset
+                else:
+                    subset = dcpy(e.data.other_subset)
+                    subset.offset(e.data.other_subset, negative=True)
             # 3b. Check subset coverage
             if not out_subset.covers(subset):
                 return False
@@ -208,7 +219,7 @@ class RedundantSecondArray(pm.Transformation):
         in_array = gnode(RedundantSecondArray._in_array)
         out_array = gnode(RedundantSecondArray._out_array)
 
-        # 1. Extract the input (first) and output (second) array subsets.
+        # Extract the input (first) and output (second) array subsets.
         memlet = graph.edges_between(in_array, out_array)[0].data
         if memlet.data == in_array.data:
             inp_subset = memlet.subset
@@ -216,6 +227,13 @@ class RedundantSecondArray(pm.Transformation):
         else:
             inp_subset = memlet.other_subset
             out_subset = memlet.subset
+        
+        if not inp_subset:
+            inp_subset = dcpy(out_subset)
+            inp_subset.offset(out_subset, negative=True)
+        if not out_subset:
+            out_subset = dcpy(inp_subset)
+            out_subset.offset(inp_subset, negative=True)
 
         for e in graph.out_edges(out_array):
             # Modify all outgoing edges to point to in_array
@@ -226,21 +244,41 @@ class RedundantSecondArray(pm.Transformation):
                     # Here we assume that the input subset covers the output
                     # subset, since this was already checked in can_be_applied.
                     # Example
-                    # inp -- inp_subset/out_subset --> out -- subset -->
+                    # inp -- (0, a:b)/(c:c+b) --> out -- (c+d) --> other
+                    # must become
+                    # inp -- (0, a+d) --> other
                     subset = pe.data.subset
+                    # (c+d) - (c:c+b) = (d)
                     subset.offset(out_subset, negative=True)
-                    subset.offset(inp_subset, negative=False)
+                    # (0, a:b)(d) = (0, a+d) (or offset for indices)
+                    if isinstance(inp_subset, subsets.Indices):
+                        tmp = dcpy(inp_subset)
+                        tmp.offset(subset, negative=False)
+                        subset = tmp
+                    else:
+                        subset = inp_subset.compose(subset)
+                    pe.data.subset = subset
                     # if isinstance(subset, subsets.Indices):
                     #     pe.data.subset.offset(subset, False)
                     # else:
                     #     pe.data.subset = subset.compose(pe.data.subset)
                 elif pe.data.other_subset:
-                    raise NotImplementedError
-                    # if isinstance(subset, subsets.Indices):
-                    #     pe.data.other_subset.offset(subset, False)
-                    # else:
-                    #     pe.data.other_subset = subset.compose(
-                    #         pe.data.other_subset)
+                    # We do the same, but for other_subset
+                    # We do not change the data
+                    subset = pe.data.other_subset
+                    subset.offset(out_subset, negative=True)
+                    if isinstance(inp_subset, subsets.Indices):
+                        tmp = dcpy(inp_subset)
+                        tmp.offset(subset, negative=False)
+                        subset = tmp
+                    else:
+                        subset = inp_subset.compose(subset)
+                    pe.data.other_subset = subset
+                else:
+                    # The subset is the entirety of the out array
+                    # Assuming that the input subset covers this,
+                    # we do not need to do anything
+                    pass
 
             # Redirect edge to out_array
             graph.remove_edge(e)
