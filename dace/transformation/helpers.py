@@ -6,7 +6,7 @@ from numpy.core.numeric import full
 from dace.subsets import Subset, union
 from typing import Dict, List, Optional, Tuple
 
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -64,6 +64,9 @@ def nest_state_subgraph(sdfg: SDFG,
 
     scope = scope_tree[top_scopenode]
     ###
+
+    # Consolidate edges in top scope
+    utils.consolidate_edges_scope(state, scope.entry)
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
