@@ -1,9 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import warnings
+
 import dace
-from dace import registry, symbolic, dtypes
+from dace import registry, symbolic, dtypes, data
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
-from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
+from dace.codegen.targets import cpp
+from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
+                                         DefinedType)
 from dace.sdfg import nodes
 from dace.config import Config
 
@@ -69,6 +73,7 @@ void __dace_exit_mpi({params}) {{
 
         # Register dispatchers
         dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
+        dispatcher.register_array_dispatcher(dtypes.StorageType.Distributed, self)
 
     def get_generated_codeobjects(self):
         return [self._codeobj]
@@ -91,6 +96,61 @@ void __dace_exit_mpi({params}) {{
     @property
     def has_finalizer(self):
         return True
+    
+    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
+                       callsite_stream):
+        name = node.data
+        nodedesc = node.desc(sdfg)
+
+        if not nodedesc.transient:  # Nested SDFG connector?
+            return
+
+        if (isinstance(nodedesc, data.Array) and
+                nodedesc.storage == dtypes.StorageType.Distributed):
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            arrsize = cpp.sym2cpp(nodedesc.total_size)
+            ctype = nodedesc.dtype.ctype
+            winname = "__mpiwin_{}".format(name)
+            callsite_stream.write(
+                "{t} *{n} = new {t} DACE_ALIGN(64)[{s}];\n"  # TODO: Is there any reason to use MPI_Alloc_mem?
+                "MPI_Win {w};\n"
+                "MPI_Win_create({n}, {s} * sizeof({t}), sizeof({t}), "
+                "MPI_INFO_NULL, MPI_COMM_WORLD, &{w});\n".format(
+                    n=name, s=arrsize, t=ctype, w=winname
+                ),
+                sdfg,
+                state_id,
+                node
+            )
+            self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
+                                              ctypedef)
+        else:
+            return
+
+        # TODO: Fix other Data and Storage options
+
+    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
+                         callsite_stream):
+        name = node.data
+        nodedesc = node.desc(sdfg)
+
+        if not nodedesc.transient:
+            return
+        
+        if (isinstance(nodedesc, data.Array) and
+                nodedesc.storage == dtypes.StorageType.Distributed):
+            winname = "__mpiwin_{}".format(name)
+            callsite_stream.write(
+                "MPI_Win_free(&w);\n"
+                "delete[] {n};\n".format(n=name, w=winname),
+                sdfg,
+                state_id,
+                node
+            )
+        else:
+            return
+
+        # TODO: Fix other Data and Storage options
 
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
                        callsite_stream):
