@@ -18,7 +18,8 @@ class MemletPattern(object):
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
-    def match(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range,
+                       orig_edges):
         raise NotImplementedError
 
     def propagate(self, array, expressions, node_range):
@@ -29,8 +30,8 @@ class MemletPattern(object):
 class SeparableMemletPattern(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         raise NotImplementedError
 
     def propagate(self, array, dim_exprs, node_range):
@@ -40,7 +41,8 @@ class SeparableMemletPattern(object):
 @registry.autoregister
 class SeparableMemlet(MemletPattern):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
-    def match(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range,
+                       orig_edges):
         # Assuming correct dimensionality in each of the expressions
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
@@ -71,8 +73,9 @@ class SeparableMemlet(MemletPattern):
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.match(dexprs, variable_context, overapprox_range,
-                                   orig_edges, dim, data_dims):
+                if smpattern.can_be_applied(dexprs, variable_context,
+                                            overapprox_range, orig_edges, dim,
+                                            data_dims):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
@@ -117,8 +120,8 @@ class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
         of the form `a * {index} + b`.
     """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
 
         params = variable_context[-1]
         defined_vars = variable_context[-2]
@@ -297,8 +300,8 @@ class ModuloSMemlet(SeparableMemletPattern):
 
         Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
     """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         # Pattern does not support unions of expressions
         if len(dim_exprs) > 1: return False
         dexpr = dim_exprs[0]
@@ -320,8 +323,9 @@ class ModuloSMemlet(SeparableMemletPattern):
         self.subpattern = None
         for pattern_class in SeparableMemletPattern.s_smpatterns:
             smpattern = pattern_class()
-            if smpattern.match([self.subexpr], variable_context, node_range,
-                               orig_edges, dim_index, total_dims):
+            if smpattern.can_be_applied([self.subexpr], variable_context,
+                                        node_range, orig_edges, dim_index,
+                                        total_dims):
                 self.subpattern = smpattern
 
         return self.subpattern is not None
@@ -351,8 +355,8 @@ class ConstantSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
     """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         # Pattern does not support unions of expressions. TODO: Support
         if len(dim_exprs) > 1: return False
         dexpr = dim_exprs[0]
@@ -395,8 +399,8 @@ class ConstantSMemlet(SeparableMemletPattern):
 class GenericSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that detects any expression, and propagates 
         interval bounds. Used as a last resort. """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         dims = []
         for dim in dim_exprs:
             if isinstance(dim, tuple):
@@ -494,7 +498,8 @@ def _subexpr(dexpr, repldict):
 class ConstantRangeMemlet(MemletPattern):
     """ Memlet pattern that matches arbitrary expressions with constant range.
     """
-    def match(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range,
+                       orig_edges):
         constant_range = True
         for dim in node_range:
             for rngelem in dim:  # For (begin, end, skip)
@@ -693,8 +698,8 @@ def propagate_memlet(dfg_state,
             tmp_subset = None
             for pclass in MemletPattern.extensions():
                 pattern = pclass()
-                if pattern.match([md.subset], variable_context, mapnode.range,
-                                 [md]):
+                if pattern.can_be_applied([md.subset], variable_context,
+                                          mapnode.range, [md]):
                     tmp_subset = pattern.propagate(arr, [md.subset],
                                                    mapnode.range)
                     break
