@@ -223,10 +223,12 @@ class RedundantSecondArray(pm.Transformation):
             for pe in path:
                 if pe.data.data == out_array.data:
                     pe.data.data = in_array.data
+                    # Here we assume that the input subset covers the output
+                    # subset, since this was already checked in can_be_applied.
+                    # Example
+                    # inp -- inp_subset/out_subset --> out -- subset -->
                     subset = pe.data.subset
                     subset.offset(out_subset, negative=True)
-                    # pe.data.subset = dcpy(inp_subset)
-                    # pe.data.subset.offset(subset, negative=False)
                     subset.offset(inp_subset, negative=False)
                     # if isinstance(subset, subsets.Indices):
                     #     pe.data.subset.offset(subset, False)
