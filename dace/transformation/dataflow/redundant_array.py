@@ -225,8 +225,9 @@ class RedundantSecondArray(pm.Transformation):
                     pe.data.data = in_array.data
                     subset = pe.data.subset
                     subset.offset(out_subset, negative=True)
-                    pe.data.subset = dcpy(inp_subset)
-                    pe.data.subset.offset(subset, negative=False)
+                    # pe.data.subset = dcpy(inp_subset)
+                    # pe.data.subset.offset(subset, negative=False)
+                    subset.offset(inp_subset, negative=False)
                     # if isinstance(subset, subsets.Indices):
                     #     pe.data.subset.offset(subset, False)
                     # else:
