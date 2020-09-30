@@ -1,9 +1,10 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains redundant array removal transformations. """
 
 from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 from dace.config import Config
 
 
@@ -35,8 +36,9 @@ class RedundantArrayCopyingIn(pm.Transformation):
         out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
 
         # Safety first (could be relaxed)
-        if not (graph.out_degree(in_array) == 1 and graph.in_degree(med_array)
-                == 1 and graph.out_degree(med_array)):
+        if not (graph.out_degree(in_array) == 1
+                and graph.in_degree(med_array) == 1
+                and graph.out_degree(med_array)):
             return False
 
         # Make sure that the removal candidates are transient

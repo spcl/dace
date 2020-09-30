@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion
 """
 import dace
@@ -6,7 +7,7 @@ from dace import dtypes, registry, symbolic, subsets, data
 from dace.sdfg import nodes, utils, replace, SDFG, scope_contains_scope
 from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
@@ -24,7 +25,7 @@ from itertools import chain
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class SubgraphFusion(pattern_matching.SubgraphTransformation):
+class SubgraphFusion(transformation.SubgraphTransformation):
     """ Implements the SubgraphFusion transformation.
         Fuses together the maps contained in the subgraph and pushes inner nodes
         into a global outer map, creating transients and new connections
@@ -47,7 +48,7 @@ class SubgraphFusion(pattern_matching.SubgraphTransformation):
         default=dtypes.StorageType.Default)
 
     @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
         Fusible if
         1. Maps have the same access sets and ranges in order

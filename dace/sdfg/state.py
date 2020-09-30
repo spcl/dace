@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import collections
@@ -659,9 +660,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         """
         for node in nodes:
             for e in self.in_edges(node):
-                yield e, node.in_connectors[e.dst_conn]
+                yield e, (node.in_connectors[e.dst_conn] if e.dst_conn else None)
             for e in self.out_edges(node):
-                yield e, node.out_connectors[e.src_conn]
+                yield e, (node.out_connectors[e.src_conn] if e.src_conn else None)
 
     def add_node(self, node):
         if not isinstance(node, nd.Node):

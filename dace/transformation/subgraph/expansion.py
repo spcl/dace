@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the expansion transformation.
 """
 
@@ -6,7 +7,7 @@ from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
 from dace.sdfg.graph import SubgraphView
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
@@ -20,7 +21,7 @@ import dace.libraries.standard as stdlib
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MultiExpansion(pattern_matching.SubgraphTransformation):
+class MultiExpansion(transformation.SubgraphTransformation):
     ''' 
     Implements the MultiExpansion transformation.
     Takes all the lowest scope maps in a given subgraph,
@@ -37,7 +38,7 @@ class MultiExpansion(pattern_matching.SubgraphTransformation):
                                     default=False)
 
     @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         ### get lowest scope maps of subgraph
         # grab first node and see whether all nodes are in the same graph
         # (or nested sdfgs therein)

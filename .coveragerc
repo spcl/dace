@@ -20,3 +20,5 @@ exclude_lines =
 # Omit files that cannot be tested
 omit =
     dace/jupyter.py
+    dace/transformation/interface/vscode/__init__.py
+    dace/transformation/interface/vscode/__main__.py

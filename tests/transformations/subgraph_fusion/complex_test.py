@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.transformation.subgraph.helpers as helpers
 import dace.sdfg.nodes as nodes
@@ -128,7 +129,7 @@ def test_quantitatively(sdfg, graph):
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    assert SubgraphFusion.match(sdfg, subgraph) == True
+    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
     fusion(sdfg, graph)
     sdfg.validate()
     csdfg = sdfg.compile()

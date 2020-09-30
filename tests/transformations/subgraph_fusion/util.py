@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.subgraph import MultiExpansion
 from dace.transformation.subgraph import SubgraphFusion

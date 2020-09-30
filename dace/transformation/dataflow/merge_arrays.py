@@ -1,4 +1,5 @@
-from dace.transformation import pattern_matching
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.transformation import transformation
 from dace import memlet, registry
 from dace.sdfg import nodes
 from dace.sdfg import SDFGState
@@ -6,7 +7,7 @@ from dace.sdfg.propagation import propagate_memlet
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
-class InMergeArrays(pattern_matching.Transformation):
+class InMergeArrays(transformation.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     _array1 = nodes.AccessNode("_")
@@ -121,7 +122,7 @@ class InMergeArrays(pattern_matching.Transformation):
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
-class OutMergeArrays(pattern_matching.Transformation):
+class OutMergeArrays(transformation.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     _array1 = nodes.AccessNode("_")
