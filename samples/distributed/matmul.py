@@ -67,6 +67,7 @@ if __name__ == "__main__":
 
     from dace.transformation.dataflow import (BlockCyclicData, BlockCyclicMap)
     sdfg = matmul.to_sdfg()
+    sdfg.apply_strict_transformations()
     sdfg.add_process_grid("A", (P0A, P1A))
     sdfg.add_process_grid("B", (P0B, P1B))
     sdfg.add_process_grid("C", (P0C, P1C))
@@ -86,6 +87,7 @@ if __name__ == "__main__":
                                     {'gridname': 'I',
                                      'block': (B0I, B1I, B2I)}],
                                 validate=False)
+    sdfg.save('ddace_test.sdfg')
     
     print('Verifying reshaping of array A ... ', end='')
     array_A = sdfg.arrays['A']
