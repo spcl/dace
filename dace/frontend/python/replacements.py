@@ -699,6 +699,13 @@ def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     return op1 + op2
 
 
+@oprepo.replaces_operator('symbol', 'Mult', 'int')
+@oprepo.replaces_operator('symbol', 'Mult', 'float')
+def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+            op1: symbolic.symbol, op2: Union[int, float]):
+    return op1 * op2
+
+
 @oprepo.replaces_operator('symbol', 'Gt', 'symbol')
 def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
            op1: symbolic.symbol, op2: Union[int, float]):

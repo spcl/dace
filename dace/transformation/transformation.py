@@ -167,9 +167,10 @@ class Transformation(object):
     def apply_pattern(self, sdfg):
         """ Applies this transformation on the given SDFG. """
         sdfg.append_transformation(self)
-        self.apply(sdfg)
+        retval = self.apply(sdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(sdfg)
+        return retval
 
     @classmethod
     def apply_to(cls,
@@ -243,7 +244,7 @@ class Transformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        instance.apply_pattern(sdfg)
+        return instance.apply_pattern(sdfg)
 
     def __str__(self):
         return type(self).__name__
@@ -503,7 +504,7 @@ class SubgraphTransformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        instance.apply(sdfg)
+        return instance.apply(sdfg)
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
