@@ -26,7 +26,7 @@ def test_add():
     assert np.allclose(result, A + A)
 
     # Check map sequence
-    me = next(n for n in sdfg.node(0).nodes()
+    me = next(n for n, _ in sdfg.all_nodes_recursive()
               if isinstance(n, dace.nodes.MapEntry))
     assert me.map.range == Range([(0, 23, 1), (0, 24, 1)])
 
