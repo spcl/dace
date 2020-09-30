@@ -171,7 +171,7 @@ class CUDACodeGen(TargetCodeGenerator):
         if self.backend == 'cuda':
             backend_header = 'cuda_runtime.h'
         elif self.backend == 'hip':
-            backend_header = 'hip/hip_runtime.h'
+            backend_header = 'hip/hip_ext.h'
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
@@ -1318,23 +1318,38 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                     e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
                 scope_entry)
 
-        if (scope_entry.map.instrument is dtypes.InstrumentationType.GPU_Events
+        if (state.instrument is dtypes.InstrumentationType.GPU_Events
                 and self.backend == 'hip'):
             # Special case for instrumentation with HIP: hipExtLaunchKernelGGL
             # can be called
             node_uid = '%d_%d_%d' % (sdfg.sdfg_id, state_id,
                                      state.node_id(scope_entry))
             self._localcode.write(
-                '''hipExtLaunchKernelGGL((void*){kname}, dim3({gdims}), dim3({bdims}), {dynsmem}, {stream}, {bevent}, {eevent}, 0, {kargs});'''
+                '''
+    hipEvent_t {bevent}, {eevent};
+    hipEventCreate(&{bevent});
+    hipEventCreate(&{eevent});
+    hipExtLaunchKernelGGL({kname}, dim3({gdims}), dim3({bdims}), {dynsmem}, {stream}, {bevent}, {eevent}, 0, {kargs});
+    hipEventSynchronize({eevent});
+    float __dace_ms;
+    hipEventElapsedTime(&__dace_ms, {bevent}, {eevent});
+    hipEventDestroy({bevent});
+    hipEventDestroy({eevent});
+    dace::perf::report.add("gpuev_{timer_name}", __dace_ms);
+    '''
                 .format(kname=kernel_name,
-                        kargs=', '.join(kernel_args + extra_kernel_args),
+                        kargs=', '.join(list(kernel_args) + extra_kernel_args),
                         gdims=('dace_number_blocks, 1, 1' if is_persistent else
                                ', '.join(_topy(grid_dims))),
                         bdims=', '.join(_topy(block_dims)),
                         dynsmem=_topy(dynsmem_size),
                         stream=cudastream,
                         bevent='__dace_ev_b%s' % node_uid,
-                        eevent='__dace_ev_e%s' % node_uid), sdfg, state_id,
+                        eevent='__dace_ev_e%s' % node_uid,
+                        timer_name='%s %s' % (type(state).__name__,
+                                              state.label)),
+                sdfg,
+                state_id,
                 scope_entry)
         else:
             self._localcode.write(

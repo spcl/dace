@@ -54,6 +54,8 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
+        if self.backend == 'hip':  # Handled separately in GPU codegen
+            return
         state_id = sdfg.node_id(state)
         # Create GPU events for each instrumented scope in the state
         for node in state.nodes():
@@ -76,6 +78,8 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
             local_stream.write(self._create_event(idstr), sdfg, state_id)
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
+        if self.backend == 'hip':  # Handled separately in GPU codegen
+            return
         state_id = sdfg.node_id(state)
         # Record and measure state stream event
         if state.instrument == dtypes.InstrumentationType.GPU_Events:
@@ -117,6 +121,8 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
+        if self.backend == 'hip':  # Handled separately in GPU codegen
+            return
         state_id = sdfg.node_id(state)
         entry_node = state.entry_node(node)
         s = self._get_sobj(node)
@@ -131,6 +137,8 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
 
     def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
                       global_stream):
+        if self.backend == 'hip':  # Handled separately in GPU codegen
+            return
         if (not isinstance(node, nodes.CodeNode)
                 or is_devicelevel_gpu(sdfg, state, node)):
             return
@@ -144,6 +152,8 @@ dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
                     global_stream):
+        if self.backend == 'hip':  # Handled separately in GPU codegen
+            return
         if (not isinstance(node, nodes.Tasklet)
                 or is_devicelevel_gpu(sdfg, state, node)):
             return
