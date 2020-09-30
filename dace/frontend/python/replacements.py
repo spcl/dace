@@ -694,16 +694,32 @@ def _neg(visitor: 'ProgramVisitor',
 
 @oprepo.replaces_operator('symbol', 'Add', 'int')
 @oprepo.replaces_operator('symbol', 'Add', 'float')
+@oprepo.replaces_operator('int', 'Add', 'symbol')
+@oprepo.replaces_operator('float', 'Add', 'symbol')
 def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-            op1: symbolic.symbol, op2: Union[int, float]):
+            op1: Union[int, float, symbolic.symbol],
+            op2: Union[int, float, symbolic.symbol]):
     return op1 + op2
 
 
 @oprepo.replaces_operator('symbol', 'Mult', 'int')
 @oprepo.replaces_operator('symbol', 'Mult', 'float')
-def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-            op1: symbolic.symbol, op2: Union[int, float]):
+@oprepo.replaces_operator('int', 'Mult', 'symbol')
+@oprepo.replaces_operator('float', 'Mult', 'symbol')
+def _multsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+             op1: Union[int, float, symbolic.symbol],
+             op2: Union[int, float, symbolic.symbol]):
     return op1 * op2
+
+
+@oprepo.replaces_operator('symbol', 'Div', 'int')
+@oprepo.replaces_operator('symbol', 'Div', 'float')
+@oprepo.replaces_operator('int', 'Div', 'symbol')
+@oprepo.replaces_operator('float', 'Div', 'symbol')
+def _divsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+            op1: Union[int, float, symbolic.symbol],
+            op2: Union[int, float, symbolic.symbol]):
+    return op1 / op2
 
 
 @oprepo.replaces_operator('symbol', 'Gt', 'symbol')

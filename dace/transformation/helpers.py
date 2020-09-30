@@ -123,7 +123,7 @@ def nest_state_subgraph(sdfg: SDFG,
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
-        name = '__in_' + edge.data.data
+        name = edge.data.data
         datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
         datadesc.transient = False
         if not full_data:
@@ -133,13 +133,16 @@ def nest_state_subgraph(sdfg: SDFG,
     for edge in outputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
-        name = '__out_' + edge.data.data
+        name = edge.data.data
         datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
         datadesc.transient = False
         if not full_data:
             datadesc.shape = edge.data.subset.size()
-        output_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
+        if name in nsdfg.data:
+            output_names.append(name)
+        else:
+            output_names.append(
+                nsdfg.add_datadesc(name, datadesc, find_new_name=True))
     ###################
 
     # Add scope symbols to the nested SDFG
