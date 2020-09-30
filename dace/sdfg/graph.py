@@ -6,6 +6,7 @@ import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
+from typing import Any, List
 
 
 class NodeNotFoundError(Exception):
@@ -331,11 +332,11 @@ class Graph(object):
                 except StopIteration:
                     stack.pop()
 
-    def source_nodes(self):
+    def source_nodes(self) -> List[Any]:
         """Returns nodes with no incoming edges."""
         return [n for n in self.nodes() if self.in_degree(n) == 0]
 
-    def sink_nodes(self):
+    def sink_nodes(self) -> List[Any]:
         """Returns nodes with no outgoing edges."""
         return [n for n in self.nodes() if self.out_degree(n) == 0]
 
