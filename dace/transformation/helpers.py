@@ -6,7 +6,7 @@ from numpy.core.numeric import full
 from dace.subsets import Subset, union
 from typing import Dict, List, Optional, Tuple
 
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -64,6 +64,9 @@ def nest_state_subgraph(sdfg: SDFG,
 
     scope = scope_tree[top_scopenode]
     ###
+
+    # Consolidate edges in top scope
+    utils.consolidate_edges_scope(state, scope.entry)
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
@@ -262,6 +265,14 @@ def nest_state_subgraph(sdfg: SDFG,
     # Remove subgraph transients from top-level graph
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
+
+    # Remove newly isolated nodes due to memlet consolidation
+    for edge in inputs:
+        if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
+            state.remove_node(edge.src)
+    for edge in outputs:
+        if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
+            state.remove_node(edge.dst)
 
     return nested_sdfg
 
