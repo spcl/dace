@@ -258,13 +258,17 @@ class Graph(object):
     def neighbors(self, node):
         return itertools.chain(self.predecessors(node), self.successors(node))
 
-    def in_degree(self, node):
+    def in_degree(self, node) -> int:
         """Returns the number of incoming edges to the specified node."""
         raise self._not_implemented_error()
 
-    def out_degree(self, node):
+    def out_degree(self, node) -> int:
         """Returns the number of outgoing edges from the specified node."""
         raise self._not_implemented_error()
+
+    def degree(self, node) -> int:
+        """Returns the number of edges connected to/from the specified node."""
+        return self.in_degree(node) + self.out_degree(node)
 
     def number_of_nodes(self):
         """Returns the total number of nodes in the graph."""
