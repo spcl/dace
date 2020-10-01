@@ -582,8 +582,8 @@ class TransformationHistProperty(Property):
             return data
         if not isinstance(data, list):
             raise TypeError(
-                'TransformationHistProperty expects a list input, got %s' % data
-            )
+                'TransformationHistProperty expects a list input, got %s' %
+                data)
         return [dace.serialize.from_json(elem) for elem in data]
 
 
@@ -1127,13 +1127,14 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (not isinstance(val, sp.expr.Expr) and not isinstance(val, int)
-                and not isinstance(val, str)):
-            raise TypeError(
-                "Property {} must an int or symbolic expression".format(
-                    self.attr_name))
-        if isinstance(val, (int, float, str, complex)):
+        if isinstance(val, (sp.Expr, int, float, str, complex)):
             val = SymbolicProperty.from_string(str(val))
+        elif self.allow_none and val is None:
+            pass
+        else:
+            raise TypeError(
+                "Property {} must a literal or symbolic expression".format(
+                    self.attr_name))
 
         super(SymbolicProperty, self).__set__(obj, val)
 
