@@ -456,11 +456,13 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
 
         # Remove connector and matching outer connector
         if inwards:
-            e.src.remove_out_connector(e.src_conn)
-            e.src.remove_in_connector('IN' + e.src_conn[3:])
+            if e.src_conn:
+                e.src.remove_out_connector(e.src_conn)
+                e.src.remove_in_connector('IN' + e.src_conn[3:])
         else:
-            e.dst.remove_in_connector(e.dst_conn)
-            e.src.remove_out_connector('OUT' + e.src_conn[2:])
+            if e.dst_conn:
+                e.dst.remove_in_connector(e.dst_conn)
+                e.src.remove_out_connector('OUT' + e.dst_conn[2:])
 
         # Continue traversing upwards
         curedge = curedge.parent
