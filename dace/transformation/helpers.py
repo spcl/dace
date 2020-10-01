@@ -3,7 +3,7 @@
 import copy
 
 from numpy.core.numeric import full
-from dace.subsets import Subset, union
+from dace.subsets import Range, Subset, union
 from typing import Dict, List, Optional, Tuple
 
 from dace.sdfg import nodes, utils
@@ -66,7 +66,7 @@ def nest_state_subgraph(sdfg: SDFG,
     ###
 
     # Consolidate edges in top scope
-    utils.consolidate_edges_scope(state, scope.entry)
+    utils.consolidate_edges(sdfg, scope)
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
@@ -142,6 +142,8 @@ def nest_state_subgraph(sdfg: SDFG,
             new_name, subset = global_subsets[name]
             if not full_data:
                 new_subset = union(subset, edge.data.subset)
+                if new_subset is None:
+                    new_subset = Range.from_array(sdfg.arrays[name])
                 global_subsets[name] = (new_name, new_subset)
                 nsdfg.arrays[new_name].shape = new_subset.size()
         input_names.append(new_name)
@@ -160,6 +162,8 @@ def nest_state_subgraph(sdfg: SDFG,
             new_name, subset = global_subsets[name]
             if not full_data:
                 new_subset = union(subset, edge.data.subset)
+                if new_subset is None:
+                    new_subset = Range.from_array(sdfg.arrays[name])
                 global_subsets[name] = (new_name, new_subset)
                 nsdfg.arrays[new_name].shape = new_subset.size()
         output_names.append(new_name)
