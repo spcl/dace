@@ -8,7 +8,7 @@ import functools
 import re
 from dace.codegen import control_flow as cflow
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
@@ -16,7 +16,6 @@ from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
-from dace.codegen import cppunparse
 
 import networkx as nx
 import numpy as np
@@ -406,8 +405,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
 
-        condition_string = cppunparse.cppunparse(edge.data.condition.code,
-                                                 False)
+        condition_string = sym2cpp(edge.data.condition_sympy())
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -515,8 +513,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             generated_edges.add(back_edge)
 
                             entry_edge = control.scope.entry.edge
-                            condition = cppunparse.cppunparse(
-                                entry_edge.data.condition.code, False)
+                            condition = sym2cpp(
+                                entry_edge.data.condition_sympy())
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -579,8 +577,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             then_entry = then_scope.entry.edge
 
-                            condition = cppunparse.cppunparse(
-                                then_entry.data.condition.code, False)
+                            condition = sym2cpp(
+                                then_entry.data.condition_sympy())
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
