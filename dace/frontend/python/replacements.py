@@ -634,7 +634,7 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
     out_shape = tuple(reversed([all_idx_dict[idx] for idx in all_idx]))
 
-    all_idx_tup = [(k, "0:" + str(v)) for k, v in sorted(all_idx_dict.items())]
+    all_idx_tup = [(k, "0:" + str(all_idx_dict[k])) for k in reversed(all_idx)]
 
     return out_shape, all_idx_tup, to_string(all_idx), to_string(
         a1_idx), to_string(a2_idx)
