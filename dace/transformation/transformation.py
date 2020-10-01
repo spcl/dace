@@ -164,9 +164,10 @@ class Transformation(object):
             if self_end:
                 return True
 
-    def apply_pattern(self, sdfg):
+    def apply_pattern(self, sdfg, append=True):
         """ Applies this transformation on the given SDFG. """
-        sdfg.append_transformation(self)
+        if append:
+            sdfg.append_transformation(self)
         retval = self.apply(sdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(sdfg)
@@ -179,6 +180,7 @@ class Transformation(object):
                  expr_index: int = 0,
                  verify: bool = True,
                  strict: bool = False,
+                 save: bool = True,
                  **where: Union[nd.Node, SDFGState]):
         """
         Applies this transformation to a given subgraph, defined by a set of
@@ -190,6 +192,8 @@ class Transformation(object):
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
         :param strict: Apply transformation in strict mode.
+        :param save: Save transformation as part of the SDFG file. Set to
+                     False if composing transformations.
         :param where: A dictionary of node names (from the transformation) to
                       nodes in the SDFG or a single state.
         """
@@ -213,9 +217,9 @@ class Transformation(object):
         # Check that all nodes in the pattern are set
         required_nodes = cls.expressions()[expr_index].nodes()
         required_node_names = {
-            pname[1:]: pval
-            for pname, pval in cls.__dict__.items()
-            if pname.startswith('_') and pval in required_nodes
+            pname[1:]: getattr(cls, pname)
+            for pname in dir(cls)
+            if pname.startswith('_') and getattr(cls, pname) in required_nodes
         }
         required = set(required_node_names.keys())
         intersection = required & set(where.keys())
@@ -244,7 +248,7 @@ class Transformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        return instance.apply_pattern(sdfg)
+        return instance.apply_pattern(sdfg, append=save)
 
     def __str__(self):
         return type(self).__name__

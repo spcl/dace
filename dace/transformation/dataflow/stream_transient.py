@@ -216,10 +216,15 @@ class AccumulateTransient(transformation.Transformation):
                          if e.data.wcr is not None)
 
         # Avoid import loop
-        from dace.transformation.dataflow.local_storage import LocalStorage
+        from dace.transformation.dataflow.local_storage import OutLocalStorage
 
-        data_node: nodes.AccessNode = LocalStorage.apply_to(
-            sdfg, dict(array=array), node_a=map_exit, node_b=outer_map_exit)
+        data_node: nodes.AccessNode = OutLocalStorage.apply_to(
+            sdfg,
+            dict(array=array),
+            verify=False,
+            save=False,
+            node_a=map_exit,
+            node_b=outer_map_exit)
 
         # Initialize transient to zero in case of summation, or with an identity
         # map/tasklet in other cases
