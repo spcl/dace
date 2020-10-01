@@ -634,9 +634,9 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
     out_shape = tuple(reversed([all_idx_dict[idx] for idx in all_idx]))
 
-    all_idx_dict = {k: "0:" + str(v) for k, v in all_idx_dict.items()}
+    all_idx_tup = [(k, "0:" + str(all_idx_dict[k])) for k in reversed(all_idx)]
 
-    return out_shape, all_idx_dict, to_string(all_idx), to_string(
+    return out_shape, all_idx_tup, to_string(all_idx), to_string(
         a1_idx), to_string(a2_idx)
 
 
@@ -646,12 +646,12 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
 
-    out_shape, all_idx_dict, all_idx, arr1_idx, arr2_idx = _broadcast_together(
+    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = _broadcast_together(
         arr1.shape, arr2.shape)
 
     name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
     state.add_mapped_tasklet("_%s_" % opname,
-                             all_idx_dict, {
+                             all_idx_tup, {
                                  '__in1': Memlet.simple(op1, arr1_idx),
                                  '__in2': Memlet.simple(op2, arr2_idx)
                              },
