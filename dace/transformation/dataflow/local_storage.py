@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement transformations relating to streams
     and transient nodes. """
 
@@ -9,11 +10,11 @@ from dace import registry, symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 @make_properties
-class LocalStorage(pattern_matching.Transformation, ABC):
+class LocalStorage(transformation.Transformation, ABC):
     """ Implements the Local Storage prototype transformation, which adds a
         transient data node between two nodes.
     """
@@ -103,8 +104,8 @@ class LocalStorage(pattern_matching.Transformation, ABC):
             new_edge = graph.add_edge(data_node, None, node_b,
                                       original_edge.dst_conn, from_data_mm)
         else:
-            new_edge = graph.add_edge(node_a, original_edge.src_conn,
-                                      data_node, None, to_data_mm)
+            new_edge = graph.add_edge(node_a, original_edge.src_conn, data_node,
+                                      None, to_data_mm)
             graph.add_edge(data_node, None, node_b, original_edge.dst_conn,
                            from_data_mm)
 

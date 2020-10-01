@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace import dtypes, nodes, registry, Memlet
@@ -6,7 +7,7 @@ from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
 from dace.sdfg.utils import find_sink_nodes, concurrent_subgraphs
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.pattern_matching import SubgraphTransformation
+from dace.transformation.transformation import SubgraphTransformation
 
 
 @registry.autoregister
@@ -67,7 +68,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     )
 
     @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView):
+    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView):
 
         if not set(subgraph.nodes()).issubset(set(sdfg.nodes())):
             return False
@@ -116,7 +117,7 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     def apply(self, sdfg: SDFG):
         subgraph = self.subgraph_view(sdfg)
-        if not self.match(sdfg, subgraph):
+        if not self.can_be_applied(sdfg, subgraph):
             raise Exception('The given subgraph cannot be fused!')
 
         entry_states_in, entry_states_out = self.get_entry_states(

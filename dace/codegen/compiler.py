@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Handles compilation of code objects. Creates the proper folder structure,
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
@@ -466,8 +466,9 @@ def generate_program_folder(sdfg,
     else:
         Config.save(os.path.join(out_path, "dace.conf"))
 
-    # Save the SDFG itself
-    sdfg.save(os.path.join(out_path, "program.sdfg"))
+    if sdfg is not None:
+        # Save the SDFG itself
+        sdfg.save(os.path.join(out_path, "program.sdfg"))
 
     return out_path
 

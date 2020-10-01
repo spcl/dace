@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -23,11 +24,11 @@ def test2(C: dace.float32[1], E: dace.float32[1], F:dace.float32[1]):
         ci << C[0]
         co >> C[0]
         co = ci + 1
-        
+
     with dace.tasklet:
-        c << C[0]       
+        c << C[0]
         e >> E[0]
-        e = c 
+        e = c
 
     with dace.tasklet:
         c << C[0]

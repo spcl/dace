@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -410,6 +411,15 @@ def consolidate_edges_scope(
         out_edge.data.subset = sbs.union(out_edge.data.subset,
                                          edge_to_remove.data.subset)
         state.remove_edge(edge_to_remove)
+
+        # Check if isolated nodes have been created and remove them
+        if (state.in_degree(edge_to_remove.src) +
+                state.out_degree(edge_to_remove.src)) == 0:
+            state.remove_node(edge_to_remove.src)
+        if (state.in_degree(edge_to_remove.dst) +
+                state.out_degree(edge_to_remove.dst)) == 0:
+            state.remove_node(edge_to_remove.dst)
+
         consolidated += 1
         # Inner side of the scope - remove and reconnect
         remove_inner_connector(e.src_conn)
