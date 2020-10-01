@@ -5,7 +5,7 @@ import functools
 import warnings
 from abc import ABC
 import random
-from sympy import ceiling, floor, Mod, Rational
+from sympy import ceiling, floor, Mod, Rational, Min
 
 from dace import dtypes, registry, symbolic, subsets, sdfg as sd
 from dace.properties import (LambdaProperty, Property, ShapeProperty, DictProperty,
@@ -13,6 +13,7 @@ from dace.properties import (LambdaProperty, Property, ShapeProperty, DictProper
 from dace.sdfg import nodes, utils
 from dace.transformation import pattern_matching
 from dace.symbolic import pystr_to_symbolic as strsym
+from dace.codegen.targets import cpp
 
 
 def _prod(sequence):
@@ -97,6 +98,19 @@ class BlockCyclicData(pattern_matching.Transformation):
         data.shape = new_shape
         data.total_size = _prod(new_shape)
 
+        # # Add window code to the SDFG
+        # if not data.transient:
+        #     winname = "__mpiwin_{}".format(node.data)
+        #     arrsize = cpp.sym2cpp(data.total_size)
+        #     ctype = data.dtype.ctype
+        #     sdfg.append_init_code(
+        #         "MPI_Win {w};\n"
+        #         "MPI_Win_create({n}, {s} * sizeof({t}), sizeof({t}), "
+        #         "MPI_INFO_NULL, MPI_COMM_WORLD, &{w});\n".format(
+        #             n=node.data, s=arrsize, t=ctype, w=winname))
+        #     sdfg.append_exit_code(
+        #         "MPI_Win_free(&w);\n".format(n=node.data, w=winname))
+
         # TODO: What happens if subset of edge is true range instead of index?
         edges = set()
         visited_edges = set()
@@ -164,6 +178,10 @@ class BlockCyclicMap(pattern_matching.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        node = graph.nodes()[candidate[BlockCyclicMap._map_entry]]
+        if node.map.schedule == dtypes.ScheduleType.MPI:
+            return False
+        # TODO: Check if map is nested in an MPI scope
         return True
 
     def apply(self, sdfg):
@@ -192,9 +210,10 @@ class BlockCyclicMap(pattern_matching.Transformation):
 
         for i in range(dims):
             pspace[i] = (0, pgrid.grid[i] - 1, 1)
-            lspace[i] = (0, ceiling((mspace[i][1] - mspace[i][0] + 1) / (self.block[i] * pgrid.grid[i])) - 1, 1)
+            # lspace[i] = (0, ceiling((mspace[i][1] - mspace[i][0] + 1) / (self.block[i] * pgrid.grid[i])) - 1, 1)
+            lspace[i] = (0, "int_ceil({n}, {d}) - 1".format(n=(mspace[i][1] - mspace[i][0] + 1), d=(self.block[i] * pgrid.grid[i])), 1)
             ospace[i] = (mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i])) * self.block[i],
-                         mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i]) + 1) * self.block[i] - 1, 1)
+                         Min(mspace[i][1], mspace[i][0] + (strsym(lidx[i]) * pgrid.grid[i] + strsym(pidx[i]) + 1) * self.block[i] - 1), 1)
         pmap = nodes.Map('p_' + mname, pidx, subsets.Range(pspace),
                          schedule=dtypes.ScheduleType.MPI)
         pentry = nodes.MapEntry(pmap)

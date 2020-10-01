@@ -713,10 +713,22 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
+        
+        # Allocate arrays
+        arrays = sdfg.arrays.keys()
+        allocated = set()
+        for state in sdfg.nodes():
+            for node in state.data_nodes():
+                if (node.data in arrays
+                        and node.data not in allocated):
+                    self._dispatcher.dispatch_allocate(sdfg, state, None, node,
+                                                       global_stream,
+                                                       callsite_stream)
+                    allocated.add(node.data)
 
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
-        allocated = set()
+        # allocated = set()
         for state in sdfg.nodes():
             for node in state.data_nodes():
                 if (node.data in shared_transients

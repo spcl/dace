@@ -81,6 +81,7 @@ void __dace_exit_mpi({params}) {{
             dispatcher.register_copy_dispatcher(
                 dtypes.StorageType.Register, dtypes.StorageType.Distributed,
                 schedule, self)
+        # dispatcher.register_node_dispatcher(self, predicate)
 
     def get_generated_codeobjects(self):
         return [self._codeobj]
@@ -108,6 +109,7 @@ void __dace_exit_mpi({params}) {{
                        callsite_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
+        print(nodedesc)
 
         if not nodedesc.transient:  # Nested SDFG connector?
             return
@@ -165,11 +167,15 @@ void __dace_exit_mpi({params}) {{
         assert len(dfg_scope.source_nodes()) == 1
         map_header = dfg_scope.source_nodes()[0]
 
-        function_stream.write('extern int __dace_comm_size, __dace_comm_rank;',
+        function_stream.write("#include <mpi.h>\n"  # TODO: Where does this actually belong?
+                              "extern int __dace_comm_size, __dace_comm_rank;",
                               sdfg, state_id, map_header)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
+        comm_name = "__dace_comm_{}".format(map_header.map.label)
+        callsite_stream.write("MPI_Comm {c};\n".format(c=comm_name),
+                              sdfg, state_id, map_header)
         callsite_stream.write('{', sdfg, state_id, map_header)
 
         # if len(map_header.map.params) > 1:
@@ -177,21 +183,22 @@ void __dace_exit_mpi({params}) {{
         #         'Multi-dimensional MPI maps are not supported')
 
         ndims = len(map_header.map.params)
-        sdims = [e for _, e, _ in map_header.map.range]
-        callsite_stream.write("MPI_Comm comm;\n"
-                              "int dims[{n}];\n"
+        sdims = [e + 1 for _, e, _ in map_header.map.range]
+        callsite_stream.write("int dims[{n}];\n"
                               "int coords[{n}];\n"
-                              "int periods[{n};\n"
-                              "int reorder = 0;\n".format(n=ndims),
+                              "int periods[{n}];\n"
+                              "int reorder = 0;".format(c=comm_name, n=ndims),
                               sdfg, state_id, map_header)  # TODO: Unique names?
         for i, s in enumerate(sdims):
             callsite_stream.write("dims[{i}] = {s};\n"
-                                  "periods[{i}] = 0\n".format(i=i, s=s),
+                                  "periods[{i}] = 0;".format(i=i, s=s),
                                   sdfg, state_id, map_header)  # TODO: Assume non-periodic for now
-        callsite_stream.write("MPI_Card_create(MPI_COMM_WORLD, {n}, dims, "
-                              "periods, reorder, &comm);\n"
-                              "MPI_Cart_coords(comm, __dace_comm_rank, "
-                              "{n}, coords);\n".format(n=ndims),
+        callsite_stream.write("MPI_Cart_create(MPI_COMM_WORLD, {n}, dims, "
+                              "periods, reorder, &{c});\n"
+                              "MPI_Cart_coords({c}, __dace_comm_rank, "
+                              "{n}, coords);".format(c=comm_name, n=ndims),
+                              sdfg, state_id, map_header)
+        callsite_stream.write("MPI_Barrier({c});".format(c=comm_name),
                               sdfg, state_id, map_header)
         
         state = sdfg.node(state_id)
@@ -224,6 +231,9 @@ void __dace_exit_mpi({params}) {{
                                            function_stream,
                                            callsite_stream,
                                            skip_entry_node=True)
+
+        callsite_stream.write("MPI_Barrier({c});".format(c=comm_name),
+                              sdfg, state_id, map_header)
 
     def copy_memory(
             self,
