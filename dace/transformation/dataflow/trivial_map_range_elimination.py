@@ -2,12 +2,10 @@
 """ Contains classes that implement the trivial map range elimination transformation. """
 
 from dace import registry
-from dace.symbolic import symlist
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
-from typing import Tuple
 
 
 @registry.autoregister_params(singlestate=True)
@@ -17,17 +15,14 @@ class TrivialMapRangeElimination(pattern_matching.Transformation):
 
         Trivial Map Range Elimination takes a multi-dimensional map with 
         a range containing one element and removes the corresponding dimension.
+        Example: Map[i=0:I,j=0] -> Map[i=0:I]
     """
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(
-                TrivialMapRangeElimination._map_entry
-            )
-        ]
+        return [sdutil.node_path_graph(TrivialMapRangeElimination._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -44,14 +39,17 @@ class TrivialMapRangeElimination(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[TrivialMapRangeElimination._map_entry]]
-        map_exit = graph.exit_node(map_entry)
 
-        trivials = [i for i, range in enumerate(map_entry.map.range.ranges) if range[0] == range[1]] # where "from == to".
+        remaining_ranges = []
+        remaining_params = []
+        for map_param, (map_from, map_to, _) in zip(map_entry.map.params, map_entry.map.range.ranges):
+            if map_from == map_to:
+                # Replace the map index variable with the value it obtained
+                scope = graph.scope_subgraph(map_entry)
+                scope.replace(map_param, map_from)
+            else:
+                remaining_ranges.append(ranges)
+                remaining_params.append(map_param)
 
-        for i in trivials:
-            map_idx = map_entry.map.params[i]
-            map_from, _, _ = map_entry.map.range[i]
-            graph.replace(map_idx, map_from)
-
-        map_entry.map.range.ranges = [range for i, range in enumerate(map_entry.map.range.ranges) if i not in trivials]
-        map_entry.map.params = [p for i, p in enumerate(map_entry.map.params) if i not in trivials]
+        map_entry.map.range.ranges = remaining_ranges
+        map_entry.map.params = remaining_params

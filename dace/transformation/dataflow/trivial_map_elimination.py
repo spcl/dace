@@ -2,12 +2,10 @@
 """ Contains classes that implement the trivial-map-elimination transformation. """
 
 from dace import registry
-from dace.symbolic import symlist
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pattern_matching
 from dace.properties import make_properties
-from typing import Tuple
 
 
 @registry.autoregister_params(singlestate=True)
@@ -15,18 +13,16 @@ from typing import Tuple
 class TrivialMapElimination(pattern_matching.Transformation):
     """ Implements the Trivial-Map Elimination pattern.
 
-        Trivial-Map Elimination takes a map with a range containing one element and removes the map.
+        Trivial-Map Elimination takes a map with a range
+        containing one element and removes the map.
+        Example: Map[i=0] -> nothing
     """
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(
-                TrivialMapElimination._map_entry
-            )
-        ]
+        return [sdutil.node_path_graph(TrivialMapElimination._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -45,10 +41,13 @@ class TrivialMapElimination(pattern_matching.Transformation):
         map_entry = graph.nodes()[self.subgraph[TrivialMapElimination._map_entry]]
         map_exit = graph.exit_node(map_entry)
 
-        map_idx = map_entry.map.params[0]
-        map_from, _, _ = map_entry.map.range[0]
+        map_param = map_entry.map.params[0]
+        map_from, map_to, _ = map_entry.map.range[0]
+        assert map_from == map_to
 
-        graph.replace(map_idx, map_from)
+        # Replace the map index variable with the value it obtained
+        scope = graph.scope_subgraph(map_entry)
+        scope.replace(map_param, map_from)
 
         # Redirect map entry's out edges.
         for edge in graph.out_edges(map_entry):
