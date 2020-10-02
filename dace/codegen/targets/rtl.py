@@ -102,25 +102,25 @@ class RTLCodeGen(TargetCodeGenerator):
                         model = NULL;
                         """
     rtl_header = """
-      module top
-      #(
-        parameter  WIDTH = 32
-      ) 
-      ( input                  clk_i  // convention: clk_i clocks the design
-      , input                  rst_i  // convention: rst_i resets the design
-      , input      [WIDTH-1:0] a
-      , output reg [WIDTH-1:0] b
-      );
-      
-      logic valid_o;
+module top
+  #(
+  parameter  WIDTH = 32
+  ) 
+  ( input                  clk_i  // convention: clk_i clocks the design
+  , input                  rst_i  // convention: rst_i resets the design
+  {inputs}
+  {outputs}
+  );
+
+  logic valid_o, ready_o, valid_i, yumi_i;
     """
 
     rtl_footer = """
-          always@(*) begin
-            if (valid_o)
-              $finish; // convention: $finish; must eventually be called
-        end
-        endmodule
+  always@(*) begin
+    if (valid_o)
+      $finish; // convention: $finish; must eventually be called
+  end
+endmodule
     """
 
     @staticmethod
@@ -136,12 +136,17 @@ class RTLCodeGen(TargetCodeGenerator):
         base_path = os.path.join(".dacecache", sdfg.name, "src", "rtl")
         absolut_path = os.path.abspath(base_path)
 
+        # construct input / output module header
+        inputs = [", input [{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1, inp) for inp in tasklet.in_connectors]
+        outputs = [", output reg [{}:0] {}".format(tasklet.out_connectors[inp].bytes*8-1, inp) for inp in tasklet.out_connectors]
+
+
         # write verilog to file
         if os.path.isdir(absolut_path):
             shutil.rmtree(absolut_path)
         os.makedirs(absolut_path)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
-            file.writelines(RTLCodeGen.rtl_header)
+            file.writelines(RTLCodeGen.rtl_header.format(inputs="\n".join(inputs), outputs="\n".join(outputs)))
             file.writelines(tasklet.code.code)
             file.writelines(RTLCodeGen.rtl_footer)
 
