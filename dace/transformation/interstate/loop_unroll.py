@@ -41,8 +41,14 @@ class LoopUnroll(DetectLoop):
         # Find starting expression and stride
         itersym = symbolic.symbol(itervar)
         if (
-            itervar in inedges[0].data.assignments[itervar]
-            and itervar not in inedges[1].data.assignments[itervar]
+            itersym
+            in symbolic.pystr_to_symbolic(
+                inedges[0].data.assignments[itervar]
+            ).free_symbols
+            and itersym
+            not in symbolic.pystr_to_symbolic(
+                inedges[1].data.assignments[itervar]
+            ).free_symbols
         ):
             stride = (
                 symbolic.pystr_to_symbolic(inedges[0].data.assignments[itervar])
@@ -50,8 +56,14 @@ class LoopUnroll(DetectLoop):
             )
             start = symbolic.pystr_to_symbolic(inedges[1].data.assignments[itervar])
         elif (
-            itervar in inedges[1].data.assignments[itervar]
-            and itervar not in inedges[0].data.assignments[itervar]
+            itersym
+            in symbolic.pystr_to_symbolic(
+                inedges[1].data.assignments[itervar]
+            ).free_symbols
+            and itersym
+            not in symbolic.pystr_to_symbolic(
+                inedges[0].data.assignments[itervar]
+            ).free_symbols
         ):
             stride = (
                 symbolic.pystr_to_symbolic(inedges[1].data.assignments[itervar])
@@ -195,9 +207,11 @@ class LoopUnroll(DetectLoop):
         # Replace iterate with value in each state
         for state in new_states:
             state.set_label(
-                state.label + "_" + itervar + "_" + (state_suffix
-                if state_suffix is not None
-                else "%d" % value)
+                state.label
+                + "_"
+                + itervar
+                + "_"
+                + (state_suffix if state_suffix is not None else "%d" % value)
             )
             state.replace(itervar, value)
 
