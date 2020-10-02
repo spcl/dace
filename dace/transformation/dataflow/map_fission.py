@@ -8,12 +8,12 @@ from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedDiGraph
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation import pattern_matching, helpers
+from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
 @registry.autoregister_params(singlestate=True)
-class MapFission(pattern_matching.Transformation):
+class MapFission(transformation.Transformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
         essentially replicating the map into maps in all of its internal

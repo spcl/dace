@@ -33,9 +33,12 @@ hlslib_files = [
 with open("README.md", "r") as fp:
     long_description = fp.read()
 
+with open(os.path.join(dace_path, "version.py"), "r") as fp:
+    version = fp.read().strip().split(' ')[-1][1:-1]
+
 setup(
     name='dace',
-    version='0.10.0a',
+    version=version,
     url='https://github.com/spcl/dace',
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',

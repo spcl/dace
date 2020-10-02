@@ -1,13 +1,14 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-expansion transformation. """
 
-from typing import Dict
+from dace.sdfg.utils import consolidate_edges
+from typing import Dict, List
 import dace
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 
 
 @registry.autoregister_params(singlestate=True)
@@ -108,3 +109,18 @@ class MapExpansion(pm.Transformation):
                                   memlet=edge.data,
                                   src_conn=edge.src_conn,
                                   dst_conn=edge.dst_conn)
+
+        from dace.sdfg.scope import ScopeTree
+        scope = None
+        queue: List[ScopeTree] = graph.scope_leaves()
+        while len(queue) > 0:
+            tnode = queue.pop()
+            if tnode.entry == entries[-1]:
+                scope = tnode
+                break
+            elif tnode.parent is not None:
+                queue.append(tnode.parent)
+        else:
+            raise ValueError('Cannot find scope in state')
+
+        consolidate_edges(sdfg, scope)

@@ -4,13 +4,13 @@
 from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import Property, make_properties
 
 
 @registry.autoregister
 @make_properties
-class GPUTransformSDFG(pattern_matching.Transformation):
+class GPUTransformSDFG(transformation.Transformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
@@ -94,9 +94,6 @@ class GPUTransformSDFG(pattern_matching.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         return graph.label
-
-    def modifies_graph(self):
-        return True
 
     def apply(self, sdfg: sd.SDFG):
 

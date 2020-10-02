@@ -10,7 +10,7 @@ from dace.properties import make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 def calc_set_image_index(map_idx, map_set, array_idx):
@@ -47,7 +47,7 @@ def calc_set_image(map_idx, map_set, array_set):
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class StreamTransient(pattern_matching.Transformation):
+class StreamTransient(transformation.Transformation):
     """ Implements the StreamTransient transformation, which adds a transient
         and stream nodes between nested maps that lead to a stream. The
         transient then acts as a local buffer.
@@ -149,13 +149,10 @@ class StreamTransient(pattern_matching.Transformation):
 
         return
 
-    def modifies_graph(self):
-        return True
-
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class AccumulateTransient(pattern_matching.Transformation):
+class AccumulateTransient(transformation.Transformation):
     """ Implements the AccumulateTransient transformation, which adds
         transient stream and data nodes between nested maps that lead to a 
         stream. The transient data nodes then act as a local accumulator.
@@ -217,15 +214,13 @@ class AccumulateTransient(pattern_matching.Transformation):
         from dace.transformation.dataflow.local_storage import LocalStorage
 
         local_storage_subgraph = {
-            LocalStorage._node_a:
-            self.subgraph[AccumulateTransient._map_exit],
+            LocalStorage._node_a: self.subgraph[AccumulateTransient._map_exit],
             LocalStorage._node_b:
             self.subgraph[AccumulateTransient._outer_map_exit]
         }
         sdfg_id = sdfg.sdfg_id
         in_local_storage = LocalStorage(sdfg_id, self.state_id,
-                                        local_storage_subgraph,
-                                        self.expr_index)
+                                        local_storage_subgraph, self.expr_index)
         in_local_storage.array = array
         in_local_storage.apply(sdfg)
 

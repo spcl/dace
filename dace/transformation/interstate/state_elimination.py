@@ -6,12 +6,12 @@ import networkx as nx
 from dace import dtypes, registry, sdfg
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.config import Config
 
 
 @registry.autoregister_params(strict=True)
-class EndStateElimination(pattern_matching.Transformation):
+class EndStateElimination(transformation.Transformation):
     """ 
     End-state elimination removes a redundant state that has one incoming edge
     and no contents.
@@ -58,7 +58,7 @@ class EndStateElimination(pattern_matching.Transformation):
 
 
 @registry.autoregister
-class StateAssignElimination(pattern_matching.Transformation):
+class StateAssignElimination(transformation.Transformation):
     """ 
     State assign elimination removes all assignments into the final state
     and subsumes the assigned value into its contents.

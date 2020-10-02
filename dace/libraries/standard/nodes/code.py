@@ -6,7 +6,7 @@ from dace.sdfg.nodes import Node, Tasklet, LibraryNode
 import dace.library
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
-from dace.transformation.pattern_matching import ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation
 from typing import Dict, Tuple
 
 
