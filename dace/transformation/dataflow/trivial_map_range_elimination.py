@@ -42,7 +42,8 @@ class TrivialMapRangeElimination(pattern_matching.Transformation):
 
         remaining_ranges = []
         remaining_params = []
-        for map_param, (map_from, map_to, _) in zip(map_entry.map.params, map_entry.map.range.ranges):
+        for map_param, ranges in zip(map_entry.map.params, map_entry.map.range.ranges):
+            map_from, map_to, _ = ranges
             if map_from == map_to:
                 # Replace the map index variable with the value it obtained
                 scope = graph.scope_subgraph(map_entry)
