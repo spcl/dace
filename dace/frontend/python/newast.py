@@ -119,11 +119,6 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype=None):
         return func(sdfg, sample_data, sample_data.dtype)
     else:
         return func(sdfg, sample_data, dtype)
-    # try:
-    #     func = AddTransientMethods._methods[type(sample_data)]
-    #     return func(sdfg, sample_data)
-    # except KeyError:
-    #     raise NotImplementedError
 
 
 def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
@@ -2086,8 +2081,6 @@ class ProgramVisitor(ExtNodeVisitor):
         end_if_state = self.last_state
 
         # Connect the states
-        # cond = astutils.unparse(node.test)
-        # cond_else = astutils.unparse(astutils.negate_expr(node.test))
         self.sdfg.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
         self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
 
@@ -2514,9 +2507,6 @@ class ProgramVisitor(ExtNodeVisitor):
             if not (symbolic.issymbolic(result)
                     or isinstance(result, dtype_keys)
                     or result in self.sdfg.arrays):
-            # if result not in self.sdfg.arrays:
-            #     if (not (symbolic.issymbolic(result) or isinstance(
-            #             result, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())))):
                     raise DaceSyntaxError(
                         self, result, "In assignments, the rhs may only be "
                                       "data, numerical/boolean constants "
@@ -2558,21 +2548,6 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.variables[name] = result
                         defined_vars[name] = result
                         continue
-                # else:
-                #     if target.id.startswith('__return'):
-                #         true_name, new_data = self.sdfg.add_temp_transient(
-                #             [1], type(result))
-                #     else:
-                #         true_name = self.sdfg.temp_data_name()
-                #         if dtype:
-                #             ttype = dtype
-                #         else:
-                #             ttype = type(result)
-                #         _, new_data = self.sdfg.add_scalar(
-                #             true_name, ttype, transient=True)
-                #     self.variables[name] = true_name
-                #     defined_vars[name] = true_name
-
 
             if new_data:
                 rng = dace.subsets.Range.from_array(new_data)
@@ -3135,13 +3110,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     subsets.Range.from_array(self.sdfg.arrays[src_name]),
                     num_accesses=src_expr.accesses, wcr_str = dst_expr.wcr)
             state.add_nedge(rnode, wnode, mem)
-            # state.add_nedge(
-            #     rnode, wnode,
-            #     Memlet.simple(src_name,
-            #                   subsets.Range.from_array(
-            #                       self.sdfg.arrays[src_name]),
-            #                   num_accesses=src_expr.accesses,
-            #                   wcr_str=dst_expr.wcr))
             return
 
         # Calling reduction or other SDFGs / functions
@@ -3294,15 +3262,6 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append(
                     (operand, type(self.scope_arrays[operand]).__name__))
-            # elif isinstance(
-            #     operand,
-            #     (int, numpy.int8, numpy.int16, numpy.int32, numpy.int64,
-            #      numpy.uint8, numpy.uint16, numpy.uint32, numpy.uint64,
-            #      float, numpy.float16, numpy.float32, numpy.float64,
-            #      complex, numpy.complex64, numpy.complex128)):
-            #     result.append((operand, 'NumConstant'))
-            # elif isinstance(operand, (bool, numpy.bool, numpy.bool_)):
-            #     result.append((operand, 'BoolConstant'))
             elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
                 if isinstance(operand, (bool, numpy.bool, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))
