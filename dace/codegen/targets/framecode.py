@@ -997,9 +997,20 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     sdfg.label, [s.label for s in states_generated],
                     [s.label for s in (set(sdfg.nodes()) - states_generated)]))
 
+        # Deallocate arrays
+        arrays = sdfg.arrays.keys()
+        deallocated = set()
+        for state in sdfg.nodes():
+            for node in state.data_nodes():
+                if (node.data in arrays
+                        and node.data not in deallocated):
+                    self._dispatcher.dispatch_deallocate(
+                        sdfg, state, None, node, global_stream, callsite_stream)
+                    deallocated.add(node.data)
+
         # Deallocate transients
         shared_transients = sdfg.shared_transients()
-        deallocated = set()
+        # deallocated = set()
         for state in sdfg.nodes():
             for node in state.data_nodes():
                 if (node.data in shared_transients
