@@ -335,6 +335,8 @@ class CPUCodeGen(TargetCodeGenerator):
                          callsite_stream):
         nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
+        if not nodedesc.transient:
+            return
         if isinstance(nodedesc, data.Scalar):
             return
         elif isinstance(nodedesc, data.Stream):
