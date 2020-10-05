@@ -249,6 +249,23 @@ _BYTES = {
     numpy.complex128: 16,
 }
 
+# Translation of C types to MPI types
+_MPITYPES = {
+    "bool": "MPI_CHAR",
+    "char": "MPI_CHAR",
+    "short": "MPI_SHORT",
+    "int": "MPI_INT",
+    "long long": "MPI_LONG_LONG",
+    "unsigned short": "MPI_UNSIGNED_SHORT",
+    "unsigned int": "MPI_UNSIGNED_INT",
+    "unsigned long long": "MPI_UNSIGNED_LONG_LONG",
+    "dace::float16": None,  # TODO: Need special handling
+    "float": "MPI_FLOAT",
+    "double": "MPI_DOUBLE",
+    "dace::complex64": "MPI_C_COMPLEX",
+    "dace::complex128": "MPI_C_DOUBLE_COMPLEX",
+}
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
