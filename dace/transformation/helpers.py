@@ -1,9 +1,12 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import copy
-from typing import List, Optional
 
-from dace.sdfg import nodes
+from numpy.core.numeric import full
+from dace.subsets import Range, Subset, union
+from typing import Dict, List, Optional, Tuple
+
+from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -61,6 +64,9 @@ def nest_state_subgraph(sdfg: SDFG,
 
     scope = scope_tree[top_scopenode]
     ###
+
+    # Consolidate edges in top scope
+    utils.consolidate_edges(sdfg, scope)
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
@@ -120,26 +126,47 @@ def nest_state_subgraph(sdfg: SDFG,
     # descriptors in nested SDFG
     input_names = []
     output_names = []
+    global_subsets: Dict[str, Tuple[str, Subset]] = {}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
-        name = '__in_' + edge.data.data
-        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-        datadesc.transient = False
-        if not full_data:
-            datadesc.shape = edge.data.subset.size()
-        input_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
+        name = edge.data.data
+        if name not in global_subsets:
+            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            datadesc.transient = False
+            if not full_data:
+                datadesc.shape = edge.data.subset.size()
+            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            global_subsets[name] = (new_name, edge.data.subset)
+        else:
+            new_name, subset = global_subsets[name]
+            if not full_data:
+                new_subset = union(subset, edge.data.subset)
+                if new_subset is None:
+                    new_subset = Range.from_array(sdfg.arrays[name])
+                global_subsets[name] = (new_name, new_subset)
+                nsdfg.arrays[new_name].shape = new_subset.size()
+        input_names.append(new_name)
     for edge in outputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
-        name = '__out_' + edge.data.data
-        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-        datadesc.transient = False
-        if not full_data:
-            datadesc.shape = edge.data.subset.size()
-        output_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
+        name = edge.data.data
+        if name not in global_subsets:
+            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            datadesc.transient = False
+            if not full_data:
+                datadesc.shape = edge.data.subset.size()
+            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            global_subsets[name] = (new_name, edge.data.subset)
+        else:
+            new_name, subset = global_subsets[name]
+            if not full_data:
+                new_subset = union(subset, edge.data.subset)
+                if new_subset is None:
+                    new_subset = Range.from_array(sdfg.arrays[name])
+                global_subsets[name] = (new_name, new_subset)
+                nsdfg.arrays[new_name].shape = new_subset.size()
+        output_names.append(new_name)
     ###################
 
     # Add scope symbols to the nested SDFG
@@ -185,7 +212,8 @@ def nest_state_subgraph(sdfg: SDFG,
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
             if not full_data:
-                edge.data.subset.offset(original_edge.data.subset, True)
+                edge.data.subset.offset(
+                    global_subsets[original_edge.data.data][1], True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, None,
@@ -193,20 +221,31 @@ def nest_state_subgraph(sdfg: SDFG,
                                         set(output_names) | output_arrays)
 
     # Reconnect memlets to nested SDFG
+    reconnected_in = set()
+    reconnected_out = set()
     for name, edge in zip(input_names, inputs):
+        if name in reconnected_in:
+            continue
         if full_data:
             data = Memlet.from_array(edge.data.data,
                                      sdfg.arrays[edge.data.data])
         else:
-            data = edge.data
+            data = copy.deepcopy(edge.data)
+            data.subset = global_subsets[edge.data.data][1]
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
+        reconnected_in.add(name)
+
     for name, edge in zip(output_names, outputs):
+        if name in reconnected_out:
+            continue
         if full_data:
             data = Memlet.from_array(edge.data.data,
                                      sdfg.arrays[edge.data.data])
         else:
-            data = edge.data
+            data = copy.deepcopy(edge.data)
+            data.subset = global_subsets[edge.data.data][1]
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
+        reconnected_out.add(name)
 
     # Connect access nodes to internal input/output data as necessary
     entry = scope.entry
@@ -230,6 +269,14 @@ def nest_state_subgraph(sdfg: SDFG,
     # Remove subgraph transients from top-level graph
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
+
+    # Remove newly isolated nodes due to memlet consolidation
+    for edge in inputs:
+        if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
+            state.remove_node(edge.src)
+    for edge in outputs:
+        if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
+            state.remove_node(edge.dst)
 
     return nested_sdfg
 

@@ -6,6 +6,7 @@ import copy
 import os
 import re
 import time
+from typing import Iterator
 
 import dace
 from dace.config import Config
@@ -50,7 +51,7 @@ class Optimizer(object):
                             strict=False,
                             states=None,
                             patterns=None,
-                            sdfg=None):
+                            sdfg=None) -> Iterator[Transformation]:
         """ Returns all possible transformations for the current SDFG.
             :param strict: Only consider strict transformations (i.e., ones
                            that surely increase performance or enhance
