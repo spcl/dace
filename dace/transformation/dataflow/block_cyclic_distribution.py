@@ -89,7 +89,8 @@ class BlockCyclicData(pattern_matching.Transformation):
 
         for i in range(dims):
             new_dist_shape[i] = pgrid.grid[i]
-            new_shape[i] = ceiling(data.shape[i] / (pgrid.grid[i] * self.block[i]))
+            # new_shape[i] = ceiling(data.shape[i] / (pgrid.grid[i] * self.block[i]))
+            new_shape[i] = strsym("int_ceil({n}, {d})".format(n=data.shape[i], d=(pgrid.grid[i] * self.block[i])))
             new_shape[i + dims] = self.block[i]
 
         # Change data properties
@@ -97,6 +98,7 @@ class BlockCyclicData(pattern_matching.Transformation):
         data.dist_shape = new_dist_shape
         data.shape = new_shape
         data.total_size = _prod(new_shape)
+        data.strides = [_prod(new_shape[i + 1:]) for i in range(len(new_shape))]
 
         # # Add window code to the SDFG
         # if not data.transient:
@@ -139,8 +141,10 @@ class BlockCyclicData(pattern_matching.Transformation):
                     oldval = e.data.subset[i][0]
                 else:
                     oldval = e.data.subset[i]
-                pval = Mod(floor(oldval / self.block[i]), pgrid.grid[i])
-                lval = floor(oldval / (pgrid.grid[i] * self.block[i]))
+                # pval = Mod(floor(oldval / self.block[i]), pgrid.grid[i])
+                pval = Mod(strsym("int_floor({n}, {d})".format(n=oldval, d=self.block[i])), pgrid.grid[i])
+                # lval = floor(oldval / (pgrid.grid[i] * self.block[i]))
+                lval = strsym("int_floor({n}, {d})".format(n=oldval, d=(pgrid.grid[i] * self.block[i])))
                 oval = Mod(oldval, self.block[i])
                 dist_ranges[i] = (pval, pval, 1)
                 local_ranges[i] = (lval, lval, 1)
@@ -218,10 +222,12 @@ class BlockCyclicMap(pattern_matching.Transformation):
                          schedule=dtypes.ScheduleType.MPI)
         pentry = nodes.MapEntry(pmap)
         pexit = nodes.MapExit(pmap)
-        lmap = nodes.Map('l_' + mname, lidx, subsets.Range(lspace))
+        lmap = nodes.Map('l_' + mname, lidx, subsets.Range(lspace),
+                         schedule=dtypes.ScheduleType.Sequential)
         lentry = nodes.MapEntry(lmap)
         lexit = nodes.MapExit(lmap)
-        omap = nodes.Map('o_' + mname, oidx, subsets.Range(ospace))
+        omap = nodes.Map('o_' + mname, oidx, subsets.Range(ospace),
+                         schedule=dtypes.ScheduleType.Sequential)
         oentry = nodes.MapEntry(omap)
         oexit = nodes.MapExit(omap)
 
