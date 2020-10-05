@@ -147,8 +147,6 @@ mode is not supported.
 Assignment statements with single or multiple targets are supported, both with
 and without parentheses. Statements with starred targets are not supported.
 Targets may only be identifiers, and subscriptions/slices of Numpy arrays.
-(TODO: We should support targets that are attribute references of dace.struct
-objects)
 
 #### 7.2.1 Augmented assignment statements
 Supported with the same constraints for targets as in assignment statements.
@@ -165,8 +163,8 @@ Unsupported
 ### 7.5 The del statement
 Unsupported
 
-### 7.6 The resunt statement
-Supported (TODO: Maybe we need to provide more details here on how it works)
+### 7.6 The result statement
+Supported
 
 ### 7.7 The yield statement
 Unsupported
@@ -193,11 +191,10 @@ Unsupported
 
 ## 8 Compound Statements
 ### 8.1 The if statement
-Supported  
-TODO: Perhaps we should document some interesting side-effects of not redefining
-variables in SDFGs. E.g., in the following code, variable b will be of type
-dace.int always, even if `a[0] == np.float32(np.pi)`, unless it is explcitly
-declared as such:
+Supported. Note that, if the type of some variable depends on the branch taken,
+then the variable will always have the type of the first branch. E.g., in the
+following code, variable b will be of type dace.int always, even if
+`a[0] == np.float32(np.pi)`, unless it is explicitly declared as such:
 ```python
 @dace.program
 def single_target(a: dace.float32[1]):

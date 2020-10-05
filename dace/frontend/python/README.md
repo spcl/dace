@@ -5,30 +5,43 @@ relatively quickly. You may read a list of supported Python features
 [here](python_supported_features.md). The frontend supports also operations
 among DaCe arrays, in a manner similar to NumPy. A short tutorial can be bound
 [here](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb).
-Please note that the Python-Frontend is still in an alpha versions. For any issues
+Please note that the Python-Frontend is still in an alpha version. For any issues
 and feature requests, you can create an issue in the main DaCe project. You can
 also address any questions you have to alziogas@inf.ethz.ch
 
 ## Known Issues
 
-### Multiple array accesses in a nested scope lead to invalid SDFGs
-When accesing an array in a nested scope (typically the body of a Map or a
-nested SDFG/DaCe program call) multiple times, but with different and partially
-overlapping indices/ranges, an invalid SDFG may be generated.  
+### Issues when automatic strict transformations are enabled
 
-Status: Under investigation  
-Temporary workaround: None
+When automatic strict transformations are enabled, SDFGs created using the
+Python-Frontend are automatically transformed using:
+- InlineSDFG
+- EndStateElimination
+- StateFusion
+- InMergeArrays
+- OutMergeArrays
+- RedundantArrayCopyingIn
+- RedundantArrayCopying
+- RedundantArray
+- RedundantSecondArray
 
-### Sequential statements in the body of a loop are parallelized in the generated SDFG
-This is an issue with the transformation StateFusion. Typically this occurs when
-two statements have a sequential dependency due to the use of a Map or loop index/variable.
-There are cases where StateFusion does not detect such dependencies properly.
+These transformations clean up the SDFG by removing extraneous arrays, and reducing
+the number of states and nested scopes/SDFGs, enabling in the process further
+optimizations. However, there exist cases where applying these transformations
+automatically may result in invalid SDFGs. Currently know issues include:
+- When accessing inside a Map an Array multiple times with different but overlapping
+ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them.
+- When there are sequential dependencies between statements due to updating a loop variable,
+StateFusion may erroneously lead to concurrent execution of those statements.
+- The RedundantArray transformations may produce erroneous Memlets for certain ranges.
+  
+Temporary workaround: Disable in the configuration file the automatic strict transformations flag
 
-Status: Pending fix in StateFusion  
-Temporary workaround: Disable in the configuration file the automatic strict transformations
+### Issues with symbolic expressions
 
-### A number of binary operators do not work as expected
-Operators like Div and Mod behave in a way that is consistent with C/C++ and not Python.
+- Symbolic expressions with complex numbers generate invalid code.
+- Data that have their value set by a symbolic expression may have wrong data type.
 
-Status: Under investigation  
-Temporary workaround: None
+Temporary workaround: Break symbolic expressions with many binary operations to simple ones,
+where each one has only one binary operation. Store the intermediate result to
+distinct variables.
