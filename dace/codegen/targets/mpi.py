@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import functools
 import warnings
 
 import dace
@@ -8,10 +9,15 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets import cpp
 from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
                                          DefinedType)
-from dace.sdfg import nodes
+from dace.sdfg import nodes, scope_contains_scope
 from dace.config import Config
 
 from dace.codegen import cppunparse
+
+
+def _dot(seq1, seq2):
+    seq3 = [a * b for a, b in zip(seq1, seq2)]
+    return functools.reduce(lambda a, b: a + b, seq3, 0)
 
 
 @registry.autoregister_params(name='mpi')
@@ -72,6 +78,11 @@ void __dace_exit_mpi({params}) {{
             MPICodeGen, 'MPI')
 
         # Register dispatchers
+        self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
+        self._dispatcher.register_node_dispatcher(
+            self, predicate=lambda *_: True)
+
+        # Register dispatchers
         dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
         dispatcher.register_array_dispatcher(dtypes.StorageType.Distributed, self)
         for schedule in dtypes.ScheduleType:
@@ -109,30 +120,65 @@ void __dace_exit_mpi({params}) {{
                        callsite_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
-        print(nodedesc)
-
-        if not nodedesc.transient:  # Nested SDFG connector?
-            return
 
         if (isinstance(nodedesc, data.Array) and
                 nodedesc.storage == dtypes.StorageType.Distributed):
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            ndims = len(nodedesc.dist_shape)
             arrsize = cpp.sym2cpp(nodedesc.total_size)
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             ctype = nodedesc.dtype.ctype
-            winname = "__mpiwin_{}".format(name)
+            comm_name = "__dace_comm_{n}".format(n=name)
+            cart_name = "__dace_cart_{n}".format(n=name)
+            dims = "__dace_dims_{n}".format(n=name)
+            coords = "__dace_coords_{n}".format(n=name)
+            periods = "__dace_periods_{n}".format(n=name)
+            reorder = "__dace_reorder_{n}".format(n=name)
+            win_name = "__dace_win_{n}".format(n=name)
             callsite_stream.write(
-                "{t} *{n} = new {t} DACE_ALIGN(64)[{s}];\n"  # TODO: Is there any reason to use MPI_Alloc_mem?
-                "MPI_Win {w};\n"
+                "MPI_Comm {c};\n"
+                "int {dims}[{d}];\n"
+                "int {coords}[{d}];\n"
+                "int {periods}[{d}];\n"
+                "int {reorder} = 0;".format(
+                    c=comm_name, d=ndims, dims=dims, coords=coords,
+                    periods=periods, reorder=reorder),
+                sdfg, state_id, node)
+            for i, s in enumerate(nodedesc.dist_shape):
+                # TODO: Assume non-periodic for now
+                callsite_stream.write(
+                    "{dims}[{i}] = {s};\n"
+                    "{periods}[{i}] = 0;".format(
+                        i=i, s=s, dims=dims, periods=periods),
+                    sdfg, state_id, node)
+            # callsite_stream.write(
+            #     "MPI_Cart_create(MPI_COMM_WORLD, {n}, {dims}, "
+            #     "{periods}, {reorder}, &{c});\n"
+            #     "MPI_Cart_coords({c}, __dace_comm_rank, "
+            #     "{n}, {coords});".format(
+            #         c=comm_name, n=ndims, dims=dims, periods=periods,
+            #         reorder=reorder, coords=coords),
+            #     sdfg, state_id, node)
+            callsite_stream.write(
+                "Cart {cart}({n}, {dims});\n"
+                "{cart}.coords(__dace_comm_rank, {coords});".format(
+                    n=ndims, dims=dims, coords=coords, cart=cart_name),
+                sdfg, state_id, node)
+            if nodedesc.transient:
+                # TODO: Is there any reason to use MPI_Alloc_mem?
+                callsite_stream.write(
+                    "{t} *{n} = new {t} DACE_ALIGN(64)[{s}];".format(
+                        t=ctype, n=name, s=arrsize),
+                    sdfg, state_id, node)
+            callsite_stream.write("MPI_Win {w};".format(w=win_name),
+                                  sdfg, state_id, node)
+            callsite_stream.write(
                 "MPI_Win_create({n}, {s} * sizeof({t}), sizeof({t}), "
-                "MPI_INFO_NULL, MPI_COMM_WORLD, &{w});\n".format(
-                    n=name, s=arrsize, t=ctype, w=winname
-                ),
-                sdfg,
-                state_id,
-                node
-            )
-            self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
-                                              ctypedef)
+                "MPI_INFO_NULL, {c}, &{w});".format(
+                    n=name, s=arrsize, t=ctype, c="MPI_COMM_WORLD", w=win_name),  # c=comm_name
+                sdfg, state_id, node)
+            if nodedesc.transient:
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
+                                                  ctypedef)
         else:
             return
 
@@ -142,20 +188,15 @@ void __dace_exit_mpi({params}) {{
                          callsite_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
-
-        if not nodedesc.transient:
-            return
         
         if (isinstance(nodedesc, data.Array) and
                 nodedesc.storage == dtypes.StorageType.Distributed):
-            winname = "__mpiwin_{}".format(name)
-            callsite_stream.write(
-                "MPI_Win_free(&w);\n"
-                "delete[] {n};\n".format(n=name, w=winname),
-                sdfg,
-                state_id,
-                node
-            )
+            winname = "__dace_win_{}".format(name)
+            callsite_stream.write("MPI_Win_free(&{w});".format(w=winname),
+                                  sdfg, state_id, node)
+            if nodedesc.transient:
+                callsite_stream.write("delete[] {n};".format(n=name),
+                                      sdfg, state_id, node)
         else:
             return
 
@@ -168,6 +209,7 @@ void __dace_exit_mpi({params}) {{
         map_header = dfg_scope.source_nodes()[0]
 
         function_stream.write("#include <mpi.h>\n"  # TODO: Where does this actually belong?
+                              "#include <dace/mpi/cart.h>\n"
                               "extern int __dace_comm_size, __dace_comm_rank;",
                               sdfg, state_id, map_header)
 
@@ -198,8 +240,21 @@ void __dace_exit_mpi({params}) {{
                               "MPI_Cart_coords({c}, __dace_comm_rank, "
                               "{n}, coords);".format(c=comm_name, n=ndims),
                               sdfg, state_id, map_header)
-        callsite_stream.write("MPI_Barrier({c});".format(c=comm_name),
-                              sdfg, state_id, map_header)
+        # TODO: We need to start passive epochs for all distributed data
+        # accessed in the map. Or maybe only the input data (gets)?
+        data_windows = set()
+        state = sdfg.nodes()[state_id]
+        for e in state.in_edges(map_header):
+            path = state.memlet_path(e)
+            # TODO: Input path, therefore input data in path[0]?
+            if isinstance(path[0].src, nodes.AccessNode):
+                data_name = path[0].src.data
+                nodedesc = sdfg.arrays[data_name]
+                if nodedesc.storage == dtypes.StorageType.Distributed:
+                    data_windows.add("__dace_win_{n}".format(n=data_name))
+        for win in data_windows:
+            callsite_stream.write("MPI_Win_lock_all(0, {w});".format(w=win),
+                                  sdfg, state_id, map_header)
         
         state = sdfg.node(state_id)
         symtypes = map_header.new_symbols(sdfg, state,
@@ -232,6 +287,9 @@ void __dace_exit_mpi({params}) {{
                                            callsite_stream,
                                            skip_entry_node=True)
 
+        for win in data_windows:
+            callsite_stream.write("MPI_Win_unlock_all({w});".format(w=win),
+                                  sdfg, state_id, map_header)
         callsite_stream.write("MPI_Barrier({c});".format(c=comm_name),
                               sdfg, state_id, map_header)
 
@@ -294,64 +352,64 @@ void __dace_exit_mpi({params}) {{
                         "Only distributed indices are currently supported")
                 index.append(begin)
 
-        # # Parse distributed location lambda method to a sympy expression.
-        # # Replace the arguments of the lambda with the parameters
-        # # of the MPI map, in order to find the rank-owner of the source data.
-        # dist_location = LambdaProperty.from_string(data.dist_location)
-        # body = pystr_to_symbolic(unparse(dist_location.body))
-        # args = [pystr_to_symbolic(a.arg) for a in dist_location.args.args]
-        # if len(args) != len(index):
-        #     raise ValueError(
-        #         "The number of arguments of the distributed location lambda "
-        #         "method does not match the length of the memlet subset")
-        # repl = {arg: idx for arg, idx in zip(args, index)}
-        # other_rank = body.subs(repl)
-        # callsite_stream.write("int other_rank = %s;\n" % str(other_rank),
-        #                       sdfg, state_id, [src_node, dst_node])
+        if isinstance(edge.data.subset, subsets.Indices):
+            local_index = edge.data.subset
+        else:
+            local_index = []
+            for r in edge.data.subset:
+                if len(r) == 3:
+                    begin, end, _ = r
+                else:
+                    begin, end, _, _ = r
+                if begin != end:
+                    raise NotImplementedError(
+                        "Only distributed indices are currently supported")
+                local_index.append(begin)
 
-        # # Use the index matching of the pair (data, map) to create a system
-        # # of equations. Solve the system to find the expressions that describe
-        # # the coordinates of the ranks that request the source data.
-        # eqs = []
-        # for k, v in data.dist_shape_map.items():
-        #     eqs.append(pystr_to_symbolic(
-        #         '{i} - my_{r}'.format(i=index[k], r=parent.map.params[v])))
-        # symbols = [pystr_to_symbolic(p) for p in parent.map.params]
-        # solution = sympy.solve(eqs, *symbols)
-        # repl = {pystr_to_symbolic('my_{r}'.format(r=r)): r
-        #         for r in symbols}
-        # fixed = {}
-        # ranges = {}
-        # for i, (var, r) in enumerate(zip(symbols, parent.map.range)):
-        #     if var in solution.keys():
-        #         fixed[i] = solution[var].subs(repl)
-        #     else:
-        #         ranges[i] = r
-
-        # # Parse the distributed location of the MPI map to sympy expression.
-        # # We will use this expression to compute the actual ranks of the
-        # # processes that request the source data.
-        # dist_location = LambdaProperty.from_string(parent.map.dist_location)
-        # body = pystr_to_symbolic(unparse(dist_location.body))
-        # args = [pystr_to_symbolic(a.arg) for a in dist_location.args.args]
+        ndims = len(index)
+        if isinstance(dst_node, nodes.Tasklet):
+            name = vconn
+            ctype = dst_node.in_connectors[vconn].dtype.ctype
+        elif isinstance(src_node, nodes.Tasklet):
+            name = uconn
+            ctype = src_node.out_connectors[uconn].dtype.ctype
+        mpitype = dtypes._MPITYPES[ctype]
+        data_name = memlet.data
+        comm_name = "__dace_comm_{n}".format(n=data_name)
+        win_name = "__dace_win_{n}".format(n=data_name)
+        cart_name = "__dace_cart_{n}".format(n=data_name)
+        trank = "__dace_target_rank_{n}".format(n=name)
+        tcoords = "__dace_target_coords_{n}".format(n=name)
+        callsite_stream.write(
+            "int {tcoords}[{n}];".format(tcoords=tcoords, n=ndims),
+            sdfg, state_id, [src_node, dst_node])
+        for i, s in enumerate(index):
+            callsite_stream.write(
+                "{tcoords}[{i}] = {s};".format(tcoords=tcoords, i=i, s=s),
+                sdfg, state_id, [src_node, dst_node])
+        # callsite_stream.write(
+        #     "int {trank};\n"
+        #     "MPI_Cart_rank({c}, {tcoords}, &{trank});".format(
+        #         trank=trank, c=comm_name, tcoords=tcoords),
+        #     sdfg, state_id, [src_node, dst_node])
+        callsite_stream.write(
+            "int {trank};\n"
+            "{cart}.rank({tcoords}, {trank});".format(
+                trank=trank, tcoords=tcoords, cart=cart_name),
+            sdfg, state_id, [src_node, dst_node])
+        disp = _dot(local_index, data.strides)
 
         if isinstance(dst_node, nodes.Tasklet):
-            # Copy into tasklet
-            # int MPI_Get(
-            #     void *origin_addr,
-            #     int origin_count,
-            #     MPI_Datatype origin_datatype, 
-            #     int target_rank,
-            #     MPI_Aint target_disp,
-            #     int target_count,
-            #     MPI_Datatype target_datatype,
-            #     MPI_Win win
-            #     );
+            ctype = dst_node.in_connectors[vconn].dtype.ctype
+            # TODO: Create dtypes dict
+            mpitype = "MPI_DOUBLE"
             callsite_stream.write(
-                "MPI_Get Data:{d} Subset:{s} Target:{t}".format(
-                    d=memlet.data, s=memlet.subset, t=index
-                ), sdfg, state_id, [src_node, dst_node])
-                # TODO: We also need some kind of flush here
+                "{ct} {conn};\n"
+                "MPI_Get(&{conn}, 1, {mt}, {trank}, {dp}, 1, {mt}, {w});\n"
+                "MPI_Win_flush_local({trank}, {w});".format(
+                    ct=ctype, conn=vconn, mt=mpitype, trank=trank,
+                    dp=disp, w=win_name),
+                sdfg, state_id, [src_node, dst_node])
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
             if memlet.wcr:
@@ -361,9 +419,10 @@ void __dace_exit_mpi({params}) {{
                 ), sdfg, state_id, [src_node, dst_node])
             else:
                 callsite_stream.write(
-                    "MPI_Put Data:{d} Subset:{s} Target:{t}".format(
-                    d=memlet.data, s=memlet.subset, t=index
-                ), sdfg, state_id, [src_node, dst_node])
+                    "MPI_Put(&{conn}, 1, {mt}, {trank}, {dp}, 1, "
+                    "{mt}, {w});".format(ct=ctype, conn=uconn, mt=mpitype,
+                                         trank=trank, dp=disp, w=win_name),
+                sdfg, state_id, [src_node, dst_node])
         else:  # Copy array-to-array
             # src_nodedesc = src_node.desc(sdfg)
             # dst_nodedesc = dst_node.desc(sdfg)
@@ -373,3 +432,214 @@ void __dace_exit_mpi({params}) {{
             # ctype = "dace::vec<%s, %d>" % (dst_nodedesc.dtype.ctype,
             #                                memlet.veclen)
             raise NotImplementedError
+    
+    def generate_node(self, sdfg, dfg, state_id, node, function_stream,
+                      callsite_stream):
+        method_name = "_generate_" + type(node).__name__
+        # Fake inheritance... use this class' method if it exists,
+        # otherwise fall back on CPU codegen
+        if hasattr(self, method_name):
+
+            # if hasattr(node, "schedule") and node.schedule not in [
+            #         dace.dtypes.ScheduleType.Default,
+            #         dace.dtypes.ScheduleType.FPGA_Device
+            # ]:
+            #     warnings.warn("Found schedule {} on {} node in FPGA code. "
+            #                   "Ignoring.".format(node.schedule,
+            #                                      type(node).__name__))
+
+            getattr(self, method_name)(sdfg, dfg, state_id, node,
+                                       function_stream, callsite_stream)
+        else:
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+
+            self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
+                                            function_stream, callsite_stream)
+
+            self._cpu_codegen.calling_codegen = old_codegen
+
+    def _generate_Tasklet(self, *args, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen._generate_Tasklet(*args, codegen=self, **kwargs)
+
+    # def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
+    #                       edge, function_stream, callsite_stream):
+    #     self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg,
+    #                                    state_dfg, state_id, function_stream,
+    #                                    callsite_stream)
+
+    def process_out_memlets(self,
+                            sdfg,
+                            state_id,
+                            node,
+                            dfg,
+                            dispatcher,
+                            result,
+                            locals_defined,
+                            function_stream,
+                            skip_wcr=False,
+                            codegen=None):
+        codegen = codegen or self
+        scope_dict = sdfg.nodes()[state_id].scope_dict()
+
+        for edge in dfg.out_edges(node):
+            _, uconn, v, _, memlet = edge
+            if skip_wcr and memlet.wcr is not None:
+                continue
+            dst_node = dfg.memlet_path(edge)[-1].dst
+
+            # Target is neither a data nor a tasklet node
+            if isinstance(node, nodes.AccessNode) and (
+                    not isinstance(dst_node, nodes.AccessNode)
+                    and not isinstance(dst_node, nodes.CodeNode)):
+                continue
+
+            # Skip array->code (will be handled as a tasklet input)
+            if isinstance(node, nodes.AccessNode) and isinstance(
+                    v, nodes.CodeNode):
+                continue
+
+            # code->code (e.g., tasklet to tasklet)
+            if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
+                shared_data_name = edge.data.data
+                if not shared_data_name:
+                    # Very unique name. TODO: Make more intuitive
+                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (
+                        sdfg.sdfg_id, state_id, dfg.node_id(node),
+                        dfg.node_id(dst_node), edge.src_conn)
+
+                result.write(
+                    "%s = %s;" % (shared_data_name, edge.src_conn),
+                    sdfg,
+                    state_id,
+                    [edge.src, edge.dst],
+                )
+                continue
+
+            # If the memlet is not pointing to a data node (e.g. tasklet), then
+            # the tasklet will take care of the copy
+            if not isinstance(dst_node, nodes.AccessNode):
+                continue
+            # If the memlet is pointing into an array in an inner scope, then
+            # the inner scope (i.e., the output array) must handle it
+            if scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(
+                    scope_dict, node, dst_node):
+                continue
+
+            # Array to tasklet (path longer than 1, handled at tasklet entry)
+            if node == dst_node:
+                continue
+
+            # Tasklet -> array
+            if isinstance(node, nodes.CodeNode):
+                if not uconn:
+                    raise SyntaxError(
+                        "Cannot copy memlet without a local connector: {} to {}"
+                        .format(str(edge.src), str(edge.dst)))
+
+                conntype = node.out_connectors[uconn]
+                is_scalar = not isinstance(conntype, dtypes.pointer)
+                is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
+
+                if is_scalar and not memlet.dynamic and not is_stream:
+                    out_local_name = "    __" + uconn
+                    in_local_name = uconn
+                    if not locals_defined:
+                        out_local_name = self.memlet_ctor(
+                            sdfg, memlet, node.out_connectors[uconn], True)
+                        in_memlets = [d for _, _, _, _, d in dfg.in_edges(node)]
+                        assert len(in_memlets) == 1
+                        in_local_name = self.memlet_ctor(
+                            sdfg, in_memlets[0], node.out_connectors[uconn],
+                            False)
+
+                    state_dfg = sdfg.nodes()[state_id]
+
+                    if memlet.wcr is not None:
+                        nc = not cpp.is_write_conflicted(
+                            dfg, edge, sdfg_schedule=self._toplevel_schedule)
+                        result.write(
+                            codegen.write_and_resolve_expr(
+                                sdfg,
+                                memlet,
+                                nc,
+                                out_local_name,
+                                in_local_name,
+                                dtype=node.out_connectors[uconn]) + ';', sdfg,
+                            state_id, node)
+                    else:
+                        try:
+                            defined_type, _ = self._dispatcher.defined_vars.get(
+                                memlet.data)
+                        except KeyError:  # The variable is not defined
+                            # This case happens with nested SDFG outputs,
+                            # which we skip since the memlets are references
+                            if isinstance(node, nodes.NestedSDFG):
+                                continue
+                            raise
+
+                        if defined_type == DefinedType.Scalar:
+                            expr = memlet.data
+                        elif defined_type == DefinedType.ArrayInterface:
+                            # Special case: No need to write anything between
+                            # array interfaces going out
+                            try:
+                                deftype, _ = self._dispatcher.defined_vars.get(
+                                    in_local_name)
+                            except KeyError:
+                                deftype = None
+                            if deftype == DefinedType.ArrayInterface:
+                                return
+
+                            expr = '*(%s + %s).ptr_out()' % (
+                                memlet.data,
+                                cpp.cpp_array_expr(
+                                    sdfg, memlet, with_brackets=False))
+                        else:
+                            # TODO: Always pointer at this point?
+                            # TODO: Do nothing?
+                            # expr = cpp.cpp_array_expr(sdfg, memlet)
+                            # # If there is a type mismatch, cast pointer
+                            # expr = cpp.make_ptr_vector_cast(
+                            #     sdfg, expr, memlet, conntype, is_scalar,
+                            #     defined_type)
+                            self.copy_memory(sdfg, dfg, state_id, node, dst_node,
+                                             edge, function_stream, result)
+                            continue
+
+                        result.write(
+                            "%s = %s;\n" % (expr, in_local_name),
+                            sdfg,
+                            state_id,
+                            node,
+                        )
+            # Dispatch array-to-array outgoing copies here
+            elif isinstance(node, nodes.AccessNode):
+                if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
+                    dispatcher.dispatch_copy(
+                        node,
+                        dst_node,
+                        edge,
+                        sdfg,
+                        dfg,
+                        state_id,
+                        function_stream,
+                        result,
+                    )
+
+    def generate_tasklet_preamble(self, *args, **kwargs):
+        # Fall back on CPU implementation
+        self._cpu_codegen.generate_tasklet_preamble(*args, **kwargs)
+
+    def generate_tasklet_postamble(self, *args, **kwargs):
+        # Fall back on CPU implementation
+        self._cpu_codegen.generate_tasklet_postamble(*args, **kwargs)
+    
+    def unparse_tasklet(self, *args, **kwargs):
+        # Fall back on CPU implementation
+        self._cpu_codegen.unparse_tasklet(*args, **kwargs)
+    
+    def define_out_memlet(self, *args, **kwargs):
+        # Fall back on CPU implementation
+        self._cpu_codegen.define_out_memlet(*args, **kwargs)
