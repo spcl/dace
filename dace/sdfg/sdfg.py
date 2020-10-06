@@ -557,7 +557,7 @@ class SDFG(OrderedDiGraph):
             if not fname.startswith('report-'):
                 continue
             os.unlink(os.path.join(path, fname))
-        
+
     def get_latest_report(self) -> \
             Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
