@@ -56,10 +56,12 @@ class StateFusion(transformation.Transformation):
             if not in_edges:
                 return False
             # Fail if symbol is set before the state to fuse
-            # TODO: Also fail if symbol is used in the dataflow of that state
             new_assignments = set(out_edges[0].data.assignments.keys())
             if any((new_assignments & set(e.data.assignments.keys()))
                    for e in in_edges):
+                return False
+            # Fail if symbol is used in the dataflow of that state
+            if len(new_assignments & first_state.free_symbols) > 0:
                 return False
 
         # There can be no state that have output edges pointing to both the
