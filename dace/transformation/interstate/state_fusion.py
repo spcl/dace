@@ -1,13 +1,25 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
+from dace.sdfg.state import SDFGState
+from typing import List, Set
 import networkx as nx
 
-from dace import dtypes, registry, sdfg
+from dace import dtypes, registry, sdfg, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.config import Config
+
+
+# Helper class for finding connected component correspondences
+class CCDesc:
+    def __init__(self, first_inputs: Set[str], first_outputs: Set[str],
+                 second_inputs: Set[str], second_outputs: Set[str]) -> None:
+        self.first_inputs = first_inputs
+        self.first_outputs = first_outputs
+        self.second_inputs = second_inputs
+        self.second_outputs = second_outputs
 
 
 @registry.autoregister_params(strict=True)
@@ -34,6 +46,72 @@ class StateFusion(transformation.Transformation):
             sdutil.node_path_graph(StateFusion._first_state,
                                    StateFusion._second_state)
         ]
+
+    @staticmethod
+    def find_fused_components(first_cc_input, first_cc_output, second_cc_input,
+                              second_cc_output) -> List[CCDesc]:
+        result = []
+        ccs_1, ccs_2 = {}, {}
+        # Find matching nodes in second state
+        for i, cc1 in enumerate(first_cc_output):
+            inpnames1 = {n.data for n in first_cc_input[i]}
+            outnames1 = {n.data for n in cc1}
+            for j, cc2 in enumerate(second_cc_input):
+                inpnames2 = {n.data for n in cc2}
+                outnames2 = {n.data for n in second_cc_output[j]}
+                if len(outnames1 & inpnames2) > 0:
+                    if i not in ccs_1 and j not in ccs_2:
+                        result.append(
+                            CCDesc(inpnames1, outnames1, inpnames2, outnames2))
+                        ccs_1[i] = result[-1]
+                        ccs_2[j] = result[-1]
+                    if i in ccs_1:
+                        ccs_1[i].first_inputs |= inpnames1
+                        ccs_1[i].first_outputs |= outnames1
+                    if j in ccs_2:
+                        ccs_2[j].second_inputs |= inpnames2
+                        ccs_2[j].second_outputs |= outnames2
+
+        return result
+
+    @staticmethod
+    def memlets_intersect(graph_a: SDFGState, group_a: List[nodes.AccessNode],
+                          inputs_a: bool, graph_b: SDFGState,
+                          group_b: List[nodes.AccessNode],
+                          inputs_b: bool) -> bool:
+        """ 
+        Performs an all-pairs check for subset intersection on two
+        groups of nodes. If group intersects or result is indeterminate, 
+        returns True as a precaution.
+        :param graph_a: The graph in which the first set of nodes reside.
+        :param group_a: The first set of nodes to check.
+        :param inputs_a: If True, checks inputs of the first group.
+        :param graph_b: The graph in which the second set of nodes reside.
+        :param group_b: The second set of nodes to check.
+        :param inputs_b: If True, checks inputs of the second group.
+        :returns True if subsets intersect or result is indeterminate.
+        """
+        # Set traversal functions
+        if inputs_a:
+            edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
+            subset_a = lambda e: e.data.src_subset
+        else:
+            edges_a = [e for n in group_a for e in graph_a.in_edges(n)]
+            subset_a = lambda e: e.data.dst_subset
+        if inputs_b:
+            edges_b = [e for n in group_b for e in graph_b.out_edges(n)]
+            subset_b = lambda e: e.data.src_subset
+        else:
+            edges_b = [e for n in group_b for e in graph_b.in_edges(n)]
+            subset_b = lambda e: e.data.dst_subset
+
+        # Simple all-pairs check
+        for ea in edges_a:
+            for eb in edges_b:
+                result = subsets.intersects(subset_a(ea), subset_b(eb))
+                if result is True or result is None:
+                    return True
+        return False
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -127,38 +205,80 @@ class StateFusion(transformation.Transformation):
             # Apply transformation in case all paths to the second state's
             # nodes go through the same access node, which implies sequential
             # behavior in SDFG semantics.
-            check_strict = len(first_cc)
-            for cc_output in first_cc_output:
-                out_nodes = [
-                    n for n in first_state.sink_nodes() if n in cc_output
-                ]
-                # Branching exists, multiple paths may involve same access node
-                # potentially causing data races
-                if len(out_nodes) > 1:
-                    continue
+            first_output_names = {node.data for node in first_output}
+            second_input_names = {node.data for node in second_input}
 
-                # Otherwise, check if any of the second state's connected
-                # components for matching input
-                for node in out_nodes:
-                    if (next((x for x in second_input if x.label == node.label),
-                             None) is not None):
-                        check_strict -= 1
-                        break
+            # If any second input appears more than once, fail
+            if len(second_input) > len(second_input_names):
+                return False
 
-            if check_strict > 0:
-                # Check strict conditions
-                # RW dependency
-                for node in first_input:
-                    if (next(
-                        (x for x in second_output if x.label == node.label),
-                            None) is not None):
+            # If any first output that is an input to the second state
+            # appears in more than one CC, fail
+            matches = first_output_names & second_input_names
+            for match in matches:
+                cc_appearances = 0
+                for cc in first_cc_output:
+                    if len([n for n in cc if n.data == match]) > 0:
+                        cc_appearances += 1
+                if cc_appearances > 1:
+                    return False
+
+            # Recreate fused connected component correspondences, and then
+            # check for hazards
+            resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(
+                first_cc_input, first_cc_output, second_cc_input,
+                second_cc_output)
+
+            # Check for data races
+            for fused_cc in resulting_ccs:
+                # Write-Write hazard - data is output of both first and second
+                # states, without a read in between
+                write_write_candidates = (
+                    (fused_cc.first_outputs & fused_cc.second_outputs) -
+                    fused_cc.second_inputs)
+                for cand in write_write_candidates:
+                    # Check for intersection (if None, fusion is ok)
+                    nodes_first = [n for n in first_output if n.data == cand]
+                    nodes_second = [n for n in second_output if n.data == cand]
+                    if StateFusion.memlets_intersect(first_state, nodes_first,
+                                                     False, second_state,
+                                                     nodes_second, False):
                         return False
-                # WW dependency
-                for node in first_output:
-                    if (next(
-                        (x for x in second_output if x.label == node.label),
-                            None) is not None):
-                        return False
+                # End of write-write hazard check
+
+                first_inout = fused_cc.first_inputs | fused_cc.first_outputs
+                for other_cc in resulting_ccs:
+                    if other_cc is fused_cc:
+                        continue
+                    # If an input/output of a connected component in the first
+                    # state is an output of another connected component in the
+                    # second state, we have a potential data race (Read-Write
+                    # or Write-Write)
+                    for d in first_inout:
+                        if d in other_cc.second_outputs:
+                            # Check for intersection (if None, fusion is ok)
+                            nodes_second = [
+                                n for n in second_output if n.data == d
+                            ]
+                            # Read-Write race
+                            if d in fused_cc.first_inputs:
+                                nodes_first = [
+                                    n for n in first_input if n.data == d
+                                ]
+                                if StateFusion.memlets_intersect(
+                                        first_state, nodes_first, True,
+                                        second_state, nodes_second, False):
+                                    return False
+                            # Write-Write race
+                            if d in fused_cc.first_outputs:
+                                nodes_first = [
+                                    n for n in first_output if n.data == d
+                                ]
+                                if StateFusion.memlets_intersect(
+                                        first_state, nodes_first, False,
+                                        second_state, nodes_second, False):
+                                    return False
+                    # End of data race check
 
         return True
 
