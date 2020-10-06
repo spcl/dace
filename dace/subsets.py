@@ -5,9 +5,10 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import Set
+from typing import Set, Union
 import warnings
 from dace.config import Config
+
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
@@ -615,6 +616,22 @@ class Range(Subset):
             self.tile_sizes[i] = (ts.subs(repl_dict)
                                   if symbolic.issymbolic(ts) else ts)
 
+    def intersects(self, other: 'Range'):
+        for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
+            if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1
+                    or other.tile_sizes[i] != 1):
+                # TODO: This function does not consider strides or tiles
+                return None
+
+            # Special case: ranges match
+            if rng[0] == orng[0] or rng[1] == orng[1]:
+                continue
+
+            if not (rng[0] <= orng[1] and orng[0] <= rng[1]):
+                return False
+
+        return True
+
 
 @dace.serialize.serializable
 class Indices(Subset):
@@ -798,12 +815,22 @@ class Indices(Subset):
         for i, ind in enumerate(self.indices):
             self.indices[i] = (ind.subs(repl_dict)
                                if symbolic.issymbolic(ind) else ind)
+
     def pop(self, dimensions):
         new_indices = []
         for i in range(len(self.indices)):
             if i not in dimensions:
                 new_indices.append(self.indices[i])
         self.indices = new_indices
+
+    def intersects(self, other: 'Indices'):
+        return all(ind == oind
+                   for ind, oind in zip(self.indices, other.indices))
+
+    def intersection(self, other: 'Indices'):
+        if self.intersects(other):
+            return self
+        return None
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
@@ -818,14 +845,17 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
     if not symbolic_positive:
-        result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-            subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
-            subset_b.max_element())]
+        result = [(min(arb,
+                       brb), max(are, bre), 1) for arb, brb, are, bre in zip(
+                           subset_a.min_element(), subset_b.min_element(),
+                           subset_a.max_element(), subset_b.max_element())]
 
     else:
         result = []
-        for arb, brb, are, bre in zip(subset_a.min_element(), subset_b.min_element(),
-                                      subset_a.max_element(), subset_b.max_element()):
+        for arb, brb, are, bre in zip(subset_a.min_element(),
+                                      subset_b.min_element(),
+                                      subset_a.max_element(),
+                                      subset_b.max_element()):
             try:
                 minrb = min(arb, brb)
             except TypeError:
@@ -846,7 +876,6 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 else:
                     raise
             result.append((minrb, maxre, 1))
-
 
     return Range(result)
 
@@ -881,5 +910,28 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                 'Unrecognized Subset type %s in union, degenerating to'
                 ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
+    except TypeError:  # cannot determine truth value of Relational
+        return None
+
+
+def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
+    """ 
+    Returns True if two subsets intersect, False if they do not, or
+    None if the answer cannot be determined.
+        
+    :param subset_a: The first subset.
+    :param subset_b: The second subset.
+    :return: True if subsets intersect, False if not, None if indeterminate.
+    """
+    try:
+        if subset_a is None or subset_b is None:
+            return False
+        elif isinstance(subset_a, Indices):
+            return subset_b.covers(subset_a)
+        elif isinstance(subset_b, Indices):
+            return subset_a.covers(subset_b)
+        elif type(subset_a) is type(subset_b):
+            return subset_a.intersects(subset_b)
+        return None
     except TypeError:  # cannot determine truth value of Relational
         return None
