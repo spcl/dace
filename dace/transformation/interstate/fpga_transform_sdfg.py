@@ -4,11 +4,11 @@
 import networkx as nx
 
 from dace import registry
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 @registry.autoregister
-class FPGATransformSDFG(pattern_matching.Transformation):
+class FPGATransformSDFG(transformation.Transformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
     @staticmethod

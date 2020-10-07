@@ -12,13 +12,13 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching, helpers
+from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
-class InlineSDFG(pattern_matching.Transformation):
+class InlineSDFG(transformation.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -454,7 +454,7 @@ class InlineSDFG(pattern_matching.Transformation):
 
 @registry.autoregister
 @make_properties
-class NestSDFG(pattern_matching.Transformation):
+class NestSDFG(transformation.Transformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
 

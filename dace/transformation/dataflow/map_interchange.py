@@ -1,18 +1,19 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the map interchange transformation. """
 
-import dace
 from dace import registry
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import symlist
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
+from dace.sdfg.propagation import propagate_memlet
 from dace.properties import make_properties
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MapInterchange(pattern_matching.Transformation):
+class MapInterchange(transformation.Transformation):
     """ Implements the map-interchange transformation.
     
         Map-interchange takes two nested maps and interchanges their position.
@@ -95,9 +96,9 @@ class MapInterchange(pattern_matching.Transformation):
         return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
                            for entry in [outer_map_entry, inner_map_entry])
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG):
         # Extract the parameters and ranges of the inner/outer maps.
-        graph = sdfg.nodes()[self.state_id]
+        graph: SDFGState = sdfg.nodes()[self.state_id]
         outer_map_entry = graph.nodes()[self.subgraph[
             MapInterchange._outer_map_entry]]
         inner_map_entry = graph.nodes()[self.subgraph[
@@ -128,5 +129,27 @@ class MapInterchange(pattern_matching.Transformation):
         sdutil.change_edge_src(graph, outer_map_exit, inner_map_exit)
 
         # Add edges between the map entries and exits.
-        for e in entry_edges + exit_edges:
-            graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data)
+        new_entry_edges = []
+        new_exit_edges = []
+        for e in entry_edges:
+            new_entry_edges.append(
+                graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data))
+        for e in exit_edges:
+            new_exit_edges.append(
+                graph.add_edge(e.dst, e.src_conn, e.src, e.dst_conn, e.data))
+
+        # Repropagate memlets in modified region
+        for e in new_entry_edges:
+            path = graph.memlet_path(e)
+            index = next(i for i, edge in enumerate(path) if e is edge)
+            e.data.subset = propagate_memlet(graph, path[index + 1].data,
+                                             outer_map_entry, True).subset
+        for e in new_exit_edges:
+            path = graph.memlet_path(e)
+            index = next(i for i, edge in enumerate(path) if e is edge)
+            e.data.subset = propagate_memlet(graph, path[index - 1].data,
+                                             outer_map_exit, True).subset
+
+    @staticmethod
+    def annotates_memlets():
+        return True

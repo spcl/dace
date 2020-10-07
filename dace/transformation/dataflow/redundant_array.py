@@ -5,7 +5,7 @@
 from dace import registry, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 from dace.config import Config
 
 
