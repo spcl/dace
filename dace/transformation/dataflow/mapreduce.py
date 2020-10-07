@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions that implement the map-reduce-fusion 
     transformation. """
 
@@ -9,7 +10,7 @@ from dace.properties import Property, make_properties
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
 from dace.symbolic import symstr
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion import MapFusion

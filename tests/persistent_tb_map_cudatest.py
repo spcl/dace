@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import dace
@@ -17,22 +17,22 @@ def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float64[1]):
         b << B[i]
         o >> out(1, lambda x, y: x + y)
         o = a * b
-        
+
 
 def test_persistent_thread_block():
-    
+
     sdfg = dot.to_sdfg()
-    
+
     sdfg.apply_gpu_transformations()
     sdfg.apply_transformations(StripMining, options={'tile_size': '256'})
-    
+
     for state in sdfg:
         for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
             if state.scope_dict()[scope] is None:
                 scope.map.schedule = ScheduleType.GPU_Device
             else:
                 scope.map.schedule = ScheduleType.GPU_ThreadBlock
-                
+
     N = 1050
 
     print('Dot product (N = {})'.format(N))
@@ -45,7 +45,7 @@ def test_persistent_thread_block():
     sdfg(A=A, B=B, out=out_AB, N=N)
 
     sdfg(A=A, B=A, out=out_AA, N=N)
-    
+
     assert (np.allclose(out_AB, np.dot(A, B))
             and np.allclose(out_AA, np.dot(A, A))), "Result doesn't match!"
     print("Complete.")

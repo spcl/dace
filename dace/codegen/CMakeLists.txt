@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 2.8.12)
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+cmake_minimum_required(VERSION 3.15)
 project(dace_program)
 
 # General options
@@ -126,7 +127,7 @@ if(DACE_ENABLE_HIP)
   get_filename_component(HIP_PATH "${HIP_HIPCC_EXECUTABLE}" DIRECTORY)
   set(HIP_PATH "${HIP_PATH}/..")
   get_filename_component(HIP_PATH "${HIP_PATH}" ABSOLUTE)
-  set(CMAKE_MODULE_PATH "${HIP_PATH}/cmake" ${CMAKE_MODULE_PATH})
+  set(CMAKE_MODULE_PATH "${HIP_PATH}/cmake;${HIP_PATH}/hip/cmake" ${CMAKE_MODULE_PATH})
   # ...Then load again to get the macros
   find_package(HIP REQUIRED)
 

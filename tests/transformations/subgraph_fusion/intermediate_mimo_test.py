@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
 from dace.sdfg import nodes
@@ -13,14 +14,13 @@ from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 
-
 N = dace.symbol('N')
 N.set(1000)
 
 
 @dace.program
 def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-         D: dace.float64[N]):
+                 D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
         with dace.tasklet:
@@ -60,18 +60,17 @@ def test_quantitatively(sdfg):
     csdfg(A=A, B=B, C=C1, D=D1, N=N)
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    expansion = MultiExpansion()
-    fusion = SubgraphFusion()
-    assert expansion.match(sdfg, subgraph) == True
-    expansion.apply(sdfg, subgraph)
-    assert fusion.match(sdfg, subgraph) == True
-    fusion.apply(sdfg, subgraph)
+    assert MultiExpansion.can_be_applied(sdfg, subgraph) == True
+    MultiExpansion(subgraph).apply(sdfg)
+    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
+    SubgraphFusion(subgraph).apply(sdfg)
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, D=D2, N=N)
 
     assert np.allclose(C1, C2)
     assert np.allclose(D1, D2)
+
 
 def test_mimo():
     sdfg = test_program.to_sdfg()
@@ -93,6 +92,7 @@ def test_mimo():
     sdfg.nodes()[0].remove_node(C2)
     sdfg.validate()
     test_quantitatively(sdfg)
+
 
 if __name__ == '__main__':
     test_mimo()

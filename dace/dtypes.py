@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -403,9 +404,10 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -528,8 +530,11 @@ class vector(typeclass):
 
     @property
     def ocltype(self):
-        vectype = _OCL_VECTOR_TYPES[self.type]
-        return f"{vectype}{self.veclen}"
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -808,6 +813,39 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
+# Helper function to determine whether a global variable is a constant
+_CONSTANT_TYPES = [
+    int,
+    float,
+    complex,
+    str,
+    bool,
+    numpy.bool_,
+    numpy.intc,
+    numpy.intp,
+    numpy.int8,
+    numpy.int16,
+    numpy.int32,
+    numpy.int64,
+    numpy.uint8,
+    numpy.uint16,
+    numpy.uint32,
+    numpy.uint64,
+    numpy.float16,
+    numpy.float32,
+    numpy.float64,
+    numpy.complex64,
+    numpy.complex128,
+    typeclass,  # , type
+]
+
+
+def isconstant(var):
+    """ Returns True if a variable is designated a constant (i.e., that can be
+        directly generated in code). """
+    return type(var) in _CONSTANT_TYPES
+
+
 bool = typeclass(numpy.bool)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
@@ -862,37 +900,6 @@ TYPECLASS_STRINGS = [
 
 #######################################################
 # Allowed types
-
-# Helper function to determine whether a global variable is a constant
-_CONSTANT_TYPES = [
-    int,
-    float,
-    complex,
-    str,
-    numpy.intc,
-    numpy.intp,
-    numpy.int8,
-    numpy.int16,
-    numpy.int32,
-    numpy.int64,
-    numpy.uint8,
-    numpy.uint16,
-    numpy.uint32,
-    numpy.uint64,
-    numpy.float16,
-    numpy.float32,
-    numpy.float64,
-    numpy.complex64,
-    numpy.complex128,
-    typeclass,  # , type
-]
-
-
-def isconstant(var):
-    """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code). """
-    return type(var) in _CONSTANT_TYPES
-
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
 _ALLOWED_MODULES = {
@@ -1041,6 +1048,36 @@ def validate_name(name):
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
+
+
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
 
 
 def can_allocate(storage: StorageType, schedule: ScheduleType):

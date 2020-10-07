@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import re, json
 import copy as cp
@@ -124,6 +125,11 @@ class Data(object):
     @property
     def veclen(self):
         return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+
+    
+    @property
+    def ctype(self):
+        return self.dtype.ctype
 
 
 @make_properties

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """Unit tests for dace.sdfg.properties module."""
 
 import unittest

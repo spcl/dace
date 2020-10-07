@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the strip-mining
     transformation."""
 
@@ -9,7 +10,7 @@ from dace.properties import make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 import sympy
 
 
@@ -117,7 +118,7 @@ def calc_set_union(set_a, set_b):
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class StripMining(pattern_matching.Transformation):
+class StripMining(transformation.Transformation):
     """ Implements the strip-mining transformation.
 
         Strip-mining takes as input a map dimension and splits it into
@@ -200,9 +201,6 @@ class StripMining(pattern_matching.Transformation):
     def print_match_pattern(self, candidate):
         gentry = candidate[self.entry]
         return str(gentry.map.params[-1])
-
-    def modifies_graph(self):
-        return True
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry,
                       prefix: str, target_dim: str):
