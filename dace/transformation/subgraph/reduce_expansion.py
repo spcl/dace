@@ -180,9 +180,6 @@ class ReduceExpansion(transformation.Transformation):
                 print("ReduceExpansion::Expanding Reduction into Map")
             # we are lucky
             shortcut = True
-            if self.create_out_transient:
-                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
-                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
             nstate.out_edges(outer_exit)[0].data.wcr = None
 
         else:
@@ -222,6 +219,10 @@ class ReduceExpansion(transformation.Transformation):
             # push to register
             nsdfg.sdfg.data(out_transient_node_inner.data
                             ).storage = dtypes.StorageType.Register
+
+            if shortcut:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
 
         if self.create_in_transient:
             # create an in-transient between inner and outer map entry
