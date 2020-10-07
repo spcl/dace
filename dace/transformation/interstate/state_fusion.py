@@ -31,9 +31,7 @@ class StateFusion(transformation.Transformation):
         access hazards are created.
     """
 
-    _states_fused = 0
     _first_state = sdfg.SDFGState()
-    _edge = sdfg.InterstateEdge()
     _second_state = sdfg.SDFGState()
 
     @staticmethod
@@ -418,5 +416,3 @@ class StateFusion(transformation.Transformation):
         # Redirect edges and remove second state
         sdutil.change_edge_src(sdfg, second_state, first_state)
         sdfg.remove_node(second_state)
-        if Config.get_bool("debugprint"):
-            StateFusion._states_fused += 1
