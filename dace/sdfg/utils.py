@@ -3,6 +3,7 @@
 
 import collections
 import copy
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
@@ -410,7 +411,11 @@ def consolidate_edges_scope(
                               if ed.dst_conn == conn_to_remove)
         out_edge.data.subset = sbs.union(out_edge.data.subset,
                                          edge_to_remove.data.subset)
-        state.remove_edge(edge_to_remove)
+
+        # Check if dangling connectors have been created and remove them,
+        # as well as their parent edges
+        remove_edge_and_dangling_path(state, edge_to_remove)
+
         consolidated += 1
         # Inner side of the scope - remove and reconnect
         remove_inner_connector(e.src_conn)
@@ -420,7 +425,56 @@ def consolidate_edges_scope(
     return consolidated
 
 
-def consolidate_edges(sdfg: SDFG) -> int:
+def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
+    """
+    Removes an edge and all of its parent edges in a memlet path, cleaning
+    dangling connectors and isolated nodes resulting from the removal.
+    :param state: The state in which the edge exists.
+    :param edge: The edge to remove.
+    """
+    mtree = state.memlet_tree(edge)
+    inwards = (isinstance(edge.src, nd.EntryNode)
+               or isinstance(edge.dst, nd.EntryNode))
+
+    # Traverse tree upwards, removing edges and connectors as necessary
+    curedge = mtree
+    while curedge is not None:
+        e = curedge.edge
+        state.remove_edge(e)
+        if inwards:
+            neighbors = [
+                neighbor for neighbor in state.out_edges(e.src)
+                if e.src_conn == neighbor.src_conn
+            ]
+        else:
+            neighbors = [
+                neighbor for neighbor in state.in_edges(e.dst)
+                if e.dst_conn == neighbor.dst_conn
+            ]
+        if len(neighbors) > 0:  # There are still edges connected, leave as-is
+            break
+
+        # Remove connector and matching outer connector
+        if inwards:
+            if e.src_conn:
+                e.src.remove_out_connector(e.src_conn)
+                e.src.remove_in_connector('IN' + e.src_conn[3:])
+        else:
+            if e.dst_conn:
+                e.dst.remove_in_connector(e.dst_conn)
+                e.src.remove_out_connector('OUT' + e.dst_conn[2:])
+
+        # Continue traversing upwards
+        curedge = curedge.parent
+    else:
+        # Check if an isolated node have been created at the root and remove
+        root_edge = mtree.root().edge
+        root_node: nd.Node = root_edge.src if inwards else root_edge.dst
+        if state.degree(root_node) == 0:
+            state.remove_node(root_node)
+
+
+def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     """
     Union scope-entering memlets relating to the same data node in all states.
     This effectively reduces the number of connectors and allows more
@@ -429,10 +483,15 @@ def consolidate_edges(sdfg: SDFG) -> int:
     :param sdfg: The SDFG to consolidate.
     :return: Number of edges removed.
     """
+    from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_scope
+
     consolidated = 0
     for state in sdfg.nodes():
         # Start bottom-up
-        queue = state.scope_leaves()
+        if starting_scope and starting_scope.entry not in state.nodes():
+            continue
+
+        queue = [starting_scope] if starting_scope else state.scope_leaves()
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
@@ -442,6 +501,17 @@ def consolidate_edges(sdfg: SDFG) -> int:
                     next_queue.append(scope.parent)
             queue = next_queue
             next_queue = []
+
+        if starting_scope is not None:
+            # Repropagate memlets from this scope outwards
+            propagate_memlets_scope(sdfg, state, starting_scope)
+
+            # No need to traverse other states
+            break
+
+    # Repropagate memlets
+    if starting_scope is None:
+        propagate_memlets_sdfg(sdfg)
 
     return consolidated
 
