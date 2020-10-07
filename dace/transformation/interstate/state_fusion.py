@@ -72,6 +72,18 @@ class StateFusion(transformation.Transformation):
                         ccs_2[j].second_inputs |= inpnames2
                         ccs_2[j].second_outputs |= outnames2
 
+        # Add components that did not match separately
+        for i in range(len(first_cc_output)):
+            if i not in ccs_1:
+                inp = {n.data for n in first_cc_input[i]}
+                out = {n.data for n in first_cc_output[i]}
+                result.append(CCDesc(inp, out, set(), set()))
+        for i in range(len(second_cc_input)):
+            if i not in ccs_2:
+                inp = {n.data for n in second_cc_input[i]}
+                out = {n.data for n in second_cc_output[i]}
+                result.append(CCDesc(set(), set(), inp, out))
+
         return result
 
     @staticmethod
