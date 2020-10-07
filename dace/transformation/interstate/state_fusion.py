@@ -252,14 +252,56 @@ class StateFusion(transformation.Transformation):
                 write_write_candidates = (
                     (fused_cc.first_outputs & fused_cc.second_outputs) -
                     fused_cc.second_inputs)
+                if len(write_write_candidates) > 0:
+                    # If we have potential candidates, check if there is a
+                    # path from the first write to the second write (in that
+                    # case, there is no hazard):
+                    # Find the leaf (topological) instances of the matches
+                    order = [
+                        x for x in reversed(
+                            list(nx.topological_sort(first_state._nx)))
+                        if isinstance(x, nodes.AccessNode)
+                        and x.data in fused_cc.first_outputs
+                    ]
+                    # Those nodes will be the connection points upon fusion
+                    match_nodes = {
+                        next(n for n in order if n.data == match)
+                        for match in (fused_cc.first_outputs
+                                      & fused_cc.second_inputs)
+                    }
+                else:
+                    match_nodes = set()
+
                 for cand in write_write_candidates:
-                    # Check for intersection (if None, fusion is ok)
                     nodes_first = [n for n in first_output if n.data == cand]
                     nodes_second = [n for n in second_output if n.data == cand]
-                    if StateFusion.memlets_intersect(first_state, nodes_first,
-                                                     False, second_state,
-                                                     nodes_second, False):
-                        return False
+
+                    # If there is a path for the candidate that goes through
+                    # the match nodes in both states, there is no conflict
+                    fail = False
+                    path_found = False
+                    for match in match_nodes:
+                        for node in nodes_first:
+                            path_to = nx.has_path(first_state._nx, node, match)
+                            if not path_to:
+                                continue
+                            path_found = True
+                            node2 = next(n for n in second_input
+                                         if n.data == match.data)
+                            if not all(
+                                    nx.has_path(second_state._nx, node2, n)
+                                    for n in nodes_second):
+                                fail = True
+                                break
+                        if fail or path_found:
+                            break
+
+                    # Check for intersection (if None, fusion is ok)
+                    if fail or not path_found:
+                        if StateFusion.memlets_intersect(
+                                first_state, nodes_first, False, second_state,
+                                nodes_second, False):
+                            return False
                 # End of write-write hazard check
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs
