@@ -104,18 +104,22 @@ class StateFusion(transformation.Transformation):
         :returns True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions
+        src_subset = lambda e: (e.data.src_subset if e.data.src_subset is
+                                not None else e.data.dst_subset)
+        dst_subset = lambda e: (e.data.dst_subset if e.data.dst_subset is
+                                not None else e.data.src_subset)
         if inputs_a:
             edges_a = [e for n in group_a for e in graph_a.out_edges(n)]
-            subset_a = lambda e: e.data.src_subset
+            subset_a = src_subset
         else:
             edges_a = [e for n in group_a for e in graph_a.in_edges(n)]
-            subset_a = lambda e: e.data.dst_subset
+            subset_a = dst_subset
         if inputs_b:
             edges_b = [e for n in group_b for e in graph_b.out_edges(n)]
-            subset_b = lambda e: e.data.src_subset
+            subset_b = src_subset
         else:
             edges_b = [e for n in group_b for e in graph_b.in_edges(n)]
-            subset_b = lambda e: e.data.dst_subset
+            subset_b = dst_subset
 
         # Simple all-pairs check
         for ea in edges_a:
