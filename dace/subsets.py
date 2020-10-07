@@ -631,7 +631,15 @@ class Range(Subset):
             if rng[0] == orng[0] or rng[1] == orng[1]:
                 continue
 
-            if not (rng[0] <= orng[1] and orng[0] <= rng[1]):
+            # Since conditions can be indeterminate, we check them separately
+            # for being False, then make a check that may raise a TypeError
+            cond1 = (rng[0] <= orng[1])
+            cond2 = (orng[0] <= rng[1])
+            # NOTE: We have to use the "==" operator because of SymPy returning
+            #       a special boolean type!
+            if cond1 == False or cond2 == False:
+                return False
+            if not (cond1 and cond2):
                 return False
 
         return True
