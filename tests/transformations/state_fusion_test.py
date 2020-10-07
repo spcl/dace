@@ -155,6 +155,56 @@ def test_two_cc_fusion_together():
     assert sdfg.apply_transformations_repeated(StateFusion) == 1
 
 
+# Data race avoidance tests
+def test_write_write_path():
+    """
+    Two states where both write to the same range of an array, but there is
+    a path between the write and the second write.
+    """
+    @dace.program
+    def state_fusion_test(A: dace.int32[20, 20]):
+        A += 1
+        tmp = A + 2
+        A[:] = tmp + 3
+
+    sdfg = state_fusion_test.to_sdfg(strict=False)
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    assert len(sdfg.nodes()) == 1
+
+
+def test_write_write_no_overlap():
+    """
+    Two states where both write to different ranges of an array.
+    """
+    N = dace.symbol('N', positive=True)
+
+    @dace.program
+    def state_fusion_test(A: dace.int32[N, N]):
+        A[0:N - 1, :] = 1
+        A[N - 1, :] = 2
+
+    sdfg = state_fusion_test.to_sdfg(strict=False)
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    assert len(sdfg.nodes()) == 1
+
+
+def test_read_write_no_overlap():
+    """
+    Two states where two separate CCs write and read to/from an array, but
+    in different ranges.
+    """
+    N = dace.symbol('N')
+
+    @dace.program
+    def state_fusion_test(A: dace.int32[N, N], B: dace.int32[N, N]):
+        A[:, 5:N] = 1
+        B[:, 3:6] = A[:, 0:3]
+
+    sdfg = state_fusion_test.to_sdfg(strict=False)
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
+    assert len(sdfg.nodes()) == 1
+
+
 if __name__ == '__main__':
     test_fuse_assignments()
     test_fuse_assignment_in_use()
@@ -162,3 +212,6 @@ if __name__ == '__main__':
     test_one_to_two_cc_fusion()
     test_two_cc_fusion_separate()
     test_two_cc_fusion_together()
+    test_write_write_path()
+    test_write_write_no_overlap()
+    test_read_write_no_overlap()
