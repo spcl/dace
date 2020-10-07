@@ -116,6 +116,10 @@ class Range(Subset):
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
+    @staticmethod
+    def from_indices(indices: 'Indices'):
+        return Range([(i, i, 1) for i in indices.indices])
+
     def to_json(self):
         ret = []
 
@@ -926,11 +930,11 @@ def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
     try:
         if subset_a is None or subset_b is None:
             return False
-        elif isinstance(subset_a, Indices):
-            return subset_b.covers(subset_a)
-        elif isinstance(subset_b, Indices):
-            return subset_a.covers(subset_b)
-        elif type(subset_a) is type(subset_b):
+        if isinstance(subset_a, Indices):
+            subset_a = Range.from_indices(subset_a)
+        if isinstance(subset_b, Indices):
+            subset_b = Range.from_indices(subset_b)
+        if type(subset_a) is type(subset_b):
             return subset_a.intersects(subset_b)
         return None
     except TypeError:  # cannot determine truth value of Relational
