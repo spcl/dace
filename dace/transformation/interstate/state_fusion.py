@@ -66,9 +66,13 @@ class StateFusion(transformation.Transformation):
                     if i in ccs_1:
                         ccs_1[i].first_inputs |= inpnames1
                         ccs_1[i].first_outputs |= outnames1
+                    else:
+                        ccs_1[i] = ccs_2[j]
                     if j in ccs_2:
                         ccs_2[j].second_inputs |= inpnames2
                         ccs_2[j].second_outputs |= outnames2
+                    else:
+                        ccs_2[j] = ccs_1[i]
 
         # Add components that did not match separately
         for i in range(len(first_cc_output)):
