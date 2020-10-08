@@ -1,17 +1,19 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement a map->for loop transformation.
 """
 
 import dace
 from dace import data, registry, symbolic
 from dace.sdfg import SDFG, SDFGState
-from dace.graph import nodes, nxutil
-from dace.transformation import pattern_matching
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
 @registry.autoregister_params(singlestate=True)
-class MapToForLoop(pattern_matching.Transformation):
+class MapToForLoop(transformation.Transformation):
     """ Implements the Map to for-loop transformation.
 
         Takes a map and enforces a sequential schedule by transforming it into
@@ -26,7 +28,7 @@ class MapToForLoop(pattern_matching.Transformation):
 
     @staticmethod
     def expressions():
-        return [nxutil.node_path_graph(MapToForLoop._map_entry)]
+        return [sdutil.node_path_graph(MapToForLoop._map_entry)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
@@ -49,14 +51,13 @@ class MapToForLoop(pattern_matching.Transformation):
         # Retrieve map entry and exit nodes.
         graph = sdfg.nodes()[self.state_id]
         map_entry = graph.nodes()[self.subgraph[MapToForLoop._map_entry]]
-        map_exit = graph.exit_nodes(map_entry)[0]
+        map_exit = graph.exit_node(map_entry)
 
         loop_idx = map_entry.map.params[0]
         loop_from, loop_to, loop_step = map_entry.map.range[0]
 
         # Turn the map scope into a nested SDFG
-        node = nest_state_subgraph(sdfg, graph,
-                                   graph.scope_subgraph(map_entry))
+        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
 
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
@@ -78,15 +79,8 @@ class MapToForLoop(pattern_matching.Transformation):
         def replace_param(param):
             param = symbolic.symstr(param)
             for p, pval in param_to_edge.items():
-                # TODO: This special replacement condition will be removed
-                #       when the code generator is modified to make consistent
-                #       scalar/array decisions.
-                if (isinstance(nsdfg.arrays[pval.data.data], data.Scalar)
-                        or (nsdfg.arrays[pval.data.data].shape[0] == 1
-                            and len(nsdfg.arrays[pval.data.data].shape) == 1)):
-                    param = param.replace(p, pval.data.data)
-                else:
-                    param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
+                # TODO: Correct w.r.t. connector type
+                param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
             return param
 
         # End of dynamic input range

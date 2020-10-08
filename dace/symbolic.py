@@ -1,12 +1,14 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import sympy
 import pickle
+import re
 from typing import Dict, Optional, Union
 import warnings
 import numpy
 
-from sympy.abc import _clash
-from sympy.printing.str import StrPrinter
+import sympy.abc
+import sympy.printing.str
 
 from dace import dtypes
 
@@ -19,17 +21,15 @@ class symbol(sympy.Symbol):
 
     s_currentsymbol = 0
 
-    def __new__(cls,
-                name=None,
-                dtype=DEFAULT_SYMBOL_TYPE,
-                override_dtype=False,
-                **assumptions):
+    def __new__(cls, name=None, dtype=DEFAULT_SYMBOL_TYPE, **assumptions):
         if name is None:
             # Set name dynamically
             name = "sym_" + str(symbol.s_currentsymbol)
             symbol.s_currentsymbol += 1
         elif name.startswith('__DACE'):
             raise NameError('Symbols cannot start with __DACE')
+        elif not dtypes.validate_name(name):
+            raise NameError('Invalid symbol name "%s"' % name)
 
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
@@ -39,10 +39,7 @@ class symbol(sympy.Symbol):
             # to modifying different references of symbols with the same name.
             self = sympy.Symbol.__xnew__(cls, name, **assumptions)
         else:
-            self = sympy.Symbol.__xnew__(cls,
-                                         name,
-                                         integer=True,
-                                         **assumptions)
+            self = sympy.Symbol.__xnew__(cls, name, integer=True, **assumptions)
 
         self.dtype = dtype
         self._constraints = []
@@ -169,6 +166,8 @@ class SymExpr(object):
             return SymExpr(self.expr + other, self.approx + other)
         return self + pystr_to_symbolic(other)
 
+    __radd__ = __add__
+
     def __sub__(self, other):
         if isinstance(other, SymExpr):
             return SymExpr(self.expr - other.expr, self.approx - other.approx)
@@ -176,12 +175,21 @@ class SymExpr(object):
             return SymExpr(self.expr - other, self.approx - other)
         return self - pystr_to_symbolic(other)
 
+    def __rsub__(self, other):
+        if isinstance(other, SymExpr):
+            return SymExpr(other.expr - self.expr, other.approx - self.approx)
+        if isinstance(other, sympy.Expr):
+            return SymExpr(other - self.expr, other - self.approx)
+        return pystr_to_symbolic(other) - self
+
     def __mul__(self, other):
         if isinstance(other, SymExpr):
             return SymExpr(self.expr * other.expr, self.approx * other.approx)
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr * other, self.approx * other)
         return self * pystr_to_symbolic(other)
+
+    __rmul__ = __mul__
 
     def __div__(self, other):
         if isinstance(other, SymExpr):
@@ -194,8 +202,7 @@ class SymExpr(object):
 
     def __floordiv__(self, other):
         if isinstance(other, SymExpr):
-            return SymExpr(self.expr // other.expr,
-                           self.approx // other.approx)
+            return SymExpr(self.expr // other.expr, self.approx // other.approx)
         if isinstance(other, sympy.Expr):
             return SymExpr(self.expr // other, self.approx // other)
         return self // pystr_to_symbolic(other)
@@ -517,8 +524,8 @@ def sympy_intdiv_fix(expr):
             # Floor of floor: "floor(a / floor(c/d))"
             m = floor.match(sympy.floor(a / int_floor(c, d)))
             if m is not None:
-                nexpr = nexpr.subs(floor, int_floor(m[a],
-                                                    int_floor(m[c], m[d])))
+                nexpr = nexpr.subs(floor, int_floor(m[a], int_floor(m[c],
+                                                                    m[d])))
                 processed += 1
                 continue
 
@@ -579,20 +586,49 @@ def simplify_ext(expr):
     return expr
 
 
+class SympyBooleanConverter(ast.NodeTransformer):
+    """ 
+    Replaces boolean operations with the appropriate SymPy functions to avoid
+    non-symbolic evaluation.
+    """
+    def visit_UnaryOp(self, node):
+        if isinstance(node.op, ast.Not):
+            func_node = ast.copy_location(
+                ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node,
+                                args=[self.visit(node.operand)],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        return node
+
+    def visit_BoolOp(self, node):
+        func_node = ast.copy_location(
+            ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
+        new_node = ast.Call(func=func_node,
+                            args=[self.visit(value) for value in node.values],
+                            keywords=[])
+        return ast.copy_location(new_node, node)
+
+
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
-    if isinstance(expr, SymExpr):
+    from dace.frontend.python.astutils import unparse  # Avoid import loops
+
+    if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
+    if isinstance(expr, str) and dtypes.validate_name(expr):
+        return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {'min': sympy.Min, 'max': sympy.Max}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
-    locals.update(_clash)
+    locals.update(sympy.abc._clash)
 
-    # Sympy processes "not" as direct evaluation rather than negation
-    if isinstance(expr, str) and 'not' in expr:
-        expr = expr.replace('not', 'Not')
+    # Sympy processes "not/and/or" as direct evaluation. Replace with
+    # And/Or(x, y), Not(x)
+    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b', expr):
+        expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
@@ -606,7 +642,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
                              symbol_map)
 
 
-class DaceSympyPrinter(StrPrinter):
+class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
     def _print_Float(self, expr):
@@ -689,3 +725,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
             return _sunpickle(value)
         else:
             raise pickle.UnpicklingError("unsupported persistent object")
+
+
+# Type hint for symbolic expressions
+SymbolicType = Union[sympy.Basic, SymExpr]

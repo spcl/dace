@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 import numpy as np
 
@@ -18,7 +19,7 @@ consume_entry, consume_exit = state.add_consume('cons', ('p', str(nprocs)),
                                                 chunksize=2)
 tasklet = state.add_tasklet(
     'fibonacci', {'s'}, {'sout', 'val'}, """
-for i in range(cons_numelems):
+for i in range(__dace_cons_numelems):
     if s[i] == 1:
         val = 1
     elif s[i] > 1:
@@ -54,8 +55,6 @@ consume_exit.add_in_connector('IN_S')
 consume_exit.add_in_connector('IN_V')
 consume_exit.add_out_connector('OUT_S')
 consume_exit.add_out_connector('OUT_V')
-
-sdfg.draw_to_file()
 
 if __name__ == '__main__':
     print('Fibonacci recursion using consume (with chunks, custom condition)')

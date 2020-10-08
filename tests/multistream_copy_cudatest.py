@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -43,8 +44,6 @@ state.add_nedge(b2, c1, dace.Memlet.simple('gB', '1', other_subset_str='1'))
 
 # Validate correctness of initial SDFG
 sdfg.validate()
-
-sdfg.draw_to_file()
 
 ######################################
 if __name__ == '__main__':

@@ -1,11 +1,14 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import aenum
 import os
 import shutil  # which
-from typing import Dict
+from typing import Dict, Tuple
+import warnings
 
 import dace
 from dace import dtypes
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
+from dace.sdfg.utils import dfs_topological_sort
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.registry import extensible_enum, make_registry
 
@@ -101,23 +104,6 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def initialize_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        """ Generates code for initializing an array, outputting to the given
-            code streams.
-            :param sdfg: The SDFG to generate code from.
-            :param dfg: The SDFG state to generate code from.
-            :param state_id: The node ID of the state in the given SDFG.
-            :param node: The data node to generate initialization for.
-            :param function_stream: A `CodeIOStream` object that will be
-                                    generated outside the calling code, for
-                                    use when generating global functions.
-            :param callsite_stream: A `CodeIOStream` object that points
-                                    to the current location (call-site)
-                                    in the code.
-        """
-        raise NotImplementedError('Abstract class')
-
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         """ Generates code for deallocating an array, outputting to the given
@@ -174,54 +160,69 @@ class DefinedType(aenum.AutoNumberEnum):
     """
     Pointer = ()
     Scalar = ()
-    ArrayView = ()
     Stream = ()
     StreamArray = ()
-    StreamView = ()
+    FPGA_ShiftRegister = ()
+    ArrayInterface = ()
 
 
 class DefinedMemlets:
     """ Keeps track of the type of defined memlets to ensure that they are
         referenced correctly in nested scopes and SDFGs. """
     def __init__(self):
-        self._scopes = [(None, {})]
+        self._scopes = [(None, {}, True)]
 
-    def enter_scope(self, parent):
-        self._scopes.append((parent, {}))
+    def enter_scope(self, parent, can_access_parent=True):
+        self._scopes.append((parent, {}, can_access_parent))
 
     def exit_scope(self, parent):
-        expected, _ = self._scopes.pop()
+        expected, _, _ = self._scopes.pop()
         if expected != parent:
             raise ValueError(
                 "Exited scope {} mismatched current scope {}".format(
                     parent.name, expected.name))
 
-    def get(self, name):
-        for _, scope in reversed(self._scopes):
+    def has(self, name):
+        try:
+            self.get(name)
+            return True
+        except KeyError:
+            return False
+
+    def get(self, name: str, ancestor: int = 0) -> Tuple[DefinedType, str]:
+        for _, scope, can_access_parent in reversed(self._scopes):
+            if ancestor > 0:
+                ancestor -= 1
+                continue
             if name in scope:
                 return scope[name]
+            if not can_access_parent:
+                break
         raise KeyError("Variable {} has not been defined".format(name))
 
     def add(self,
-            name,
-            connector_type,
+            name: str,
+            dtype: DefinedType,
+            ctype: str,
             ancestor: int = 0,
             allow_shadowing: bool = False):
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' %
                             type(name).__name__)
 
-        for _, scope in reversed(self._scopes):
+        for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(
-                    name, scope[name], connector_type)
+                    name, scope[name], dtype)
                 if (allow_shadowing or dace.config.Config.get_bool(
                         "compiler", "allow_shadowing")):
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
                 else:
                     raise dace.codegen.codegen.CodegenError(err_str)
-        self._scopes[-1 - ancestor][1][name] = connector_type
+            if not can_access_parent:
+                break
+        self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
 
 #############################################################################
@@ -422,8 +423,9 @@ class TargetDispatcher(object):
         if num_satisfied > 1:
             raise RuntimeError(
                 "Multiple predicates satisfied for {}: {}".format(
-                    state, ", ".join(
-                        [type(x).__name__ for x in satisfied_dispatchers])))
+                    state,
+                    ", ".join([type(x).__name__
+                               for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
             satisfied_dispatchers[0].generate_state(sdfg, state,
                                                     function_stream,
@@ -454,18 +456,17 @@ class TargetDispatcher(object):
             assert len(start_nodes) == 1
             nodes_to_skip.add(start_nodes[0])
 
-        for v in nxutil.dfs_topological_sort(dfg, start_nodes):
+        for v in dfs_topological_sort(dfg, start_nodes):
             if v in nodes_to_skip:
                 continue
 
             if isinstance(v, nodes.MapEntry):
-                scope_subgraph = sdfg.find_state(state_id).scope_subgraph(v)
+                scope_subgraph = sdfg.node(state_id).scope_subgraph(v)
 
                 self.dispatch_scope(v.map.schedule, sdfg, scope_subgraph,
                                     state_id, function_stream, callsite_stream)
 
                 # Skip scope subgraph nodes
-                #print(scope_subgraph.nodes())
                 nodes_to_skip.update(scope_subgraph.nodes())
             else:
                 self.dispatch_node(sdfg, dfg, state_id, v, function_stream,
@@ -490,8 +491,9 @@ class TargetDispatcher(object):
         if num_satisfied > 1:
             raise RuntimeError(
                 "Multiple predicates satisfied for {}: {}".format(
-                    node, ", ".join(
-                        [type(x).__name__ for x in satisfied_dispatchers])))
+                    node,
+                    ", ".join([type(x).__name__
+                               for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
             self._used_targets.add(satisfied_dispatchers[0])
             satisfied_dispatchers[0].generate_node(sdfg, dfg, state_id, node,
@@ -500,13 +502,15 @@ class TargetDispatcher(object):
         else:  # num_satisfied == 0
             # Otherwise use the generic code generator (CPU)
             self._used_targets.add(self._generic_node_dispatcher)
-            self._generic_node_dispatcher.generate_node(
-                sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._generic_node_dispatcher.generate_node(sdfg, dfg, state_id,
+                                                        node, function_stream,
+                                                        callsite_stream)
 
     def dispatch_scope(self, map_schedule, sdfg, sub_dfg, state_id,
                        function_stream, callsite_stream):
         """ Dispatches a code generator function for a scope in an SDFG
             state. """
+
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
@@ -523,19 +527,9 @@ class TargetDispatcher(object):
                    dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
-        self._array_dispatchers[storage].allocate_array(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream)
-
-    def dispatch_initialize(self, sdfg, dfg, state_id, node, function_stream,
-                            callsite_stream):
-        """ Dispatches a code generator for a data initialization. """
-
-        nodedesc = node.desc(sdfg)
-        storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
-        self._array_dispatchers[storage].initialize_array(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._array_dispatchers[storage].allocate_array(sdfg, dfg, state_id,
+                                                        node, function_stream,
+                                                        callsite_stream)
 
     def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
                             callsite_stream):
@@ -636,5 +630,6 @@ def make_absolute(path):
         # as "g++". Try to find it on the PATH
         executable = shutil.which(path)
         if not executable:
-            raise ValueError("Could not find executable \"{}\"".format(path))
+            executable = path
+            warnings.warn("Could not find executable \"{}\"".format(path))
         return executable.replace('\\', '/')

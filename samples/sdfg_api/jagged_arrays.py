@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -61,8 +62,6 @@ sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
 sdfg.apply_strict_transformations()
-
-sdfg.draw_to_file()
 
 ######################################
 if __name__ == '__main__':

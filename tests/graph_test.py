@@ -1,5 +1,6 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
-from dace.graph.graph import *
+from dace.sdfg.graph import *
 
 
 class TestOrderedGraphs(unittest.TestCase):

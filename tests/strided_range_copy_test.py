@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -28,8 +29,6 @@ if __name__ == '__main__':
     D = np.random.rand(128, 128).astype(np.float32)
     E = np.random.rand(8, 8).astype(np.float32)
     F = np.random.rand(128, 128).astype(np.float32)
-
-    sr.draw_to_file()
 
     sr(A=A, B=B, C=C, D=D, E=E, F=F)
 

@@ -1,3 +1,4 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #include <cuda_runtime.h>
@@ -62,8 +63,6 @@ class CublasHandle {
 
   std::unordered_map<int, cublasHandle_t> handles_;
 };
-
-namespace {
 
 class _CublasConstants {
  public:
@@ -136,8 +135,6 @@ class _CublasConstants {
   cuComplex* complex64_pone_;
   cuDoubleComplex* complex128_pone_;
 };
-
-}  // namespace
 
 class CublasConstants {
  public:

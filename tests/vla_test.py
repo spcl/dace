@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tries to allocate a symbolically-sized array on a register and makes
     sure that it is allocated on the heap instead.
 """
@@ -31,7 +32,7 @@ if __name__ == '__main__':
         if not w:
             print('FAIL: No warnings caught')
             exit(2)
-        if not any('Variable-length' in warn.message.args[0] for warn in w):
+        if not any('Variable-length' in str(warn.message) for warn in w):
             print('FAIL: No VLA warnings caught')
             exit(3)
 

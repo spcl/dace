@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 from io import StringIO
 import os
@@ -73,18 +74,21 @@ class TransformationTester(Optimizer):
                 tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
                 match.apply(tsdfg)
 
-                sdfg.save(os.path.join('_dotgraphs', 'program.sdfg'))
+                sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
                 # Validate
                 if self.validate:
                     new_sdfg.validate()
+
+                # Expand library nodes
+                new_sdfg.expand_library_nodes()
 
                 # Generate code
                 if self.generate_code:
                     new_sdfg.generate_code()
 
                 if self.compile:
-                    compiled = new_sdfg.compile(optimizer='')
+                    compiled = new_sdfg.compile()
                     del compiled
 
                 print('PASS', file=self.stdout)

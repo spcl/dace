@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 
 W = dp.symbol('W')
@@ -25,4 +25,4 @@ def myprogram(A, B):
 
 
 if __name__ == '__main__':
-    dp.compile(myprogram, dp.float32[W, H], dp.float32[H, W])
+    myprogram.compile(dp.float32[W, H], dp.float32[H, W])

@@ -1,12 +1,8 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 
 W = dp.symbol('W')
 H = dp.symbol('H')
-
-#@dp.program
-#def mirror(i):
-#    return -i
 
 
 @dp.program
@@ -32,9 +28,7 @@ def bla(A, B, alpha):
 def myprogram(A, B, cst):
     transpose(A, B)
     bla(A, B, cst)
-    #bla(A, B, -mirror(cst) + 1)
-    #bla(A, B, -mirror(-cst) + 1)
 
 
 if __name__ == '__main__':
-    dp.compile(myprogram, dp.float32[W, H], dp.float32[H, W], dp.int32)
+    myprogram.compile(dp.float32[W, H], dp.float32[H, W], dp.int32)

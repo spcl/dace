@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -30,14 +31,16 @@ batchSize = dace.symbol('batchSize')
 
 
 @dace.program
-def attn_fwd(q: dace.float32[batchSize, Qsize, seqLenQ],
-             k: dace.float32[batchSize, Qsize, seqLenK],
-             v: dace.float32[batchSize, Qsize, seqLenK],
-             wq: dace.float32[numHeads, projQsize, Qsize],
-             wk: dace.float32[numHeads, projQsize, Qsize],
-             wv: dace.float32[numHeads, projQsize, Qsize],
-             wo: dace.float32[numHeads, Qsize, projQsize],
-             out: dace.float32[batchSize, Qsize, seqLenQ]):
+def attn_fwd(
+    q: dace.float32[batchSize, Qsize, seqLenQ],
+    k: dace.float32[batchSize, Qsize, seqLenK],
+    v: dace.float32[batchSize, Qsize, seqLenK],
+    wq: dace.float32[numHeads, projQsize, Qsize],
+    wk: dace.float32[numHeads, projQsize, Qsize],
+    wv: dace.float32[numHeads, projQsize, Qsize],
+    wo: dace.float32[numHeads, Qsize, projQsize],
+    out: dace.float32[batchSize, Qsize, seqLenQ],
+):
 
     for b in dace.map[0:batchSize]:
 
@@ -60,7 +63,7 @@ def attn_fwd(q: dace.float32[batchSize, Qsize, seqLenQ],
             h_bar = v_bar @ alpha  # projQsize x seqLenQ
             outs[h] = wo[h] @ h_bar  # Qsize x seqLenQ
 
-        out[b] = dace.reduce(lambda a, b: a + b, outs, axis=0)
+        out[b] = dace.reduce(lambda a, b: a + b, outs, axis=0, identity=0)
 
 
 if __name__ == '__main__':
@@ -69,4 +72,4 @@ if __name__ == '__main__':
     sdfg = attn_fwd.to_sdfg()
     sdfg.save('test.sdfg')
     print("=== Compiling ===")
-    sdfg.compile(optimizer='')
+    sdfg.compile()

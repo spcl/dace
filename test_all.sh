@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -6,7 +7,10 @@ SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH
 
 DACE_debugprint="${DACE_debugprint:-0}"
-DACE_experimental_test_serialization="${DACE_experimental_test_serialization:-1}"
+DACE_testing_serialization="${DACE_testing_serialization:-1}"
+DACE_testing_single_cache="${DACE_testing_single_cache:-1}"
+DACE_optimizer_interface="${DACE_optimizer_interface:-dace.transformation.optimizer.SDFGOptimizer}"
+DACE_optimizer_transform_on_call="${DACE_optimizer_transform_on_call:-1}"
 NOSTATUSBAR="${NOSTATUSBAR:-0}"
 ERRORS=0
 FAILED_TESTS=""
@@ -94,7 +98,7 @@ runtest_cu() {
 
 runtest_octave() {
     test_start $1
-    testcmd $PYTHON_BINARY $SCRIPTPATH/scripts/dacelab $1
+    testcmd $PYTHON_BINARY $SCRIPTPATH/dace/frontend/octave/dacelab.py $1
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
@@ -129,10 +133,9 @@ echo "====== All-Inclusive Test Runner ======"
 
 cd $SCRIPTPATH/tests
 
-SUBTESTS=`find . -type d -not -name '.*' | cut -c3- | grep -v "/[._]" | grep -v '^[._]'`
+SUBTESTS=`find . -type d -not -path '*/\.*' | cut -c3- | grep -v "/[._]" | grep -v '^[._]'`
 
 DACE_compiler_use_cache=0
-DACE_optimizer_interface="dace.transformation.optimizer.SDFGOptimizer"
 DACE_optimizer_detect_control_flow=1
 
 # Specific test(s)

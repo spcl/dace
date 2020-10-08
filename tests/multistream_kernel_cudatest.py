@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -67,8 +68,6 @@ sdfg.fill_scope_connectors()
 
 # Validate correctness of initial SDFG
 sdfg.validate()
-
-sdfg.draw_to_file()
 
 ######################################
 if __name__ == '__main__':

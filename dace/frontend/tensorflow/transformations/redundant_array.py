@@ -1,8 +1,10 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement a redundant array removal transformation.
 """
 
-from dace.graph import nodes, nxutil
-from dace.transformation import pattern_matching as pm
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation as pm
 from dace.config import Config
 
 
@@ -17,7 +19,7 @@ class TensorflowRedundantArray(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(TensorflowRedundantArray._in_array,
+            sdutil.node_path_graph(TensorflowRedundantArray._in_array,
                                    TensorflowRedundantArray._out_array)
         ]
 

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 import numpy as np
 
@@ -44,8 +45,6 @@ consume_exit.add_in_connector('IN_S')
 consume_exit.add_in_connector('IN_V')
 consume_exit.add_out_connector('OUT_S')
 consume_exit.add_out_connector('OUT_V')
-
-sdfg.draw_to_file()
 
 
 def fibonacci(v):

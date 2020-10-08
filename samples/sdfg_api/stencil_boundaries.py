@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Example of a 7x7 stencil with custom boundary conditions executed in 
     parallel. """
 
@@ -70,8 +71,6 @@ sdfg.validate()
 # NOTE: If GPUTransformSDFG is applied, boundary kernels will run on separate
 # streams.
 if __name__ == '__main__':
-    sdfg.draw_to_file()
-
     H, W = 24, 24
 
     A = np.random.rand(H, W).astype(np.float32)

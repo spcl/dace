@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import aenum
 import json
 import numpy as np
@@ -34,6 +35,7 @@ class NumpySerializer:
 _DACE_SERIALIZE_TYPES = {
     # Define these manually, so dtypes can stay independent
     "pointer": dace.dtypes.pointer,
+    "vector": dace.dtypes.vector,
     "callback": dace.dtypes.callback,
     "struct": dace.dtypes.struct,
     "ndarray": NumpySerializer,
@@ -133,7 +135,7 @@ def loads(*args, context=None, **kwargs):
 
 
 def dumps(*args, **kwargs):
-    return json.dumps(*args, default=to_json, **kwargs)
+    return json.dumps(*args, default=to_json, indent=2, **kwargs)
 
 
 def all_properties_to_json(object_with_properties):

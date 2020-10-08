@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.dtypes import InstrumentationType
 from dace.registry import make_registry
 from typing import Dict, Type
@@ -22,6 +23,15 @@ class InstrumentationProvider(object):
             if params.get('type'):
                 result[params['type']] = provider
 
+        return result
+
+    def _idstr(self, sdfg, state, node):
+        """ Returns a unique identifier string from a node or state. """
+        result = str(sdfg.sdfg_id)
+        if state is not None:
+            result += '_' + str(sdfg.node_id(state))
+            if node is not None:
+                result += '_' + str(state.node_id(node))
         return result
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream):
@@ -87,9 +97,8 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge,
-                      local_stream, global_stream, copy_shape, src_strides,
-                      dst_strides):
+    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream,
+                      global_stream, copy_shape, src_strides, dst_strides):
         """ Event called at the beginning of generating a copy operation.
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.

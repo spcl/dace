@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -29,15 +29,13 @@ def make_init_state(sdfg):
     tmp0 = add_tmp(state)
     state.add_memlet_path(a0,
                           tmp0,
-                          memlet=dace.memlet.Memlet.simple(
-                              tmp0, "0, 0:H, 0:W"))
+                          memlet=dace.memlet.Memlet.simple(tmp0, "0, 0:H, 0:W"))
 
     a1 = state.add_array("A", (H, W), dtype)
     tmp1 = add_tmp(state)
     state.add_memlet_path(a1,
                           tmp1,
-                          memlet=dace.memlet.Memlet.simple(
-                              tmp1, "1, 0:H, 0:W"))
+                          memlet=dace.memlet.Memlet.simple(tmp1, "1, 0:H, 0:W"))
 
     return state
 
@@ -77,50 +75,50 @@ def make_compute_sdfg():
     post_shift = sdfg.add_state("post_shift")
 
     sdfg.add_edge(time_begin, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"t": 0}))
     sdfg.add_edge(y_begin, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"y": 0}))
     sdfg.add_edge(x_begin, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"x": 0}))
 
     sdfg.add_edge(
         time_entry, y_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t < T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, x_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y < H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, pre_shift,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x < W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(y_end, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": "t + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"t": "t + 1"}))
     sdfg.add_edge(x_end, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": "y + 1"}))
-    sdfg.add_edge(pre_shift, loop_body, dace.graph.edges.InterstateEdge())
-    sdfg.add_edge(loop_body, post_shift, dace.graph.edges.InterstateEdge())
+                  dace.sdfg.InterstateEdge(assignments={"y": "y + 1"}))
+    sdfg.add_edge(pre_shift, loop_body, dace.sdfg.InterstateEdge())
+    sdfg.add_edge(loop_body, post_shift, dace.sdfg.InterstateEdge())
     sdfg.add_edge(post_shift, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": "x + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"x": "x + 1"}))
 
     sdfg.add_edge(
         time_entry, time_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t >= T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, y_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x >= W", language=dace.dtypes.Language.Python)))
 
@@ -133,43 +131,44 @@ def make_compute_sdfg():
                                   dtype,
                                   transient=True,
                                   storage=dace.dtypes.StorageType.FPGA_Local,
-                                  toplevel=True)
-    rows_out = post_shift.add_array("row_buffers", (2, W),
-                                    dtype,
-                                    transient=True,
-                                    storage=dace.dtypes.StorageType.FPGA_Local,
-                                    toplevel=True)
+                                  lifetime=dace.dtypes.AllocationLifetime.SDFG)
+    rows_out = post_shift.add_array(
+        "row_buffers", (2, W),
+        dtype,
+        transient=True,
+        storage=dace.dtypes.StorageType.FPGA_Local,
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
 
     window_buffer_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Registers,
-        toplevel=True)
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_buffer_out = pre_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Registers,
-        toplevel=True)
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_compute_in = loop_body.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Registers,
-        toplevel=True)
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_shift_in = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Registers,
-        toplevel=True)
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
     window_shift_out = post_shift.add_array(
         "sliding_window", (3, 3),
         dtype,
         transient=True,
         storage=dace.dtypes.StorageType.FPGA_Registers,
-        toplevel=True)
+        lifetime=dace.dtypes.AllocationLifetime.SDFG)
 
     code = """\
 if y >= 3 and x >= 3 and y < H - 1 and x < W - 1:
@@ -185,54 +184,42 @@ if y >= 3 and x >= 3 and y < H - 1 and x < W - 1:
                                   window_compute_in, "0:3, 0:3"))
 
     # Output result (conditional write)
-    out_memlet = dace.memlet.Memlet(
-        stream_out, dace.symbolic.pystr_to_symbolic("-1"),
-        dace.properties.SubsetProperty.from_string("0"), 1)
+    out_memlet = dace.memlet.Memlet.simple(stream_out, "0", num_accesses=-1)
     loop_body.add_memlet_path(tasklet,
                               stream_out,
                               src_conn="result",
                               memlet=out_memlet)
 
     # Read row buffer
-    read_row_memlet = dace.memlet.Memlet(
-        rows_in,
-        dace.symbolic.pystr_to_symbolic("2"),
-        dace.properties.SubsetProperty.from_string("0:2, x"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0:2, 2"))
+    read_row_memlet = dace.memlet.Memlet.simple(rows_in,
+                                                '0:2, x',
+                                                other_subset_str="0:2, 2")
     pre_shift.add_memlet_path(rows_in,
                               window_buffer_out,
                               memlet=read_row_memlet)
 
     # Read from memory
-    read_memory_memlet = dace.memlet.Memlet(
-        stream_in,
-        dace.symbolic.pystr_to_symbolic("1"),
-        dace.properties.SubsetProperty.from_string("0"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("2, 2"))
+    read_memory_memlet = dace.memlet.Memlet.simple(stream_in,
+                                                   '0',
+                                                   other_subset_str="2, 2")
     pre_shift.add_memlet_path(stream_in,
                               window_buffer_out,
                               memlet=read_memory_memlet)
 
     # Shift window
-    shift_window_memlet = dace.memlet.Memlet(
-        window_shift_in,
-        dace.symbolic.pystr_to_symbolic("6"),
-        dace.properties.SubsetProperty.from_string("0:3, 1:3"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0:3, 0:2"))
+    shift_window_memlet = dace.memlet.Memlet.simple(window_shift_in,
+                                                    "0:3, 1:3",
+                                                    num_accesses=6,
+                                                    other_subset_str="0:3, 0:2")
     post_shift.add_memlet_path(window_shift_in,
                                window_shift_out,
                                memlet=shift_window_memlet)
 
     # To row buffer
-    write_row_memlet = dace.memlet.Memlet(
-        window_buffer_in,
-        dace.symbolic.pystr_to_symbolic("2"),
-        dace.properties.SubsetProperty.from_string("1:3, 2"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0:2, x"))
+    write_row_memlet = dace.memlet.Memlet.simple(window_buffer_in,
+                                                 '1:3, 2',
+                                                 num_accesses="2",
+                                                 other_subset_str="0:2, x")
     post_shift.add_memlet_path(window_buffer_in,
                                rows_out,
                                memlet=write_row_memlet)
@@ -259,48 +246,48 @@ def make_read_sdfg():
     loop_body = sdfg.add_state("read_memory")
 
     sdfg.add_edge(time_begin, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"t": 0}))
     sdfg.add_edge(y_begin, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"y": 0}))
     sdfg.add_edge(x_begin, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"x": 0}))
 
     sdfg.add_edge(
         time_entry, y_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t < T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, x_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y < H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x < W", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(y_end, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": "t + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"t": "t + 1"}))
     sdfg.add_edge(x_end, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": "y + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"y": "y + 1"}))
     sdfg.add_edge(loop_body, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": "x + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"x": "x + 1"}))
 
     sdfg.add_edge(
         time_entry, time_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t >= T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, y_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y >= H", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x >= W", language=dace.dtypes.Language.Python)))
 
@@ -314,12 +301,9 @@ def make_read_sdfg():
         storage=dace.dtypes.StorageType.FPGA_Global)
 
     # Read from memory
-    read_memory_memlet = dace.memlet.Memlet(
-        mem_read,
-        dace.symbolic.pystr_to_symbolic("1"),
-        dace.properties.SubsetProperty.from_string("t%2, y, x"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string("0"))
+    read_memory_memlet = dace.memlet.Memlet.simple(mem_read,
+                                                   "t%2, y, x",
+                                                   other_subset_str="0")
     loop_body.add_memlet_path(mem_read,
                               stream_to_kernel,
                               memlet=read_memory_memlet)
@@ -346,48 +330,48 @@ def make_write_sdfg():
     loop_body = sdfg.add_state("write_memory")
 
     sdfg.add_edge(time_begin, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": 0}))
+                  dace.sdfg.InterstateEdge(assignments={"t": 0}))
     sdfg.add_edge(y_begin, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": 2}))
+                  dace.sdfg.InterstateEdge(assignments={"y": 2}))
     sdfg.add_edge(x_begin, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": 2}))
+                  dace.sdfg.InterstateEdge(assignments={"x": 2}))
 
     sdfg.add_edge(
         time_entry, y_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t < T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, x_begin,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y < H - 2", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, loop_body,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x < W - 2", language=dace.dtypes.Language.Python)))
 
     sdfg.add_edge(y_end, time_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"t": "t + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"t": "t + 1"}))
     sdfg.add_edge(x_end, y_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"y": "y + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"y": "y + 1"}))
     sdfg.add_edge(loop_body, x_entry,
-                  dace.graph.edges.InterstateEdge(assignments={"x": "x + 1"}))
+                  dace.sdfg.InterstateEdge(assignments={"x": "x + 1"}))
 
     sdfg.add_edge(
         time_entry, time_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "t >= T", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         y_entry, y_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "y >= H - 2", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         x_entry, x_end,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "x >= W - 2", language=dace.dtypes.Language.Python)))
 
@@ -396,19 +380,13 @@ def make_write_sdfg():
         dtype,
         1,
         storage=dace.dtypes.StorageType.FPGA_Global)
-    mem_write = loop_body.add_array(
-        "mem_write", (2, H, W),
-        dtype,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    mem_write = loop_body.add_array("mem_write", (2, H, W),
+                                    dtype,
+                                    storage=dace.dtypes.StorageType.FPGA_Global)
 
     # Read from memory
-    write_memory_memlet = dace.memlet.Memlet(
-        stream_from_kernel,
-        dace.symbolic.pystr_to_symbolic("1"),
-        dace.properties.SubsetProperty.from_string("0"),
-        1,
-        other_subset=dace.properties.SubsetProperty.from_string(
-            "1 - t%2, y, x"))
+    write_memory_memlet = dace.memlet.Memlet.simple(
+        stream_from_kernel, "0", other_subset_str="1 - t%2, y, x")
     loop_body.add_memlet_path(stream_from_kernel,
                               mem_write,
                               memlet=write_memory_memlet)
@@ -450,8 +428,8 @@ def make_outer_compute_state(sdfg):
     read_sdfg_node = state.add_nested_sdfg(read_sdfg, sdfg, {"mem_read"},
                                            {"stream_to_kernel"})
     compute_sdfg = make_compute_sdfg()
-    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg,
-                                              {"stream_in"}, {"stream_out"})
+    compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg, {"stream_in"},
+                                              {"stream_out"})
     write_sdfg = make_write_sdfg()
     write_sdfg_node = state.add_nested_sdfg(write_sdfg, sdfg,
                                             {"stream_from_kernel"},
@@ -464,40 +442,39 @@ def make_outer_compute_state(sdfg):
                           dst_conn="mem_read",
                           memlet=dace.memlet.Memlet.simple(
                               tmp_in, "0:2, 0:H, 0:W"))
-    state.add_memlet_path(read_sdfg_node,
-                          stream_read_out,
-                          src_conn="stream_to_kernel",
-                          memlet=dace.memlet.Memlet(
-                              stream_read_out,
-                              dace.symbolic.pystr_to_symbolic("T*H*W"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+    state.add_memlet_path(
+        read_sdfg_node,
+        stream_read_out,
+        src_conn="stream_to_kernel",
+        memlet=dace.memlet.Memlet.simple(
+            stream_read_out,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*H*W")))
 
-    state.add_memlet_path(stream_read_in,
-                          compute_sdfg_node,
-                          dst_conn="stream_in",
-                          memlet=dace.memlet.Memlet(
-                              stream_read_in,
-                              dace.symbolic.pystr_to_symbolic("T*H*W"),
-                              dace.properties.SubsetProperty.from_string("0"),
-                              1))
+    state.add_memlet_path(
+        stream_read_in,
+        compute_sdfg_node,
+        dst_conn="stream_in",
+        memlet=dace.memlet.Memlet.simple(
+            stream_read_in,
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*H*W")))
     state.add_memlet_path(
         compute_sdfg_node,
         stream_write_out,
         src_conn="stream_out",
-        memlet=dace.memlet.Memlet(
+        memlet=dace.memlet.Memlet.simple(
             stream_write_out,
-            dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)"),
-            dace.properties.SubsetProperty.from_string("0"), 1))
+            '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)")))
 
     state.add_memlet_path(
         stream_write_in,
         write_sdfg_node,
         dst_conn="stream_from_kernel",
-        memlet=dace.memlet.Memlet(
-            stream_write_in,
-            dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)"),
-            dace.properties.SubsetProperty.from_string("0"), 1))
+        memlet=dace.memlet.Memlet.simple(
+            stream_write_in, '0',
+            num_accesses=dace.symbolic.pystr_to_symbolic("T*(H - 2)*(W - 2)")))
     state.add_memlet_path(write_sdfg_node,
                           tmp_out,
                           src_conn="mem_write",
@@ -514,6 +491,7 @@ def make_sdfg(specialize):
     else:
         sdfg = dace.SDFG("jacobi_fpga_stream_{}x{}x{}".format(
             H.get(), W.get(), T.get()))
+    sdfg.add_symbol('T', dace.int32)
     init_state = make_init_state(sdfg)
 
     fpga_state = make_outer_compute_state(sdfg)
@@ -521,15 +499,15 @@ def make_sdfg(specialize):
     finalize_even = make_finalize_state(sdfg, True)
     finalize_odd = make_finalize_state(sdfg, False)
 
-    sdfg.add_edge(init_state, fpga_state, dace.graph.edges.InterstateEdge())
+    sdfg.add_edge(init_state, fpga_state, dace.sdfg.InterstateEdge())
     sdfg.add_edge(
         fpga_state, finalize_even,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "T % 2 == 0", language=dace.dtypes.Language.Python)))
     sdfg.add_edge(
         fpga_state, finalize_odd,
-        dace.graph.edges.InterstateEdge(
+        dace.sdfg.InterstateEdge(
             condition=dace.properties.CodeProperty.from_string(
                 "T % 2 == 1", language=dace.dtypes.Language.Python)))
 
@@ -578,7 +556,6 @@ if __name__ == "__main__":
     #############################################
     # Run DaCe program
 
-    jacobi.draw_to_file()
     if args["specialize"]:
         jacobi(A=A)
     else:
@@ -608,8 +585,7 @@ if __name__ == "__main__":
                                                    H.get() * W.get()))
         print("Highest difference: {}".format(highest_diff))
         print("** Result:\n", A[:min(6, H.get()), :min(6, W.get())])
-        print("** Reference:\n",
-              regression[:min(4, H.get()), :min(4, W.get())])
+        print("** Reference:\n", regression[:min(4, H.get()), :min(4, W.get())])
         print("Type \"debug\" to enter debugger, "
               "or any other string to quit (timeout in 10 seconds)")
         read, _, _ = select.select([sys.stdin], [], [], 10)

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -109,4 +110,4 @@ if __name__ == '__main__':
     sdfg = attn_fwd.to_sdfg()
     sdfg.save('test.sdfg')
     print("=== Compiling ===")
-    sdfg.compile(optimizer='')
+    sdfg.compile()

@@ -1,18 +1,20 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the map fusion transformation.
 """
 
 from copy import deepcopy as dcpy
 from dace import dtypes, registry, symbolic, subsets
-from dace.graph import nodes, nxutil
+from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
-from dace.transformation import pattern_matching
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 from typing import List, Union
 import networkx as nx
 
 
 @registry.autoregister_params(singlestate=True)
-class MapFusion(pattern_matching.Transformation):
+class MapFusion(transformation.Transformation):
     """ Implements the MapFusion transformation.
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
         based on the following rules, fuse them and remove the transient in
@@ -38,7 +40,7 @@ class MapFusion(pattern_matching.Transformation):
              the first map entry.
     """
     _first_map_exit = nodes.ExitNode()
-    _some_array = nodes.AccessNode("_")
+    _array = nodes.AccessNode("_")
     _second_map_entry = nodes.EntryNode()
 
     @staticmethod
@@ -48,9 +50,9 @@ class MapFusion(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(
                 MapFusion._first_map_exit,
-                MapFusion._some_array,
+                MapFusion._array,
                 MapFusion._second_map_entry,
             )
         ]
@@ -91,8 +93,7 @@ class MapFusion(pattern_matching.Transformation):
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         first_map_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
-        second_map_entry = graph.nodes()[candidate[
-            MapFusion._second_map_entry]]
+        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
 
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
@@ -142,14 +143,14 @@ class MapFusion(pattern_matching.Transformation):
 
         # Check that input set of second map is provided by the output set
         # of the first map, or other unrelated maps
-        for _, _, _, _, second_memlet in graph.out_edges(second_map_entry):
+        for second_edge in graph.out_edges(second_map_entry):
             # Memlets that do not come from one of the intermediate arrays
-            if second_memlet.data not in intermediate_data:
+            if second_edge.data.data not in intermediate_data:
                 # however, if intermediate_data eventually leads to
                 # second_memlet.data, need to fail.
                 for _n in intermediate_nodes:
-                    source_node = _n  # graph.find_node(_n.data)
-                    destination_node = graph.find_node(second_memlet.data)
+                    source_node = _n
+                    destination_node = graph.memlet_path(second_edge)[0].src
                     # NOTE: Assumes graph has networkx version
                     if destination_node in nx.descendants(
                             graph._nx, source_node):
@@ -159,14 +160,14 @@ class MapFusion(pattern_matching.Transformation):
             provided = False
 
             # Compute second subset with respect to first subset's symbols
-            sbs_permuted = dcpy(second_memlet.subset)
+            sbs_permuted = dcpy(second_edge.data.subset)
             sbs_permuted.replace({
                 symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
                 for k, v in params_dict.items()
             })
 
             for first_memlet in out_memlets:
-                if first_memlet.data != second_memlet.data:
+                if first_memlet.data != second_edge.data.data:
                     continue
 
                 # If there is a covered subset, it is provided
@@ -214,9 +215,8 @@ class MapFusion(pattern_matching.Transformation):
         graph = sdfg.nodes()[self.state_id]
         first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
         first_entry = graph.entry_node(first_exit)
-        second_entry = graph.nodes()[self.subgraph[
-            MapFusion._second_map_entry]]
-        second_exit = graph.exit_nodes(second_entry)[0]
+        second_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
+        second_exit = graph.exit_node(second_entry)
 
         intermediate_nodes = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):

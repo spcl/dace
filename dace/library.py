@@ -1,9 +1,10 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import inspect
 import sys
 import types
 import dace.properties
-from dace.graph.nodes import LibraryNode
-from dace.transformation.pattern_matching import (Transformation,
+from dace.sdfg.nodes import LibraryNode
+from dace.transformation.transformation import (Transformation,
                                                   ExpandTransformation)
 
 
@@ -73,9 +74,10 @@ def register_transformation(transformation_cls, library):
        automatically for transformations defined in a DaCe library module,
        but this function can be used to add additional transformations from an
        external context."""
-    if not isinstance(transformation_cls, Transformation):
+
+    if not issubclass(transformation_cls, Transformation):
         raise TypeError("Expected Transformation, got: {}".format(
-            type(transformation_cls).__name__))
+            transformation_cls.__name__))
     if not isinstance(library, types.ModuleType):
         raise TypeError("Expected Python module, got: {}".format(
             type(library).__name__))
@@ -120,7 +122,7 @@ def node(n):
     n = dace.properties.make_properties(n)
     if not issubclass(n, LibraryNode):
         raise TypeError("Library node class \"" + n.__name__ +
-                        "\" must derive from dace.graph.nodes.LibraryNode")
+                        "\" must derive from dace.sdfg.nodes.LibraryNode")
     if not hasattr(n, "implementations"):
         raise ValueError("Library node class \"" + n.__name__ +
                          "\" must define implementations.")

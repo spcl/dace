@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
 import dace
 import numpy as np
@@ -35,7 +36,7 @@ class LocalStorageTests(unittest.TestCase):
                                    options=[{
                                        'tile_sizes': [5]
                                    }, {}])
-        dace.propagate_labels_sdfg(sdfg)
+        dace.propagate_memlets_sdfg(sdfg)
         sdfg(N=16, __return=output)
         self.assertTrue(
             np.array_equal(output[:16], np.arange(16, dtype=np.int32)))

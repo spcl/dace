@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import numpy as np
 
@@ -25,20 +25,20 @@ if __name__ == '__main__':
     B = state.add_array('B', [N], dp.float32)
     C = state.add_array('C', [N], dp.float32)
 
-    # Easy way to add a tasklet
     tasklet, map_entry, map_exit = state.add_mapped_tasklet(
         'mytasklet', dict(i='0:N:2'),
-        dict(a=Memlet.simple(A, 'i', veclen=2),
-             b=Memlet.simple(B, 'i', veclen=2)), 'c = min(a, b)',
-        dict(c=Memlet.simple(C, 'i', veclen=2)))
+        dict(a=Memlet.simple(A, 'i'), b=Memlet.simple(B, 'i')), 'c = min(a, b)',
+        dict(c=Memlet.simple(C, 'i')))
+
+    # Manually vectorize tasklet
+    tasklet.in_connectors['a'] = dp.vector(dp.float32, 2)
+    tasklet.in_connectors['b'] = dp.vector(dp.float32, 2)
+    tasklet.out_connectors['c'] = dp.vector(dp.float32, 2)
 
     # Add outer edges
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
     state.add_edge(B, None, map_entry, None, Memlet.simple(B, '0:N'))
     state.add_edge(map_exit, None, C, None, Memlet.simple(C, '0:N'))
-
-    # Left for debugging purposes
-    mysdfg.draw_to_file()
 
     mysdfg(A=input, B=input2, C=output, N=N)
 

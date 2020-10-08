@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions related to optimization of the stateful
     dataflow graph representation. """
 
@@ -5,15 +6,17 @@ import copy
 import os
 import re
 import time
+from typing import Iterator
 
 import dace
 from dace.config import Config
-from dace.graph import labeling
-from dace.graph.graph import SubgraphView
+from dace.sdfg import propagation
+from dace.sdfg.graph import SubgraphView
 from dace.transformation import pattern_matching
+from dace.transformation.transformation import Transformation
 
 # This import is necessary since it registers all the patterns
-from dace.transformation import dataflow, interstate
+from dace.transformation import dataflow, interstate, subgraph
 
 
 class Optimizer(object):
@@ -34,11 +37,10 @@ class Optimizer(object):
             self.sdfg = copy.deepcopy(sdfg)
 
         # Initialize patterns to search for
-        self.patterns = set(
-            k for k, v in pattern_matching.Transformation.extensions().items()
-            if v.get('singlestate', False))
-        self.stateflow_patterns = set(pattern_matching.Transformation.
-                                      extensions().keys()) - self.patterns
+        self.patterns = set(k for k, v in Transformation.extensions().items()
+                            if v.get('singlestate', False))
+        self.stateflow_patterns = set(
+            Transformation.extensions().keys()) - self.patterns
         self.applied_patterns = set()
 
     def optimize(self):
@@ -49,7 +51,7 @@ class Optimizer(object):
                             strict=False,
                             states=None,
                             patterns=None,
-                            sdfg=None):
+                            sdfg=None) -> Iterator[Transformation]:
         """ Returns all possible transformations for the current SDFG.
             :param strict: Only consider strict transformations (i.e., ones
                            that surely increase performance or enhance
@@ -207,17 +209,14 @@ class SDFGOptimizer(Optimizer):
                 return dace.SDFG.from_file(sdfg_file)
 
         # Visualize SDFGs during optimization process
-        VISUALIZE = Config.get_bool('optimizer', 'visualize')
         VISUALIZE_SDFV = Config.get_bool('optimizer', 'visualize_sdfv')
-        SAVE_DOTS = Config.get_bool('optimizer', 'savedots')
+        SAVE_INTERMEDIATE = Config.get_bool('optimizer', 'save_intermediate')
 
-        if SAVE_DOTS:
-            self.sdfg.draw_to_file('before.dot')
-            self.sdfg.save(os.path.join('_dotgraphs', 'before.sdfg'))
-            if VISUALIZE:
-                os.system('xdot _dotgraphs/before.dot&')
+        if SAVE_INTERMEDIATE:
+            self.sdfg.save(os.path.join('_dacegraphs', 'before.sdfg'))
             if VISUALIZE_SDFV:
-                os.system('sdfv _dotgraphs/before.sdfg&')
+                from diode import sdfv
+                sdfv.view(os.path.join('_dacegraphs', 'before.sdfg'))
 
         # Optimize until there is not pattern matching or user stops the process.
         pattern_counter = 0
@@ -274,33 +273,25 @@ class SDFGOptimizer(Optimizer):
             pattern_match.apply(sdfg)
             self.applied_patterns.add(type(pattern_match))
 
-            if SAVE_DOTS:
+            if SAVE_INTERMEDIATE:
                 filename = 'after_%d_%s_b4lprop' % (
                     pattern_counter + 1, type(pattern_match).__name__)
-                self.sdfg.save(os.path.join('_dotgraphs', filename + '.sdfg'))
-                self.sdfg.draw_to_file(filename + '.dot')
+                self.sdfg.save(os.path.join('_dacegraphs', filename + '.sdfg'))
 
             if not pattern_match.annotates_memlets():
-                labeling.propagate_labels_sdfg(self.sdfg)
+                propagation.propagate_memlets_sdfg(self.sdfg)
 
             if True:
                 pattern_counter += 1
-                if SAVE_DOTS:
+                if SAVE_INTERMEDIATE:
                     filename = 'after_%d_%s' % (pattern_counter,
                                                 type(pattern_match).__name__)
                     self.sdfg.save(
-                        os.path.join('_dotgraphs', filename + '.sdfg'))
-                    self.sdfg.draw_to_file(filename + '.dot')
-
-                    if VISUALIZE:
-                        time.sleep(0.7)
-                        os.system(
-                            'xdot _dotgraphs/after_%d_%s.dot&' %
-                            (pattern_counter, type(pattern_match).__name__))
+                        os.path.join('_dacegraphs', filename + '.sdfg'))
 
                     if VISUALIZE_SDFV:
-                        os.system(
-                            'sdfv _dotgraphs/after_%d_%s.sdfg&' %
-                            (pattern_counter, type(pattern_match).__name__))
+                        from diode import sdfv
+                        sdfv.view(
+                            os.path.join('_dacegraphs', filename + '.sdfg'))
 
         return self.sdfg

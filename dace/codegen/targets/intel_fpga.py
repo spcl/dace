@@ -1,4 +1,8 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import astunparse
+import functools
+import copy
 import itertools
 import os
 import re
@@ -13,6 +17,8 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute, DefinedType
 from dace.codegen.targets import cpp, fpga
+from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.tools.type_inference import infer_expr_type
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -44,6 +50,10 @@ REDUCTION_TYPE_TO_PYEXPR = {
 }
 
 
+class NameTooLongError(ValueError):
+    pass
+
+
 @registry.autoregister_params(name='intel_fpga')
 class IntelFPGACodeGen(fpga.FPGACodeGen):
     target_name = 'intel_fpga'
@@ -60,23 +70,27 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     @staticmethod
     def cmake_options():
 
-        compiler = make_absolute(
-            Config.get("compiler", "intel_fpga", "executable"))
         host_flags = Config.get("compiler", "intel_fpga", "host_flags")
         kernel_flags = Config.get("compiler", "intel_fpga", "kernel_flags")
         mode = Config.get("compiler", "intel_fpga", "mode")
         target_board = Config.get("compiler", "intel_fpga", "board")
         enable_debugging = ("ON" if Config.get_bool(
             "compiler", "intel_fpga", "enable_debugging") else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
+                     else "OFF")
         options = [
-            "-DINTELFPGAOCL_ROOT_DIR={}".format(
-                os.path.dirname(os.path.dirname(compiler))),
             "-DDACE_INTELFPGA_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_INTELFPGA_KERNEL_FLAGS=\"{}\"".format(kernel_flags),
             "-DDACE_INTELFPGA_MODE={}".format(mode),
             "-DDACE_INTELFPGA_TARGET_BOARD=\"{}\"".format(target_board),
             "-DDACE_INTELFPGA_ENABLE_DEBUGGING={}".format(enable_debugging),
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
         ]
+        # Override Intel FPGA OpenCL installation directory
+        if Config.get("compiler", "intel_fpga", "path"):
+            options.append("-DINTELFPGAOCL_ROOT_DIR=\"{}\"".format(
+                Config.get("compiler", "intel_fpga", "path").replace("\\",
+                                                                     "/")))
         return options
 
     def get_generated_codeobjects(self):
@@ -105,9 +119,16 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
         host_code.write("""
+dace::fpga::Context *dace::fpga::_context;
+
 DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-    hlslib::ocl::GlobalContext().MakeProgram({kernel_file_name});
+    dace::fpga::_context = new dace::fpga::Context();
+    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
     return 0;
+}}
+
+DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
+    delete dace::fpga::_context;
 }}
 
 {host_code}""".format(signature=self._global_sdfg.signature(),
@@ -115,8 +136,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
                           "{separator}\n// Kernel: {kernel_name}"
-                          "\n{separator}\n\n{code}\n\n".format(
-                              separator="/" * 79, kernel_name=name, code=code)
+                          "\n{separator}\n\n{code}\n\n".format(separator="/" *
+                                                               79,
+                                                               kernel_name=name,
+                                                               code=code)
                           for (name, code) in self._host_codes
                       ])))
 
@@ -139,9 +162,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         return [host_code_obj] + kernel_code_objs
 
-    def define_stream(self, dtype, vector_length, buffer_size, var_name,
-                      array_size, function_stream, kernel_stream):
-        vec_type = self.make_vector_type(dtype, vector_length, False)
+    def define_stream(self, dtype, buffer_size, var_name, array_size,
+                      function_stream, kernel_stream):
+        vec_type = self.make_vector_type(dtype, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
         else:
@@ -150,41 +173,47 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:
             size_str = ""
-        kernel_stream.write("channel {} {}{}{};".format(
-            vec_type, var_name, size_str, depth_attribute))
+        kernel_stream.write("channel {} {}{}{};".format(vec_type, var_name,
+                                                        size_str,
+                                                        depth_attribute))
 
-    def define_local_array(self, dtype, vector_length, var_name, array_size,
-                           storage, shape, function_stream, kernel_stream,
-                           sdfg, state_id, node):
-        vec_type = self.make_vector_type(dtype, vector_length, False)
-        if storage == dace.dtypes.StorageType.FPGA_Registers:
+        # Return value is used for adding to defined_vars in fpga.py
+        return 'channel {}'.format(vec_type)
+
+    def define_local_array(self, var_name, desc, array_size, function_stream,
+                           kernel_stream, sdfg, state_id, node):
+        vec_type = self.make_vector_type(desc.dtype, False)
+        if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
             attributes = " __attribute__((register))"
         else:
             attributes = ""
         kernel_stream.write("{}{} {}[{}];\n".format(vec_type, attributes,
                                                     var_name,
                                                     cpp.sym2cpp(array_size)))
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer,
+                                          vec_type)
+
+    def define_shift_register(self, *args, **kwargs):
+        # Shift registers are just arrays on Intel
+        self.define_local_array(*args, **kwargs)
 
     @staticmethod
-    def make_vector_type(dtype, vector_length, is_const):
-        return "{}{}{}".format(
-            "const " if is_const else "", dtype.ctype,
-            vector_length if str(vector_length) != "1" else "")
+    def make_vector_type(dtype, is_const):
+        return "{}{}".format("const " if is_const else "", dtype.ocltype)
 
-    def make_kernel_argument(self, data, var_name, vector_length, is_output,
+    def make_kernel_argument(self, data, var_name, is_output,
                              with_vectorization):
         if isinstance(data, dace.data.Array):
             if with_vectorization:
-                vec_type = self.make_vector_type(data.dtype, vector_length,
-                                                 False)
+                vec_type = data.dtype.ocltype
             else:
-                vec_type = data.dtype.ctype
+                vec_type = fpga.vector_element_type_of(data.dtype).ocltype
             return "__global volatile  {}* restrict {}".format(
                 vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
         else:
-            return data.signature(with_types=True, name=var_name)
+            return data.as_arg(with_types=True, name=var_name)
 
     @staticmethod
     def generate_unroll_loop_pre(kernel_stream, factor, sdfg, state_id, node):
@@ -215,57 +244,74 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         pass
 
-    @staticmethod
-    def make_read(defined_type, type_str, var_name, vector_length, expr,
-                  index):
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "read_channel_intel({})".format(expr)
+    def make_read(self, defined_type, dtype, var_name, expr, index, is_pack,
+                  packing_factor):
+        if defined_type == DefinedType.Stream:
+            read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
             # remove "[0]" index as this is not allowed if the subscripted value is not an array
             expr = expr.replace("[0]", "")
-            return "read_channel_intel({})".format(expr)
+            read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
-            return "*({}{})".format(expr, " + " + index if index else "")
+            read_expr = "*({}{})".format(expr, " + " + index if index else "")
         elif defined_type == DefinedType.Scalar:
-            return var_name
-        raise NotImplementedError(
-            "Unimplemented read type: {}".format(defined_type))
+            read_expr = var_name
+        else:
+            raise NotImplementedError(
+                "Unimplemented read type: {}".format(defined_type))
+        if is_pack:
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.converters_to_generate.add((True, ocltype, packing_factor))
+            return "pack_{}{}(&({}))".format(ocltype, packing_factor, read_expr)
+        else:
+            return read_expr
 
-    @staticmethod
-    def make_write(defined_type, type_str, var_name, vector_length, write_expr,
-                   index, read_expr, wcr):
+    def make_write(self, defined_type, dtype, var_name, write_expr, index,
+                   read_expr, wcr, is_unpack, packing_factor):
         """
         Creates write expression, taking into account wcr if present
         """
         if wcr is not None:
             redtype = operations.detect_reduction_type(wcr)
 
-        if defined_type in [DefinedType.Stream, DefinedType.StreamView]:
-            return "write_channel_intel({}, {});".format(write_expr, read_expr)
-        elif defined_type == DefinedType.StreamArray:
-            if index != "0":
-                return "write_channel_intel({}[{}], {});".format(
-                    write_expr, index, read_expr)
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
+            if defined_type == DefinedType.StreamArray:
+                if index == "0":
+                    # remove "[0]" index as this is not allowed if the
+                    # subscripted values is not an array
+                    write_expr = write_expr.replace("[0]", "")
+                else:
+                    write_expr = "{}[{}]".format(write_expr, index)
+            if is_unpack:
+                return "\n".join("write_channel_intel({}, {}[{}]);".format(
+                    write_expr, read_expr, i) for i in range(packing_factor))
             else:
-                # remove "[0]" index as this is not allowed if the subscripted values is not an array
-                write_expr = write_expr.replace("[0]", "")
                 return "write_channel_intel({}, {});".format(
                     write_expr, read_expr)
         elif defined_type == DefinedType.Pointer:
             if wcr is not None:
-                if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
+                if (redtype != dace.dtypes.ReductionType.Min
+                        and redtype != dace.dtypes.ReductionType.Max):
                     return "{}[{}] = {}[{}] {} {};".format(
                         write_expr, index, write_expr, index,
                         REDUCTION_TYPE_TO_HLSLIB[redtype], read_expr)
                 else:
                     # use max/min opencl builtins
                     return "{}[{}] = {}{}({}[{}],{});".format(
-                        write_expr, index, ("f" if type_str == "float"
-                                            or type_str == "double" else ""),
+                        write_expr, index,
+                        ("f" if dtype.ocltype == "float"
+                         or dtype.ocltype == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr, index,
                         read_expr)
             else:
-                return "{}[{}] = {};".format(write_expr, index, read_expr)
+                if is_unpack:
+                    ocltype = fpga.vector_element_type_of(dtype).ocltype
+                    self.converters_to_generate.add(
+                        (False, ocltype, packing_factor))
+                    return "unpack_{}{}({}, &{}[{}]);".format(
+                        ocltype, packing_factor, read_expr, write_expr, index)
+                else:
+                    return "{}[{}] = {};".format(write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -275,78 +321,41 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                 else:
                     # use max/min opencl builtins
                     return "{} = {}{}({},{});".format(
-                        write_expr, ("f" if type_str == "float"
-                                     or type_str == "double" else ""),
+                        write_expr, ("f" if dtype.ocltype == "float"
+                                     or dtype.ocltype == "double" else ""),
                         REDUCTION_TYPE_TO_HLSLIB[redtype], write_expr,
                         read_expr)
             else:
-                return "{} = {};".format(var_name, read_expr)
+                if is_unpack:
+                    ocltype = fpga.vector_element_type_of(dtype).ocltype
+                    self.converters_to_generate.add(
+                        (False, ocltype, packing_factor))
+                    return "unpack_{}{}({}, {});".format(
+                        vector_element_type_of(dtype).ocltype, packing_factor,
+                        read_expr, var_name)
+                else:
+                    return "{} = {};".format(var_name, read_expr)
         raise NotImplementedError(
             "Unimplemented write type: {}".format(defined_type))
 
-    @staticmethod
-    def make_reduction(sdfg, state_id, node, output_memlet, dtype,
-                       vector_length_in, vector_length_out, output_type,
-                       reduction_type, callsite_stream, iterators_inner,
-                       input_subset, identity, out_var, in_var):
-        """
-        Generates reduction loop body
-        """
-        axes = node.axes
-
-        # If axes were not defined, use all input dimensions
-        if axes is None:
-            axes = tuple(range(input_subset.dims()))
-
-        # Check if this is the first iteration of accumulating into this
-        # location
-
-        is_first_iteration = " && ".join([
-            "{} == {}".format(iterators_inner[i], input_subset[axis][0])
-            for i, axis in enumerate(axes)
-        ])
-
-        if identity is not None:
-            # If this is the first iteration, set the previous value to be
-            # identity, otherwise read the value from the output location
-            prev_var = "{}_prev".format(output_memlet.data)
-            callsite_stream.write(
-                "{} {} = ({}) ? ({}) : ({});".format(output_type, prev_var,
-                                                     is_first_iteration,
-                                                     identity, out_var), sdfg,
-                state_id, node)
-            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = {} {} {};".format(
-                        out_var, prev_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
-            else:
-                # use max/min opencl builtins
-                callsite_stream.write(
-                    "{} = {}{}({}, {});".format(
-                        out_var, ("f" if output_type == "float"
-                                  or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], prev_var,
-                        in_var), sdfg, state_id, node)
-
-        else:
-            # If this is the first iteration, assign the value read from the
-            # input directly to the output
-            if reduction_type != dace.dtypes.ReductionType.Min and reduction_type != dace.dtypes.ReductionType.Max:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {} {} {};".format(
-                        out_var, is_first_iteration, in_var, out_var,
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], in_var),
-                    sdfg, state_id, node)
-            else:
-                callsite_stream.write(
-                    "{} = ({}) ? ({}) : {}{}({}, {});".format(
-                        out_var, is_first_iteration, in_var,
-                        ("f" if output_type == "float"
-                         or output_type == "double" else ""),
-                        REDUCTION_TYPE_TO_HLSLIB[reduction_type], out_var,
-                        in_var), sdfg, state_id, node)
+    def make_shift_register_write(self, defined_type, dtype, var_name,
+                                  write_expr, index, read_expr, wcr, is_unpack,
+                                  packing_factor):
+        if defined_type != DefinedType.Pointer:
+            raise TypeError("Intel shift register must be an array: "
+                            "{} is {}".format(var_name, defined_type))
+        # Shift array
+        arr_size = functools.reduce(lambda a, b: a * b,
+                                    self._global_sdfg.data(var_name).shape, 1)
+        res = """
+#pragma unroll
+for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
+  {name}[u_{name}] = {name}[u_{name} + {veclen}];
+}}\n""".format(name=var_name, size=arr_size, veclen=dtype.veclen)
+        # Then do write
+        res += self.make_write(defined_type, dtype, var_name, write_expr, index,
+                               read_expr, wcr, is_unpack, packing_factor)
+        return res
 
     @staticmethod
     def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
@@ -365,9 +374,13 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         state_id = sdfg.node_id(state)
 
-        kernel_stream.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
-        self.generate_constants(sdfg, kernel_stream)
-        kernel_stream.write("\n", sdfg)
+        kernel_header_stream = CodeIOStream()
+        kernel_body_stream = CodeIOStream()
+
+        kernel_header_stream.write("#include <dace/intel_fpga/device.h>\n\n",
+                                   sdfg)
+        self.generate_constants(sdfg, kernel_header_stream)
+        kernel_header_stream.write("\n", sdfg)
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
@@ -384,12 +397,10 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream, kernel_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 callsite_stream,
-                                                 kernel_stream)
+                                               callsite_stream,
+                                               kernel_body_stream)
 
-        kernel_stream.write("\n")
+        kernel_body_stream.write("\n")
 
         # Generate host code
         self.generate_host_function_boilerplate(
@@ -397,18 +408,22 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             symbol_parameters, nested_global_transients, host_code_body_stream,
             function_stream, callsite_stream)
 
-        self.generate_host_function_prologue(sdfg, state,
-                                             host_code_body_stream)
+        self.generate_host_function_prologue(sdfg, state, host_code_body_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
-                              symbol_parameters, kernel_stream,
+                              symbol_parameters, kernel_body_stream,
                               host_code_header_stream, host_code_body_stream)
 
-        kernel_stream.write("\n")
+        kernel_body_stream.write("\n")
 
-        self.generate_host_function_epilogue(sdfg, state,
-                                             host_code_body_stream)
+        # Generate data width converters
+        self.generate_converters(sdfg, kernel_header_stream)
+
+        kernel_stream.write(kernel_header_stream.getvalue() +
+                            kernel_body_stream.getvalue())
+
+        self.generate_host_function_epilogue(sdfg, state, host_code_body_stream)
 
         # Store code to be passed to compilation phase
         self._host_codes.append(
@@ -422,16 +437,36 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
     @staticmethod
     def generate_host_function_epilogue(sdfg, state, host_stream):
+        state_id = sdfg.node_id(state)
         host_stream.write(
-            """\
-  const auto start = std::chrono::high_resolution_clock::now();
+            "const auto start = std::chrono::high_resolution_clock::now();",
+            sdfg, state_id)
+        launch_async = Config.get_bool("compiler", "intel_fpga", "launch_async")
+        if launch_async:
+            # hlslib uses std::async to launch each kernel launch as an
+            # asynchronous task in a separate C++ thread. This seems to cause
+            # problems with some versions of the Intel FPGA runtime, despite it
+            # supposedly being thread-safe, so we allow disabling this.
+            host_stream.write(
+                """\
   std::vector<std::future<std::pair<double, double>>> futures;
   for (auto &k : kernels) {
     futures.emplace_back(k.ExecuteTaskAsync());
   }
   for (auto &f : futures) {
     f.wait();
+  }""", sdfg, state_id)
+        else:
+            # Launch one-by-one and wait for the cl::Events
+            host_stream.write(
+                """\
+  std::vector<cl::Event> events;
+  for (auto &k : kernels) {
+    events.emplace_back(k.ExecuteTaskFork());
   }
+  cl::Event::waitForEvents(events);""", sdfg, state_id)
+        host_stream.write(
+            """\
   const auto end = std::chrono::high_resolution_clock::now();
   const double elapsedChrono = 1e-9 * std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
   std::cout << "Kernel executed in " << elapsedChrono << " seconds.\\n" << std::flush;
@@ -444,46 +479,45 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
-        # Treat scalars and symbols the same, assuming there are no scalar
-        # outputs
-        symbol_sigs = [
-            v.signature(with_types=True, name=k)
-            for k, v in symbol_parameters.items()
-        ]
-        symbol_names = symbol_parameters.keys()
-
         kernel_args_opencl = []
         kernel_args_host = []
         kernel_args_call = []
         added = set()
-        for is_output, pname, p in parameters:
-            # Don't make duplicate arguments for other types than arrays
+        # Split into arrays and scalars
+        arrays = sorted(
+            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            key=lambda t: t[1])
+        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
+        scalars += [(False, k, v) for k, v in symbol_parameters.items()]
+        scalars = list(sorted(scalars, key=lambda t: t[1]))
+        for is_output, pname, p in itertools.chain(arrays, scalars):
             if pname in added:
                 continue
             added.add(pname)
-            if isinstance(p, dace.data.Array):
-                arg = self.make_kernel_argument(p, pname,
-                                                self._memory_widths[pname],
-                                                is_output, True)
-            else:
-                arg = self.make_kernel_argument(p, pname, 1, is_output, True)
+            arg = self.make_kernel_argument(p, pname, is_output, True)
             if arg is not None:
                 kernel_args_opencl.append(arg)
-                kernel_args_host.append(p.signature(True, name=pname))
+                kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
 
-        kernel_args_opencl += symbol_sigs
-        kernel_args_host += symbol_sigs
-        kernel_args_call += symbol_names
-
         module_function_name = "module_" + name
+
+        # The official limit suggested by Intel is 61. However, the compiler
+        # can also append text to the module. Longest seen so far is
+        # "_cra_slave_inst", which is 15 characters, so we restrict to
+        # 61 - 15 = 46, and round down to 42 to be conservative.
+        if len(module_function_name) > 42:
+            raise NameTooLongError(
+                "Due to a bug in the Intel FPGA OpenCL compiler, "
+                "kernel names cannot be longer than 42 characters:\n\t{}".
+                format(module_function_name))
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_dict = subgraph.scope_dict(node_to_children=True)
         top_scopes = [
             n for n in scope_dict[None]
-            if isinstance(n, dace.graph.nodes.EntryNode)
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
         if len(top_scopes) == 1:
@@ -540,9 +574,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
 
         if unrolled_loops == 0:
             module_body_stream.write(
-                "__kernel void {}({}) {{".format(
-                    module_function_name, ", ".join(kernel_args_opencl)), sdfg,
-                state_id)
+                "__kernel void {}({}) {{".format(module_function_name,
+                                                 ", ".join(kernel_args_opencl)),
+                sdfg, state_id)
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
@@ -556,7 +590,7 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
                             set([p[1] for p in parameters]))
         allocated = set()
         for node in subgraph.nodes():
-            if not isinstance(node, dace.graph.nodes.AccessNode):
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
                 continue
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
@@ -564,9 +598,6 @@ DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream,
                                                module_body_stream)
-            self._dispatcher.dispatch_initialize(sdfg, state, state_id, node,
-                                                 module_stream,
-                                                 module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
@@ -612,119 +643,24 @@ __kernel void \\
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
-
-        callsite_stream.write('{\n', sdfg, state_id, node)
-
-        state_dfg = sdfg.nodes()[state_id]
-
-        self._dispatcher.defined_vars.enter_scope(node)
-
-        arrays = set()
-        for edge in dfg.in_edges(node):
-            u = edge.src
-            memlet = edge.data
-
-            if edge.dst_conn:  # Not (None or "")
-
-                if edge.dst_conn in arrays:  # Disallow duplicates
-                    raise SyntaxError('Duplicates found in memlets')
-
-                # Special case: code->code
-                if isinstance(edge.src, dace.graph.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    src_node = find_input_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.dst_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.dst_conn)
-
-        callsite_stream.write('\n', sdfg, state_id, node)
-
-        # Use outgoing edges to preallocate output local vars
-        for edge in dfg.out_edges(node):
-            v = edge.dst
-            memlet = edge.data
-
-            if edge.src_conn:
-
-                if edge.src_conn in arrays:  # Disallow duplicates
-                    continue
-
-                # Special case: code->code
-                if isinstance(edge.dst, dace.graph.nodes.CodeNode):
-                    raise NotImplementedError(
-                        "Tasklet to tasklet memlets not implemented")
-
-                else:
-                    dst_node = find_output_arraynode(state_dfg, edge)
-                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                                   state_dfg, state_id,
-                                                   function_stream,
-                                                   callsite_stream)
-
-                # Also define variables in the C++ unparser scope
-                self._cpu_codegen._locals.define(edge.src_conn, -1,
-                                                 self._cpu_codegen._ldepth + 1)
-                arrays.add(edge.src_conn)
-
-        callsite_stream.write("\n////////////////////\n", sdfg, state_id, node)
-
-        self.unparse_tasklet(sdfg, state_id, dfg, node, function_stream,
-                             callsite_stream, self._cpu_codegen._locals,
-                             self._cpu_codegen._ldepth,
-                             self._cpu_codegen._toplevel_schedule)
-
-        callsite_stream.write("////////////////////\n\n", sdfg, state_id, node)
-
-        # Process outgoing memlets
-        self.generate_memlet_outputs(sdfg, state_dfg, state_id, node,
-                                     callsite_stream, function_stream)
-        self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
-
-        for edge in state_dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
-            if (isinstance(datadesc, dace.data.Array) and
-                (datadesc.storage == dace.dtypes.StorageType.FPGA_Local
-                 or datadesc.storage == dace.dtypes.StorageType.FPGA_Registers)
-                    and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn,
-                                                 callsite_stream, sdfg,
-                                                 state_id, node)
-
-        callsite_stream.write('}\n', sdfg, state_id, node)
-        self._dispatcher.defined_vars.exit_scope(node)
-
     def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
                              callsite_stream):
 
         self._dispatcher.defined_vars.enter_scope(sdfg)
 
-        # If SDFG parent is not set, set it
         state_dfg = sdfg.nodes()[state_id]
-        node.sdfg.parent = state_dfg
-        node.sdfg._parent_sdfg = sdfg
 
         # Take care of nested SDFG I/O
         for edge in state_dfg.in_edges(node):
             src_node = find_input_arraynode(state_dfg, edge)
             self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                           state_dfg, state_id,
-                                           function_stream, callsite_stream)
+                                           state_dfg, state_id, function_stream,
+                                           callsite_stream)
         for edge in state_dfg.out_edges(node):
             dst_node = find_output_arraynode(state_dfg, edge)
             self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                           state_dfg, state_id,
-                                           function_stream, callsite_stream)
+                                           state_dfg, state_id, function_stream,
+                                           callsite_stream)
 
         callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
                               node)
@@ -744,26 +680,27 @@ __kernel void \\
                               node)
 
         # Process outgoing memlets with the internal SDFG
-        self.generate_memlet_outputs(sdfg, state_dfg, state_id, node,
-                                     callsite_stream, function_stream)
-
-        self.generate_undefines(sdfg, state_dfg, node, callsite_stream)
+        self.process_out_memlets(sdfg, state_id, node, state_dfg,
+                                 self._dispatcher, callsite_stream, True,
+                                 function_stream)
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
 
-        if isinstance(edge.dst, dace.graph.nodes.CodeNode):
+        if isinstance(edge.dst, dace.sdfg.nodes.CodeNode):
             # Input memlet
             connector = edge.dst_conn
             is_output = False
             tasklet = edge.dst
-        elif isinstance(edge.src, dace.graph.nodes.CodeNode):
+            conntype = tasklet.in_connectors[connector]
+        elif isinstance(edge.src, dace.sdfg.nodes.CodeNode):
             # Output memlet
             connector = edge.src_conn
             is_output = True
             tasklet = edge.src
+            conntype = tasklet.out_connectors[connector]
         else:
             raise NotImplementedError("Not implemented for {} to {}".format(
                 type(edge.src), type(edge.dst)))
@@ -771,71 +708,97 @@ __kernel void \\
         memlet = edge.data
         data_name = memlet.data
         data_desc = sdfg.arrays[data_name]
-        memlet_type = self.make_vector_type(data_desc.dtype,
-                                            self._memory_widths[data_name],
-                                            False)
-        offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
-                                     memlet.veclen)
+        data_dtype = data_desc.dtype
+
+        is_scalar = not isinstance(conntype, dtypes.pointer)
+        dtype = conntype if is_scalar else conntype._typeclass
+
+        memlet_type = self.make_vector_type(dtype, False)
+        offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None)
+
+        if dtype != data_dtype:
+            if (isinstance(dtype, dace.vector)
+                    and dtype.base_type == data_dtype):
+                cast = True
+            else:
+                raise TypeError("Type mismatch: {} vs. {}".format(
+                    dtype, data_dtype))
+        else:
+            cast = False
 
         result = ""
 
-        def_type = self._dispatcher.defined_vars.get(data_name)
+        def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
-            if memlet.num_accesses == 1:
+            if cast:
+                rhs = f"(*({memlet_type} const *)&{data_name})"
+            else:
+                rhs = data_name
+            if not memlet.dynamic:
                 if not is_output:
                     # We can pre-read the value
-                    result += "{} {} = {};".format(memlet_type, connector,
-                                                   data_name)
+                    result += "{} {} = {};".format(memlet_type, connector, rhs)
                 else:
                     # The value will be written during the tasklet, and will be
                     # automatically written out after
                     init = ""
 
                     result += "{} {}{};".format(memlet_type, connector, init)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 # Variable number of reads or writes
-                result += "{} *{} = &{};".format(memlet_type, connector,
-                                                 data_name)
+                result += "{} *{} = &{};".format(memlet_type, connector, rhs)
                 self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Pointer)
+                                                  DefinedType.Pointer,
+                                                  '%s *' % memlet_type)
         elif def_type == DefinedType.Pointer:
-            if memlet.num_accesses == 1:
+            if cast:
+                rhs = f"(({memlet_type} const *){data_name})"
+            else:
+                rhs = data_name
+            if is_scalar and not memlet.dynamic:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     result += "{} {} = {}[{}];".format(memlet_type, connector,
-                                                       data_name, offset)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Scalar)
+                                                       rhs, offset)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
                     qualifiers = "__global volatile "
                 else:
                     qualifiers = ""
-                result += "{}{} *{} = &{}[{}];".format(qualifiers, memlet_type,
-                                                       connector, data_name,
-                                                       offset)
+                ctype = '{}{} *'.format(qualifiers, memlet_type)
+                result += "{}{} = &{}[{}];".format(ctype, connector, rhs,
+                                                   offset)
                 self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Pointer)
+                                                  DefinedType.Pointer, ctype)
         elif def_type == DefinedType.Stream:
-            if memlet.num_accesses == 1:
+            if cast:
+                raise TypeError("Cannot cast stream from {} to {}.".format(
+                    data_dtype, dtype))
+            if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     result += "{} {} = read_channel_intel({});".format(
                         memlet_type, connector, data_name)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
                     connector, data_name)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Stream)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
+                                                  ctypedef)
         elif def_type == DefinedType.StreamArray:
-            if memlet.num_accesses == 1:
+            if cast:
+                raise TypeError(
+                    "Cannot cast stream array from {} to {}.".format(
+                        data_dtype, dtype))
+            if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
@@ -845,8 +808,8 @@ __kernel void \\
                     else:
                         result += "{} {} = read_channel_intel({});".format(
                             memlet_type, connector, data_name)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.Scalar)
+                self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
+                                                  memlet_type)
             else:
                 # Must happen directly in the code
                 # Here we create a macro which take the proper channel
@@ -862,74 +825,24 @@ __kernel void \\
                     result += "#define {} {} ".format(connector, data_name)
 
                 self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.StreamArray)
+                                                  DefinedType.StreamArray,
+                                                  ctypedef)
         else:
             raise TypeError("Unknown variable type: {}".format(def_type))
 
         callsite_stream.write(result, sdfg, state_id, tasklet)
 
-    def generate_memlet_outputs(self, sdfg, dfg, state_id, node,
-                                callsite_stream, function_stream):
+    def generate_channel_writes(self, sdfg, dfg, node, callsite_stream):
         for edge in dfg.out_edges(node):
             connector = edge.src_conn
             memlet = edge.data
             data_name = memlet.data
-            data_desc = sdfg.arrays[data_name]
-            memlet_type = self.make_vector_type(data_desc.dtype,
-                                                self._memory_widths[data_name],
-                                                False)
-            offset = cpp.cpp_offset_expr(data_desc, memlet.subset, None,
-                                         memlet.veclen)
-
-            result = ""
-
-            src_def_type = self._dispatcher.defined_vars.get(connector)
-            dst_def_type = self._dispatcher.defined_vars.get(data_name)
-
-            read_expr = self.make_read(src_def_type, memlet_type, connector,
-                                       self._memory_widths[data_name],
-                                       connector, None)
-
-            # create write expression
-            write_expr = self.make_write(dst_def_type, memlet_type, data_name,
-                                         self._memory_widths[data_name],
-                                         data_name, offset, read_expr,
-                                         memlet.wcr)
-
-            if isinstance(data_desc, dace.data.Scalar):
-                if memlet.num_accesses == 1:
-                    # The value will be written during the tasklet, and will be
-                    # automatically written out after
-                    result += write_expr
-                elif memlet.num_accesses == -1:
-                    # Variable number of reads or writes
-                    pass
-                else:
-                    raise dace.codegen.codegen.CodegenError(
-                        "Unsupported number of accesses {} for scalar {}".
-                        format(memlet.num_accesses, connector))
-            elif isinstance(data_desc, dace.data.Array):
-                if memlet.num_accesses == 1:
-                    result += write_expr
-                else:
-                    pass
-            elif isinstance(data_desc, dace.data.Stream):
-                if not data_desc.is_stream_array():
-                    if memlet.num_accesses == 1:
-                        result += write_expr
-                    else:
-                        # Must happen directly in the code
-                        pass
-                else:  # is array of streams
-                    if memlet.num_accesses == 1:
-                        result += write_expr
-                    else:
-                        # Must happen directly in the code
-                        pass
-            else:
-                raise TypeError("Unknown variable type: {}".format(data_desc))
-
-            callsite_stream.write(result, sdfg, state_id, node)
+            if data_name is not None:
+                data_desc = sdfg.arrays[data_name]
+                if (isinstance(data_desc, dace.data.Stream)
+                        and memlet.volume == 1 and not memlet.dynamic):
+                    callsite_stream.write(
+                        f"write_channel_intel({data_name}, {connector});", sdfg)
 
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
@@ -945,8 +858,35 @@ __kernel void \\
                 data_desc = sdfg.arrays[data_name]
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.num_accesses != 1):
-                    callsite_stream.write("#undef {}".format(memlet_name),
-                                          sdfg, sdfg.node_id(dfg), node)
+                    callsite_stream.write("#undef {}".format(memlet_name), sdfg)
+
+    def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
+                            function_stream):
+        if is_unpack:
+            function_stream.write(
+                """\
+void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
+    #pragma unroll
+    for (int u = 0; u < {veclen}; ++u) {{
+        ptr[u] = value[u];
+    }}
+}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
+        else:
+            function_stream.write(
+                """\
+{dtype}{veclen} pack_{dtype}{veclen}({dtype} const *const ptr) {{
+    {dtype}{veclen} vec;
+    #pragma unroll
+    for (int u = 0; u < {veclen}; ++u) {{
+        vec[u] = ptr[u];
+    }}
+    return vec;
+}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
+
+    def generate_converters(self, sdfg, function_stream):
+        for unpack, ctype, veclen in self.converters_to_generate:
+            self._generate_converter(unpack, ctype, veclen, sdfg,
+                                     function_stream)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream,
                         callsite_stream, locals, ldepth, toplevel_schedule):
@@ -958,29 +898,19 @@ __kernel void \\
         # Not [], "" or None
         if not node.code:
             return ''
-        # Not [], "" or None
-        if node.code_global:
-            if node.language is not dtypes.Language.CPP:
-                raise ValueError(
-                    "Global code only supported for C++ tasklets: got {}".
-                    format(node.language))
-            function_stream.write(
-                type(node).__properties__["code_global"].to_string(
-                    node.code_global), sdfg, state_id, node)
-            function_stream.write("\n", sdfg, state_id, node)
 
         # If raw C++ code, return the code directly
         if node.language != dtypes.Language.Python:
             if node.language != dtypes.Language.CPP:
                 raise ValueError(
-                    "Only Python or C++ code supported in CPU codegen, got: {}"
-                    .format(node.language))
+                    "Only Python or C++ code supported in CPU codegen, got: {}".
+                    format(node.language))
             callsite_stream.write(
                 type(node).__properties__["code"].to_string(node.code), sdfg,
                 state_id, node)
             return
 
-        body = node.code
+        body = node.code.code
 
         callsite_stream.write('// Tasklet code (%s)\n' % node.label, sdfg,
                               state_id, node)
@@ -990,40 +920,43 @@ __kernel void \\
         for edge in state_dfg.all_edges(node):
             u, uconn, v, vconn, memlet = edge
             if u == node:
+                if uconn in u.out_connectors:
+                    conntype = u.out_connectors[uconn]
+                else:
+                    conntype = None
+
                 # this could be a wcr
-                memlets[uconn] = (memlet, edge.data.wcr_conflict,
-                                  edge.data.wcr)
+                memlets[uconn] = (memlet, not edge.data.wcr_nonatomic,
+                                  edge.data.wcr, conntype)
             elif v == node:
-                memlets[vconn] = (memlet, False, None)
+                if vconn in v.in_connectors:
+                    conntype = v.in_connectors[vconn]
+                else:
+                    conntype = None
+                memlets[vconn] = (memlet, False, None, conntype)
 
         # Build dictionary with all the previously defined symbols
         # This is used for forward type inference
-        defined_symbols = state_dfg.scope_tree()[state_dfg.scope_dict()
-                                                 [node]].defined_vars
+        defined_symbols = state_dfg.symbols_defined_at(node)
 
-        # Dtypes is a dictionary containing associations name -> type (ctypes)
-        # Add defined variables
-        defined_symbols = {str(x): x.dtype for x in defined_symbols}
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
 
-        for connector, (memlet, _, _) in memlets.items():
+        for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
-                defined_symbols.update(
-                    {connector: sdfg.arrays[memlet.data].dtype})
+                defined_symbols.update({connector: conntype})
 
-        used_streams = []
         for stmt in body:  # for each statement in tasklet body
+            stmt = copy.deepcopy(stmt)
+            ocl_visitor = OpenCLDaceKeywordRemover(
+                sdfg, self._dispatcher.defined_vars, memlets, self)
             if isinstance(stmt, ast.Expr):
-                ocl_visitor = OpenCLDaceKeywordRemover(sdfg, memlets,
-                                                       sdfg.constants)
                 rk = ocl_visitor.visit_TopLevelExpr(stmt)
             else:
-                ocl_visitor = OpenCLDaceKeywordRemover(
-                    sdfg, self._dispatcher.defined_vars, memlets,
-                    sdfg.constants)
                 rk = ocl_visitor.visit(stmt)
-            used_streams.extend(ocl_visitor.used_streams)
+            # Generate width converters
+            self.converters_to_generate |= ocl_visitor.width_converters
+
             if rk is not None:
                 result = StringIO()
                 cppunparse.CPPUnparser(rk,
@@ -1034,13 +967,6 @@ __kernel void \\
                                        type_inference=True)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
-        # In Intel OpenCL is not possible to have multiple access points to the same channel
-        for s in used_streams:
-            if used_streams.count(s) > 1:
-                raise dace.codegen.codegen.CodegenError(
-                    "Multiple access points for stream are forbidden in IntelFPGA (stream \"{}\" "
-                    "in tasklet \"{}\")".format(s, node.name))
-
     def generate_constants(self, sdfg, callsite_stream):
         # Use framecode's generate_constants, but substitute constexpr for
         # __constant
@@ -1049,6 +975,34 @@ __kernel void \\
         constant_string = constant_stream.getvalue()
         constant_string = constant_string.replace("constexpr", "__constant")
         callsite_stream.write(constant_string, sdfg)
+
+    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
+                                   function_stream, callsite_stream,
+                                   after_memlets_stream):
+        super().generate_tasklet_postamble(sdfg, dfg, state_id, node,
+                                           function_stream, callsite_stream,
+                                           after_memlets_stream)
+        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream)
+        self.generate_undefines(sdfg, dfg, node, after_memlets_stream)
+
+    def write_and_resolve_expr(self,
+                               sdfg,
+                               memlet,
+                               nc,
+                               outname,
+                               inname,
+                               indices=None,
+                               dtype=None):
+        offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset,
+                                     None)
+        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
+        return self.make_write(defined_type, dtype, memlet.data, memlet.data,
+                               offset, inname, memlet.wcr, False, 1)
+
+    def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
+                             var_type):
+        vtype = self.make_vector_type(conntype, False)
+        return f"{vtype}({expr})"
 
 
 class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
@@ -1065,54 +1019,67 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         'ptrdiff_t', 'intptr_t', 'uintptr_t', 'void', 'double'
     ]
 
-    def __init__(self, sdfg, defined_vars, memlets, *args, **kwargs):
+    def __init__(self, sdfg, defined_vars, memlets, codegen):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
         self.used_streams = [
         ]  # keep track of the different streams used in a tasklet
-        super().__init__(sdfg, memlets, constants=sdfg.constants)
-
-    def visit_Subscript(self, node):
-        target = rname(node)
-        if target not in self.memlets and target not in self.constants:
-            return self.generic_visit(node)
-
-        slice = self.visit(node.slice)
-        if not isinstance(slice, ast.Index):
-            raise NotImplementedError('Range subscripting not implemented')
-
-        if isinstance(slice.value, ast.Tuple):
-            subscript = cpp.unparse(slice)[1:-1]
-        else:
-            subscript = cpp.unparse(slice)
-
-        if target in self.constants:
-            shape = self.constants[target].shape
-        else:
-            shape = self.sdfg.arrays[self.memlets[target][0].data].shape
-        slice_str = cpp.DaCeKeywordRemover.ndslice_cpp(subscript.split(', '),
-                                                       shape)
-
-        newnode = ast.parse('%s[%s]' % (target, slice_str)).body[0].value
-
-        return ast.copy_location(newnode, node)
+        self.width_converters = set()  # Pack and unpack vectors
+        self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
+        super().__init__(sdfg, memlets, sdfg.constants, codegen)
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[target]
+        memlet, nc, wcr, dtype = self.memlets[target]
+        is_scalar = not isinstance(dtype, dtypes.pointer)
 
-        value = self.visit(node.value)
+        value = cppunparse.cppunparse(self.visit(node.value),
+                                      expr_semicolon=False)
 
-        defined_type = self.defined_vars.get(memlet.data)
-        updated = node
+        veclen_lhs = self.sdfg.data(memlet.data).veclen
+        dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+        if dtype_rhs is None:
+            # If we don't understand the vector length of the RHS, assume no
+            # conversion is needed
+            veclen_rhs = veclen_lhs
+        else:
+            veclen_rhs = dtype_rhs.veclen
+
+        if ((veclen_lhs > veclen_rhs and veclen_rhs != 1)
+                or (veclen_lhs < veclen_rhs and veclen_lhs != 1)):
+            raise ValueError("Conflicting memory widths: {} and {}".format(
+                veclen_lhs, veclen_rhs))
+
+        if veclen_rhs > veclen_lhs:
+            veclen = veclen_rhs
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.width_converters.add((True, ocltype, veclen))
+            unpack_str = "unpack_{}{}".format(ocltype, veclen)
+
+        if veclen_lhs > veclen_rhs:
+            veclen = veclen_lhs
+            ocltype = fpga.vector_element_type_of(dtype).ocltype
+            self.width_converters.add((False, ocltype, veclen))
+            pack_str = "pack_{}{}".format(ocltype, veclen)
+            # TODO: Horrible hack to not dereference pointers if we have to
+            # unpack it
+            if value[0] == "*":
+                value = value[1:]
+            value = "{}({})".format(pack_str, value)
+
+        defined_type, _ = self.defined_vars.get(target)
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
             if isinstance(node.targets[0], ast.Subscript):
+                if veclen_rhs > veclen_lhs:
+                    code_str = unpack_str + "({src}, &{dst}[{idx}]);"
+                else:
+                    code_str = "{dst}[{idx}] = {src};"
                 slice = self.visit(node.targets[0].slice)
                 if isinstance(slice.value, ast.Tuple):
                     subscript = unparse(slice)[1:-1]
@@ -1120,34 +1087,47 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                     subscript = unparse(slice)
                 if wcr is not None:
                     redtype = operations.detect_reduction_type(wcr)
-                    target_str = "{}[{}]".format(memlet.data, subscript)
                     red_str = REDUCTION_TYPE_TO_PYEXPR[redtype].format(
-                        a=target_str, b=unparse(value))
-                    code_str = "{} = {};".format(target_str, red_str)
+                        a="{}[{}]".format(memlet.data, subscript), b=value)
+                    code_str = code_str.format(dst=memlet.data,
+                                               idx=subscript,
+                                               src=red_str)
                 else:
-                    target_str = "{}[{}]".format(target, subscript)
-                    code_str = "{} = {}; ".format(target_str, unparse(value))
-                updated = ast.Name(id=code_str)
-            else:  # target has no subscript
-                updated = ast.Name(
-                    id="{} = {};".format(target, unparse(value)))
+                    code_str = code_str.format(dst=target,
+                                               idx=subscript,
+                                               src=value)
+            else:  # Target has no subscript
+                if veclen_rhs > veclen_lhs:
+                    code_str = unpack_str + "({}, {});".format(value, target)
+                else:
+                    if self.defined_vars.get(target)[0] == DefinedType.Pointer:
+                        code_str = "*{} = {};".format(target, value)
+                    else:
+                        code_str = "{} = {};".format(target, value)
+            updated = ast.Name(id=code_str)
 
-        elif defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray:
+        elif (defined_type == DefinedType.Stream
+              or defined_type == DefinedType.StreamArray):
             if memlet.num_accesses != 1:
-                updated = ast.Name(id="write_channel_intel({}, {});".format(
-                    target, cppunparse.cppunparse(value,
-                                                  expr_semicolon=False)))
+                updated = ast.Name(
+                    id="write_channel_intel({}, {});".format(target, value))
                 self.used_streams.append(target)
             else:
                 # in this case for an output stream we have
-                # previously defined an output local var: we use that one instead of directly writing to channel
-                updated = ast.Name(id="{} = {};".format(
-                    target, cppunparse.cppunparse(value,
-                                                  expr_semicolon=False)))
-        elif memlet is not None and memlet.num_accesses != 1:
-            newnode = ast.Name(id="*{} = {}; ".format(
-                target, cppunparse.cppunparse(value, expr_semicolon=False)))
+                # previously defined an output local var: we use that one
+                # instead of directly writing to channel
+                updated = ast.Name(id="{} = {};".format(target, value))
+        elif memlet is not None and (not is_scalar or memlet.dynamic):
+            newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
+        elif defined_type == DefinedType.Scalar:
+            code_str = "{} = {};".format(target, value)
+            updated = ast.Name(id=code_str)
+        else:
+            raise RuntimeError("Unhandled case: {}, type {}, veclen {}, "
+                               "memory size {}, {} accesses".format(
+                                   target, defined_type, veclen_lhs, veclen_lhs,
+                                   memlet.num_accesses))
 
         return ast.copy_location(updated, node)
 
@@ -1155,8 +1135,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         if node.id not in self.memlets:
             return self.generic_visit(node)
 
-        memlet, nc, wcr = self.memlets[node.id]
-        defined_type = self.defined_vars.get(memlet.data)
+        memlet, nc, wcr, dtype = self.memlets[node.id]
+        defined_type, _ = self.defined_vars.get(node.id)
         updated = node
 
         if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
@@ -1199,7 +1179,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                         ast.Name) and node.func.id in self.nptypes_to_ctypes:
             # if it as numpy type, convert to C type
             node.func.id = "({})".format(self.nptypes_to_ctypes(node.func.id))
-        elif (isinstance(node.func, ast.Num)
+        elif (isinstance(node.func, (ast.Num, ast.Constant))
               and (node.func.n.to_string() in self.ctypes
                    or node.func.n.to_string() in self.nptypes)):
             new_node = ast.Name(id="({})".format(node.func.n), ctx=ast.Load)

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ State of DaCe program in DIODE. """
 import os
 import re
@@ -103,9 +104,9 @@ class DaceState:
         for state in sdfg.nodes():
             data.update(
                 set((n.data, n.desc(sdfg)) for n in state.nodes()
-                    if isinstance(n, dace.graph.nodes.AccessNode)))
+                    if isinstance(n, dace.sdfg.nodes.AccessNode)))
 
-        sym_args = [k for k, _ in sdfg.undefined_symbols(False).items()]
+        sym_args = list(sdfg.symbols.keys())
         data_args = [d for d in data if not d[1].transient]
 
         initializer = ""
@@ -124,9 +125,9 @@ class DaceState:
         for state in sdfg.nodes():
             data.update(
                 set((n.data, n.desc(sdfg)) for n in state.nodes()
-                    if isinstance(n, dace.graph.nodes.AccessNode)))
+                    if isinstance(n, dace.sdfg.nodes.AccessNode)))
 
-        sym_args = [k for k, _ in sdfg.undefined_symbols(False).items()]
+        sym_args = list(sdfg.symbols.keys())
         data_args = [d for d in data if not d[1].transient]
 
         call_args = []

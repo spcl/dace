@@ -1,14 +1,16 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.graph import nodes, nxutil, edges as ed
-from dace.transformation import pattern_matching
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 from dace.properties import Property, make_properties
 
 
 @registry.autoregister
 @make_properties
-class GPUTransformSDFG(pattern_matching.Transformation):
+class GPUTransformSDFG(transformation.Transformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
@@ -93,9 +95,6 @@ class GPUTransformSDFG(pattern_matching.Transformation):
     def match_to_str(graph, candidate):
         return graph.label
 
-    def modifies_graph(self):
-        return True
-
     def apply(self, sdfg: sd.SDFG):
 
         #######################################################
@@ -113,13 +112,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         and node.desc(sdfg).transient == False):
                     if (state.out_degree(node) > 0
                             and node.data not in input_nodes):
-                        # Special case: nodes that lead to dynamic map ranges
-                        # must stay on host
+                        # Special case: nodes that lead to top-level dynamic
+                        # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode)
-                                    and last_edge.dst_conn and
-                                    not last_edge.dst_conn.startswith('IN_')):
+                                    and last_edge.dst_conn
+                                    and not last_edge.dst_conn.startswith('IN_')
+                                    and sdict[last_edge.dst] is None):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
@@ -128,12 +128,12 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         output_nodes.append((node.data, node.desc(sdfg)))
                 elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
                     if not isinstance(node,
-                                      (nodes.EmptyTasklet, nodes.LibraryNode)):
+                                      (nodes.LibraryNode, nodes.NestedSDFG)):
                         global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None and e.data.wcr_identity is None:
+                if e.data.wcr is not None:
                     if (e.data.data not in input_nodes
                             and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append(
@@ -149,6 +149,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for inodename, inode in set(input_nodes):
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
+            if inode.storage == dtypes.StorageType.GPU_Global:
+                continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
@@ -159,6 +161,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         for onodename, onode in set(output_nodes):
             if onodename in cloned_arrays:
+                continue
+            if onode.storage == dtypes.StorageType.GPU_Global:
                 continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
@@ -186,7 +190,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         excluded_copyin = self.exclude_copyin.split(',')
 
         copyin_state = sdfg.add_state(sdfg.label + '_copyin')
-        sdfg.add_edge(copyin_state, start_state, ed.InterstateEdge())
+        sdfg.add_edge(copyin_state, start_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(input_nodes):
             if nname in excluded_copyin or nname not in cloned_arrays:
@@ -206,7 +210,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
         copyout_state = sdfg.add_state(sdfg.label + '_copyout')
         for state in end_states:
-            sdfg.add_edge(state, copyout_state, ed.InterstateEdge())
+            sdfg.add_edge(state, copyout_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(output_nodes):
             if nname in excluded_copyout or nname not in cloned_arrays:
@@ -238,7 +242,13 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                             for e in state.out_edges(node)):
                         continue
 
-                    if sdict[node] is None:
+                    gpu_storage = [
+                        dtypes.StorageType.GPU_Global,
+                        dtypes.StorageType.GPU_Shared,
+                        dtypes.StorageType.CPU_Pinned
+                    ]
+                    if sdict[
+                            node] is None and nodedesc.storage not in gpu_storage:
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
@@ -246,8 +256,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         # Try to move allocation/deallocation out of loops
                         if (self.toplevel_trans
                                 and not isinstance(nodedesc, data.Stream)):
-                            nodedesc.toplevel = True
-                    else:
+                            nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
+                    elif nodedesc.storage not in gpu_storage:
                         # Make internal transients registers
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
@@ -267,10 +277,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 # when they are removed from the graph
                 in_edges = list(state.in_edges(gcode))
                 out_edges = list(state.out_edges(gcode))
-                me.in_connectors = set('IN_' + e.dst_conn for e in in_edges)
-                me.out_connectors = set('OUT_' + e.dst_conn for e in in_edges)
-                mx.in_connectors = set('IN_' + e.src_conn for e in out_edges)
-                mx.out_connectors = set('OUT_' + e.src_conn for e in out_edges)
+                me.in_connectors = {('IN_' + e.dst_conn): None
+                                    for e in in_edges}
+                me.out_connectors = {('OUT_' + e.dst_conn): None
+                                     for e in in_edges}
+                mx.in_connectors = {('IN_' + e.src_conn): None
+                                    for e in out_edges}
+                mx.out_connectors = {('OUT_' + e.src_conn): None
+                                     for e in out_edges}
 
                 # Create memlets through map
                 for e in in_edges:
@@ -288,17 +302,17 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
                 # Map without inputs
                 if len(in_edges) == 0:
-                    state.add_nedge(me, gcode, memlet.EmptyMemlet())
+                    state.add_nedge(me, gcode, memlet.Memlet())
         #######################################################
-        # Step 6: Change all top-level maps and Reduce nodes to GPU schedule
+        # Step 6: Change all top-level maps and library nodes to GPU schedule
 
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.Reduce)):
+                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, nodes.EntryNode)
+                    elif (isinstance(node, (nodes.EntryNode, nodes.LibraryNode))
                           and self.sequential_innermaps):
                         node.schedule = dtypes.ScheduleType.Sequential
 
@@ -310,7 +324,7 @@ class GPUTransformSDFG(pattern_matching.Transformation):
             for e in sdfg.out_edges(state):
                 # Used arrays = intersection between symbols and cloned arrays
                 arrays_used.update(
-                    set(e.data.condition_symbols())
+                    set(e.data.free_symbols)
                     & set(cloned_arrays.keys()))
 
             # Create a state and copy out used arrays
@@ -319,9 +333,9 @@ class GPUTransformSDFG(pattern_matching.Transformation):
 
                 # Reconnect outgoing edges to after interim copyout state
                 for e in sdfg.out_edges(state):
-                    nxutil.change_edge_src(sdfg, state, co_state)
+                    sdutil.change_edge_src(sdfg, state, co_state)
                 # Add unconditional edge to interim state
-                sdfg.add_edge(state, co_state, ed.InterstateEdge())
+                sdfg.add_edge(state, co_state, sd.InterstateEdge())
 
                 # Add copy-out nodes
                 for nname in arrays_used:

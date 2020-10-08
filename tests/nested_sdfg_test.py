@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace as dp
@@ -56,10 +56,6 @@ if __name__ == '__main__':
     output = dp.ndarray([N, N], dp.float32)
     input[:] = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
     output[:] = dp.float32(0)
-
-    # Left for debugging purposes
-    nsdfg.sdfg.draw_to_file('nested_sdfg.dot')
-    mysdfg.draw_to_file()
 
     mysdfg(A=input, B=output, N=N)
 

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dp
 import numpy as np
 
@@ -23,8 +24,6 @@ s2.add_edge(A, None, t, 'a', dp.Memlet.from_array(A.data, A.desc(sdfg)))
 
 sdfg.add_edge(s0, s1, dp.InterstateEdge('A[0] > 3'))
 sdfg.add_edge(s0, s2, dp.InterstateEdge('A[0] <= 3'))
-
-sdfg.draw_to_file()
 
 if __name__ == '__main__':
     print('Toplevel array usage in interstate edge')

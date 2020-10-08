@@ -1,15 +1,17 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the GPU Transform Map transformation. """
 
 from dace import data, dtypes, sdfg as sd, registry
-from dace.graph import nodes, nxutil
-from dace.graph.graph import SubgraphView
-from dace.transformation import pattern_matching, helpers
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import SubgraphView
+from dace.transformation import transformation, helpers
 from dace.properties import Property, make_properties
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class GPUTransformMap(pattern_matching.Transformation):
+class GPUTransformMap(transformation.Transformation):
     """ Implements the GPUTransformMap transformation.
 
         Converts a single map to a GPU-scheduled map and creates GPU arrays
@@ -34,13 +36,15 @@ class GPUTransformMap(pattern_matching.Transformation):
                                     default=False)
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _reduce = nodes.Reduce('lambda: None', None)
+
+    import dace.libraries.standard as stdlib  # Avoid import loop
+    _reduce = stdlib.Reduce('lambda: None', None)
 
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(GPUTransformMap._map_entry),
-            nxutil.node_path_graph(GPUTransformMap._reduce)
+            sdutil.node_path_graph(GPUTransformMap._map_entry),
+            sdutil.node_path_graph(GPUTransformMap._reduce)
         ]
 
     @staticmethod
@@ -53,7 +57,7 @@ class GPUTransformMap(pattern_matching.Transformation):
             if (candidate_map.schedule in [dtypes.ScheduleType.MPI] +
                     dtypes.GPU_SCHEDULES):
                 return False
-            if sd.is_devicelevel(sdfg, graph, map_entry):
+            if sd.is_devicelevel_gpu(sdfg, graph, map_entry):
                 return False
 
             # Dynamic map ranges cannot become kernels
@@ -66,12 +70,12 @@ class GPUTransformMap(pattern_matching.Transformation):
             for node in subgraph.nodes():
                 if (isinstance(node, nodes.AccessNode) and
                         node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and node.desc(sdfg).storage !=
-                        dtypes.StorageType.Register):
+                        and
+                        node.desc(sdfg).storage != dtypes.StorageType.Register):
                     return False
 
             # If one of the outputs is a stream, do not match
-            map_exit = graph.exit_nodes(map_entry)[0]
+            map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 dst = graph.memlet_path(edge)[-1].dst
                 if (isinstance(dst, nodes.AccessNode)
@@ -82,11 +86,8 @@ class GPUTransformMap(pattern_matching.Transformation):
         elif expr_index == 1:
             reduce = graph.nodes()[candidate[GPUTransformMap._reduce]]
 
-            # Map schedules that are disallowed to transform to GPUs
-            if (reduce.schedule in [dtypes.ScheduleType.MPI] +
-                    dtypes.GPU_SCHEDULES):
-                return False
-            if sd.is_devicelevel(sdfg, graph, reduce):
+            # Disallow GPU transformation if already in device-level code
+            if sd.is_devicelevel_gpu(sdfg, graph, reduce):
                 return False
 
             return True
@@ -101,8 +102,7 @@ class GPUTransformMap(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         if self.expr_index == 0:
-            map_entry = graph.nodes()[self.subgraph[
-                GPUTransformMap._map_entry]]
+            map_entry = graph.nodes()[self.subgraph[GPUTransformMap._map_entry]]
             nsdfg_node = helpers.nest_state_subgraph(
                 sdfg,
                 graph,

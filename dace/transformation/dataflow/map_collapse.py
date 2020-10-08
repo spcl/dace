@@ -1,16 +1,18 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-collapse transformation. """
 
 from dace import registry
 from dace.symbolic import symlist
-from dace.graph import nodes, nxutil
-from dace.transformation import pattern_matching
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 from dace.properties import make_properties
 from typing import Tuple
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MapCollapse(pattern_matching.Transformation):
+class MapCollapse(transformation.Transformation):
     """ Implements the Map Collapse pattern.
 
         Map-collapse takes two nested maps with M and N dimensions respectively,
@@ -23,7 +25,7 @@ class MapCollapse(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(
+            sdutil.node_path_graph(
                 MapCollapse._outer_map_entry,
                 MapCollapse._inner_map_entry,
             )
@@ -32,10 +34,8 @@ class MapCollapse(pattern_matching.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # Check the edges between the entries of the two maps.
-        outer_map_entry = graph.nodes()[candidate[
-            MapCollapse._outer_map_entry]]
-        inner_map_entry = graph.nodes()[candidate[
-            MapCollapse._inner_map_entry]]
+        outer_map_entry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
+        inner_map_entry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]
 
         # Check that inner map range is independent of outer range
         map_deps = set()
@@ -67,8 +67,8 @@ class MapCollapse(pattern_matching.Transformation):
                     return False
 
         # Check the edges between the exits of the two maps.
-        inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
-        outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
+        inner_map_exit = graph.exit_node(inner_map_entry)
+        outer_map_exit = graph.exit_node(outer_map_entry)
 
         # Check that the destination of all the outgoing edges
         # from the inner map's exit is the outer map's exit.
@@ -86,10 +86,8 @@ class MapCollapse(pattern_matching.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        outer_map_entry = graph.nodes()[candidate[
-            MapCollapse._outer_map_entry]]
-        inner_map_entry = graph.nodes()[candidate[
-            MapCollapse._inner_map_entry]]
+        outer_map_entry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
+        inner_map_entry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]
 
         return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
                            for entry in [outer_map_entry, inner_map_entry])
@@ -106,8 +104,8 @@ class MapCollapse(pattern_matching.Transformation):
             MapCollapse._outer_map_entry]]
         inner_map_entry = graph.nodes()[self.subgraph[
             MapCollapse._inner_map_entry]]
-        inner_map_exit = graph.exit_nodes(inner_map_entry)[0]
-        outer_map_exit = graph.exit_nodes(outer_map_entry)[0]
+        inner_map_exit = graph.exit_node(inner_map_entry)
+        outer_map_exit = graph.exit_node(outer_map_entry)
 
-        return nxutil.merge_maps(graph, outer_map_entry, outer_map_exit,
+        return sdutil.merge_maps(graph, outer_map_entry, outer_map_exit,
                                  inner_map_entry, inner_map_exit)

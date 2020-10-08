@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
 import numpy as np
@@ -34,8 +35,6 @@ if __name__ == '__main__':
     print('Strided range tasklet test')
     A = np.random.rand(2, 16, 4).astype(np.float32)
     B = np.random.rand(16).astype(np.float32)
-
-    sr.draw_to_file()
 
     sr(A=A, B=B)
 

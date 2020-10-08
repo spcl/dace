@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 # Schema file for DaCe Preferences
 
 # Metadata fields for elements:
@@ -26,23 +27,25 @@ required:
                 default: false
                 title: Auto-specialize symbols
                 description: >
-                    Automatically specialize every SDFG to the symbol values 
+                    Automatically specialize every SDFG to the symbol values
                     at call-time. Requires all symbols to be set.
 
-            interface:
+            transform_on_call:
                 type: bool
+                default: false
+                title: Transform SDFGs on Invocation
+                description: >
+                    Automatically calls sdfg.optimize() every time a DaCe
+                    program or SDFG is invoked.
+
+            interface:
+                type: str
                 default: dace.transformation.optimizer.SDFGOptimizer
                 title: SDFG Optimizer
                 description: >
-                    SDFG optimization class to import and call automatically
-                    on compilation. Defaults to the transformation CLI, empty
-                    string or an invalid class name skips the process.
-
-            visualize:
-                type: bool
-                default: false
-                title: Visualize SDFG
-                description: Open a GraphViz window after every transformation.
+                    SDFG optimization class to import and call on
+                    sdfg.optimize(). Defaults to the transformation CLI,
+                    empty string or an invalid class name skips optimization.
 
             visualize_sdfv:
                 type: bool
@@ -50,49 +53,46 @@ required:
                 title: Visualize SDFG
                 description: Open a SDFV in browser every transformation.
 
-            savedots:
+            save_intermediate:
                 type: bool
                 default: false
-                title: Save dot files
-                description: Save GraphViz .dot files after every transformation.
+                title: Save intermediate SDFGs
+                description: Save SDFG files after every transformation.
 
             automatic_strict_transformations:
                 type: bool
                 default: true
                 title: Automatic strict transformations
                 description: >
-                    Automatically performs strict transformations 
+                    Automatically performs strict transformations
                     that are considered to be safe.
 
             detect_control_flow:
                 type: bool
-                default: true 
+                default: true
                 title: Detect control flow from state transitions
                 description: >
-                    Attempts to infer control flow constructs "if", 
-                    "for" and "while" from state transitions, allowing 
-                    code generators to generate appropriate code. 
+                    Attempts to infer control flow constructs "if",
+                    "for" and "while" from state transitions, allowing
+                    code generators to generate appropriate code.
 
-    renderer:
-        type: dict
-        title: Renderer
-        description: Preferences of the SDFG Renderer
-        required:
-            fulledges:
+            symbolic_positive:
+                type: bool
+                default: true
+                title: Treat all symbolic expressions as positive
+                description: >
+                    Every expression in which a symbolic value appears
+                    is treated as strictly positive. This is necessary
+                    for certain Range evaluations using Subgraph Fusion.
+
+            match_exception:
                 type: bool
                 default: false
-                title: Show full edges
+                title: Treat exceptions in "can_be_applied" as errors
                 description: >
-                    If enabled, prints out the full edge labels (which may be 
-                    long due to complex indexing).
-            html5renderer:
-                type: bool
-                default: false
-                title: (EXPERIMENTAL) HTML5 Rendering Engine
-                description: >
-                    If enabled, uses an HTML5-based renderer to display SDFGs. 
-                    This allows to visualize performance data, but is still experimental. 
-
+                    When an exception is raised in a transformation "can_be_applied"
+                    function, if True the exception is raised further. Otherwise
+                    the exception is printed as a warning.
     compiler:
         type: dict
         title: Compiler
@@ -103,7 +103,7 @@ required:
                 default: false
                 title: Use cache
                 description: >
-                    If enabled, does not recompile code generated from SDFGs 
+                    If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
             library_extension:
@@ -124,7 +124,7 @@ required:
 
             build_type:
                 type: str
-                default: Release
+                default: RelWithDebInfo
                 title: Build configuration
                 description: >
                     Configuration type for CMake build (can be Debug, Release,
@@ -132,19 +132,41 @@ required:
 
             allow_shadowing:
                 type: str
-                default: false 
+                default: true
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
-                   
+
+            default_data_types:
+                type : str
+                default: Python
+                title : Default data types
+                descrition: >
+                    Specify the default data types to use in generating code.
+                    If "Python", Python's semantics will be followed (i.e., `float`  and `int`
+                    are represented using 64 bits). If the property is set to "C", C's semantcs will be
+                    used (`float` and `int` are represented using 32bits).
+
             fpga_vendor:
                 type: str
-                default: xilinx 
+                default: xilinx
                 title: FPGA vendor
                 description: >
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
-                    generating code. 
+                    generating code.
+
+            autobuild_bitstreams:
+                type: bool
+                default: true
+                title: Automatically build bitstreams
+                description: >
+                    If set to true, CMake will automatically build missing
+                    bitstreams when running an FPGA program. This can take a
+                    very long time, and users might want to do this manually.
+                    If set to false, the program will optimistically assume
+                    that the bitstream is present in the build directory, and
+                    will crash if this is not the case.
             #############################################
             # CPU compiler
             cpu:
@@ -154,9 +176,8 @@ required:
                 required:
                     executable:
                         type: str
-                        default: g++
-                        default_Windows: cl
-                        title: Compiler executable name
+                        default: ''
+                        title: Compiler executable override
                         description: File path or name of compiler executable
 
                     args:
@@ -166,61 +187,121 @@ required:
                         default: '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
-                    additional_args:
-                        type: str
-                        title: Extra Arguments
-                        description: Additional arguments provided by users
-                        default: ''
-
                     libs:
                         type: str
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
-                        
+
             #############################################
-            # GPU (CUDA) compiler
+            # GPU (CUDA/HIP) compiler
             cuda:
                 type: dict
                 title: GPU
-                description: GPU (CUDA) compiler preferences
+                description: GPU (CUDA/HIP) compiler preferences
                 required:
-                    executable:
+                    backend:
                         type: str
-                        default: nvcc
-                        title: Compiler executable name
-                        description: File path or name of compiler executable
+                        default: 'cuda'
+                        title: Compilation backend
+                        description: >
+                            Backend to compile for ('cuda' for NVIDIA or 'hip' for AMD).
+
+                    path:
+                        type: str
+                        default: ''
+                        title: CUDA/HIP path override
+                        description: Path to CUDA toolkit or ROCm/HIP root directory
 
                     args:
                         type: str
-                        title: Arguments
-                        description: Compiler argument flags
+                        title: nvcc Arguments
+                        description: Compiler argument flags for CUDA
                         default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
                         default_Windows: '-std=c++14 -O3 --use_fast_math'
+
+                    hip_args:
+                        type: str
+                        title: hipcc Arguments
+                        description: Compiler argument flags for HIP
+                        default: '-std=c++17 -fPIC -O3 -ffast-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
                         title: Additional CUDA architectures
                         description: >
                             Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current 
+                            to compile GPU code for, excluding the current
                             architecture on the compiling machine.
                         default: '35'
-                
+
+                    hip_arch:
+                        type: str
+                        title: Additional HIP architectures
+                        description: >
+                            Additional HIP architectures (separated by commas)
+                            to compile GPU code for, excluding the current
+                            architecture on the compiling machine.
+                        default: '906'
+
                     default_block_size:
                         type: str
                         title: Default thread-block size
                         description: >
-                            Default thread-block size for CUDA kernels when
+                            Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
                         default: '32,1,1'
 
+                    dynamic_map_block_size:
+                        type: str
+                        title: Thread-Block size for GPU_ThreadBlock_Dynamic
+                        description: >
+                            Thread-Block size for maps using GPU_ThreadBlock_Dynamic
+                            scheduler.
+                        default: '128,1,1'
+
+                    dynamic_map_fine_grained:
+                        type: bool
+                        title: Enable fine grained load balancing for GPU_ThreadBlock_Dynamic
+                        description: >
+                            If true the scheduler will dynamically redistribute the
+                            combined work of all threads in the warp equally across the
+                            warp (fine grained). Otherwise, each warp works sequentially
+                            only on its tasks (potential load imbalance).
+                        default: true
+
+                    persistent_map_SM_fraction:
+                        type: float
+                        title: Fraction of SMs to use for persistent GPU map
+                        description: >
+                            Sets the fraction of the number of SMs of the Device
+                            that the GPU_Persistent map can use. Together with
+                            persistent_map_occupancy this specifies the grid
+                            size of the kernel being launched.
+                            0.0 < persistent_map_SM_fraction <= 1.0
+                            The fraction will be rounded up to the next integer
+                            number of SMs. The max value of SMs that can/will
+                            be used is equal to cudaDevAttrMultiProcessorCount.
+                        default: 1.0
+
+                    persistent_map_occupancy:
+                        type: int
+                        title: Number of blocks to launch per SM used
+                        description: >
+                            Sets the number of thread block to be launched per
+                            SM being used. Essentially this is a simple
+                            multiplier to persistent_map_SM_fraction.
+                            It is up to the user to check if the resulting
+                            number of thread blocks can run efficiently on the
+                            GPU.
+                        default: 2
+
                     max_concurrent_streams:
                         type: int
-                        title: Concurrent CUDA streams
+                        title: Concurrent execution streams
                         description: >
-                            Maximum number of concurrent CUDA streams to 
-                            generate. Special values: -1 only uses the 
+                            Maximum number of concurrent CUDA/HIP streams to
+                            generate. Special values: -1 only uses the
                             default stream, 0 uses infinite concurrent streams.
                         default: 0
 
@@ -228,15 +309,9 @@ required:
                         type: bool
                         title: Synchronous Debugging
                         description: >
-                            Enables Synchronous Debugging mode, where each CUDA call
+                            Enables Synchronous Debugging mode, where each library call
                             is followed by full-device synchronization and error checking.
                         default: false
-
-                    additional_args:
-                        type: str
-                        title: Extra Arguments
-                        description: Additional arguments provided by users
-                        default: ''
 
                     libs:
                         type: str
@@ -248,32 +323,35 @@ required:
             # FPGA (Xilinx) compiler flags
             xilinx:
                 type: dict
-                title: Xilinx 
+                title: Xilinx
                 description: FPGA (Xilinx) compiler preferences
                 required:
 
                     mode:
-                        type: str 
-                        default: simulation 
-                        title: Compilation mode 
-                        description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware) 
-
-                    executable:
                         type: str
-                        default: v++ 
-                        title: Vitis compiler executable path 
-                        description: File path or name of Vitis binary (v++) 
+                        default: simulation
+                        title: Compilation mode
+                        description: Target of FPGA kernel build (simulation/software_emulation/hardware_emulation/hardware)
+
+                    path:
+                        type: str
+                        default: ''
+                        title: Vitis installation override
+                        description: >
+                            Path to specific Vitis/SDx/SDAccel installation to
+                            use instead of just searching PATH and environment
+                            variables.
 
                     platform:
                         type: str
-                        default: xilinx_u280_xdma_201920_1 
-                        title: Target platform for Xilinx 
+                        default: xilinx_u250_xdma_201830_2
+                        title: Target platform for Xilinx
                         description: Platform name of Vitis/SDx/SDAccel target.
 
                     enable_debugging:
-                        type: bool 
-                        default: false 
-                        title: Enable debugging for hardware kernels 
+                        type: bool
+                        default: false
+                        title: Enable debugging for hardware kernels
                         description: >
                             Injects debugging cores on the interfaces of the
                             kernel, allowing fine-grained debugging of hardware
@@ -288,48 +366,50 @@ required:
 
                     synthesis_flags:
                         type: str
-                        title: Synthesis arguments 
-                        description: High-level synthesis C++ flags 
+                        title: Synthesis arguments
+                        description: High-level synthesis C++ flags
                         default: "-std=c++11"
 
                     build_flags:
                         type: str
                         title: Arguments
-                        description: Kernel build C++ flags 
+                        description: Kernel build C++ flags
                         default: ""
-                        
+
             #############################################
             # Intel FPGA compiler flags
             intel_fpga:
                 type: dict
-                title: Intel FPGA 
+                title: Intel FPGA
                 description: Intel FPGA compiler preferences.
                 required:
 
                     mode:
-                        type: str 
-                        default: emulator 
-                        title: Compilation mode 
+                        type: str
+                        default: emulator
+                        title: Compilation mode
                         description: >
                           Target of FPGA kernel build
                           (emulator/simulator/hardware).
 
-                    executable:
+                    path:
                         type: str
-                        default: aoc 
-                        title: Compiler path 
+                        default: ''
+                        title: Intel FPGA OpenCL SDK installation override
                         description: >
-                          Intel Offline Compiler (aoc) executable path. 
+                            Path to specific Intel FPGA OpenCL SDK installation
+                            to use instead of just searching PATH and
+                            environment variables.
 
                     board:
                         type: str
-                        default: a10gx 
-                        title: Target FPGA board 
+                        default: a10gx
+                        title: Target FPGA board
 
                     enable_debugging:
-                        type: bool 
-                        default: false 
-                        title: Enable debugging for hardware kernels 
+                        type: bool
+                        default: false
+                        title: Enable debugging for hardware kernels
                         description: Injects debugging cores where available.
 
                     host_flags:
@@ -340,9 +420,18 @@ required:
 
                     kernel_flags:
                         type: str
-                        title: Kernel flags 
-                        description: High-level synthesis C++ flags 
-                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant"
+                        title: Kernel flags
+                        description: High-level synthesis C++ flags
+                        default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
+
+                    launch_async:
+                        type: bool
+                        default: false
+                        title: Launch kernels asynchronously
+                        description: >
+                            Instead of launching kernels one-by-one, spawn a separate C++ thread using std::async and
+                            std::future. This also allows each kernel to measure its own runtime from the host code.
+
             #############################################
             # MPI compiler
             mpi:
@@ -352,10 +441,10 @@ required:
                 required:
                     executable:
                         type: str
-                        default: mpicxx
-                        title: Compiler executable name
+                        default: ''
+                        title: Compiler executable override
                         description: File path or name of compiler executable
-            
+
             #############################################
             # Linker
             linker:
@@ -365,9 +454,8 @@ required:
                 required:
                     executable:
                         type: str
-                        default: g++
-                        default_Windows: cl
-                        title: Linker executable name
+                        default: ''
+                        title: Linker executable override
                         description: File path or name of linker executable
 
                     args:
@@ -378,35 +466,14 @@ required:
                         # FPGA programs fail to find certain libraries at
                         # runtime with runpath.
                         default: '-Wl,--disable-new-dtags'
-
-                    additional_args:
-                        type: str
-                        title: Extra Arguments
-                        description: Additional arguments provided by users
-                        default: ''
-                        template_envvars:
-                            - CUDA_PATH
-
-                    library_prefix:
-                        type: str
-                        title: Library argument prefix
-                        description: >
-                            Argument prefix to add before each added library.
-                        default: '-l'
+                        default_Darwin: ''
                         default_Windows: ''
 
-                    library_suffix:
-                        type: str
-                        title: Library argument suffix
-                        description: >
-                            Argument suffix to add after each added library.
-                        default: ''
-                        default_Windows: '.lib'
 
     execution:
         type: dict
         title: Execution
-        description: Binary execution preferences        
+        description: Binary execution preferences
         required:
             general:
                 type: dict
@@ -428,7 +495,7 @@ required:
                     check_args:
                         type: bool
                         default: true
-                        title: Check arguments 
+                        title: Check arguments
                         description: >
                             Do strict verification that arguments passed when
                             calling a DaCe program match the expected dtypes.
@@ -448,7 +515,7 @@ required:
                         default: 'scp ${host}:${srcfile} ${dstfile}'
                         title: "Remote->Local copy command"
                         description: >
-                            Command to use to copy ${srcfile} on ${host} to 
+                            Command to use to copy ${srcfile} on ${host} to
                             the local ${dstfile}.
                         template_vars:
                             - host
@@ -472,8 +539,8 @@ required:
                         default: 5
                         title: "Repetitions per Run"
                         description: >
-                            Number of repetitions to run for each click of the 
-                            Run button (median value will be reported in the 
+                            Number of repetitions to run for each click of the
+                            Run button (median value will be reported in the
                             performance chart).
             mpi:
                 type: dict
@@ -495,71 +562,12 @@ required:
                         type: int
                         default: 4
                         title: Number of processes
-                        description: Number of MPI processes to use 
+                        description: Number of MPI processes to use
     diode:
         type: dict
         title: DIODE
         description: DIODE GUI preferences
         required:
-            layout:
-                type: dict
-                title: Layout
-                description: Window layout preferences
-                required:
-                    window_width:
-                        default: 800
-                        title: Window Width
-                        type: float
-                        description: Window width (in pixels)
-
-                    window_height:
-                        default: 600
-                        title: Window Height
-                        type: float
-                        description: Window height (in pixels)
-
-                    window_maximized:
-                        default: True
-                        title: Window Maximized
-                        type: bool
-                        description: >
-                            If True, DIODE starts with a maximized window
-            
-                    toppane_height:
-                        default: 20
-                        type: float
-                        title: Top-Pane Height
-                        description: >
-                            Height of top pane in Optimizer view (in percentage)
-           
-                    pypane_width:
-                        default: 30
-                        title: Python Pane Width
-                        type: float
-                        description: >
-                            Width of the Python Editor pane (in percentage)
-            
-                    optpane_width:
-                        default: 30
-                        title: Transformation Pane Width
-                        type: float
-                        description: >
-                            Width of the Transformation pane (in percentage)
-            
-                    codepane_width:
-                        default: 30
-                        title: Generated Code Pane Width
-                        type: float
-                        description: >
-                            Width of the Generated Code pane (in percentage)
-
-                    perfpane_width:
-                        default: 30
-                        title: Performance Pane Width
-                        type: float
-                        description: >
-                            Width of the Performance graph pane (in percentage)
-
             general:
                 type: dict
                 title: General
@@ -572,29 +580,6 @@ required:
                         description: >
                             Automatically expand library nodes upon compilation, rather than
                             expecting the nodes be expanded manually to the chosen implementation.
-
-            fonts:
-                type: dict
-                title: Fonts
-                description: Fonts used in editors
-                required:
-                    python:
-                        default: ''
-                        title: Python
-                        type: font
-                        description: Font used to render Python code.
-
-                    codegen:
-                        default: ''
-                        title: Generated Code
-                        type: font
-                        description: Font used to render generated code.
-
-                    pated:
-                        default: ''
-                        title: Transformation Editor
-                        type: font
-                        description: Font used to render pattern match code.
 
     instrumentation:
         type: dict
@@ -630,15 +615,24 @@ required:
     # General settings
     debugprint:
         type: bool
-        default: true 
+        default: false
         title: Debug printing
         description: Enable verbose printouts.
-    
+
     profiling:
         type: bool
         default: false
         title: Profiling
         description: Enable profiling support.
+
+    profiling_status:
+        type: bool
+        default: true
+        title: Status bar for profiling
+        description: >
+            Enable tqdm status bar while profiling. If tqdm is not installed
+            a warning will appear. To disable this feature (and the warning) set
+            this option to false.
 
     treps:
         type: int
@@ -661,7 +655,15 @@ required:
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
 
-            test_serialization:
+    #############################################
+    # Features for unit testing
+
+    testing:
+        type: dict
+        title: Testing
+        description: Unit testing settings
+        required:
+            serialization:
                 type: bool
                 default: false
                 title: Test Serialization on validation
@@ -669,17 +671,16 @@ required:
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
 
-            blas_implementation:
-                type: str
-                default: pure
-                title: Default BLAS Implementation
+            single_cache:
+                type: bool
+                default: false
+                title: Use one build folder
                 description: >
-                    Default library to use when implementing BLAS library nodes
-                    encountered in an SDFG, if no other implementation has been
-                    explicitly specified.
+                    When generating code, use a single build folder as cache.
+                    Speeds up build time but disallows concurrent invocations.
 
     #############################################
-    # DaCe library settings 
+    # DaCe library settings
 
     library:
         type: dict
@@ -693,12 +694,11 @@ required:
                 required:
                     default_implementation:
                         type: str
-                        default: pure 
-                        description: Default implementation BLAS library nodes.  
+                        default: pure
+                        description: Default implementation BLAS library nodes.
                     override:
                         type: bool
                         default: false
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
-

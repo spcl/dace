@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
 import copy
@@ -7,7 +8,8 @@ from typing import List, Optional, Tuple
 
 from dace import dtypes, registry, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.graph import edges, graph as gr, nodes, nxutil
+from dace.sdfg import graph as gr, nodes
+from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import DetectLoop
 
@@ -23,8 +25,9 @@ class LoopUnroll(DetectLoop):
                      "iterations (loop must be constant-sized for 0)")
 
     @staticmethod
-    def _loop_range(itervar: str, inedges: List[gr.Edge], condition: sp.Expr
-                    ) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
+    def _loop_range(
+            itervar: str, inedges: List[gr.Edge],
+            condition: sp.Expr) -> Optional[Tuple[sp.Expr, sp.Expr, sp.Expr]]:
         """
         Finds loop range from state machine.
         :param itersym: String representing the iteration variable.
@@ -122,7 +125,8 @@ class LoopUnroll(DetectLoop):
             raise NotImplementedError  # TODO(later)
 
         # Find the state prior to the loop
-        if str(rng[0]) == guard_inedges[0].data.assignments[itervar]:
+        if rng[0] == symbolic.pystr_to_symbolic(
+                guard_inedges[0].data.assignments[itervar]):
             before_state: sd.SDFGState = guard_inedges[0].src
             last_state: sd.SDFGState = guard_inedges[1].src
         else:
@@ -131,58 +135,65 @@ class LoopUnroll(DetectLoop):
 
         # Get loop states
         loop_states = list(
-            nxutil.dfs_topological_sort(
-                sdfg,
-                sources=[begin],
-                condition=lambda _, child: child != guard))
+            sdutil.dfs_conditional(sdfg,
+                                   sources=[begin],
+                                   condition=lambda _, child: child != guard))
         first_id = loop_states.index(begin)
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants)
-                              for r in rng)
+        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
 
         # Create states for loop subgraph
         unrolled_states = []
         for i in range(start, end + 1, stride):
-            # Using to/from JSON copies faster than deepcopy (which will also
-            # copy the parent SDFG)
-            new_states = [
-                sd.SDFGState.from_json(s.to_json(), context={'sdfg': sdfg})
-                for s in loop_states
-            ]
-
-            # Replace iterate with value in each state
-            for state in new_states:
-                state.set_label(state.label + '_%s_%d' % (itervar, i))
-                state.replace(itervar, str(i))
-
-            # Add subgraph to original SDFG
-            for edge in loop_subgraph.edges():
-                src = new_states[loop_states.index(edge.src)]
-                dst = new_states[loop_states.index(edge.dst)]
-
-                # Replace conditions in subgraph edges
-                data: edges.InterstateEdge = copy.deepcopy(edge.data)
-                if data.condition:
-                    ASTFindReplace({itervar: str(i)}).visit(data.condition)
-
-                sdfg.add_edge(src, dst, data)
+            # Instantiate loop states with iterate value
+            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
+                                               itervar, i)
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
                 sdfg.add_edge(unrolled_states[-1][1], new_states[first_id],
-                              edges.InterstateEdge())
+                              sd.InterstateEdge())
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
         # Connect new states to before and after states without conditions
         if unrolled_states:
             sdfg.add_edge(before_state, unrolled_states[0][0],
-                          edges.InterstateEdge())
+                          sd.InterstateEdge())
             sdfg.add_edge(unrolled_states[-1][1], after_state,
-                          edges.InterstateEdge())
+                          sd.InterstateEdge())
 
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)
+
+    def instantiate_loop(self, sdfg: sd.SDFG, loop_states: List[sd.SDFGState],
+                         loop_subgraph: gr.SubgraphView, itervar: str,
+                         value: symbolic.SymbolicType):
+        # Using to/from JSON copies faster than deepcopy (which will also
+        # copy the parent SDFG)
+        new_states = [
+            sd.SDFGState.from_json(s.to_json(), context={'sdfg': sdfg})
+            for s in loop_states
+        ]
+
+        # Replace iterate with value in each state
+        for state in new_states:
+            state.set_label(state.label + '_%s_%d' % (itervar, value))
+            state.replace(itervar, value)
+
+        # Add subgraph to original SDFG
+        for edge in loop_subgraph.edges():
+            src = new_states[loop_states.index(edge.src)]
+            dst = new_states[loop_states.index(edge.dst)]
+
+            # Replace conditions in subgraph edges
+            data: sd.InterstateEdge = copy.deepcopy(edge.data)
+            if data.condition:
+                ASTFindReplace({itervar: str(value)}).visit(data.condition)
+
+            sdfg.add_edge(src, dst, data)
+
+        return new_states

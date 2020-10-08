@@ -1,10 +1,10 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
 
 @dace.program(dace.uint32[2], dace.uint32[1])
 def cpp_tasklet(A, B):
-    @dace.tasklet('CPP', global_code='#include <cstdio>')
+    @dace.tasklet('CPP')
     def index2():
         a << A[0]
         b >> B[0]

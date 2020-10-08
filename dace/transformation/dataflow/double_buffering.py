@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement the double buffering pattern. """
 
 import copy
@@ -5,14 +6,15 @@ import itertools
 
 from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
-from dace.graph import edges, nodes, nxutil
-from dace.transformation import pattern_matching
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
 @registry.autoregister_params(singlestate=True)
-class DoubleBuffering(pattern_matching.Transformation):
+class DoubleBuffering(transformation.Transformation):
     """ Implements the double buffering pattern, which pipelines reading
         and processing data by creating a second copy of the memory.
         In particular, the transformation takes a 1D map and all internal
@@ -27,7 +29,7 @@ class DoubleBuffering(pattern_matching.Transformation):
     @staticmethod
     def expressions():
         return [
-            nxutil.node_path_graph(DoubleBuffering._map_entry,
+            sdutil.node_path_graph(DoubleBuffering._map_entry,
                                    DoubleBuffering._transient)
         ]
 
@@ -79,8 +81,8 @@ class DoubleBuffering(pattern_matching.Transformation):
         map_rstart, map_rend, map_rstride = map_entry.map.range[0]
         map_rend = symbolic.pystr_to_symbolic('(%s) - (%s)' %
                                               (map_rend, map_rstride))
-        map_entry.map.range = subsets.Range([(map_rstart, map_rend,
-                                              map_rstride)])
+        map_entry.map.range = subsets.Range([(map_rstart, map_rend, map_rstride)
+                                             ])
 
         ##############################
         # Gather transients to modify
@@ -159,7 +161,7 @@ class DoubleBuffering(pattern_matching.Transformation):
         # All instances of the map parameter in this state become the loop start
         sd.replace(initial_state, map_param, map_rstart)
         # Initial writes go to the first buffer
-        sd.replace(initial_state, '__dace_db_param', '0')
+        sd.replace(initial_state, '__dace_db_param', 0)
 
         ##############################
         # Modify main state's memlets
@@ -204,6 +206,10 @@ class DoubleBuffering(pattern_matching.Transformation):
                                               (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
 
+        # Remove symbol once done
+        del nsdfg_node.sdfg.symbols['__dace_db_param']
+        del nsdfg_node.symbol_mapping['__dace_db_param']
+
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):
         desc = sdfg.arrays[data_name]
@@ -211,8 +217,8 @@ class DoubleBuffering(pattern_matching.Transformation):
             # Already in the right shape, modify new dimension
             subset = list(subset)[1:]
 
-        new_subset = subsets.Range([('__dace_db_param', '__dace_db_param',
-                                     1)] + list(subset))
+        new_subset = subsets.Range([('__dace_db_param', '__dace_db_param', 1)] +
+                                   list(subset))
         return new_subset
 
     @staticmethod

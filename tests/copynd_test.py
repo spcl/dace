@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import dace
@@ -95,8 +95,6 @@ if __name__ == "__main__":
         dace.memlet.Memlet.simple(arrays[-2],
                                   '20:40, 10:30',
                                   other_subset_str='2, 10:30, 20:40'))
-
-    sdfg.draw_to_file()
 
     array_data = [
         np.random.rand(*[

@@ -1,6 +1,7 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.transformation.dataflow import MapFission
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
@@ -33,7 +34,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -240,7 +241,7 @@ class MapFissionTest(unittest.TestCase):
         nstate.add_edge(t, 'out', a, None, dace.Memlet.simple('a', '0'))
         nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'})
 
-        state.add_edge(me, None, nsdfg_node, None, dace.EmptyMemlet())
+        state.add_edge(me, None, nsdfg_node, None, dace.Memlet())
         anode = state.add_write('A')
         state.add_memlet_path(nsdfg_node,
                               mx,
@@ -254,6 +255,82 @@ class MapFissionTest(unittest.TestCase):
         A = np.random.rand(2, 3)
         sdfg(A=A)
         self.assertTrue(np.allclose(A, np.zeros_like(A)))
+
+    def test_offsets(self):
+        sdfg = dace.SDFG('mapfission_offsets')
+        sdfg.add_array('A', [20], dace.float64)
+        sdfg.add_scalar('interim', dace.float64, transient=True)
+        state = sdfg.add_state()
+        me, mx = state.add_map('outer', dict(i='10:20'))
+
+        t1 = state.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
+        t2 = state.add_tasklet('addtwo', {'a'}, {'b'}, 'b = a + 2')
+
+        aread = state.add_read('A')
+        awrite = state.add_write('A')
+        state.add_memlet_path(aread,
+                              me,
+                              t1,
+                              dst_conn='a',
+                              memlet=dace.Memlet.simple('A', 'i'))
+        state.add_edge(t1, 'b', t2, 'a', dace.Memlet.simple('interim', '0'))
+        state.add_memlet_path(t2,
+                              mx,
+                              awrite,
+                              src_conn='b',
+                              memlet=dace.Memlet.simple('A', 'i'))
+
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+
+        dace.propagate_memlets_sdfg(sdfg)
+        sdfg.validate()
+
+        # Test
+        A = np.random.rand(20)
+        expected = A.copy()
+        expected[10:] += 3
+        sdfg(A=A)
+        self.assertTrue(np.allclose(A, expected))
+
+    def test_offsets_array(self):
+        sdfg = dace.SDFG('mapfission_offsets2')
+        sdfg.add_array('A', [20], dace.float64)
+        sdfg.add_array('interim', [1], dace.float64, transient=True)
+        state = sdfg.add_state()
+        me, mx = state.add_map('outer', dict(i='10:20'))
+
+        t1 = state.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
+        interim = state.add_access('interim')
+        t2 = state.add_tasklet('addtwo', {'a'}, {'b'}, 'b = a + 2')
+
+        aread = state.add_read('A')
+        awrite = state.add_write('A')
+        state.add_memlet_path(aread,
+                              me,
+                              t1,
+                              dst_conn='a',
+                              memlet=dace.Memlet.simple('A', 'i'))
+        state.add_edge(t1, 'b', interim, None,
+                       dace.Memlet.simple('interim', '0'))
+        state.add_edge(interim, None, t2, 'a',
+                       dace.Memlet.simple('interim', '0'))
+        state.add_memlet_path(t2,
+                              mx,
+                              awrite,
+                              src_conn='b',
+                              memlet=dace.Memlet.simple('A', 'i'))
+
+        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+
+        dace.propagate_memlets_sdfg(sdfg)
+        sdfg.validate()
+
+        # Test
+        A = np.random.rand(20)
+        expected = A.copy()
+        expected[10:] += 3
+        sdfg(A=A)
+        self.assertTrue(np.allclose(A, expected))
 
 
 if __name__ == '__main__':

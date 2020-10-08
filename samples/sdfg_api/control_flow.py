@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -7,6 +8,7 @@ sdfg = dace.SDFG('cflow')
 
 sdfg.add_array('A', [2], dace.float32)
 sdfg.add_array('B', [2], dace.float32)
+sdfg.add_symbol('T', T.dtype)
 
 
 # Sample state contents
@@ -77,12 +79,8 @@ sdfg.add_edge(loopstate0, loopstate1, dace.InterstateEdge())
 # Validate correctness of initial SDFG
 sdfg.validate()
 
-sdfg.draw_to_file('nofusion.dot')
-
 # Fuses redundant states and removes unnecessary transient arrays
 sdfg.apply_strict_transformations()
-
-sdfg.draw_to_file('withfusion.dot')
 
 ######################################
 if __name__ == '__main__':

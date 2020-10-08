@@ -1,14 +1,15 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
 import sympy as sp
 import networkx as nx
 
 from dace import sdfg as sd
-from dace.graph import edges, nxutil
-from dace.transformation import pattern_matching
+from dace.sdfg import utils as sdutil
+from dace.transformation import transformation
 
 
-class DetectLoop(pattern_matching.Transformation):
+class DetectLoop(transformation.Transformation):
     """ Detects a for-loop construct from an SDFG. """
 
     _loop_guard = sd.SDFGState()
@@ -25,11 +26,11 @@ class DetectLoop(pattern_matching.Transformation):
             DetectLoop._exit_state
         ])
         sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin,
-                      edges.InterstateEdge())
+                      sd.InterstateEdge())
         sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state,
-                      edges.InterstateEdge())
+                      sd.InterstateEdge())
         sdfg.add_edge(DetectLoop._loop_begin, DetectLoop._loop_guard,
-                      edges.InterstateEdge())
+                      sd.InterstateEdge())
 
         # Case 2: Loop with multiple states (no back-edge from state)
         msdfg = sd.SDFG('_')
@@ -38,9 +39,9 @@ class DetectLoop(pattern_matching.Transformation):
             DetectLoop._exit_state
         ])
         msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin,
-                       edges.InterstateEdge())
+                       sd.InterstateEdge())
         msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state,
-                       edges.InterstateEdge())
+                       sd.InterstateEdge())
 
         return [sdfg, msdfg]
 
@@ -78,7 +79,7 @@ class DetectLoop(pattern_matching.Transformation):
         # All nodes inside loop must be dominated by loop guard
         dominators = nx.dominance.immediate_dominators(sdfg.nx,
                                                        sdfg.start_state)
-        loop_nodes = nxutil.dfs_topological_sort(
+        loop_nodes = sdutil.dfs_conditional(
             sdfg, sources=[begin], condition=lambda _, child: child != guard)
         backedge_found = False
         for node in loop_nodes:

@@ -1,9 +1,10 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.config import Config
 
 from dace.codegen import cppunparse
@@ -39,8 +40,13 @@ DACE_EXPORTED int __dace_init_mpi({params});
 DACE_EXPORTED void __dace_exit_mpi({params});
 
 int __dace_init_mpi({params}) {{
-    if (MPI_Init(NULL, NULL) != MPI_SUCCESS)
+    int isinit = 0;
+    if (MPI_Initialized(&isinit) != MPI_SUCCESS)
         return 1;
+    if (!isinit) {{
+        if (MPI_Init(NULL, NULL) != MPI_SUCCESS)
+            return 1;
+    }}
 
     MPI_Comm_dup(MPI_COMM_WORLD, &__dace_mpi_comm);
     MPI_Comm_rank(__dace_mpi_comm, &__dace_comm_rank);
@@ -69,11 +75,14 @@ void __dace_exit_mpi({params}) {{
 
     @staticmethod
     def cmake_options():
-        compiler = make_absolute(Config.get("compiler", "mpi", "executable"))
-        return [
-            "-DMPI_CXX_COMPILER=\"{}\"".format(compiler),
-            "-DDACE_ENABLE_MPI=ON",
-        ]
+        options = ['-DDACE_ENABLE_MPI=ON']
+
+        if Config.get("compiler", "mpi", "executable"):
+            compiler = make_absolute(Config.get("compiler", "mpi",
+                                                "executable"))
+            options.append("-DMPI_CXX_COMPILER=\"{}\"".format(compiler))
+
+        return options
 
     @property
     def has_initializer(self):
@@ -100,13 +109,18 @@ void __dace_exit_mpi({params}) {{
             raise NotImplementedError(
                 'Multi-dimensional MPI maps are not supported')
 
+        state = sdfg.node(state_id)
+        symtypes = map_header.new_symbols(sdfg, state,
+                                          state.symbols_defined_at(map_header))
+
         for var, r in zip(map_header.map.params, map_header.map.range):
             begin, end, skip = r
 
             callsite_stream.write('{\n', sdfg, state_id, map_header)
             callsite_stream.write(
-                'auto %s = %s + __dace_comm_rank * (%s);\n' %
-                (var, cppunparse.pyexpr2cpp(symbolic.symstr(begin)),
+                '%s %s = %s + __dace_comm_rank * (%s);\n' %
+                (symtypes[var], var,
+                 cppunparse.pyexpr2cpp(symbolic.symstr(begin)),
                  cppunparse.pyexpr2cpp(symbolic.symstr(skip))), sdfg, state_id,
                 map_header)
 
@@ -118,12 +132,8 @@ void __dace_exit_mpi({params}) {{
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id,
-                                               child, function_stream,
-                                               callsite_stream)
-            self._dispatcher.dispatch_initialize(sdfg, dfg_scope, state_id,
-                                                 child, function_stream,
-                                                 callsite_stream)
+            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
+                                               function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,

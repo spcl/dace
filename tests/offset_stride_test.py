@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace as dp
@@ -38,9 +38,6 @@ if __name__ == '__main__':
     # Add outer edges
     state.add_edge(A_, None, map_entry, None, Memlet.simple(A_, '1:4,1:3'))
     state.add_edge(map_exit, None, B_, None, Memlet.simple(B_, '1:4,1:3'))
-
-    # Left for debugging purposes
-    mysdfg.draw_to_file()
 
     mysdfg(A=input, B=output, N=N)
 

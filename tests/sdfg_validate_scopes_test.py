@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import unittest
 import dace
 
@@ -17,7 +18,7 @@ class ScopeValidationTests(unittest.TestCase):
             state.add_edge(A, None, me, 'IN_a',
                            dace.Memlet.from_array(A.data, A.desc(sdfg)))
             state.add_edge(me, 'OUT_b', T, 'a', dace.Memlet.simple(A, '0'))
-            state.add_edge(T, None, mx, None, dace.EmptyMemlet())
+            state.add_edge(T, None, mx, None, dace.Memlet())
 
             sdfg.validate()
             self.fail('Failed to detect invalid SDFG')

@@ -1,5 +1,8 @@
 pipeline {
   agent any
+  environment {
+    CODECOV_TOKEN = credentials('codecov-token')
+  }
   stages {
     stage('Setup') {
       steps {
@@ -11,9 +14,11 @@ pipeline {
                     echo "Installing additional dependencies"
                     pip3 install --upgrade --user tensorflow-gpu==1.14.0
                     echo "Installing DaCe"
-                    pip3 install --ignore-installed --upgrade --user ".[testing]" .
+                    pip3 uninstall -y dace
+                    pip3 install --upgrade --user ".[testing]" .
                     pip3 install --user cmake
                     pip3 install --user coverage
+                    pip3 install --user mpi4py
                 '''
       }
     }
@@ -37,7 +42,7 @@ tests/cuda_test.sh
           steps {
             sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
             export COVERAGE_RCFILE=`pwd`/.coveragerc
-            export PATH=/opt/Xilinx/SDx/2018.2/bin:$PATH
+            export PATH=/opt/Xilinx/SDx/2018.2/bin:~/.local/bin:$PATH
 export DACE_compiler_xilinx_executable=xocc
 export DACE_compiler_xilinx_platform=xilinx_vcu1525_dynamic_5_1
 export XILINXD_LICENSE_FILE=2100@sgv-license-01
@@ -47,28 +52,30 @@ tests/xilinx_test.sh 0
           }
         }
         
-        stage('Test Intel FPGA') {
-          steps {
-            sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
-            export COVERAGE_RCFILE=`pwd`/.coveragerc
-            source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
-export DACE_debugprint=1
-tests/intel_fpga_test.sh 
-'''
-          }
-        }
+        
 
         stage('Test MPI') {
           steps {
             sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
             export COVERAGE_RCFILE=`pwd`/.coveragerc
-            export PATH=/opt/mpich3.2.11/bin:$PATH
+            export PATH=/opt/mpich3.2.11/bin:~/.local/bin:$PATH
 export DACE_debugprint=1
 tests/mpi_test.sh'''
           }
         }
 
       }
+    }
+    stage('Test Intel FPGA') {
+          steps {
+            sh '''export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode"
+            export COVERAGE_RCFILE=`pwd`/.coveragerc
+            source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
+            export PATH=~/.local/bin:$PATH
+export DACE_debugprint=1
+tests/intel_fpga_test.sh 
+'''
+          }
     }
     stage('Report') {
       steps {

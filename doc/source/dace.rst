@@ -9,6 +9,7 @@ Subpackages
    dace.codegen
    dace.frontend
    dace.graph
+   dace.sdfg
    dace.transformation
 
 Submodules
@@ -62,18 +63,18 @@ dace.properties module
    :undoc-members:
    :show-inheritance:
 
-dace.sdfg module
-----------------
-
-.. automodule:: dace.sdfg
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.serialize module
 ---------------------
 
 .. automodule:: dace.serialize
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.sdfg module
+---------------------
+
+.. automodule:: dace.sdfg
    :members:
    :undoc-members:
    :show-inheritance:

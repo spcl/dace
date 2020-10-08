@@ -1,13 +1,14 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import networkx as nx
 
 from dace import registry
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 @registry.autoregister
-class FPGATransformSDFG(pattern_matching.Transformation):
+class FPGATransformSDFG(transformation.Transformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
     @staticmethod
@@ -42,7 +43,7 @@ class FPGATransformSDFG(pattern_matching.Transformation):
         from dace.transformation.interstate import NestSDFG
         from dace.transformation.interstate import FPGATransformState
 
-        sdfg_id = sdfg.sdfg_list.index(sdfg)
+        sdfg_id = sdfg.sdfg_id
         nesting = NestSDFG(sdfg_id, -1, {}, self.expr_index)
         nesting.promote_global_trans = True
         nesting.apply(sdfg)
