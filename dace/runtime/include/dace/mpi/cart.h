@@ -31,6 +31,10 @@ public:
             rank += coords[i] * strides[i];
         }
     }
+    // TODO: Pick a better name
+    bool fits(int rank) {
+        return rank < size;
+    }
 };
 
 #endif  // __DACE_MPI_CART_H
