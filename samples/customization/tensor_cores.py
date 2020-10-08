@@ -6,9 +6,9 @@ Running the sample requires an NVIDIA GPU with Tensor Cores.
 """
 
 import dace
-from dace.graph import nodes
+from dace.sdfg import nodes
 from dace.codegen.targets.framecode import DaCeCodeGenerator
-from dace.codegen.targets.cpu import cpp_array_expr, cpp_offset_expr
+from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 from dace.frontend.common.op_repository import replaces
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.transformation.interstate import GPUTransformSDFG
@@ -152,21 +152,19 @@ def _include_mma(sdfg: dace.SDFG):
 using namespace nvcuda;
 #endif
 '''
-    if not sdfg.global_code:
-        sdfg.set_global_code(global_code)
-    elif 'mma.h' not in sdfg.global_code:
-        sdfg.set_global_code(sdfg.global_code + global_code)
+    if ('cuda' not in sdfg.global_code
+            or 'mma.h' not in sdfg.global_code['cuda'].code):
+        sdfg.append_global_code(global_code, 'cuda')
 
 
 @replaces('frag_fill')
 def frag_fill(sdfg: dace.SDFG, state: dace.SDFGState, frag: str, fill: str):
     wnode = state.add_write(frag)
-    tasklet = state.add_tasklet(
-        'fill',
-        set(), {'out'},
-        '''
+    tasklet = state.add_tasklet('fill',
+                                set(), {'out'},
+                                '''
       wmma::fill_fragment(out, %s);''' % fill,
-        language=dace.Language.CPP)
+                                language=dace.Language.CPP)
 
     state.add_edge(tasklet, 'out', wnode, None,
                    dace.Memlet.from_array(frag, wnode.desc(sdfg)))
@@ -183,11 +181,10 @@ def wmma(sdfg: dace.SDFG, state: dace.SDFGState, a_frag: str, b_frag: str,
     anode = state.add_read(a_frag)
     bnode = state.add_read(b_frag)
     cnode = state.add_read(c_frag)
-    tasklet = state.add_tasklet(
-        'wmma', {'afrag', 'bfrag'}, {'cfrag'},
-        '''
+    tasklet = state.add_tasklet('wmma', {'afrag', 'bfrag'}, {'cfrag'},
+                                '''
       wmma::mma_sync(cfrag, afrag, bfrag, cfrag);''',
-        language=dace.Language.CPP)
+                                language=dace.Language.CPP)
 
     state.add_edge(anode, None, tasklet, 'afrag',
                    dace.Memlet.from_array(a_frag, anode.desc(sdfg)))
@@ -222,23 +219,20 @@ N = dace.symbol('N')
 
 
 @dace.program
-def tc_hgemm(A: dace.float16[N, N], B: dace.float16[N, N],
-             C: dace.float32[N, N]):
+def tc_hgemm(A: dace.float16[N, N], B: dace.float16[N, N], C: dace.float32[N,
+                                                                           N]):
     for i, j in dace.map[0:N:16, 0:N:16]:
-        ctile = dace.ndarray(
-            [16, 16],
-            dtype=dace.float32,
-            storage=dace.StorageType.TensorCore_Accumulator)
+        ctile = dace.ndarray([16, 16],
+                             dtype=dace.float32,
+                             storage=dace.StorageType.TensorCore_Accumulator)
         frag_fill(ctile, 0.0)
         for k in range(0, N, 16):
-            atile = dace.ndarray(
-                [16, 16],
-                dtype=dace.float16,
-                storage=dace.StorageType.TensorCore_A)
-            btile = dace.ndarray(
-                [16, 16],
-                dtype=dace.float16,
-                storage=dace.StorageType.TensorCore_B)
+            atile = dace.ndarray([16, 16],
+                                 dtype=dace.float16,
+                                 storage=dace.StorageType.TensorCore_A)
+            btile = dace.ndarray([16, 16],
+                                 dtype=dace.float16,
+                                 storage=dace.StorageType.TensorCore_B)
             atile << A[i:i + 16, k:k + 16]
             btile << B[k:k + 16, j:j + 16]
             wmma(atile, btile, ctile)
@@ -256,7 +250,7 @@ if __name__ == '__main__':
     C = np.random.rand(1024, 1024).astype(np.float32)
 
     sdfg = tc_hgemm.to_sdfg()
-    sdfg.apply_transformations(GPUTransformSDFG, apply_once=True)
+    sdfg.apply_transformations(GPUTransformSDFG)
     sdfg(A=A, B=B, C=C, N=1024)
 
     diff = np.linalg.norm(A @ B - C) / (1024 * 1024)
