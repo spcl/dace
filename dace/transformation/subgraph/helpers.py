@@ -7,12 +7,13 @@ from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
 
-from copy import deepcopy as dcpy
-from typing import List, Union, Dict, Tuple
+from collections import defaultdict
+import copy
+from typing import List, Union, Dict, Tuple, Set
 
 import dace.libraries.standard as stdlib
 
-
+import itertools
 
 # ****************
 # Helper functions
@@ -140,3 +141,98 @@ def get_highest_scope_maps(sdfg, graph, subgraph = None):
                                               and is_lowest_scope(node)]
 
     return maps
+
+def are_subsets_contiguous(subset_a: subsets.Subset,
+                           subset_b: subsets.Subset) -> bool:
+    ''' If subsets are contiguous, return True '''
+    bbunion = subsets.bounding_box_union(subset_a, subset_b)
+
+    return all([bbsz == asz + bsz for (bbsz, asz, bsz) \
+                    in zip(bbunion.size(), subset_a.bounding_box_size(), subset_b.bounding_box_size())])
+    '''
+    return bbunion.num_elements() == (subset_a.num_elements() +
+                                      subset_b.num_elements())
+    '''
+
+def find_contiguous_subsets(
+        subset_list: List[subsets.Subset]) -> Set[subsets.Subset]:
+    """
+    Finds the set of largest contiguous subsets in a list of subsets.
+    :param subsets: Iterable of subset objects.
+    :return: A list of contiguous subsets.
+    """
+    # Currently O(n^2) worst case.
+    subset_set = set(subset_list)
+    while True:
+        for sa, sb in itertools.product(subset_set, subset_set):
+            if sa is sb:
+                continue
+            if sa.covers(sb):
+                subset_set.remove(sb)
+                break
+            elif sb.covers(sa):
+                subset_set.remove(sa)
+                break
+            elif are_subsets_contiguous(sa, sb):
+                subset_set.remove(sa)
+                subset_set.remove(sb)
+                subset_set.add(subsets.bounding_box_union(sa, sb))
+                break
+        else:  # No modification performed
+            break
+    return subset_set
+def deduplicate(sdfg, graph, map_entry, out_connector, edges):
+    ''' applies Deduplication to ALL edges coming from the same
+        out_connector specified in out_connector.
+        Suitable after consolidating edges at the entry node.
+        WARNING: This is not guaranteed to be deterministic
+    '''
+    # Steps:
+    # 1. Find unique subsets
+    # 2. Find sets of contiguous subsets
+    # 3. Create transients for subsets
+    # 4. Redirect edges through new transients
+
+    # only connector we are interested in
+    conn = out_connector
+
+    # Get original data descriptor
+    edge0 = next(iter(edges))
+    dname = edge0.data.data
+    desc = sdfg.arrays[edge0.data.data]
+
+    # Get unique subsets
+    unique_subsets = set(e.data.subset for e in edges)
+
+    # Find largest contiguous subsets
+    contiguous_subsets = find_contiguous_subsets(unique_subsets)
+    #print("Subsets:", contiguous_subsets)
+
+    # Map original edges to subsets
+    edge_mapping = defaultdict(list)
+    for e in edges:
+        for ind, subset in enumerate(contiguous_subsets):
+            if subset.covers(e.data.subset):
+                edge_mapping[ind].append(e)
+                break
+        else:
+            raise ValueError(
+                "Failed to find contiguous subset for edge %s" % e.data)
+
+    # Create transients for subsets and redirect edges
+    for ind, subset in enumerate(contiguous_subsets):
+        name, _ = sdfg.add_temp_transient(subset.size(), desc.dtype)
+        anode = graph.add_access(name)
+        graph.add_edge(map_entry, conn, anode, None,
+                       Memlet(data=dname, subset=subset))
+        for e in edge_mapping[ind]:
+            graph.remove_edge(e)
+            new_memlet = copy.deepcopy(e.data)
+            # Offset memlet to match new transient
+            new_memlet.subset.offset(subset, True)
+            new_edge = graph.add_edge(anode, None, e.dst, e.dst_conn,
+                                      new_memlet)
+            # Rename data on memlet
+            for pe in graph.memlet_tree(new_edge):
+                pe.data.data = name
+                pe.data.subset.offset(subset, True)

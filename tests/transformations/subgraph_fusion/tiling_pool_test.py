@@ -73,6 +73,8 @@ def test_stencil(tile_size, offset = False):
     st.tile_size = (tile_size,)
     st.schedule = dace.dtypes.ScheduleType.Sequential
     assert st.can_be_applied(sdfg, subgraph)
+    # so that OMP never fails
+    st.schedule = dace.dtypes.ScheduleType.Sequential
     st.apply(sdfg)
 
     sdfg._name = 'tiled'

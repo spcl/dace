@@ -56,7 +56,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         default = False
     )
 
-    scheulde_innermaps = Property(
+    schedule_innermaps = Property(
         desc = "Schedule of inner maps",
         dtype = dtypes.ScheduleType,
         default = dtypes.ScheduleType.Default
@@ -892,7 +892,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # create a hook for outside access to global_map
         self._global_map_entry = global_map_entry
-        if self.sequential_innermaps:
-            for node in graph.scope_dict(graph)[global_map_entry]:
-                if isinstance(node, nodes.MapEntry):
-                    node.map.schedule = dtypes.ScheduleType.Sequential
+        for node in graph.scope_dict(graph)[global_map_entry]:
+            if isinstance(node, nodes.MapEntry):
+                node.map.schedule = self.schedule_innermaps
