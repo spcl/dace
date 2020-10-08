@@ -127,28 +127,35 @@ void __dace_exit_mpi({params}) {{
             arrsize = cpp.sym2cpp(nodedesc.total_size)
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             ctype = nodedesc.dtype.ctype
-            comm_name = "__dace_comm_{n}".format(n=name)
+            # comm_name = "__dace_comm_{n}".format(n=name)
             cart_name = "__dace_cart_{n}".format(n=name)
             dims = "__dace_dims_{n}".format(n=name)
             coords = "__dace_coords_{n}".format(n=name)
-            periods = "__dace_periods_{n}".format(n=name)
-            reorder = "__dace_reorder_{n}".format(n=name)
+            # periods = "__dace_periods_{n}".format(n=name)
+            # reorder = "__dace_reorder_{n}".format(n=name)
             win_name = "__dace_win_{n}".format(n=name)
+            # callsite_stream.write(
+            #     "MPI_Comm {c};\n"
+            #     "int {dims}[{d}];\n"
+            #     "int {coords}[{d}];\n"
+            #     "int {periods}[{d}];\n"
+            #     "int {reorder} = 0;".format(
+            #         c=comm_name, d=ndims, dims=dims, coords=coords,
+            #         periods=periods, reorder=reorder),
+            #     sdfg, state_id, node)
             callsite_stream.write(
-                "MPI_Comm {c};\n"
                 "int {dims}[{d}];\n"
-                "int {coords}[{d}];\n"
-                "int {periods}[{d}];\n"
-                "int {reorder} = 0;".format(
-                    c=comm_name, d=ndims, dims=dims, coords=coords,
-                    periods=periods, reorder=reorder),
+                "int {coords}[{d}];".format(d=ndims, dims=dims, coords=coords),
                 sdfg, state_id, node)
             for i, s in enumerate(nodedesc.dist_shape):
                 # TODO: Assume non-periodic for now
+                # callsite_stream.write(
+                #     "{dims}[{i}] = {s};\n"
+                #     "{periods}[{i}] = 0;".format(
+                #         i=i, s=s, dims=dims, periods=periods),
+                #     sdfg, state_id, node)
                 callsite_stream.write(
-                    "{dims}[{i}] = {s};\n"
-                    "{periods}[{i}] = 0;".format(
-                        i=i, s=s, dims=dims, periods=periods),
+                    "{dims}[{i}] = {s};\n".format(i=i, s=s, dims=dims),
                     sdfg, state_id, node)
             # callsite_stream.write(
             #     "MPI_Cart_create(MPI_COMM_WORLD, {n}, {dims}, "
@@ -215,9 +222,9 @@ void __dace_exit_mpi({params}) {{
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
-        comm_name = "__dace_comm_{}".format(map_header.map.label)
-        callsite_stream.write("MPI_Comm {c};\n".format(c=comm_name),
-                              sdfg, state_id, map_header)
+        # comm_name = "__dace_comm_{}".format(map_header.map.label)
+        # callsite_stream.write("MPI_Comm {c};\n".format(c=comm_name),
+        #                       sdfg, state_id, map_header)
         callsite_stream.write('{', sdfg, state_id, map_header)
 
         # if len(map_header.map.params) > 1:
@@ -226,20 +233,40 @@ void __dace_exit_mpi({params}) {{
 
         ndims = len(map_header.map.params)
         sdims = [e + 1 for _, e, _ in map_header.map.range]
-        callsite_stream.write("int dims[{n}];\n"
-                              "int coords[{n}];\n"
-                              "int periods[{n}];\n"
-                              "int reorder = 0;".format(c=comm_name, n=ndims),
-                              sdfg, state_id, map_header)  # TODO: Unique names?
+        name = "{sd}_{st}_{n}".format(
+            sd=sdfg.sdfg_list.index(sdfg),
+            st=state_id,
+            n=sdfg.nodes()[state_id].node_id(map_header))
+        cart_name = "__dace_cart_{n}".format(n=name)
+        dims = "__dace_dims_{n}".format(n=name)
+        coords = "__dace_coords_{n}".format(n=name)
+        callsite_stream.write(
+            "int {dims}[{d}];\n"
+            "int {coords}[{d}];".format(d=ndims, dims=dims, coords=coords),
+            sdfg, state_id, map_header)
         for i, s in enumerate(sdims):
-            callsite_stream.write("dims[{i}] = {s};\n"
-                                  "periods[{i}] = 0;".format(i=i, s=s),
-                                  sdfg, state_id, map_header)  # TODO: Assume non-periodic for now
-        callsite_stream.write("MPI_Cart_create(MPI_COMM_WORLD, {n}, dims, "
-                              "periods, reorder, &{c});\n"
-                              "MPI_Cart_coords({c}, __dace_comm_rank, "
-                              "{n}, coords);".format(c=comm_name, n=ndims),
-                              sdfg, state_id, map_header)
+            callsite_stream.write(
+                "{dims}[{i}] = {s};\n".format(i=i, s=s, dims=dims),
+                sdfg, state_id, map_header)
+        callsite_stream.write(
+            "Cart {cart}({n}, {dims});\n"
+            "{cart}.coords(__dace_comm_rank, {coords});".format(
+                n=ndims, dims=dims, coords=coords, cart=cart_name),
+            sdfg, state_id, map_header)
+        # callsite_stream.write("int dims[{n}];\n"
+        #                       "int coords[{n}];\n"
+        #                       "int periods[{n}];\n"
+        #                       "int reorder = 0;".format(c=comm_name, n=ndims),
+        #                       sdfg, state_id, map_header)  # TODO: Unique names?
+        # for i, s in enumerate(sdims):
+        #     callsite_stream.write("dims[{i}] = {s};\n"
+        #                           "periods[{i}] = 0;".format(i=i, s=s),
+        #                           sdfg, state_id, map_header)  # TODO: Assume non-periodic for now
+        # callsite_stream.write("MPI_Cart_create(MPI_COMM_WORLD, {n}, dims, "
+        #                       "periods, reorder, &{c});\n"
+        #                       "MPI_Cart_coords({c}, __dace_comm_rank, "
+        #                       "{n}, coords);".format(c=comm_name, n=ndims),
+        #                       sdfg, state_id, map_header)
         # TODO: We need to start passive epochs for all distributed data
         # accessed in the map. Or maybe only the input data (gets)?
         data_windows = set()
@@ -266,7 +293,8 @@ void __dace_exit_mpi({params}) {{
 
             callsite_stream.write('{\n', sdfg, state_id, map_header)
             callsite_stream.write(
-                "{t} {v} = coords[{i}];\n".format(t=symtypes[var], v=var, i=i),
+                "{t} {v} = {coords}[{i}];\n".format(
+                    t=symtypes[var], coords=coords, v=var, i=i),
                 sdfg, state_id, map_header)  # TODO: Bound checking
 
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, map_header)
@@ -290,7 +318,7 @@ void __dace_exit_mpi({params}) {{
         for win in data_windows:
             callsite_stream.write("MPI_Win_unlock_all({w});".format(w=win),
                                   sdfg, state_id, map_header)
-        callsite_stream.write("MPI_Barrier({c});".format(c=comm_name),
+        callsite_stream.write("MPI_Barrier({c});".format(c="MPI_COMM_WORLD"),
                               sdfg, state_id, map_header)
 
     def copy_memory(
