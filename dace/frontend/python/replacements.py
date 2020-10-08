@@ -241,6 +241,8 @@ def _simple_call(sdfg: SDFG,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
+    if isinstance(inpname, (list, tuple)):  # TODO investigate this
+        inpname = inpname[0]
     inparr = sdfg.arrays[inpname]
     if restype is None:
         restype = sdfg.arrays[inpname].dtype
@@ -382,6 +384,7 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.max')
+@oprepo.replaces('numpy.amax')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg,
                    state,
@@ -392,6 +395,7 @@ def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.min')
+@oprepo.replaces('numpy.amin')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg,
                    state,
