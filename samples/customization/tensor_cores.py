@@ -180,7 +180,7 @@ def wmma(sdfg: dace.SDFG, state: dace.SDFGState, a_frag: str, b_frag: str,
          c_frag: str):
     anode = state.add_read(a_frag)
     bnode = state.add_read(b_frag)
-    cnode = state.add_read(c_frag)
+    cnode = state.add_write(c_frag)
     tasklet = state.add_tasklet('wmma', {'afrag', 'bfrag'}, {'cfrag'},
                                 '''
       wmma::mma_sync(cfrag, afrag, bfrag, cfrag);''',
