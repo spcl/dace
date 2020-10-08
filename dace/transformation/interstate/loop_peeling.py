@@ -18,8 +18,8 @@ from dace.transformation.interstate.loop_unroll import LoopUnroll
 @registry.autoregister
 @make_properties
 class LoopPeeling(LoopUnroll):
-    """ 
-    Splits the first `count` iterations of a state machine for-loop into 
+    """
+    Splits the first `count` iterations of a state machine for-loop into
     multiple, separate states.
     """
 
@@ -77,7 +77,7 @@ class LoopPeeling(LoopUnroll):
         for i in range(self.count):
             # Instantiate loop states with iterate value
             new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
-                                               itervar, rng[0] + i * rng[2])
+                                               itervar, rng[0] + i * rng[2], i)
 
             # Connect states to before the loop with unconditional edges
             sdfg.add_edge(append_state, new_states[first_id],
