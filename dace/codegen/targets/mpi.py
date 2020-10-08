@@ -403,7 +403,7 @@ void __dace_exit_mpi({params}) {{
             ctype = src_node.out_connectors[uconn].dtype.ctype
         mpitype = dtypes._MPITYPES[ctype]
         data_name = memlet.data
-        comm_name = "__dace_comm_{n}".format(n=data_name)
+        # comm_name = "__dace_comm_{n}".format(n=data_name)
         win_name = "__dace_win_{n}".format(n=data_name)
         cart_name = "__dace_cart_{n}".format(n=data_name)
         trank = "__dace_target_rank_{n}".format(n=name)
@@ -428,9 +428,6 @@ void __dace_exit_mpi({params}) {{
         disp = _dot(local_index, data.strides)
 
         if isinstance(dst_node, nodes.Tasklet):
-            ctype = dst_node.in_connectors[vconn].dtype.ctype
-            # TODO: Create dtypes dict
-            mpitype = "MPI_DOUBLE"
             callsite_stream.write(
                 "{ct} {conn};\n"
                 "MPI_Get(&{conn}, 1, {mt}, {trank}, {dp}, 1, {mt}, {w});\n"
