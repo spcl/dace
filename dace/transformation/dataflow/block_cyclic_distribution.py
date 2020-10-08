@@ -97,6 +97,7 @@ class BlockCyclicData(pattern_matching.Transformation):
         data.storage = dtypes.StorageType.Distributed
         data.dist_shape = new_dist_shape
         data.shape = new_shape
+        data.offset = [0] * len(new_shape)  # TODO: Is this always correct?
         data.total_size = _prod(new_shape)
         data.strides = [_prod(new_shape[i + 1:]) for i in range(len(new_shape))]
 
