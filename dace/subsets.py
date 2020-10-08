@@ -824,8 +824,8 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
 
     else:
         result = []
-        for arb, brb, are, bre in zip(subset_a.min_element(), subset_b.min_element(),
-                                      subset_a.max_element(), subset_b.max_element()):
+        for arb, brb, are, bre in zip(subset_a.min_element_approx(), subset_b.min_element_approx(),
+                                      subset_a.max_element_approx(), subset_b.max_element_approx()):
             try:
                 minrb = min(arb, brb)
             except TypeError:
@@ -861,14 +861,15 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                  inputs. If union failed, returns None.
     """
     try:
-        if type(subset_a) != type(subset_b):
-            return bounding_box_union(subset_a, subset_b)
-        elif subset_a is not None and subset_b is None:
+
+        if subset_a is not None and subset_b is None:
             return subset_a
         elif subset_b is not None and subset_a is None:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
+        elif type(subset_a) != type(subset_b):
+            return bounding_box_union(subset_a, subset_b)
         elif isinstance(subset_a, Indices):
             # Two indices. If they are adjacent, returns a range that contains both,
             # otherwise, returns a bounding box of the two

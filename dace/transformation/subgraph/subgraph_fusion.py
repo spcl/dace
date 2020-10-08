@@ -12,6 +12,8 @@ from dace.properties import make_properties, Property
 from dace.symbolic import symstr, overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from dace.transformation.subgraph import helpers
+from dace.transformation.dataflow import RedundantArray
+from dace.sdfg.utils import consolidate_edges_scope
 
 from copy import deepcopy as dcpy
 from typing import List, Union
@@ -39,13 +41,36 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     """
 
-    debug = Property(desc="Show debug info", dtype=bool, default=False)
+    debug = Property(desc="Show debug info", dtype=bool, default=True)
 
     transient_allocation = Property(
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
         default=dtypes.StorageType.Default)
+
+
+    consolidate = Property(
+        desc = "Consolidate edges that enter and exit the fused map.",
+        dtype = bool,
+        default = False
+    )
+
+    scheulde_innermaps = Property(
+        desc = "Schedule of inner maps",
+        dtype = dtypes.ScheduleType,
+        default = dtypes.ScheduleType.Default
+    )
+
+    propagate_source = Property(
+        desc="Propagate memlets of edges that go inside the fused map"
+             "from source arrays in order to get a correct volume estiamte."
+             "Disable if this causes problems. (If memlet propagation does"
+             "not work correctly)",
+        dtype=bool,
+        default = True
+    )
+
 
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
@@ -56,7 +81,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
            There is at most one AccessNode only on a path between two maps,
            no other nodes are allowed
         3. The exiting memlets' subsets to an intermediate edge must cover
-           the respective incoming memlets' subset into the next map
+           the respective incoming memlets' subset into the next map.
+           Also, as a limitation, the union of all exiting memlets'
+           subsets must be contiguous.
         '''
         # get graph
         graph = subgraph.graph
@@ -185,58 +212,21 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             subset_to_add.pop(dims_to_discard)
                             lower_subsets.add(subset_to_add)
 
-            upper_iter = iter(upper_subsets)
-            union_upper = next(upper_iter)
 
-            # TODO: add this check at a later point
-            # We assume that upper_subsets for each data array
-            # are contiguous
-            # or do the full check if possible (intersection needed)
-            '''
-            # check whether subsets in upper_subsets are adjacent.
-            # this is a requriement for the current implementation
-            #try:
-            # O(n^2*|dims|) but very small amount of subsets anyway
+            # We assume that upper_subsets are contiguous
+            # Check for this.
             try:
-                for dim in range(total_dims - len(dims_to_discard)):
-                    ordered_list = [(-1,-1,-1)]
-                    for upper_subset in upper_subsets:
-                        lo = upper_subset[dim][0]
-                        hi = upper_subset[dim][1]
-                        for idx,element in enumerate(ordered_list):
-                            if element[0] <= lo and element[1] >= hi:
-                                break
-                            if element[0] > lo:
-                                ordered_list.insert(idx, (lo,hi))
-                    ordered_list.pop(0)
-
-
-                    highest = ordered_list[0][1]
-                    for i in range(len(ordered_list)):
-                        if i < len(ordered_list)-1:
-                            current_range = ordered_list[i]
-                            if current_range[1] > highest:
-                                hightest = current_range[1]
-                            next_range = ordered_list[i+1]
-                            if highest < next_range[0] - 1:
-                                return False
+                contiguous_upper = helpers.find_contiguous_subsets(upper_subsets)
+                if len(contiguous_upper) > 1:
+                    return False
             except TypeError:
-                #return False
-            '''
-            # FORNOW: just omit warning if unsure
-            for lower_subset in lower_subsets:
-                covers = False
-                for upper_subset in upper_subsets:
-                    if upper_subset.covers(lower_subset):
-                        covers = True
-                        break
-                if not covers:
-                    warnings.warn(
-                        f"WARNING: For node {node}, please check assure that"
-                        "incoming memlets cover outgoing ones. Ambiguous check (WIP)."
-                    )
+                warnings.warn('Could not determine whether subset is continuous.'
+                              'Exiting Check with False.')
+                return False
 
             # now take union of upper subsets
+            upper_iter = iter(upper_subsets)
+            union_upper = next(upper_iter)
             for subs in upper_iter:
                 union_upper = subsets.union(union_upper, subs)
                 if not union_upper:
@@ -244,6 +234,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     return False
 
             # finally check coverage
+            # every lower subset must be completely covered by union_upper
             for lower_subset in lower_subsets:
                 if not union_upper.covers(lower_subset):
                     return False
@@ -779,6 +770,27 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     sdfg.data(
                         data_name).lifetime = dtypes.AllocationLifetime.State
 
+        # this function is needed in the next loop
+        # it adjusts augmented arrays in nearby connected SDFGs
+        def adjust_arrays(sdfg, nsdfg, name, nname):
+            # DFS to replace strides and and volumes of a certain array in an
+            # sdfg and its nested sdfgs contained. this is needed to change
+            # the above properties of augmented arrays in adjacent sdfgs
+            nsdfg.data(nested_data_name).strides = dcpy(sdfg.data(name).strides)
+            nsdfg.data(nested_data_name).total_size = dcpy(sdfg.data(name).total_size)
+            # traverse the whole graph and search for arrays
+            for ngraph in nsdfg.nodes():
+                for nnode in ngraph.nodes():
+                    if isinstance(nnode, nodes.AccessNode) and nnode.label == nname:
+                        # trace and recurse if necessary
+                        for e in chain(ngraph.out_edges(nnode), ngraph.in_edges(nnode)):
+                            for te in ngraph.memlet_tree(e):
+                                if isinstance(te.dst, nodes.NestedSDFG):
+                                    adjust_arrays(nsdfg, te.dst.sdfg, nname, te.dst_conn)
+                                if isinstance(te.src, nodes.NestedSDFG):
+                                    adjust_arrays(nsdfg, te.src.sdfg, nname, te.src_conn)
+
+
         # do one pass to adjust and the memlets of in-between transients
         for node in intermediate_nodes:
             # all incoming edges to node
@@ -804,6 +816,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             edge.data.subset.offset(min_offset, True)
                         elif edge.data.other_subset:
                             edge.data.other_subset.offset(min_offset, True)
+                    # nested SDFG: go the extra mile
+                    if isinstance(iedge.src, nodes.NestedSDFG):
+                        nsdfg = iedge.src.sdfg
+                        nested_data_name = edge.src_conn
+                        adjust_arrays(sdfg, nsdfg, node.data, nested_data_name)
+
 
                 for cedge in inter_edges:
                     for edge in graph.memlet_tree(cedge):
@@ -811,6 +829,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             edge.data.subset.offset(min_offset, True)
                         elif edge.data.other_subset:
                             edge.data.other_subset.offset(min_offset, True)
+                        # nested SDFG: go the extra mile
+                        if isinstance(edge.dst, nodes.NestedSDFG):
+                            nsdfg = edge.dst.sdfg
+                            nested_data_name = edge.dst_conn
+                            adjust_arrays(sdfg, nsdfg, node.data, nested_data_name)
+
 
                 # if in_edges has several entries:
                 # put other_subset into out_edges for correctness
@@ -828,6 +852,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if e.data.data == node.data:
                             e.data.data += '_OUT'
 
+        if self.consolidate:
+            consolidate_edges_scope(graph, global_map_entry)
+            consolidate_edges_scope(graph, global_map_exit)
+
+
         # do one last pass to correct outside memlets adjacent to global map
         for out_connector in global_map_entry.out_connectors:
             # find corresponding in_connector
@@ -841,22 +870,29 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # and all out-connecting edges that belong to it
             # count them
             oedge_counter = 0
+            oedge_set = set()
             for oedge in graph.out_edges(global_map_entry):
                 if oedge.src_conn == out_connector:
-                    out_edge = oedge
+                    oedge_set.add(oedge)
                     oedge_counter += 1
 
             # do memlet propagation
             # if there are several out edges, else there is no need
 
             if oedge_counter > 1:
-                memlet_out = propagate_memlet(dfg_state=graph,
-                                              memlet=out_edge.data,
-                                              scope_node=global_map_entry,
-                                              union_inner_edges=True)
-                # override number of accesses
-                in_edge.data.volume = memlet_out.volume
-                in_edge.data.subset = memlet_out.subset
+                if self.propagate_source:
+                    memlet_out = propagate_memlet(dfg_state=graph,
+                                                  memlet=next(iter(oedge_set)).data,
+                                                  scope_node=global_map_entry,
+                                                  union_inner_edges=True)
+                    #override number of accesses
+                    in_edge.data.volume = memlet_out.volume
+                    in_edge.data.subset = memlet_out.subset
+
 
         # create a hook for outside access to global_map
         self._global_map_entry = global_map_entry
+        if self.sequential_innermaps:
+            for node in graph.scope_dict(graph)[global_map_entry]:
+                if isinstance(node, nodes.MapEntry):
+                    node.map.schedule = dtypes.ScheduleType.Sequential

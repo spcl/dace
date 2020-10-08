@@ -35,7 +35,7 @@ class ReduceExpansion(transformation.Transformation):
 
     _reduce = stdlib.Reduce()
 
-    debug = Property(desc="Debug Info", dtype=bool, default=False)
+    debug = Property(desc="Debug Info", dtype=bool, default=True)
 
     create_in_transient = Property(desc="Create local in-transient"
                                    "in registers",
@@ -180,16 +180,13 @@ class ReduceExpansion(transformation.Transformation):
                 print("ReduceExpansion::Expanding Reduction into Map")
             # we are lucky
             shortcut = True
-            if self.create_out_transient:
-                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
-                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
             nstate.out_edges(outer_exit)[0].data.wcr = None
 
         else:
             if self.debug:
-                print(f"ReduceExpansion::Expanding Reduction into Map"
-                      "and introducing update Tasklet,"
-                      "connecting with ancestor {array_closest_ancestor}")
+                print(f"ReduceExpansion::Expanding Reduction into Map "
+                      "and introducing update Tasklet, "
+                      "connecting with ancestor.")
             if not array_closest_ancestor:
                 array_closest_ancestor = nodes.AccessNode(
                     out_storage_node.data, access=dtypes.AccessType.ReadOnly)
@@ -222,6 +219,9 @@ class ReduceExpansion(transformation.Transformation):
             # push to register
             nsdfg.sdfg.data(out_transient_node_inner.data
                             ).storage = dtypes.StorageType.Register
+            if shortcut:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
 
         if self.create_in_transient:
             # create an in-transient between inner and outer map entry
@@ -360,10 +360,11 @@ class ReduceExpansion(transformation.Transformation):
         self._new_reduce = reduce_node_new
         self._outer_entry = outer_entry
 
-        if identity is None and not shortcut:
+        if identity is None and self.create_out_transient:
             # set the reduction identity accordingly so that the correct
             # blank result is written to the out_transient node
             # we use default values deducted from the reduction type
+            reduction_type = detect_reduction_type(wcr)
             try:
                 reduce_node_new.identity = self.reduction_type_identity[
                     reduction_type]
