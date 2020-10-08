@@ -7,6 +7,13 @@ import numpy as np
 import scipy as sp
 from mpi4py import MPI
 
+from dace.sdfg import SDFG
+from dace.codegen.compiler import CompiledSDFG, ReloadableDLL
+
+from functools import reduce
+from itertools import product
+from typing import List, Tuple
+
 N = dace.symbol('N')
 PX = dace.symbol('PX')
 PY = dace.symbol('PY')
@@ -22,24 +29,101 @@ def axpy(A, X, Y):
 
 
 if __name__ == "__main__":
-    print("==== Program start ====")
 
+    # MPI variables
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    # Arguments/symbols
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=1024)
+    parser.add_argument("PX", type=int, nargs="?", default=size)
+    parser.add_argument("PY", type=int, nargs="?", default=size)
+    parser.add_argument("PM", type=int, nargs="?", default=size)
+    parser.add_argument("BX", type=int, nargs="?", default=64)
+    parser.add_argument("BY", type=int, nargs="?", default=64)
+    parser.add_argument("BM", type=int, nargs="?", default=64)
     args = vars(parser.parse_args())
 
+    # Set symbols
     N.set(args["N"])
+    PX.set(args["PX"])
+    PY.set(args["PY"])
+    PM.set(args["PM"])
+    BX.set(args["BX"])
+    BY.set(args["BY"])
+    BM.set(args["BM"])
 
-    print('Scalar-vector multiplication %d' % (N.get()))
+    # Validate decomposition parameters
+    def validate_param(rank: int, size: int,
+                       param: dace.symbol, label: str) -> int:
+        if param.get() > size:
+            if rank == 0:
+                print("Not enough ranks for the requested {l} decomposition "
+                      "(size = {s}, PX = {px}). Setting {n} equal to comm "
+                      "size".format(l=label, s=size, px=param.get(),
+                                    n=param.name))
+            return size
+        return param.get()
+    
+    PX.set(validate_param(rank, size, PX, "X vector"))
+    PY.set(validate_param(rank, size, PY, "Y vector"))
+    PM.set(validate_param(rank, size, PM, "iteration space"))
 
-    # Initialize arrays: Randomize A and X, zero Y
-    # A = dace.float64(np.random.rand())
-    # X = np.random.rand(N.get()).astype(np.float64)
-    # Y = np.random.rand(N.get()).astype(np.float64)
-    A = dace.float64(2.0)
-    X = np.arange(N.get(), dtype=np.float64)
-    Y = np.ones(N.get(), dtype=np.float64)
+    if rank == 0:
+        print("==== Program start ====")
+        print("BLAS axpy kernel (Y += A * X) with N = {}".format(N.get()))
+        print("PX = {}, PY = {}, PM = {}".format(PX.get(), PY.get(), PM.get()))
+        print("BX = {}, BY = {}, BM = {}".format(BX.get(), BY.get(), BM.get()))
 
+    # Create SDFG
+    if rank == 0:
+        from dace.transformation.dataflow import (BlockCyclicData,
+                                                  BlockCyclicMap, MapFusion)
+        sdfg = axpy.to_sdfg()
+        sdfg.apply_strict_transformations()
+        sdfg.add_process_grid("X", (PX,))
+        sdfg.add_process_grid("Y", (PY,))
+        sdfg.add_process_grid("M", (PM,))
+        sdfg.apply_transformations([MapFusion, BlockCyclicData,
+                                    BlockCyclicData, BlockCyclicMap],
+                                    options=[
+                                        {},
+                                        {'dataname': 'X',
+                                        'gridname': 'X',
+                                        'block': (BX,)},
+                                        {'dataname': 'Y',
+                                        'gridname': 'Y',
+                                        'block': (BY,)},
+                                        {'gridname': 'M',
+                                        'block': (BM,)}])
+        sdfg.save("rma_axpy.sdfg")
+        func = sdfg.compile()
+    
+    comm.Barrier()
+
+    if rank > 0:
+        sdfg = SDFG.from_file("rma_axpy.sdfg")
+        func = CompiledSDFG(sdfg, ReloadableDLL(
+            '.dacecache/axpy/build/libaxpy.so', sdfg.name))
+    
+
+    # Initialize arrays: Randomize A, X, and Y
+    A_arr = np.random.rand(1).astype(np.float64)
+    X = np.random.rand(N.get()).astype(np.float64)
+    Y = np.random.rand(N.get()).astype(np.float64)
+    # A = np.float64(2.0)
+    # X = np.arange(N.get(), dtype=np.float64)
+    # Y = np.ones(N.get(), dtype=np.float64)
+    
+    # Use rank 0's arrays
+    comm.Bcast(A_arr, root=0)
+    A = np.float64(A_arr[0])
+    comm.Bcast(X, root=0)
+    comm.Bcast(Y, root=0)
+
+    # Initialize regression arrays
     A_regression = np.float64(0.0)
     X_regression = np.ndarray([N.get()], dtype=np.float64)
     Y_regression = np.ndarray([N.get()], dtype=np.float64)
@@ -47,106 +131,82 @@ if __name__ == "__main__":
     X_regression[:] = X[:]
     Y_regression[:] = Y[:]
 
-    # axpy(A, X, Y)
+    # Extract local data
+    def get_coords(rank: int,
+                   process_grid: List[dace.symbol]) -> Tuple[bool, List[int]]:
+        # Check if rank belongs to comm
+        pg_int = [p.get() for p in process_grid]
+        cart_size = reduce(lambda a, b: a * b, pg_int, 1)
+        if rank >= cart_size:
+            return False, []
+        # Compute strides
+        n = len(process_grid)
+        size = 1
+        strides = [None] * n
+        for i in range(n - 1, -1, -1):
+            strides[i] = size
+            size *= process_grid[i].get()
+        # Compute coords
+        rem = rank
+        coords = [None] * n
+        for i in range(n):
+            coords[i] = int(rem / strides[i])
+            rem %= strides[i]
+        return True, coords
 
-    from dace.transformation.dataflow import (BlockCyclicData, BlockCyclicMap, MapFusion)
-    sdfg = axpy.to_sdfg()
-    sdfg.apply_strict_transformations()
-    sdfg.add_process_grid("X", (PX,))
-    sdfg.add_process_grid("Y", (PY,))
-    sdfg.add_process_grid("M", (PM,))
-    # sdfg.apply_transformations([BlockCyclicData,  BlockCyclicData,
-    #                             BlockCyclicMap],
-    #                             options=[
-    #                                 {'dataname': 'X',
-    #                                  'gridname': 'X',
-    #                                  'block': (BX,)},
-    #                                 {'dataname': 'Y',
-    #                                  'gridname': 'Y',
-    #                                  'block': (BY,)},
-    #                                 {'gridname': 'M',
-    #                                  'block': (BM,)}],
-    #                             validate=False)
-    sdfg.apply_transformations([MapFusion, BlockCyclicData, BlockCyclicData, BlockCyclicMap],
-                                options=[
-                                    {},
-                                    {'dataname': 'X',
-                                     'gridname': 'X',
-                                     'block': (BX,)},
-                                    {'dataname': 'Y',
-                                     'gridname': 'Y',
-                                     'block': (BY,)},
-                                    {'gridname': 'M',
-                                     'block': (BM,)}],
-                                validate=False)
+    def extract_local(global_data, rank: int,
+                      process_grid: List[dace.symbol],
+                      block_sizes: List[dace.symbol]):
+        
+        fits, coords = get_coords(rank, process_grid)
+        if not fits:
+            return np.empty([0], dtype=global_data.dtype)
+
+        local_shape = [math.ceil(n / (b.get() * p.get()))
+                       for n, p, b in zip(global_data.shape, process_grid,
+                                          block_sizes)]
+        local_shape.extend([b.get() for b in block_sizes])
+        local_data = np.zeros(local_shape, dtype=global_data.dtype)
+
+        n = len(global_data.shape)
+        for l in product(*[range(ls) for ls in local_shape[:n]]):
+            gstart = [(li * p.get() + c) * b.get()
+                      for li, p, c, b in zip(l, process_grid, coords,
+                                             block_sizes)]
+            gfinish = [min(n, s + b.get())
+                       for n, s, b in zip(global_data.shape, gstart,
+                                          block_sizes)]
+            gindex = tuple(slice(s, f, 1) for s, f in zip(gstart, gfinish))
+            # Validate range
+            rng = [f - s for s, f in zip(gstart, gfinish)]
+            if np.any(np.less(rng, 0)):
+                continue
+            block_slice = tuple(slice(0, r, 1) for r in rng)
+            lindex = l + block_slice
+            try:
+                local_data[lindex] = global_data[gindex]
+            except Exception as e:
+                print(rank, coords, process_grid, block_sizes)
+                print(l, lindex, gstart, gfinish, gindex)
+                raise e
+        
+        return local_data
     
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    # rank = 0
-    # size = 1
+    local_X = extract_local(X, rank, [PX], [BX])
+    local_Y = extract_local(Y, rank, [PY], [BY])
 
-    PX.set(2)
-    BX.set(64)
-    PY.set(3)
-    BY.set(32)
-    PM.set(size)
-    BM.set(16)
 
-    if rank == 0:
-        sdfg.save("mpi_test.sdfg")
-
-    local_X = np.empty([BX.get() * math.ceil(N.get() / (BX.get() * PX.get()))],
-                       dtype=np.float64)
-    if rank < PX.get():
-        disp = 0
-        for l in range(math.ceil(N.get() / (BX.get() * PX.get()))):
-            start = (l * PX.get() + rank) * BX.get()
-            end = min(N.get(), start + BX.get())
-            if end > start:
-                local_X[disp:disp+BX.get()] = X[start:end]
-            disp += BX.get()
-    
-    local_Y = np.empty([BY.get() * math.ceil(N.get() / (BY.get() * PY.get()))],
-                       dtype=np.float64)
-    if rank < PY.get():
-        disp = 0
-        for l in range(math.ceil(N.get() / (BY.get() * PY.get()))):
-            start = (l * PY.get() + rank) * BY.get()
-            end = min(N.get(), start + BY.get())
-            if end > start:
-                local_Y[disp:disp+BY.get()] = Y[start:end]
-            disp += BY.get()
-
-    sdfg(A=A, X=local_X, Y=local_Y, N=N,
+    func(A=A, X=local_X, Y=local_Y, N=N,
          PX=PX, BX=BX, PY=PY, BY=BY, PM=PM, BM=BM)
 
     c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
                                            arrays=(X_regression, Y_regression))
-    if dace.Config.get_bool('profiling'):
-        dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
-                      Y_regression, N.get(), A_regression)
-    else:
-        c_axpy(X_regression, Y_regression, N.get(), A_regression)
+    c_axpy(X_regression, Y_regression, N.get(), A_regression)
 
-    if rank < PY.get():
-        norm_true = 0
-        norm_diff = 0
-        disp = 0
-        for l in range(math.ceil(N.get() / (BY.get() * PY.get()))):
-            start = (l * PY.get() + rank) * BY.get()
-            end = min(N.get(), start + BY.get())
-            if end > start:
-                norm_true += np.linalg.norm(Y_regression[start:end])
-                norm_diff += np.linalg.norm(
-                    Y_regression[start:end] - local_Y[disp:disp+BY.get()])
-                print("Rank {r}: [{s}, {e}), partial_error is {er}".format(
-                    r=rank, s=start, e=end, er=norm_diff / norm_true))
-            disp += BY.get()
+    local_Y_ref = extract_local(Y_regression, rank, [PY], [BY])
+    if local_Y.size > 0:
+        norm_diff = np.linalg.norm(local_Y - local_Y_ref)
+        norm_ref = np.linalg.norm(local_Y_ref)
+        relerror = norm_diff / norm_ref
+        print("Rank {r} relative_error: {d}".format(r=rank, d=relerror))
 
-        relerror = norm_diff / norm_true
-    else:
-        relerror = 0
-    print("Rank {r} relative_error: {d}".format(r=rank, d=relerror))
-    print("==== Program end ====")
-    exit(0 if relerror <= 1e-5 else 1)
