@@ -225,7 +225,7 @@ void __dace_exit_mpi({params}) {{
         # comm_name = "__dace_comm_{}".format(map_header.map.label)
         # callsite_stream.write("MPI_Comm {c};\n".format(c=comm_name),
         #                       sdfg, state_id, map_header)
-        callsite_stream.write('{', sdfg, state_id, map_header)
+        # callsite_stream.write('{', sdfg, state_id, map_header)
 
         # if len(map_header.map.params) > 1:
         #     raise NotImplementedError(
@@ -250,9 +250,12 @@ void __dace_exit_mpi({params}) {{
                 sdfg, state_id, map_header)
         callsite_stream.write(
             "Cart {cart}({n}, {dims});\n"
+            "bool fits_cart_{name} = {cart}.fits(__dace_comm_rank);\n"
             "{cart}.coords(__dace_comm_rank, {coords});".format(
-                n=ndims, dims=dims, coords=coords, cart=cart_name),
+                n=ndims, dims=dims, name=name, coords=coords, cart=cart_name),
             sdfg, state_id, map_header)
+        callsite_stream.write('if (fits_cart_{name}) {{'.format(name=name),
+                              sdfg, state_id, map_header)
         # callsite_stream.write("int dims[{n}];\n"
         #                       "int coords[{n}];\n"
         #                       "int periods[{n}];\n"
@@ -438,10 +441,13 @@ void __dace_exit_mpi({params}) {{
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
             if memlet.wcr:
+                # TODO: Match wcr with MPI_Op (dtypes?)
                 callsite_stream.write(
-                    "MPI_Accumulate Data:{d} Subset:{s} Target:{t}".format(
-                    d=memlet.data, s=memlet.subset, t=index
-                ), sdfg, state_id, [src_node, dst_node])
+                    "MPI_Accumulate(&{conn}, 1, {mt}, {trank}, {dp}, 1, "
+                    "{mt}, {op}, {w});".format(
+                        ct=ctype, conn=uconn, mt=mpitype,
+                        trank=trank, dp=disp, op="MPI_SUM", w=win_name),
+                sdfg, state_id, [src_node, dst_node])
             else:
                 callsite_stream.write(
                     "MPI_Put(&{conn}, 1, {mt}, {trank}, {dp}, 1, "
@@ -582,17 +588,20 @@ void __dace_exit_mpi({params}) {{
                     state_dfg = sdfg.nodes()[state_id]
 
                     if memlet.wcr is not None:
-                        nc = not cpp.is_write_conflicted(
-                            dfg, edge, sdfg_schedule=self._toplevel_schedule)
-                        result.write(
-                            codegen.write_and_resolve_expr(
-                                sdfg,
-                                memlet,
-                                nc,
-                                out_local_name,
-                                in_local_name,
-                                dtype=node.out_connectors[uconn]) + ';', sdfg,
-                            state_id, node)
+                        # nc = not cpp.is_write_conflicted(
+                        #     dfg, edge, sdfg_schedule=self._toplevel_schedule)
+                        # result.write(
+                        #     codegen.write_and_resolve_expr(
+                        #         sdfg,
+                        #         memlet,
+                        #         nc,
+                        #         out_local_name,
+                        #         in_local_name,
+                        #         dtype=node.out_connectors[uconn]) + ';', sdfg,
+                        #     state_id, node)
+                        self.copy_memory(sdfg, dfg, state_id, node, dst_node,
+                                             edge, function_stream, result)
+                        continue
                     else:
                         try:
                             defined_type, _ = self._dispatcher.defined_vars.get(
