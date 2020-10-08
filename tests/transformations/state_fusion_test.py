@@ -16,7 +16,7 @@ def test_fuse_assignments():
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3,
                   dace.InterstateEdge(assignments=dict(k='k + 1')))
-    sdfg.apply_transformations_repeated(StateFusion)
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
     assert sdfg.number_of_nodes() == 3
 
 
@@ -39,7 +39,10 @@ def test_fuse_assignment_in_use():
                     state3.add_write('A'), None, dace.Memlet('A[1]'))
 
     try:
-        StateFusion.apply_to(sdfg, first_state=state3, second_state=state4)
+        StateFusion.apply_to(sdfg,
+                             strict=True,
+                             first_state=state3,
+                             second_state=state4)
         raise AssertionError('States fused, test failed')
     except ValueError:
         print('Exception successfully caught')
@@ -70,7 +73,7 @@ def test_two_to_one_cc_fusion():
     state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
     state2.add_edge(t2, 'out', state2.add_write('C'), None, dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
 
 
 def test_one_to_two_cc_fusion():
@@ -94,7 +97,7 @@ def test_one_to_two_cc_fusion():
                     state2.add_tasklet('two', {'b'}, {}, ''), 'b',
                     dace.Memlet('B'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
 
 
 def test_two_cc_fusion_separate():
@@ -123,7 +126,7 @@ def test_two_cc_fusion_separate():
     state2.add_edge(state2.add_read('B'), None, t2, 'b', dace.Memlet('B'))
     state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
 
 
 def test_two_cc_fusion_together():
@@ -148,11 +151,13 @@ def test_two_cc_fusion_together():
                     state2.add_tasklet('one', {'a'}, {}, ''), 'a',
                     dace.Memlet('B'))
 
-    t2 = state2.add_tasklet('two', {'b', 'c'}, {}, '')
+    t2 = state2.add_tasklet('two', {'b', 'c'}, {'d', 'e'}, 'd = b + c; e = b')
     state2.add_edge(state2.add_read('A'), None, t2, 'b', dace.Memlet('A'))
     state2.add_edge(state2.add_read('C'), None, t2, 'c', dace.Memlet('C'))
+    state2.add_edge(t2, 'd', state2.add_write('A'), None, dace.Memlet('A'))
+    state2.add_edge(t2, 'e', state2.add_write('C'), None, dace.Memlet('C'))
 
-    assert sdfg.apply_transformations_repeated(StateFusion) == 1
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
 
 
 # Data race avoidance tests

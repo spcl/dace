@@ -48,43 +48,30 @@ class StateFusion(transformation.Transformation):
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input,
                               second_cc_output) -> List[CCDesc]:
-        result = []
-        ccs_1, ccs_2 = {}, {}
+        # Make a bipartite graph out of the first and second components
+        g = nx.DiGraph()
+        g.add_nodes_from((0, i) for i in range(len(first_cc_output)))
+        g.add_nodes_from((1, i) for i in range(len(second_cc_output)))
         # Find matching nodes in second state
         for i, cc1 in enumerate(first_cc_output):
-            inpnames1 = {n.data for n in first_cc_input[i]}
             outnames1 = {n.data for n in cc1}
             for j, cc2 in enumerate(second_cc_input):
                 inpnames2 = {n.data for n in cc2}
-                outnames2 = {n.data for n in second_cc_output[j]}
                 if len(outnames1 & inpnames2) > 0:
-                    if i not in ccs_1 and j not in ccs_2:
-                        result.append(
-                            CCDesc(inpnames1, outnames1, inpnames2, outnames2))
-                        ccs_1[i] = result[-1]
-                        ccs_2[j] = result[-1]
-                    if i in ccs_1:
-                        ccs_1[i].first_inputs |= inpnames1
-                        ccs_1[i].first_outputs |= outnames1
-                    else:
-                        ccs_1[i] = ccs_2[j]
-                    if j in ccs_2:
-                        ccs_2[j].second_inputs |= inpnames2
-                        ccs_2[j].second_outputs |= outnames2
-                    else:
-                        ccs_2[j] = ccs_1[i]
+                    g.add_edge((0, i), (1, j))
 
-        # Add components that did not match separately
-        for i in range(len(first_cc_output)):
-            if i not in ccs_1:
-                inp = {n.data for n in first_cc_input[i]}
-                out = {n.data for n in first_cc_output[i]}
-                result.append(CCDesc(inp, out, set(), set()))
-        for i in range(len(second_cc_input)):
-            if i not in ccs_2:
-                inp = {n.data for n in second_cc_input[i]}
-                out = {n.data for n in second_cc_output[i]}
-                result.append(CCDesc(set(), set(), inp, out))
+        # Construct result out of connected components of the bipartite graph
+        result = []
+        for cc in nx.weakly_connected_components(g):
+            input1, output1, input2, output2 = set(), set(), set(), set()
+            for gind, cind in cc:
+                if gind == 0:
+                    input1 |= {n.data for n in first_cc_input[cind]}
+                    output1 |= {n.data for n in first_cc_output[cind]}
+                else:
+                    input2 |= {n.data for n in second_cc_input[cind]}
+                    output2 |= {n.data for n in second_cc_output[cind]}
+            result.append(CCDesc(input1, output1, input2, output2))
 
         return result
 
