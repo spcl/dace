@@ -12,6 +12,7 @@ from dace.sdfg import nodes
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
+import dace
 
 
 def calc_set_image_index(map_idx, map_set, array_idx):
@@ -204,6 +205,7 @@ class AccumulateTransient(transformation.Transformation):
 
     def apply(self, sdfg: SDFG):
         graph = sdfg.node(self.state_id)
+        tasklet = graph.nodes()[self.subgraph[AccumulateTransient._tasklet]]
         map_exit = graph.node(self.subgraph[AccumulateTransient._map_exit])
         outer_map_exit = graph.node(
             self.subgraph[AccumulateTransient._outer_map_exit])
@@ -226,36 +228,48 @@ class AccumulateTransient(transformation.Transformation):
             node_a=map_exit,
             node_b=outer_map_exit)
 
-        # Initialize transient to zero in case of summation, or with an identity
-        # map/tasklet in other cases
-        memlet = graph.in_edges(data_node)[0].data
-        if detect_reduction_type(memlet.wcr) == dtypes.ReductionType.Sum:
-            data_node.setzero = True
-        else:
-            if self.identity is None:
-                warnings.warn('AccumulateTransient did not properly initialize'
-                              'newly-created transient!')
-                return
+        if self.identity is None:
+            warnings.warn('AccumulateTransient did not properly initialize'
+                          'newly-created transient!')
+            return
 
-            init_state = sdfg.add_state_before(graph)
-            desc = sdfg.arrays[array]
-            if desc.total_size == 1:
-                # Add initialization as a tasklet
-                t = init_state.add_tasklet('acctrans_init', {}, {'out'},
-                                           'out = %s' % self.identity)
-                w = init_state.add_write(array)
-                init_state.add_edge(t, 'out', w, None, dace.Memlet(array))
-            else:
-                # Add initialization as a map
-                init_state.add_mapped_tasklet(
-                    'acctrans_init', {
-                        '_o%d' % i: '0:%s' % symstr(d)
-                        for i, d in enumerate(desc.shape)
-                    }, {},
-                    'out = %s' % self.identity, {
-                        'out':
-                        dace.Memlet.simple(
-                            '_out', ','.join(
-                                ['_o%d' % i for i in range(desc.shape)]))
-                    },
-                    external_edges=True)
+        from dace.transformation.helpers import nest_state_subgraph
+        from dace.sdfg.graph import SubgraphView
+        from dace.sdfg.state import SDFGState
+
+
+        sdfg_state: SDFGState = sdfg.node(self.state_id)
+
+        map_entry = sdfg_state.entry_node(map_exit)
+
+        dtypes_key = ('compiler', 'default_data_types')
+        old_dtype = dace.Config.get(*dtypes_key)
+        dace.Config.set(*dtypes_key, value='C')
+
+        from dace.sdfg.nodes import NestedSDFG
+
+        nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg, state=sdfg_state, subgraph=SubgraphView(sdfg_state, [map_entry, tasklet, map_exit]))
+
+        dace.Config.set(*dtypes_key, value=old_dtype)
+
+        nested_sdfg_state: SDFGState = nested_sdfg.sdfg.nodes()[0]
+
+        init_state = nested_sdfg.sdfg.add_state_before(nested_sdfg_state)
+
+        from dace.data import Array
+
+        temp_array: Array = sdfg.arrays[data_node.data]
+
+        init_state.add_mapped_tasklet(
+            name='acctrans_init',
+            map_ranges={
+                '_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(temp_array.shape)
+            },
+            inputs={},
+            code='out = %s' % self.identity,
+            outputs={
+                'out': dace.Memlet.simple(data=data_node.data, subset_str=','.join(['0:%d' % i for i in temp_array.shape]))
+            },
+            external_edges=True)
+
+        # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges
