@@ -3260,8 +3260,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 result.append(
                     (operand, type(self.sdfg.arrays[operand]).__name__))
             elif isinstance(operand, str) and operand in self.scope_arrays:
-                result.append(
-                    (operand, type(self.scope_arrays[operand]).__name__))
+                # TODO: Verify that this is correct
+                # Fix for scalars not being passed to nested SDFGs
+                if isinstance(self.scope_arrays[operand], data.Scalar):
+                    rng = subsets.Range([(0, 0, 1)])
+                    newop = self._add_read_access(operand, rng, opnode)
+                    result.append((newop,
+                                   type(self.sdfg.arrays[newop]).__name__))
+                else:
+                    result.append(
+                        (operand, type(self.scope_arrays[operand]).__name__))
             elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
                 if isinstance(operand, (bool, numpy.bool, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))
