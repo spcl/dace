@@ -95,7 +95,7 @@ DaCe and Numpy modules
 ### 6.4 Await expression
 Unsupported  
 
-### 6.5 The power operator
+### 6.5 The power (**) operator
 Supported. If the base is an integer and the exponent a signed integer, both
 operands are cast to float64 and the result is also of type float64.
 
