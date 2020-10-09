@@ -86,7 +86,7 @@ def specifies_datatype(func: Callable[[Any, data.Data, Any],
 
 
 @specifies_datatype(datatype=data.Scalar)
-def _method(sdfg: SDFG, sample_data: data.Scalar, dtype):
+def _method(sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
     name = sdfg.temp_data_name()
     _, new_data = sdfg.add_scalar(name, dtype, transient=True)
     return name, new_data
