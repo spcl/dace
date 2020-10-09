@@ -170,7 +170,7 @@ Supported
 Unsupported
 
 ### 7.8 The raise statement
-Unsusupported
+Unsupported
 
 ### 7.9 The break statement
 Supported for for/while loops, as long as the break statement is in the same
