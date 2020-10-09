@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
 import os
@@ -154,7 +155,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise
         except Exception as ex:
             raise InvalidSDFGNodeError("Node validation failed: " + str(ex),
-                                       sdfg, state_id, nid)
+                                       sdfg, state_id, nid) from ex
 
         # Isolated nodes
         ########################################
@@ -268,6 +269,19 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
 
+        # Check for connectors that are also array/symbol names
+        if isinstance(node, nd.Tasklet):
+            for conn in node.in_connectors.keys():
+                if conn in sdfg.arrays or conn in symbols:
+                    raise InvalidSDFGNodeError(
+                        f"Input connector {conn} already "
+                        "defined as array or symbol", sdfg, state_id, nid)
+            for conn in node.out_connectors.keys():
+                if conn in sdfg.arrays or conn in symbols:
+                    raise InvalidSDFGNodeError(
+                        f"Output connector {conn} already "
+                        "defined as array or symbol", sdfg, state_id, nid)
+
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
             incoming_edges = 0
@@ -284,7 +298,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # in some cases:
             if incoming_edges > 1 and not isinstance(node, nd.ExitNode):
                 raise InvalidSDFGNodeError(
-                    "Connector %s cannot have more "
+                    "Connector '%s' cannot have more "
                     "than one incoming edge, found %d" % (conn, incoming_edges),
                     sdfg,
                     state_id,
@@ -303,11 +317,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError("Dangling out-connector %s" % conn,
                                            sdfg, state_id, nid)
 
-            # In case of scope exit, only one outgoing edge per connector
-            # is allowed.
-            if outgoing_edges > 1 and isinstance(node, nd.ExitNode):
+            # In case of scope exit or code node, only one outgoing edge per
+            # connector is allowed.
+            if outgoing_edges > 1 and isinstance(node,
+                                                 (nd.ExitNode, nd.CodeNode)):
                 raise InvalidSDFGNodeError(
-                    "Connector %s cannot have more "
+                    "Connector '%s' cannot have more "
                     "than one outgoing edge, found %d" % (conn, outgoing_edges),
                     sdfg,
                     state_id,

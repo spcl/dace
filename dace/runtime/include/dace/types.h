@@ -1,3 +1,4 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #ifndef __DACE_TYPES_H
 #define __DACE_TYPES_H
 
@@ -25,16 +26,22 @@
 #define DACE_CONSTEXPR constexpr
 #endif
 
-
+// GPU support
 #ifdef __CUDACC__
     #include <cuda_runtime.h>
     #include <thrust/complex.h>
     #include "../../../external/cub/cub/grid/grid_barrier.cuh"
-    #define DACE_HDFI __host__ __device__ __forceinline__
-    #define DACE_HFI __host__ __forceinline__
-    #define DACE_DFI __device__ __forceinline__
+
+    // Workaround so that half is defined as a scalar (for reductions)
+    namespace std {
+        template <>
+        struct is_scalar<half> : std::integral_constant<bool, true> {};
+    }  // namespace std
 #elif defined(__HIPCC__)
     #include <hip/hip_runtime.h>
+#endif
+
+#if defined(__CUDACC__) || defined(__HIPCC__)
     #define DACE_HDFI __host__ __device__ __forceinline__
     #define DACE_HFI __host__ __forceinline__
     #define DACE_DFI __device__ __forceinline__
@@ -69,6 +76,9 @@ namespace dace
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
     typedef half float16;
+    #elif defined(__HIPCC__)
+    // Not fully supported
+    typedef short float16;
     #else
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;

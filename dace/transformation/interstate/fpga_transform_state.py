@@ -1,10 +1,11 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 def fpga_update(sdfg, state, depth):
@@ -29,7 +30,7 @@ def fpga_update(sdfg, state, depth):
 
 
 @registry.autoregister
-class FPGATransformState(pattern_matching.Transformation):
+class FPGATransformState(transformation.Transformation):
     """ Implements the FPGATransformState transformation. """
 
     _state = sd.SDFGState()

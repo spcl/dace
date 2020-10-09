@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
 B, C, E, F = (dace.symbol(s) for s in 'BCEF')
