@@ -2169,8 +2169,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         'lambda x, y: x {} y'.format(op))
                 if op_name:
                     inp_memlet = {'__inp': Memlet.simple(
-                        op_name, '%s' % op_subset)}  # TODO: Why [0][0]???
-                        # op_name, '%s' % op_subset[0][0])}
+                        op_name, '%s' % op_subset)}
                     tasklet_code = '__out = __inp'
                 else:
                     inp_memlet = dict()
@@ -2202,11 +2201,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                         code=tasklet_code,
                                         debuginfo=self.current_lineinfo)
             if op_name:
-                inp_memlet = Memlet.simple(op_name, '%s' % op_subset)  # TODO: Why [0][0]???
-                # inp_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                inp_memlet = Memlet.simple(op_name, '%s' % op_subset)
                 state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
-            out_memlet = Memlet.simple(target_name, '%s' % target_subset)  # TODO: Why [0][0]???
-            # out_memlet = Memlet.simple(target_name, '%s' % target_subset[0][0])
+            out_memlet = Memlet.simple(target_name, '%s' % target_subset)
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
@@ -2298,8 +2295,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         for i, (s, _, _) in enumerate(in1_subset)
                     ]))
                 if op_name:
-                    in2_memlet = Memlet.simple(op_name, '%s' % op_subset)  # TODO: Why [0][0]???
-                    # in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                    in2_memlet = Memlet.simple(op_name, '%s' % op_subset)
                     inp_memlets = {'__in1': in1_memlet, '__in2': in2_memlet}
                     tasklet_code = '__out = __in1 {op} __in2'.format(op=op)
                 else:
@@ -2341,14 +2337,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     outputs={'__out'},
                     code=tasklet_code,
                     debuginfo=self.current_lineinfo)
-                in1_memlet = Memlet.simple(rtarget_name, '%s' % rtarget_subset)  # TODO: Why [0][0]???
-                                        #    '%s' % rtarget_subset[0][0])
+                in1_memlet = Memlet.simple(rtarget_name, '%s' % rtarget_subset)
                 if op_name:
-                    in2_memlet = Memlet.simple(op_name, '%s' % op_subset)  # TODO: Why [0][0]???
-                    # in2_memlet = Memlet.simple(op_name, '%s' % op_subset[0][0])
+                    in2_memlet = Memlet.simple(op_name, '%s' % op_subset)
                     state.add_edge(op2, None, tasklet, '__in2', in2_memlet)
-                out_memlet = Memlet.simple(wtarget_name, '%s' % wtarget_subset)  # TODO: Why [0][0]???
-                                        #    '%s' % wtarget_subset[0][0])
+                out_memlet = Memlet.simple(wtarget_name, '%s' % wtarget_subset)
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
