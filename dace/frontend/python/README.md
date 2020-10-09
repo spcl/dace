@@ -28,7 +28,7 @@ Python-Frontend are automatically transformed using:
 These transformations clean up the SDFG by removing extraneous arrays, and reducing
 the number of states and nested scopes/SDFGs, enabling in the process further
 optimizations. However, there exist cases where applying these transformations
-automatically may result in invalid SDFGs. Currently know issues include:
+automatically may result in invalid SDFGs. Currently known issues include:
 - When accessing inside a Map an Array multiple times with different but overlapping
 ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them.
 - When there are sequential dependencies between statements due to updating a loop variable,
