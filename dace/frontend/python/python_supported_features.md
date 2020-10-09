@@ -8,7 +8,7 @@ The comparison is made against the [Python Language Reference](https://docs.pyth
 ### 2.1 Line Structure
 The DaCe Python-Frontend uses the Python AST module to parse code.
 Therefore, full support of the line structure section is expected.
-However, we explicitly test for the following subsections (`tests/python_fronted/line_structure_test.py`):
+However, we explicitly test for the following subsections (`tests/python_frontend/line_structure_test.py`):
 - 2.1.3 Comments
 - 2.1.5 Explicit Line Joining
 - 2.1.6 Implicit Line Joining
