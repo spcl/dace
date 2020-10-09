@@ -135,7 +135,7 @@ Supported only for (supported) method arguments that expect a list/tuple
 Supported
 
 ### 6.17 Operator precedence
-Supported
+Evaluated exactly as in Python.
 
 ## 7 Simple Statements
 
