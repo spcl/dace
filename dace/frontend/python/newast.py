@@ -996,10 +996,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  filename)
 
         # Add symbols
-        for k, v in scope_arrays.items():
-            if isinstance(v, data.Scalar):
-                if k not in self.sdfg.symbols:
-                    self.sdfg.add_symbol(k, v.dtype)
         symbols = symbols or {}
         for k, v in symbols.items():
             if k not in self.sdfg.symbols:
@@ -2712,7 +2708,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         for aname, arg in zip(func.argnames, node.args)]
                 args += [(arg.arg, self._parse_function_arg(arg.value))
                          for arg in node.keywords]
-                required_args = func.argnames
+                required_args = copy.deepcopy(func.argnames)
 
                 sdfg = copy.deepcopy(
                     func.to_sdfg(*({
@@ -2746,8 +2742,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add undefined symbols to required arguments
             if mapping:
-                required_args.extend(
-                    [sym for sym in symbols if sym not in mapping])
+                required_args.extend([
+                    sym for sym in symbols
+                    if sym not in mapping and sym not in required_args
+                ])
             else:
                 required_args.extend(
                     [sym for sym in symbols if sym not in required_args])
