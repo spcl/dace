@@ -163,7 +163,7 @@ Unsupported
 ### 7.5 The del statement
 Unsupported
 
-### 7.6 The result statement
+### 7.6 The return statement
 Supported
 
 ### 7.7 The yield statement
