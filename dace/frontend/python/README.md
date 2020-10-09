@@ -28,18 +28,18 @@ Python-Frontend are automatically transformed using:
 These transformations clean up the SDFG by removing extraneous arrays, and reducing
 the number of states and nested scopes/SDFGs, enabling in the process further
 optimizations. However, there exist cases where applying these transformations
-automatically may result in invalid SDFGs. Currently know issues include:
+automatically may result in invalid SDFGs. Currently known issues include:
 - When accessing inside a Map an Array multiple times with different but overlapping
 ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them.
 - When there are sequential dependencies between statements due to updating a loop variable,
 StateFusion may erroneously lead to concurrent execution of those statements.
 - The RedundantArray transformations may produce erroneous Memlets for certain ranges.
   
-Temporary workaround: Disable in the configuration file the automatic strict transformations flag
+Temporary workaround: Disable the automatic strict transformations flag in the configuration file `.dace.conf`.
 
 ### Issues with symbolic expressions
 
-- Symbolic expressions with complex numbers generate invalid code.
+- Symbolic expressions with complex numbers generate invalid code. This is due to the use of the SymPy library.
 - Data that have their value set by a symbolic expression may have wrong data type.
 
 Temporary workaround: Break symbolic expressions with many binary operations to simple ones,

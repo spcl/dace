@@ -86,7 +86,7 @@ def specifies_datatype(func: Callable[[Any, data.Data, Any],
 
 
 @specifies_datatype(datatype=data.Scalar)
-def _method(sdfg: SDFG, sample_data: data.Scalar, dtype):
+def _method(sdfg: SDFG, sample_data: data.Scalar, dtype: dtypes.typeclass):
     name = sdfg.temp_data_name()
     _, new_data = sdfg.add_scalar(name, dtype, transient=True)
     return name, new_data
@@ -109,7 +109,7 @@ def _method(sdfg: SDFG, sample_data: data.Stream, dtype):
     return name, new_data
 
 
-def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype=None):
+def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typeclass = None):
     """ Adds to the sdfg transient data of the same dtype, shape and other
         parameters as sample_data. """
     func = AddTransientMethods.get(type(sample_data))
