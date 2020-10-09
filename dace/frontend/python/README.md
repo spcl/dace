@@ -35,7 +35,7 @@ ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate
 StateFusion may erroneously lead to concurrent execution of those statements.
 - The RedundantArray transformations may produce erroneous Memlets for certain ranges.
   
-Temporary workaround: Disable in the configuration file the automatic strict transformations flag
+Temporary workaround: Disable the automatic strict transformations flag in the configuration file `.dace.conf`.
 
 ### Issues with symbolic expressions
 
