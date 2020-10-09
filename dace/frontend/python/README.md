@@ -39,7 +39,7 @@ Temporary workaround: Disable the automatic strict transformations flag in the c
 
 ### Issues with symbolic expressions
 
-- Symbolic expressions with complex numbers generate invalid code.
+- Symbolic expressions with complex numbers generate invalid code. This is due to the use of the SymPy library.
 - Data that have their value set by a symbolic expression may have wrong data type.
 
 Temporary workaround: Break symbolic expressions with many binary operations to simple ones,
