@@ -581,6 +581,10 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
+                # Symbolic expressions stay Names
+                if symbolic.issymbolic(self.globals[node.id]):
+                    return node
+
                 # Compatibility check since Python changed their AST nodes
                 if sys.version_info >= (3, 8):
                     newnode = ast.Constant(value=self.globals[node.id], kind='')
