@@ -2853,20 +2853,20 @@ class ProgramVisitor(ExtNodeVisitor):
                                                               node,
                                                               new_name=vname)
                         memlet.data = vname
-                    # Delete the old read descriptor
-                    conn_used = False
-                    for s in self.sdfg.nodes():
-                        for n in s.data_nodes():
-                            if n.data == aname:
-                                conn_used = True
-                                break
-                        if conn_used:
-                            break
-                    if not conn_used:
-                        del self.sdfg.arrays[aname]
-                if aname in self.inputs.keys():
-                    # Delete input
-                    del self.inputs[aname]
+                #     # Delete the old read descriptor
+                #     conn_used = False
+                #     for s in self.sdfg.nodes():
+                #         for n in s.data_nodes():
+                #             if n.data == aname:
+                #                 conn_used = True
+                #                 break
+                #         if conn_used:
+                #             break
+                #     if not conn_used:
+                #         del self.sdfg.arrays[aname]
+                # if aname in self.inputs.keys():
+                #     # Delete input
+                #     del self.inputs[aname]
                 # Delete potential input slicing
                 if slice_state:
                     for n in slice_state.nodes():
