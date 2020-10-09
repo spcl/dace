@@ -112,6 +112,9 @@ run_all() {
     run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 "\n" 24
+
+    #Unique nested sdfg
+    run_sample fpga/unique_nested_sdfg_fpga two_vecAdd "\n"
 }
 
 # Check if aoc is vailable

@@ -47,6 +47,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keep track of traversed nodes
         self._generated_nodes = set()
+
+        # Keep track of generated NestedSDG
+        self._generated_nested_sdfg = set()
+
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
@@ -148,10 +152,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
+        self._locals.clear_scope(self._ldepth + 1)
         # Mark node as "generated"
         self._generated_nodes.add(node)
-
-        self._locals.clear_scope(self._ldepth + 1)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
@@ -470,8 +473,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(
-                        vconn)[0] == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(vconn)[0]
+                    == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -494,9 +497,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else
-                                    memlet.other_subset)
+                    array_subset = (memlet.subset if memlet.data
+                                    == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -1401,8 +1403,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit nested SDFG as a separate function
         nested_stream = CodeIOStream()
         nested_global_stream = CodeIOStream()
-        sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id, state_id,
-                                      dfg.node_id(node))
+        nested_dfg_unique_name = node.sdfg.unique_name
+        sdfg_label = "%s_%d_%d_%d" % (
+            node.sdfg.name, sdfg.sdfg_id, state_id, dfg.node_id(node)
+        ) if nested_dfg_unique_name == "" else nested_dfg_unique_name
+
+        code_already_generated = False
+        if nested_dfg_unique_name in self._generated_nested_sdfg:
+            code_already_generated = True
+        elif nested_dfg_unique_name != "":
+            self._generated_nested_sdfg.add(nested_dfg_unique_name)
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
@@ -1411,39 +1421,42 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_references = codegen.generate_nsdfg_arguments(
             sdfg, state_dfg, node)
 
-        nested_stream.write(
-            codegen.generate_nsdfg_header(sdfg, state_dfg, node,
-                                          memlet_references, sdfg_label), sdfg,
-            state_id, node)
+        if not code_already_generated:
+            nested_stream.write(
+                codegen.generate_nsdfg_header(sdfg, state_dfg, node,
+                                              memlet_references, sdfg_label),
+                sdfg, state_id, node)
 
         #############################
         # Generate function contents
-        self._frame.generate_constants(node.sdfg, nested_stream)
 
-        old_schedule = self._toplevel_schedule
-        self._toplevel_schedule = node.schedule
+        if not code_already_generated:
+            self._frame.generate_constants(node.sdfg, nested_stream)
 
-        # Generate code for internal SDFG
-        global_code, local_code, used_targets, used_environments = self._frame.generate_code(
-            node.sdfg, node.schedule, sdfg_label)
-        self._dispatcher._used_environments |= used_environments
+            old_schedule = self._toplevel_schedule
+            self._toplevel_schedule = node.schedule
 
-        self._toplevel_schedule = old_schedule
+            # Generate code for internal SDFG
+            global_code, local_code, used_targets, used_environments = self._frame.generate_code(
+                node.sdfg, node.schedule, sdfg_label)
+            self._dispatcher._used_environments |= used_environments
 
-        nested_stream.write(local_code)
+            self._toplevel_schedule = old_schedule
 
-        # Process outgoing memlets with the internal SDFG
-        self.process_out_memlets(sdfg,
-                                 state_id,
-                                 node,
-                                 state_dfg,
-                                 self._dispatcher,
-                                 nested_stream,
-                                 True,
-                                 nested_global_stream,
-                                 skip_wcr=True)
+            nested_stream.write(local_code)
 
-        nested_stream.write('}\n\n', sdfg, state_id, node)
+            # Process outgoing memlets with the internal SDFG
+            self.process_out_memlets(sdfg,
+                                     state_id,
+                                     node,
+                                     state_dfg,
+                                     self._dispatcher,
+                                     nested_stream,
+                                     True,
+                                     nested_global_stream,
+                                     skip_wcr=True)
+
+            nested_stream.write('}\n\n', sdfg, state_id, node)
 
         ########################
         # Generate function call
@@ -1456,7 +1469,8 @@ class CPUCodeGen(TargetCodeGenerator):
         ###############################################################
         # Write generated code in the proper places (nested SDFG writes
         # location info)
-        function_stream.write(global_code)
+        if not code_already_generated:
+            function_stream.write(global_code)
         function_stream.write(nested_global_stream.getvalue())
         function_stream.write(nested_stream.getvalue())
 

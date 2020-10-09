@@ -204,6 +204,10 @@ class SDFG(OrderedDiGraph):
     exit_code = DictProperty(
         str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
 
+    unique_name = Property(dtype=str,
+                           desc="Unique name of the SDFG",
+                           default="")
+
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
