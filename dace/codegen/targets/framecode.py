@@ -405,7 +405,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
 
-        condition_string = sym2cpp(edge.data.condition_sympy())
+        condition_string = edge.data.condition_cpp()
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -513,8 +513,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             generated_edges.add(back_edge)
 
                             entry_edge = control.scope.entry.edge
-                            condition = sym2cpp(
-                                entry_edge.data.condition_sympy())
+                            condition = entry_edge.data.condition_cpp()
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -577,8 +576,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             then_entry = then_scope.entry.edge
 
-                            condition = sym2cpp(
-                                then_entry.data.condition_sympy())
+                            condition = then_entry.data.condition_cpp()
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
