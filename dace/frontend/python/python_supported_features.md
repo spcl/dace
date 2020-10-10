@@ -8,7 +8,7 @@ The comparison is made against the [Python Language Reference](https://docs.pyth
 ### 2.1 Line Structure
 The DaCe Python-Frontend uses the Python AST module to parse code.
 Therefore, full support of the line structure section is expected.
-However, we explicitly test for the following subsections (`tests/python_fronted/line_structure_test.py`):
+However, we explicitly test for the following subsections (`tests/python_frontend/line_structure_test.py`):
 - 2.1.3 Comments
 - 2.1.5 Explicit Line Joining
 - 2.1.6 Implicit Line Joining
@@ -95,7 +95,7 @@ DaCe and Numpy modules
 ### 6.4 Await expression
 Unsupported  
 
-### 6.5 The power operator
+### 6.5 The power (**) operator
 Supported. If the base is an integer and the exponent a signed integer, both
 operands are cast to float64 and the result is also of type float64.
 
@@ -135,7 +135,7 @@ Supported only for (supported) method arguments that expect a list/tuple
 Supported
 
 ### 6.17 Operator precedence
-Supported
+Evaluated exactly as in Python.
 
 ## 7 Simple Statements
 
@@ -170,7 +170,7 @@ Supported
 Unsupported
 
 ### 7.8 The raise statement
-Unsusupported
+Unsupported
 
 ### 7.9 The break statement
 Supported for for/while loops, as long as the break statement is in the same
