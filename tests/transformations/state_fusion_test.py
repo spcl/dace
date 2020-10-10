@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.interstate import StateFusion
+import networkx as nx
 
 
 # Inter-state condition tests
@@ -210,6 +211,67 @@ def test_read_write_no_overlap():
     assert len(sdfg.nodes()) == 1
 
 
+def test_array_in_middle_no_overlap():
+    """ 
+    Two states that write and read from an array without overlap. Should be
+    fused to two separate components.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    sdfg.add_array('A', [10, 10], dace.int32)
+    sdfg.add_array('B', [5, 5], dace.int32)
+    sdfg.add_array('C', [5, 5], dace.int32)
+    state = sdfg.add_state()
+    t1 = state.add_tasklet('init_a1', {}, {'a'}, '')
+    rw1 = state.add_access('A')
+    t2 = state.add_tasklet('a2b', {'a'}, {'b'}, '')
+    wb = state.add_write('B')
+    state.add_edge(t1, 'a', rw1, None, dace.Memlet('A[0:5, 0:5]'))
+    state.add_edge(rw1, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
+    state.add_edge(t2, 'b', wb, None, dace.Memlet('B'))
+
+    state2 = sdfg.add_state_after(state)
+    t1 = state2.add_tasklet('init_a2', {}, {'a'}, '')
+    rw2 = state2.add_access('A')
+    t2 = state2.add_tasklet('a2c', {'a'}, {'c'}, '')
+    wc = state2.add_write('C')
+    state2.add_edge(t1, 'a', rw2, None, dace.Memlet('A[5:10, 5:10]'))
+    state2.add_edge(rw2, None, t2, 'a', dace.Memlet('A[5:10, 5:10]'))
+    state2.add_edge(t2, 'c', wc, None, dace.Memlet('C'))
+
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+    assert len(list(nx.weakly_connected_components(sdfg.node(0).nx))) == 2
+
+
+def test_array_in_middle_overlap():
+    """ 
+    Two states that write and read from an array with overlap. Should not be
+    fused.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    sdfg.add_array('A', [10, 10], dace.int32)
+    sdfg.add_array('B', [5, 5], dace.int32)
+    sdfg.add_array('C', [5, 5], dace.int32)
+    state = sdfg.add_state()
+    t1 = state.add_tasklet('init_a1', {}, {'a'}, '')
+    rw1 = state.add_access('A')
+    t2 = state.add_tasklet('a2b', {'a'}, {'b'}, '')
+    wb = state.add_write('B')
+    state.add_edge(t1, 'a', rw1, None, dace.Memlet('A[0:5, 0:5]'))
+    state.add_edge(rw1, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
+    state.add_edge(t2, 'b', wb, None, dace.Memlet('B'))
+
+    state2 = sdfg.add_state_after(state)
+    t1 = state2.add_tasklet('init_a2', {}, {'a'}, '')
+    rw2 = state2.add_access('A')
+    t2 = state2.add_tasklet('a2c', {'a'}, {'c'}, '')
+    wc = state2.add_write('C')
+    state2.add_edge(t1, 'a', rw2, None, dace.Memlet('A[0:5, 0:5]'))
+    state2.add_edge(rw2, None, t2, 'a', dace.Memlet('A[0:5, 0:5]'))
+    state2.add_edge(t2, 'c', wc, None, dace.Memlet('C'))
+
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
+
+
 if __name__ == '__main__':
     test_fuse_assignments()
     test_fuse_assignment_in_use()
@@ -220,3 +282,5 @@ if __name__ == '__main__':
     test_write_write_path()
     test_write_write_no_overlap()
     test_read_write_no_overlap()
+    test_array_in_middle_no_overlap()
+    test_array_in_middle_overlap()
