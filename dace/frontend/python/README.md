@@ -30,10 +30,10 @@ the number of states and nested scopes/SDFGs, enabling in the process further
 optimizations. However, there exist cases where applying these transformations
 automatically may result in invalid SDFGs. Currently known issues include:
 - When accessing inside a Map an Array multiple times with different but overlapping
-ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them.
+ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them (see #352).
 - When there are sequential dependencies between statements due to updating a loop variable,
-StateFusion may erroneously lead to concurrent execution of those statements.
-- The RedundantArray transformations may produce erroneous Memlets for certain ranges.
+StateFusion may erroneously lead to concurrent execution of those statements (see #315).
+- The RedundantArray transformations may produce erroneous Memlets for certain ranges (see #371).
   
 Temporary workaround: Disable the automatic strict transformations flag in the configuration file `.dace.conf`.
 

@@ -158,7 +158,7 @@ Unsupported
 Unsupported
 
 ### 7.4 The pass statement
-Unsupported
+Supported
 
 ### 7.5 The del statement
 Unsupported
@@ -181,7 +181,7 @@ Supported for for/while loops, as long as the continue statement is in the same
 SDFG-level as the for/while statement.
 
 ### 7.11 The import statement
-Unsupported, inclduing 7.11.1 Future statements
+Unsupported, including 7.11.1 Future statements
 
 ### 7.12 The global statement
 Unsupported
@@ -191,7 +191,7 @@ Unsupported
 
 ## 8 Compound Statements
 ### 8.1 The if statement
-Supported. Note that, if the type of some variable depends on the branch taken,
+Supported. Note that if the type of some variable depends on the branch taken,
 then the variable will always have the type of the first branch. E.g., in the
 following code, variable b will be of type dace.int always, even if
 `a[0] == np.float32(np.pi)`, unless it is explicitly declared as such:
@@ -211,7 +211,7 @@ def single_target(a: dace.float32[1]):
 Supported
 
 ### 8.3 The for statement
-Supported
+Supported, but only with `range`, `parrange`, and `dace.map`.
 
 ### 8.4 The try statement
 Unsupported
