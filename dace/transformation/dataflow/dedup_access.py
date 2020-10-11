@@ -149,7 +149,6 @@ class DeduplicateAccess(pattern_matching.Transformation):
 
         # Find largest contiguous subsets
         contiguous_subsets = self.find_contiguous_subsets(unique_subsets)
-        print("Subsets:", contiguous_subsets)
 
         # Map original edges to subsets
         edge_mapping = defaultdict(list)
@@ -171,10 +170,10 @@ class DeduplicateAccess(pattern_matching.Transformation):
             for e in edge_mapping[ind]:
                 graph.remove_edge(e)
                 new_memlet = copy.deepcopy(e.data)
-                # Offset memlet to match new transient
-                new_memlet.subset.offset(subset, True)
                 new_edge = graph.add_edge(anode, None, e.dst, e.dst_conn,
                                           new_memlet)
-                # Rename data on memlet
                 for pe in graph.memlet_tree(new_edge):
+                    # Rename data on memlet
                     pe.data.data = name
+                    # Offset memlets to match new transient
+                    pe.data.subset.offset(subset, True)
