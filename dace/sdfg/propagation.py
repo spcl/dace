@@ -537,17 +537,17 @@ class ConstantRangeMemlet(MemletPattern):
 
 def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
-        @note: This is an in-place operation on the SDFG.
+        :note: This is an in-place operation on the SDFG.
     """
     for state in sdfg.nodes():
-        _propagate_labels(state, sdfg)
+        propagate_memlets_state(sdfg, state)
 
 
-def _propagate_labels(g, sdfg):
+def propagate_memlets_state(sdfg, state):
     """ Propagates memlets throughout one SDFG state. 
-        :param g: The state to propagate in.
         :param sdfg: The SDFG in which the state is situated.
-        @note: This is an in-place operation on the SDFG state.
+        :param state: The state to propagate in.
+        :note: This is an in-place operation on the SDFG state.
     """
     # Algorithm:
     # 1. Start propagating information from tasklets outwards (their edges
@@ -573,14 +573,32 @@ def _propagate_labels(g, sdfg):
     #    Accumulate information about each array in the target node.
 
     # First, propagate nested SDFGs in a bottom-up fashion
-    for node in g.nodes():
+    for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
             propagate_memlets_sdfg(node.sdfg)
 
-    scopes_to_process = g.scope_leaves()
+    # Process scopes from the leaves upwards
+    propagate_memlets_scope(sdfg, state, state.scope_leaves())
+
+
+def propagate_memlets_scope(sdfg, state, scopes):
+    """ 
+    Propagate memlets from the given scopes outwards. 
+    :param sdfg: The SDFG in which the scopes reside.
+    :param state: The SDFG state in which the scopes reside.
+    :param scopes: The ScopeTree object or a list thereof to start from.
+    :note: This operation is performed in-place on the given SDFG.
+    """
+    from dace.sdfg.scope import ScopeTree
+
+    if isinstance(scopes, ScopeTree):
+        scopes_to_process = [scopes]
+    else:
+        scopes_to_process = scopes
+
     next_scopes = set()
 
-    # Process scopes from the leaves upwards, propagating edges at the
+    # Process scopes from the inputs upwards, propagating edges at the
     # entry and exit nodes
     while len(scopes_to_process) > 0:
         for scope in scopes_to_process:
@@ -588,10 +606,10 @@ def _propagate_labels(g, sdfg):
                 continue
 
             # Propagate out of entry
-            _propagate_node(g, scope.entry)
+            _propagate_node(state, scope.entry)
 
             # Propagate out of exit
-            _propagate_node(g, scope.exit)
+            _propagate_node(state, scope.exit)
 
             # Add parent to next frontier
             next_scopes.add(scope.parent)
