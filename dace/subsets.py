@@ -576,7 +576,8 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self, ignore_indices: List[int] = []):
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
         shape = self.size()
         non_ones = []
         offset_indices = []
