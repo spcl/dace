@@ -2453,7 +2453,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.outputs[var_name] = (dace.Memlet.simple(parent_name,
                                                          rng), inner_indices)
 
-        return var_name
+        return (var_name, squeezed_rng)
 
     def _add_read_access(self,
                          name: str,
