@@ -600,7 +600,8 @@ class TaskletTransformer(ExtNodeTransformer):
                  scope_vars: Dict[str, str] = dict(),
                  variables: Dict[str, str] = dict(),
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str],
-                                str] = dict()):
+                                str] = dict(),
+                 symbols: Dict[str, "dace.symbol"] = dict()):
         """ Creates an AST parser for tasklets.
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
@@ -628,6 +629,9 @@ class TaskletTransformer(ExtNodeTransformer):
 
         self.sdfg_inputs = {}
         self.sdfg_outputs = {}
+
+        # Tmp fix for missing state symbol propatation
+        self.symbols = symbols
 
         # Disallow keywords
         for stmt in _DISALLOWED_STMTS:
@@ -693,9 +697,38 @@ class TaskletTransformer(ExtNodeTransformer):
             shape = parent_array.shape
             strides = [parent_array.strides[d] for d in squeezed_rng]
         else:
+            ignore_indices = []
+            sym_rng = []
+            for i, r in enumerate(rng):
+                for s, sr in self.symbols.items():
+                    if s in symbolic.symlist(r).keys():
+                        ignore_indices.append(i)
+                        sym_rng.append(sr)
+
+            if ignore_indices:
+                tmp_memlet = Memlet.simple(parent_name, rng)
+                for s, r in self.symbols.items():
+                    tmp_memlet = propagate_symbol(
+                        self.state, tmp_memlet, s, r, parent_array)
+
             squeezed_rng = copy.deepcopy(rng)
-            non_squeezed = squeezed_rng.squeeze()
+            non_squeezed = squeezed_rng.squeeze(ignore_indices)
+            # TODO: Need custom shape computation here
             shape = squeezed_rng.size()
+            for i, sr in zip(ignore_indices, sym_rng):
+                iMin, iMax, step = sr.ranges[0]
+                ts = rng.tile_sizes[i]
+                sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+                shape[sqz_idx] = ts * sympy.ceiling(
+                    ((iMax.approx
+                      if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                     (iMin.approx
+                      if isinstance(iMin, symbolic.SymExpr) else iMin)) / 
+                    (step.approx
+                     if isinstance(step, symbolic.SymExpr) else step))
+            # squeezed_rng = copy.deepcopy(rng)
+            # non_squeezed = squeezed_rng.squeeze()
+            # shape = squeezed_rng.size()
             if non_squeezed:
                 strides = [parent_array.strides[d] for d in non_squeezed]
             else:
@@ -873,6 +906,9 @@ class TaskletTransformer(ExtNodeTransformer):
                     connector, memlet = parse_memlet(self, node.value.left,
                                                      node.value.right,
                                                      self.sdfg.arrays)
+                    # Fix memlet with correct subset
+                    if squeezed_rng is not None:
+                        memlet.subset = squeezed_rng
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
@@ -2137,7 +2173,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                     scope_arrays=self.scope_arrays,
                                     scope_vars=self.scope_vars,
                                     variables=self.variables,
-                                    accesses=self.accesses)
+                                    accesses=self.accesses,
+                                    symbols=self.symbols)
         node, inputs, outputs, self.accesses = ttrans.parse_tasklet(node, name)
 
         # Convert memlets to their actual data nodes
