@@ -5,7 +5,7 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import Set
+from typing import List, Set
 import warnings
 from dace.config import Config
 
@@ -571,13 +571,13 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self, dont_squeeze=None):
+    def squeeze(self, ignore_indices: List[int] = []):
         shape = self.size()
         non_ones = []
         offset_indices = []
         sqz_idx = 0
         for i, d in enumerate(shape):
-            if i in dont_squeeze:
+            if i in ignore_indices:
                 non_ones.append(i)
                 sqz_idx += 1
             elif d != 1:
@@ -586,8 +586,6 @@ class Range(Subset):
                 sqz_idx += 1
             else:
                 pass
-        # non_ones = [i for i, d in enumerate(shape)
-        #             if (d != 1 or i in dont_squeeze)]
         squeezed_ranges = [self.ranges[i] for i in non_ones]
         squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
         if not squeezed_ranges:
