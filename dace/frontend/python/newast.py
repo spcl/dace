@@ -2395,25 +2395,25 @@ class ProgramVisitor(ExtNodeVisitor):
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
 
-        dont_squeeze = []
+        ignore_indices = []
         sym_rng = []
         for i, r in enumerate(rng):
             for s, sr in self.symbols.items():
                 if s in symbolic.symlist(r).keys():
-                    dont_squeeze.append(i)
+                    ignore_indices.append(i)
                     sym_rng.append(sr)
 
-        if dont_squeeze:
+        if ignore_indices:
             tmp_memlet = Memlet.simple(parent_name, rng)
             for s, r in self.symbols.items():
                 tmp_memlet = propagate_symbol(
                     self.last_state, tmp_memlet, s, r, parent_array)
 
         squeezed_rng = copy.deepcopy(rng)
-        non_squeezed = squeezed_rng.squeeze(dont_squeeze)
+        non_squeezed = squeezed_rng.squeeze(ignore_indices)
         # TODO: Need custom shape computation here
         shape = squeezed_rng.size()
-        for i, sr in zip(dont_squeeze, sym_rng):
+        for i, sr in zip(ignore_indices, sym_rng):
             iMin, iMax, step = sr.ranges[0]
             ts = rng.tile_sizes[i]
             sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
