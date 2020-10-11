@@ -1338,7 +1338,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 debuginfo=self.current_lineinfo)
 
             if dec.endswith('scope'):  # @dace.mapscope or @dace.consumescope
-                sdfg, inputs, outputs = self._parse_subprogram(
+                # TODO: Now that we return the nested for-loop symbols,
+                # can we use them for something here?
+                sdfg, inputs, outputs, _ = self._parse_subprogram(
                     node.name,
                     node,
                     extra_symbols=self._symbols_from_params(params, map_inputs))
