@@ -22,7 +22,7 @@ from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg.propagation import propagate_memlet, propagate_symbol
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -177,7 +177,7 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
                         scope_vars={},
                         other_sdfgs=other_sdfgs)
 
-    sdfg, _, _ = pv.parse_program(src_ast.body[0])
+    sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
 
     return sdfg
@@ -1007,6 +1007,9 @@ class ProgramVisitor(ExtNodeVisitor):
         self.continue_states = []
         self.break_states = []
 
+        # Tmp fix for missing state symbol propatation
+        self.symbols = dict()
+
     def visit(self, node: ast.AST):
         """Visit a node."""
         self.current_lineinfo = dtypes.DebugInfo(node.lineno, node.col_offset,
@@ -1057,7 +1060,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
 
-        return self.sdfg, self.inputs, self.outputs
+        return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
     def defined(self):
@@ -1625,7 +1628,8 @@ class ProgramVisitor(ExtNodeVisitor):
                           exit_node: nodes.ExitNode,
                           inputs: Dict[str, Memlet],
                           outputs: Dict[str, Memlet],
-                          map_inputs: Dict[str, Memlet] = None):
+                          map_inputs: Dict[str, Memlet] = None,
+                          symbols: Dict[str, 'dace.symbol'] = dict()):
 
         # Parse map inputs (for memory-based ranges)
         if map_inputs is not None:
@@ -1667,6 +1671,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                for s, r in symbols.items():
+                    memlet = propagate_symbol(state, memlet, s, r)
                 if _subset_has_indirection(memlet.subset):
                     read_node = entry_node
                     if entry_node is None:
@@ -1774,6 +1780,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                for s, r in symbols.items():
+                    memlet = propagate_symbol(state, memlet, s, r)
                 if _subset_has_indirection(memlet.subset):
                     write_node = exit_node
                     if exit_node is None:
@@ -1931,7 +1939,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                    ndrange=params,
                                    debuginfo=self.current_lineinfo)
             # body = SDFG('MapBody')
-            body, inputs, outputs = self._parse_subprogram(
+            body, inputs, outputs, symbols = self._parse_subprogram(
                 self.name,
                 node,
                 extra_symbols=self._symbols_from_params(params, map_inputs))
@@ -1942,19 +1950,39 @@ class ProgramVisitor(ExtNodeVisitor):
                                             debuginfo=self.current_lineinfo)
             self._add_nested_symbols(tasklet)
             self._add_dependencies(state, tasklet, me, mx, inputs, outputs,
-                                   map_inputs)
+                                   map_inputs, symbols)
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             from dace.codegen.tools.type_inference import infer_expr_type
-            extra_syms = {
-                indices[0]:
-                symbolic.symbol(
-                    indices[0],
-                    dtypes.result_type_of(
-                        infer_expr_type(ranges[0][0], self.sdfg.symbols),
-                        infer_expr_type(ranges[0][1], self.sdfg.symbols),
-                        infer_expr_type(ranges[0][2], self.sdfg.symbols)))
-            }
+            # extra_syms = {
+            #     indices[0]:
+            #     symbolic.symbol(
+            #         indices[0],
+            #         dtypes.result_type_of(
+            #             infer_expr_type(ranges[0][0], self.sdfg.symbols),
+            #             infer_expr_type(ranges[0][1], self.sdfg.symbols),
+            #             infer_expr_type(ranges[0][2], self.sdfg.symbols)))
+            # }
+
+            sym_name = indices[0]
+            sym_obj = symbolic.symbol(
+                indices[0],
+                dtypes.result_type_of(
+                    infer_expr_type(ranges[0][0], self.sdfg.symbols),
+                    infer_expr_type(ranges[0][1], self.sdfg.symbols),
+                    infer_expr_type(ranges[0][2], self.sdfg.symbols)))
+            
+            # TODO: What if two consecutive loops use the same symbol?
+            if sym_name in self.symbols.keys():
+                raise NotImplementedError("Two for-loops using the same symbol "
+                                          "({}) in the same nested SDFG level. "
+                                          "This is not supported (yet).".format(
+                                              sym_name
+                                          ))
+
+            extra_syms = {sym_name: sym_obj}
+            self.symbols[sym_name] = subsets.Range(
+                [(b, "({}) - 1".format(e), s) for b, e, s in ranges])
 
             # Add range symbols as necessary
             for rng in ranges[0]:
@@ -2366,9 +2394,36 @@ class ProgramVisitor(ExtNodeVisitor):
 
         parent_name = self.scope_vars[name]
         parent_array = self.scope_arrays[parent_name]
+
+        dont_squeeze = []
+        sym_rng = []
+        for i, r in enumerate(rng):
+            for s, sr in self.symbols.items():
+                if s in symbolic.symlist(r).keys():
+                    dont_squeeze.append(i)
+                    sym_rng.append(sr)
+
+        if dont_squeeze:
+            tmp_memlet = Memlet.simple(parent_name, rng)
+            for s, r in self.symbols.items():
+                tmp_memlet = propagate_symbol(
+                    self.last_state, tmp_memlet, s, r, parent_array)
+
         squeezed_rng = copy.deepcopy(rng)
-        non_squeezed = squeezed_rng.squeeze()
+        non_squeezed = squeezed_rng.squeeze(dont_squeeze)
+        # TODO: Need custom shape computation here
         shape = squeezed_rng.size()
+        for i, sr in zip(dont_squeeze, sym_rng):
+            iMin, iMax, step = sr.ranges[0]
+            ts = rng.tile_sizes[i]
+            sqz_idx = squeezed_rng.ranges.index(rng.ranges[i])
+            shape[sqz_idx] = ts * sympy.ceiling(
+                ((iMax.approx
+                  if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                  (iMin.approx
+                   if isinstance(iMin, symbolic.SymExpr) else iMin)) / 
+                 (step.approx if isinstance(step, symbolic.SymExpr) else step))
+            
         dtype = parent_array.dtype
 
         if arr_type is None:
