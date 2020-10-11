@@ -548,6 +548,16 @@ class SDFG(OrderedDiGraph):
             for fname in os.listdir(path) if fname.startswith('report-')
         ]
 
+    def clear_instrumentation_reports(self):
+        """
+        Clears the instrumentation report folder of this SDFG.
+        """
+        path = os.path.join(self.build_folder, 'perf')
+        for fname in os.listdir(path):
+            if not fname.startswith('report-'):
+                continue
+            os.unlink(os.path.join(path, fname))
+
     def get_latest_report(self) -> \
             Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
@@ -573,10 +583,16 @@ class SDFG(OrderedDiGraph):
     @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
-        if Config.get_bool('testing', 'single_cache'):
+        if hasattr(self, '_build_folder'):
+            return self._build_folder
+        elif Config.get_bool('testing', 'single_cache'):
             return os.path.join('.dacecache', 'test')
         else:
             return os.path.join('.dacecache', self.name)
+
+    @build_folder.setter
+    def build_folder(self, newfolder: str):
+        self._build_folder = newfolder
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
