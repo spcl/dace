@@ -22,7 +22,7 @@ from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet, propagate_symbol
+from dace.sdfg.propagation import propagate_memlet, propagate_subset
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -708,8 +708,8 @@ class TaskletTransformer(ExtNodeTransformer):
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
                 for s, r in self.symbols.items():
-                    tmp_memlet = propagate_symbol(
-                        self.state, tmp_memlet, s, r, parent_array)
+                    tmp_memlet = propagate_subset(
+                        [tmp_memlet], parent_array, [s], r)
 
             squeezed_rng = copy.deepcopy(rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
@@ -1730,8 +1730,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                if memlet.data in self.sdfg.arrays:
+                    arr = self.sdfg.arrays[memlet.data]
+                else:
+                    arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_symbol(state, memlet, s, r)
+                    memlet = propagate_subset([memlet], arr, [s], r)
                 if _subset_has_indirection(memlet.subset):
                     read_node = entry_node
                     if entry_node is None:
@@ -1839,8 +1843,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet, inner_indices = v
                 else:
                     memlet, inner_indices = v, set()
+                if memlet.data in self.sdfg.arrays:
+                    arr = self.sdfg.arrays[memlet.data]
+                else:
+                    arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_symbol(state, memlet, s, r)
+                    memlet = propagate_subset([memlet], arr, [s], r)
                 if _subset_has_indirection(memlet.subset):
                     write_node = exit_node
                     if exit_node is None:
@@ -2457,8 +2465,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if ignore_indices:
             tmp_memlet = Memlet.simple(parent_name, rng)
             for s, r in self.symbols.items():
-                tmp_memlet = propagate_symbol(
-                    self.last_state, tmp_memlet, s, r, parent_array)
+                tmp_memlet = propagate_subset(
+                    [tmp_memlet], parent_array, [s], r)
 
         squeezed_rng = copy.deepcopy(rng)
         non_squeezed = squeezed_rng.squeeze(ignore_indices)
