@@ -210,6 +210,64 @@ def test_map_with_break_continue():
     assert(False)
 
 
+@dace.program
+def nested_map_for_loop():
+    A = np.ndarray([10, 10], dtype=np.int64)
+    for i in dace.map[0:10]:
+        for j in range(10):
+            A[i, j] = i * 10 + j
+    return A
+
+
+def test_nested_map_for_loop():
+    ref = np.zeros([10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in range(10):
+            ref[i, j] = i * 10 + j
+    val = nested_map_for_loop()
+    assert(np.array_equal(val, ref))
+
+
+@dace.program
+def nested_map_for_for_loop():
+    A = np.ndarray([10, 10, 10], dtype=np.int64)
+    for i in dace.map[0:10]:
+        for j in range(10):
+            for k in range(10):
+                A[i, j, k] = i * 100 + j * 10 + k
+    return A
+
+
+def test_nested_map_for_for_loop():
+    ref = np.zeros([10, 10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in range(10):
+            for k in range(10):
+                ref[i, j, k] = i * 100 + j * 10 + k
+    val = nested_map_for_for_loop()
+    assert(np.array_equal(val, ref))
+
+
+@dace.program
+def nested_for_map_for_loop():
+    A = np.ndarray([10, 10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in dace.map[0:10]:
+            for k in range(10):
+                A[i, j, k] = i * 100 + j * 10 + k
+    return A
+
+
+def test_nested_for_map_for_loop():
+    ref = np.zeros([10, 10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in range(10):
+            for k in range(10):
+                ref[i, j, k] = i * 100 + j * 10 + k
+    val = nested_for_map_for_loop()
+    assert(np.array_equal(val, ref))
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
@@ -220,3 +278,6 @@ if __name__ == "__main__":
     test_nested_for_while_loop()
     test_nested_while_for_loop()
     test_map_with_break_continue()
+    test_nested_map_for_loop()
+    test_nested_map_for_for_loop()
+    test_nested_for_map_for_loop()
