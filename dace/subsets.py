@@ -288,7 +288,7 @@ class Range(Subset):
             else:
                 other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
-        if not indices:
+        if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
         for i in indices:
@@ -571,9 +571,23 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self):
+    def squeeze(self, dont_squeeze=None):
         shape = self.size()
-        non_ones = [i for i, d in enumerate(shape) if d != 1]
+        non_ones = []
+        offset_indices = []
+        sqz_idx = 0
+        for i, d in enumerate(shape):
+            if i in dont_squeeze:
+                non_ones.append(i)
+                sqz_idx += 1
+            elif d != 1:
+                non_ones.append(i)
+                offset_indices.append(sqz_idx)
+                sqz_idx += 1
+            else:
+                pass
+        # non_ones = [i for i, d in enumerate(shape)
+        #             if (d != 1 or i in dont_squeeze)]
         squeezed_ranges = [self.ranges[i] for i in non_ones]
         squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
         if not squeezed_ranges:
@@ -581,7 +595,7 @@ class Range(Subset):
             squeezed_tsizes = [1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.offset(self, True)
+        self.offset(self, True, indices=offset_indices)
         return non_ones
 
     def unsqueeze(self, axes):
