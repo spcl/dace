@@ -86,17 +86,25 @@ class DeduplicateAccess(pattern_matching.Transformation):
     def match_to_str(graph, candidate):
         return str(graph.node(candidate[DeduplicateAccess._map_entry]))
 
-    def are_subsets_contiguous(self, subset_a: subsets.Subset,
-                               subset_b: subsets.Subset) -> bool:
+    def are_subsets_contiguous(self,
+                               subset_a: subsets.Subset,
+                               subset_b: subsets.Subset,
+                               dim: int = None) -> bool:
+        if dim is not None:
+            # TODO: A version that only checks for contiguity in certain
+            #       dimension (to prioritize stride-1 range)
+            raise NotImplementedError
         bbunion = subsets.bounding_box_union(subset_a, subset_b)
         return bbunion.num_elements() == (subset_a.num_elements() +
                                           subset_b.num_elements())
 
-    def find_contiguous_subsets(
-            self, subset_list: List[subsets.Subset]) -> Set[subsets.Subset]:
+    def find_contiguous_subsets(self,
+                                subset_list: List[subsets.Subset],
+                                dim: int = None) -> Set[subsets.Subset]:
         """ 
         Finds the set of largest contiguous subsets in a list of subsets. 
         :param subsets: Iterable of subset objects.
+        :param dim: Check for contiguity only for the specified dimension.
         :return: A list of contiguous subsets.
         """
         # Currently O(n^3) worst case. TODO: improve
@@ -111,7 +119,7 @@ class DeduplicateAccess(pattern_matching.Transformation):
                 elif sb.covers(sa):
                     subset_set.remove(sa)
                     break
-                elif self.are_subsets_contiguous(sa, sb):
+                elif self.are_subsets_contiguous(sa, sb, dim):
                     subset_set.remove(sa)
                     subset_set.remove(sb)
                     subset_set.add(subsets.bounding_box_union(sa, sb))
@@ -148,7 +156,16 @@ class DeduplicateAccess(pattern_matching.Transformation):
         unique_subsets = set(e.data.subset for e in edges)
 
         # Find largest contiguous subsets
-        contiguous_subsets = self.find_contiguous_subsets(unique_subsets)
+        try:
+            # Start from stride-1 dimension
+            contiguous_subsets = self.find_contiguous_subsets(
+                unique_subsets,
+                dim=next(i for i, s in enumerate(desc.strides) if s == 1))
+        except (StopIteration, NotImplementedError):
+            contiguous_subsets = unique_subsets
+
+        # Then find subsets for rest of the dimensions
+        contiguous_subsets = self.find_contiguous_subsets(contiguous_subsets)
 
         # Map original edges to subsets
         edge_mapping = defaultdict(list)
