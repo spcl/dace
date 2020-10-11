@@ -108,10 +108,6 @@ class InterstateEdge(object):
     def condition_sympy(self):
         return symbolic.pystr_to_symbolic(self.condition.as_string)
 
-    def condition_cpp(self):
-        from dace.codegen.cppunparse import pyexpr2cpp
-        return pyexpr2cpp(self.condition.code[0])
-
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
