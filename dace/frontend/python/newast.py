@@ -2011,15 +2011,6 @@ class ProgramVisitor(ExtNodeVisitor):
         elif iterator == 'range':
             # Create an extra typed symbol for the loop iterate
             from dace.codegen.tools.type_inference import infer_expr_type
-            # extra_syms = {
-            #     indices[0]:
-            #     symbolic.symbol(
-            #         indices[0],
-            #         dtypes.result_type_of(
-            #             infer_expr_type(ranges[0][0], self.sdfg.symbols),
-            #             infer_expr_type(ranges[0][1], self.sdfg.symbols),
-            #             infer_expr_type(ranges[0][2], self.sdfg.symbols)))
-            # }
 
             sym_name = indices[0]
             sym_obj = symbolic.symbol(
