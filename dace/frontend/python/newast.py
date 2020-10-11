@@ -866,6 +866,7 @@ class TaskletTransformer(ExtNodeTransformer):
                 name = rname(target)
                 name_sub = False
                 if isinstance(node.value.op, ast.LShift):
+                    squeezed_rng = None
                     if self.nested:
                         real_name = variables[name]
                         rng = self._get_range(target, real_name)
@@ -881,6 +882,16 @@ class TaskletTransformer(ExtNodeTransformer):
                     connector, memlet = parse_memlet(self, node.value.right,
                                                      node.value.left,
                                                      self.sdfg.arrays)
+                    # Fix memlet with correct subset
+                    if squeezed_rng is not None:
+                        # TODO: Fix for `contains_sympy_functions`
+                        # not liking ints
+                        memlet.subset = subsets.Range([(
+                            symbolic.pystr_to_symbolic(b),
+                            symbolic.pystr_to_symbolic(e),
+                            symbolic.pystr_to_symbolic(s))
+                            for b, e, s in squeezed_rng.ranges
+                        ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if connector in self.inputs or connector in self.outputs:
@@ -891,6 +902,7 @@ class TaskletTransformer(ExtNodeTransformer):
                     self.inputs[connector] = memlet
                     return None  # Remove from final tasklet code
                 elif isinstance(node.value.op, ast.RShift):
+                    squeezed_rng = None
                     if self.nested:
                         real_name = variables[name]
                         rng = self._get_range(target, real_name)
@@ -908,7 +920,14 @@ class TaskletTransformer(ExtNodeTransformer):
                                                      self.sdfg.arrays)
                     # Fix memlet with correct subset
                     if squeezed_rng is not None:
-                        memlet.subset = squeezed_rng
+                        # TODO: Fix for `contains_sympy_functions`
+                        # not liking ints
+                        memlet.subset = subsets.Range([(
+                            symbolic.pystr_to_symbolic(b),
+                            symbolic.pystr_to_symbolic(e),
+                            symbolic.pystr_to_symbolic(s))
+                            for b, e, s in squeezed_rng.ranges
+                        ])
                     if self.nested and _subset_has_indirection(rng):
                         memlet = dace.Memlet.simple(memlet.data, rng)
                     if self.nested and name in self.sdfg_outputs:
@@ -1325,7 +1344,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     extra_symbols=self._symbols_from_params(params, map_inputs))
             else:  # Scope + tasklet (e.g., @dace.map)
                 name = "{}_body".format(entry.label)
-                sdfg, inputs, outputs = self._parse_subprogram(
+                # TODO: Now that we return the nested for-loop symbols,
+                # can we use them for something here?
+                sdfg, inputs, outputs, _ = self._parse_subprogram(
                     name,
                     node,
                     True,
