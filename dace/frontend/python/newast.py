@@ -2526,7 +2526,7 @@ class ProgramVisitor(ExtNodeVisitor):
         elif (name, rng, 'r') in self.accesses:
             return self.accesses[(name, rng, 'r')][0]
         elif name in self.variables:
-            return self.variables[name]
+            return (self.variables[name], None)
         elif name in self.scope_vars:
             return self._add_access(name, rng, 'r', target, new_name, arr_type)
         else:
@@ -2542,7 +2542,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')][0]
         elif name in self.variables:
-            return self.variables[name]
+            return (self.variables[name], None)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
@@ -3196,25 +3196,29 @@ class ProgramVisitor(ExtNodeVisitor):
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
             src_name = src_expr.name
+            src_rng = None
             if src_name not in self.sdfg.arrays:
-                src_name = self._add_read_access(src_name, src_expr.subset,
-                                                 None)
+                src_name, src_rng = self._add_read_access(
+                    src_name, src_expr.subset, None)
             dst_name = dst_expr.name
+            dst_rng = None
             if dst_name not in self.sdfg.arrays:
-                dst_name = self._add_write_access(dst_name, dst_expr.subset,
-                                                  None)
+                dst_name, dst_rng = self._add_write_access(
+                    dst_name, dst_expr.subset, None)
 
             rnode = state.add_read(src_name, debuginfo=self.current_lineinfo)
             wnode = state.add_write(dst_name, debuginfo=self.current_lineinfo)
             if isinstance(self.sdfg.arrays[dst_name], data.Stream):
+                dst_rng = dst_rng or subsets.Range.from_array(
+                    self.sdfg.arrays[dst_name])
                 mem = Memlet.simple(
-                    dst_name,
-                    subsets.Range.from_array(self.sdfg.arrays[dst_name]),
+                    dst_name, dst_rng,
                     num_accesses=dst_expr.accesses, wcr_str = dst_expr.wcr)
             else:
+                src_rng = src_rng or subsets.Range.from_array(
+                    self.sdfg.arrays[src_name])
                 mem = Memlet.simple(
-                    src_name,
-                    subsets.Range.from_array(self.sdfg.arrays[src_name]),
+                    src_name, src_rng,
                     num_accesses=src_expr.accesses, wcr_str = dst_expr.wcr)
             state.add_nedge(rnode, wnode, mem)
             return
@@ -3481,7 +3485,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 rng = dace.subsets.Range(
                     astutils.subscript_to_slice(true_node, defined_arrays)[1])
 
-                return self._add_read_access(name, rng, node)
+                # return self._add_read_access(name, rng, node)
+                new_name, new_rng = self._add_read_access(name, rng, node)
+                new_arr = self.sdfg.arrays[new_name]
+                full_rng = subsets.Range.from_array(new_arr)
+                if new_rng.ranges == full_rng.ranges:
+                    return new_name
+                else:
+                    return NotImplementedError(
+                        "Read accesses using nested for-loop symbols "
+                        "are not supported yet")
 
         # Obtain array
         node_parsed = self._gettype(node.value)
