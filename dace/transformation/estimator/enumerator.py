@@ -2,12 +2,14 @@
 
 from dace.transformation.subgraph import SubgraphFusion, helpers
 from dace.properties import make_properties, Property
-from collections import deque
+from collections import deque, defaultdict
+
+import dace.sdfg.nodes as nodes
 
 class TreeNode:
-    def __init__(self, map, children):
+    def __init__(self, map, children = None):
         self.map = map
-        if children = None:
+        if children is None:
             self.children = {}
         else:
             self.children = children
@@ -18,7 +20,6 @@ class TreeNode:
             self.children[map] = TreeNode(map)
 
 
-@make_properties
 class Enumerator:
     mode = Property(desc = "What the Iterator should return",
                     default = "subgraph",
@@ -30,7 +31,7 @@ class Enumerator:
         self.subgraph = subgraph
 
         # get hightest scope maps
-        self.map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
+        map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
 
         # label all the map entries
         label = 0
@@ -46,20 +47,20 @@ class Enumerator:
             map_exit = graph.exit_node(map_entry)
             for edge in graph.out_edges(map_exit):
                 current_node = edge.dst
-                if not isinstance(current, nodes.AccessNode):
+                if not isinstance(current_node, nodes.AccessNode):
                     continue
                 for dst_edge in graph.out_edges(current_node):
                     if dst_edge.dst in map_entries:
                         self.adjacency_list[map_entry].add(current_node)
 
         self.adjacency_list[None] = set(map_entries)
-        print(adjacency_list)
+        print(self.adjacency_list)
 
         # build tree
         self.build_tree()
 
 
-    def build_tree(self, adjacency_list, prune = False):
+    def build_tree(self, prune = False):
 
         self.root = TreeNode(None)
         queue = deque([self.root])
@@ -76,36 +77,30 @@ class Enumerator:
             # this has suboptimal complexity but we don't really
             # care since what we are doing is NP
             for map, children in self.adjacency_list.items():
-                if current in children and map not in processed
-                    and map not in queue and
-                    all[c in processed or c in queue]:
+                if map not in processed \
+                   and map not in queue \
+                   and (len(children) == 0 \
+                   or current in children and all([(c in processed or c in queue) for c in children])):
 
                     queue.append(map)
 
-            children = {c:n for (c,n) in self.root.items()}
-            self.root.children[current] = TreeNode(current, children)
-
-        while len(entries) > 0:
-            current = None
-            for e in entries:
-                self.adjacency_list[]
-            # search for one entry whose entries are all
-        # add Null as root with all the nodes as children
-        while len(queue) > 0:
-            current = queue.popleft()
-
-
-        queue = deque()
-        queue.append(None)
+            # FORNOW: shallow copy from root children suffices
+            children = {c:n for (c,n) in self.root.children.items() if c in self.adjacency_list[current]}
+            self.root.children[current] = TreeNode(current.map, children)
+            processed.add(current)
 
 
     def traverse(self, current, node):
+        print("TRAVERSE")
         current.append(node.map)
         yield current
         for child in node.children.values():
             self.traverse(current, child)
         current.pop()
 
-    def __iter__():
+    def __iter__(self):
+        print("ITER")
+        print(self.root.map)
+        print(self.root.children)
         for node in self.root.children.values():
-            yield self.traverse([], node)
+            yield from self.traverse([], node)
