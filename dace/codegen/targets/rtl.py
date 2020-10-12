@@ -103,18 +103,17 @@ class RTLCodeGen(TargetCodeGenerator):
                         """
     rtl_header = """
 module top
-  #(
-  parameter  WIDTH = 32
-  ) 
+{parameters}
   ( input                  clk_i  // convention: clk_i clocks the design
   , input                  rst_i  // convention: rst_i resets the design
+  , input                  valid_i
+  , input                  ready_i
   {inputs}
+  , output reg             ready_o
+  , output reg             valid_o
   {outputs}
   );
-
-  logic valid_o, ready_o, valid_i, yumi_i;
     """
-
     rtl_footer = """
   always@(*) begin
     if (valid_o)
@@ -136,6 +135,18 @@ endmodule
         base_path = os.path.join(".dacecache", sdfg.name, "src", "rtl")
         absolut_path = os.path.abspath(base_path)
 
+        # construct parameters module header
+        parameters = {}# {"WIDTH": 32, "TEST": 64} # TODO: forward real user-parameters
+
+        if(len(parameters) == 0):
+            parameter_string = ""
+        else:
+            parameter_string = """
+            #(
+            {}
+            )
+            """.format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, parameters[key]) for i, key in enumerate(parameters)]))
+
         # construct input / output module header
         inputs = [", input [{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1, inp) for inp in tasklet.in_connectors]
         outputs = [", output reg [{}:0] {}".format(tasklet.out_connectors[inp].bytes*8-1, inp) for inp in tasklet.out_connectors]
@@ -146,7 +157,7 @@ endmodule
             shutil.rmtree(absolut_path)
         os.makedirs(absolut_path)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
-            file.writelines(RTLCodeGen.rtl_header.format(inputs="\n".join(inputs), outputs="\n".join(outputs)))
+            file.writelines(RTLCodeGen.rtl_header.format(parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs)))
             file.writelines(tasklet.code.code)
             file.writelines(RTLCodeGen.rtl_footer)
 
