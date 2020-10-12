@@ -827,10 +827,17 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
-    def squeeze(self):
-        num_dim = len(self.indices)
-        self.indices = [0]
-        return [num_dim - 1]
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
+        non_ones = []
+        for i in range(len(self.indices)):
+            if i in ignore_indices:
+                non_ones.append(i)
+        squeezed_indices = [self.indices[i] for i in non_ones]
+        if not squeezed_indices:
+            squeezed_indices = [0]
+        self.indices = squeezed_indices
+        return non_ones
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
