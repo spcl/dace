@@ -32,7 +32,7 @@ pipeline {
             export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 export PATH=/usr/local/cuda/bin:~/.local/bin:$PATH
 export CUDA_ROOT=/usr/local/cuda
-export MKLROOT=/opt/intel.mkl
+export MKLROOT=/opt/intel/mkl
 export DACE_debugprint=1
 tests/cuda_test.sh
                 '''
