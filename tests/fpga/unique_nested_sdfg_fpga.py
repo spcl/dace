@@ -175,8 +175,6 @@ def make_nested_sdfg_fpga():
 
 
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"},{"z"})
-    # ATTENTION: assign the same unique name
-    nested_sdfg.sdfg.unique_name = "vecAddNested"
 
     state.add_memlet_path(x,
                           nested_sdfg,
@@ -209,8 +207,6 @@ def make_nested_sdfg_fpga():
 
     nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"v", "w"}, {"u"})
 
-    # ATTENTION: assign the same unique name
-    nested_sdfg.sdfg.unique_name = "vecAddNested"
     state2.add_memlet_path(v,
                           nested_sdfg,
                           dst_conn="v",

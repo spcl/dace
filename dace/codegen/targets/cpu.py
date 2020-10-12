@@ -1409,10 +1409,13 @@ class CPUCodeGen(TargetCodeGenerator):
         ) if nested_dfg_unique_name == "" else nested_dfg_unique_name
 
         code_already_generated = False
-        if nested_dfg_unique_name in self._generated_nested_sdfg:
+
+        # Use hashing to check whether this Nested SDFG has been already generated
+        hash = sdfg.hash_sdfg()
+        if hash in self._generated_nested_sdfg:
             code_already_generated = True
-        elif nested_dfg_unique_name != "":
-            self._generated_nested_sdfg.add(nested_dfg_unique_name)
+        else:
+            self._generated_nested_sdfg.add(hash)
 
         #########################################
         # Take care of nested SDFG I/O (arguments)

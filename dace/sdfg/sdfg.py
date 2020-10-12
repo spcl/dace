@@ -252,7 +252,7 @@ class SDFG(OrderedDiGraph):
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.orig_sdfg = None
         self.transformation_hist = []
-
+        self.unique_name = name
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -319,6 +319,18 @@ class SDFG(OrderedDiGraph):
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         return ret
+
+    def hash_sdfg(self) -> int:
+        '''
+        Returns an hash of the current SDFG, withou considering IDs and attributes name
+        :return:
+        '''
+        jsondict = self.to_json()  # No more nonstandard objects
+        del jsondict['sdfg_list_id']  # Make non-unique in SDFG hierarchy
+        del jsondict['attributes']['name']  # Make non-unique in SDFG hierarchy v2
+        string_representation = dace.serialize.dumps(jsondict)  # dict->str
+        hsh = hash(string_representation)  # str->int
+        return hsh
 
     @property
     def arrays(self):
