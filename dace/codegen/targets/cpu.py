@@ -152,9 +152,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
-        self._locals.clear_scope(self._ldepth + 1)
         # Mark node as "generated"
         self._generated_nodes.add(node)
+        self._locals.clear_scope(self._ldepth + 1)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
