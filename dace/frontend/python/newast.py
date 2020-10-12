@@ -2529,9 +2529,9 @@ class ProgramVisitor(ExtNodeVisitor):
                          arr_type: data.Data = None):
 
         if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')][0]
+            return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
-            return self.accesses[(name, rng, 'r')][0]
+            return self.accesses[(name, rng, 'r')]
         elif name in self.variables:
             return (self.variables[name], None)
         elif name in self.scope_vars:
@@ -2552,7 +2552,7 @@ class ProgramVisitor(ExtNodeVisitor):
                           arr_type: data.Data = None):
 
         if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')][0]
+            return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], None)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
