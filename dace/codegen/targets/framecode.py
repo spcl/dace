@@ -8,7 +8,8 @@ import functools
 import re
 from dace.codegen import control_flow as cflow
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.targets.cpp import unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
@@ -16,7 +17,6 @@ from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
-from dace.codegen import cppunparse
 
 import networkx as nx
 import numpy as np
@@ -393,9 +393,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                        global_stream)
 
     @staticmethod
-    def _generate_assignments(assignments):
+    def _generate_assignments(assignments, sdfg):
         return [
-            "{} = {}".format(variable, value)
+            "{} = {}".format(variable, unparse_interstate_edge(value, sdfg))
             for variable, value in assignments.items()
         ]
 
@@ -405,9 +405,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
-
-        condition_string = cppunparse.cppunparse(edge.data.condition.code,
-                                                 False)
+        condition_string = unparse_interstate_edge(edge.data.condition.code[0],
+                                                   sdfg)
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -417,7 +416,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         if len(assignments) > 0:
             callsite_stream.write(
                 ";\n".join(
-                    DaCeCodeGenerator._generate_assignments(assignments) +
+                    DaCeCodeGenerator._generate_assignments(assignments, sdfg) +
                     [""]), sdfg, sid)
 
         callsite_stream.write(
@@ -503,7 +502,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                 assignment_edge = control.scope.assignment.edge
                                 init_assignments = ", ".join(
                                     DaCeCodeGenerator._generate_assignments(
-                                        assignment_edge.data.assignments))
+                                        assignment_edge.data.assignments, sdfg))
                                 generated_edges.add(assignment_edge)
                             else:
                                 init_assignments = ""
@@ -511,12 +510,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             back_edge = control.scope.back.edge
                             continue_assignments = ", ".join(
                                 DaCeCodeGenerator._generate_assignments(
-                                    back_edge.data.assignments))
+                                    back_edge.data.assignments, sdfg))
                             generated_edges.add(back_edge)
 
                             entry_edge = control.scope.entry.edge
-                            condition = cppunparse.cppunparse(
-                                entry_edge.data.condition.code, False)
+                            condition = unparse_interstate_edge(
+                                entry_edge.data.condition.code[0], sdfg)
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -579,8 +578,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             then_entry = then_scope.entry.edge
 
-                            condition = cppunparse.cppunparse(
-                                then_entry.data.condition.code, False)
+                            condition = unparse_interstate_edge(
+                                then_entry.data.condition.code[0], sdfg)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
@@ -660,7 +659,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     callsite_stream.write(
                         ";\n".join(
                             DaCeCodeGenerator._generate_assignments(
-                                assignments_to_generate) + [""]), sdfg, sid)
+                                assignments_to_generate, sdfg) + [""]), sdfg,
+                        sid)
                 generated_edges.add(edge)
                 # End of out_edges loop
 
@@ -728,6 +728,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
+        global_symbols.update(
+            {aname: arr.dtype
+             for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for e in sdfg.edges():
             symbols = e.data.new_symbols(global_symbols)

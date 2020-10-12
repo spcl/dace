@@ -1460,7 +1460,9 @@ class ProgramVisitor(ExtNodeVisitor):
             NotImplementedError: If iterator type is not implemented
 
         Returns:
-            Tuple[str, List[str]] -- Iterator type and iteration ranges
+            Tuple[str, List[str], List[ast.AST]] -- Iterator type, iteration 
+                                                    ranges, and AST versions of
+                                                    the ranges
         """
 
         if not isinstance(node, (ast.Call, ast.Subscript)):
@@ -1469,19 +1471,29 @@ class ProgramVisitor(ExtNodeVisitor):
                 "Iterator of ast.For must be a function or a subscript")
 
         iterator = rname(node)
+
+        ast_ranges = []
+
         if iterator not in {'range', 'parrange', 'dace.map'}:
             raise DaceSyntaxError(self, node,
                                   "Iterator {} is unsupported".format(iterator))
         elif iterator in ['range', 'parrange']:
+            # AST nodes for common expressions
+            zero = ast.parse('0').body[0]
+            one = ast.parse('1').body[0]
+
             if len(node.args) == 1:  # (par)range(stop)
                 ranges = [('0', self._parse_value(node.args[0]), '1')]
+                ast_ranges = [(zero, node.args[0], one)]
             elif len(node.args) == 2:  # (par)range(start, stop)
                 ranges = [(self._parse_value(node.args[0]),
                            self._parse_value(node.args[1]), '1')]
+                ast_ranges = [(node.args[0], node.args[1], one)]
             elif len(node.args) == 3:  # (par)range(start, stop, step)
                 ranges = [(self._parse_value(node.args[0]),
                            self._parse_value(node.args[1]),
                            self._parse_value(node.args[2]))]
+                ast_ranges = [(node.args[0], node.args[1], node.args[2])]
             else:
                 raise DaceSyntaxError(
                     self, node,
@@ -1498,7 +1510,7 @@ class ProgramVisitor(ExtNodeVisitor):
             else:  # isinstance(node.slice, ast.Index) is True
                 ranges.append(self._parse_index_as_range(node.slice))
 
-        return (iterator, ranges)
+        return (iterator, ranges, ast_ranges)
 
     def _parse_map_inputs(
             self, name: str, params: List[Tuple[str, str]],
@@ -1914,7 +1926,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # 3. `for i,j,k in dace.map[0:M, 0:N, 0:K]`: Creates an ND map
         # print(ast.dump(node))
         indices = self._parse_for_indices(node.target)
-        iterator, ranges = self._parse_for_iterator(node.iter)
+        iterator, ranges, ast_ranges = self._parse_for_iterator(node.iter)
 
         if len(indices) != len(ranges):
             raise DaceSyntaxError(
@@ -1957,8 +1969,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add range symbols as necessary
             for rng in ranges[0]:
-                rng = pystr_to_symbolic(rng)
-                for atom in rng.free_symbols:
+                symrng = pystr_to_symbolic(rng)
+                for atom in symrng.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
                         if str(atom) not in self.defined:
@@ -1979,9 +1991,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0],
-                ranges[0][0],
-                '%s %s %s' % (indices[0], loop_cond, ranges[0][1]),
-                '%s + %s' % (indices[0], ranges[0][2]), last_loop_state)
+                astutils.unparse(ast_ranges[0][0]), '%s %s %s' %
+                (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])),
+                '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2])),
+                last_loop_state)
         else:
             raise DaceSyntaxError(
                 self, node, 'Unsupported for-loop iterator "%s"' % iterator)
