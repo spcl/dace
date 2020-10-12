@@ -370,15 +370,16 @@ def add_indirection_subgraph(sdfg: SDFG,
                 access = [access]
             conn = None
             if PVisitor.nested:
+                # TODO: Make this work for nested for-loops
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
                 if output:
-                    arrname = PVisitor._add_write_access(arr_name,
-                                                         arr_rng,
-                                                         target=None)
+                    arrname, _ = PVisitor._add_write_access(arr_name,
+                                                            arr_rng,
+                                                            target=None)
                 else:
-                    arrname = PVisitor._add_read_access(arr_name,
-                                                        arr_rng,
-                                                        target=None)
+                    arrname, _ = PVisitor._add_read_access(arr_name,
+                                                           arr_rng,
+                                                           target=None)
                 access = [0] * len(access)
                 conn = 'index_%s_%d' % (arr_name, i)
             arr = sdfg.arrays[arrname]
@@ -696,6 +697,8 @@ class TaskletTransformer(ExtNodeTransformer):
             squeezed_rng = list(range(len(rng)))
             shape = parent_array.shape
             strides = [parent_array.strides[d] for d in squeezed_rng]
+            # TODO: Why is squeezed_rng and index in the first place?
+            squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
         else:
             ignore_indices = []
             sym_rng = []
@@ -1694,8 +1697,9 @@ class ProgramVisitor(ExtNodeVisitor):
         if map_inputs is not None:
             for conn, memlet in map_inputs.items():
                 if self.nested:
-                    new_name = self._add_read_access(memlet.data, memlet.subset,
-                                                     None)
+                    # TODO: Make this work nested for-loops
+                    new_name, _ = self._add_read_access(memlet.data, memlet.subset,
+                                                        None)
                     memlet = Memlet.from_array(new_name,
                                                self.sdfg.arrays[new_name])
                 else:
