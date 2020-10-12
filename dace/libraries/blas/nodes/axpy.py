@@ -240,76 +240,6 @@ class ExpandAxpyOpenBLAS(ExpandTransformation):
         return ExpandAxpyMKL.expansion(node, state, sdfg)
 
 
-class ExpandAxpyCuBLAS(ExpandTransformation):
-
-    environments = [environments.cublas.cuBLAS]
-
-    @staticmethod
-    def make_sdfg(dtype, n, a, node):
-
-        # ---------- ----------
-        # SETUP GRAPH
-        # ---------- ----------
-        axpy_sdfg = dace.SDFG('axpy_graph')
-        axpy_state = axpy_sdfg.add_state()
-
-        axpy_sdfg.add_symbol(a.name, dtype)
-
-        # ---------- ----------
-        # MEMORY LOCATIONS
-        # ---------- ----------
-        axpy_sdfg.add_array('_x', shape=[n], dtype=dtype)
-        axpy_sdfg.add_array('_y', shape=[n], dtype=dtype)
-        axpy_sdfg.add_array('_res', shape=[n], dtype=dtype)
-
-        # ---------- ----------
-        # COMPUTE
-        # ---------- ----------
-        x_in = axpy_state.add_read('_x')
-        res_out = axpy_state.add_write('_res')
-
-        if dtype == dace.float32:
-            func = "Saxpy"
-        elif dtype == dace.float64:
-            func = "Daxpy"
-        else:
-            raise ValueError("Unsupported type for BLAS axpy: " + str(dtype))
-
-        code = (
-            "const auto __dace_cuda_device = 0;\n" +
-            "auto &__dace_cublas_handle = dace::blas::CublasHandle::Get(__dace_cuda_device);\n"
-            "cublasSetStream(__dace_cublas_handle, dace::cuda::__streams[0]);\n"
-            "cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);\n"
-            "{dtype} alpha = {a};\n"
-            "cublas{func}(__dace_cublas_handle, {n}, &alpha, __xDev.ptr<1>(), 1, "
-            "__res_axpyDev.ptr<1>(), 1);".format(
-                func=func, n=n, a=a, dtype=dtype))
-
-        task = axpy_state.add_tasklet('axpy_blas_task', ['xDev'],
-                                      ['res_axpyDev'],
-                                      code,
-                                      language=dace.dtypes.Language.CPP)
-
-        axpy_state.add_memlet_path(x_in,
-                                   task,
-                                   dst_conn='xDev',
-                                   memlet=Memlet.simple(x_in.data,
-                                                        "0:{}".format(n)))
-
-        axpy_state.add_memlet_path(task,
-                                   res_out,
-                                   src_conn='res_axpyDev',
-                                   memlet=Memlet.simple(res_out.data,
-                                                        "0:{}".format(n)))
-
-        return axpy_sdfg
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-
-        return ExpandAxpyCuBLAS.make_sdfg(node.dtype, node.n, node.a, node)
-
 
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
@@ -319,8 +249,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandAxpyVectorized,
         "fpga_stream": ExpandAxpyFPGAStreaming,
         "MKL": ExpandAxpyMKL,
-        "OpenBLAS": ExpandAxpyOpenBLAS,
-        "cuBLAS": ExpandAxpyCuBLAS
+        "OpenBLAS": ExpandAxpyOpenBLAS
     }
     default_implementation = 'pure'
 
@@ -379,9 +308,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         out_memlet = out_edges[0].data
         size = in_memlets[0].subset.size()
 
-        # TODO: check veclen with new native vector types
-        # veclen = in_memlets[0].veclen
-
         if len(size) != 1:
             raise ValueError("axpy only supported on 1-dimensional arrays")
 
@@ -391,10 +317,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if size != out_memlet.subset.size():
             raise ValueError("Output of axpy must have same size as input")
 
-        # TODO: check veclen with new native vector types
-        # if veclen != in_memlets[1].veclen or veclen != out_memlet.veclen:
-        #     raise ValueError(
-        #         "Vector lengths of inputs/outputs to axpy must be identical")
 
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):

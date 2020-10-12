@@ -190,8 +190,6 @@ def cpu_graph(precision, implementation, testCase="0"):
         memlet=Memlet.simple(z_out, "0:n")
     )
 
-    if saxpy_node.implementation == "cuBLAS":
-        test_sdfg.apply_transformations(GPUTransformSDFG)
 
     test_sdfg.expand_library_nodes()
 
@@ -212,18 +210,6 @@ def test_cpu(implementation):
     run_test(configs, "cpu", implementation, overwrite_y=True)
 
     print(" --> passed")
-
-
-# ---------- ----------
-# GPU Cuda graph program
-# ---------- ----------
-# def gpu_graph():
-#     return pure_graph(1, precision, implementation=implementation)
-
-
-def test_gpu():
-    test_cpu("cuBLAS")
-
 
 
 # ---------- ----------
@@ -315,7 +301,6 @@ if __name__ == "__main__":
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
-    cmdParser.add_argument("--cublas", dest="cublas", action='store_true')
     cmdParser.add_argument("--mkl", dest="mkl", action='store_true')
     cmdParser.add_argument("--openblas", dest="openblas", action='store_true')
     cmdParser.add_argument("--pure", dest="pure", action='store_true')
@@ -332,9 +317,6 @@ if __name__ == "__main__":
 
     if args.openblas:
         test_cpu("OpenBLAS")
-
-    if args.cublas:
-        test_gpu()
 
     if args.xilinx:
         test_fpga("xilinx")
