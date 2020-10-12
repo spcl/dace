@@ -101,7 +101,6 @@ def test_program(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], \
 def prep(sdfg, graph):
     expand_reduce(sdfg, graph)
     expand_maps(sdfg, graph)
-    #fusion(sdfg, graph)
 
 def enumerate(sdfg, graph):
     subgraph = SubgraphView(graph, [g for g in graph.nodes()])
@@ -109,8 +108,11 @@ def enumerate(sdfg, graph):
     print("*************")
     for subgraph in enum:
         print(subgraph)
-        print(subgraph.nodes())
+    print("LOCAL MAXIMA")
+    print(enum._local_maxima)
     enum.histogram()
+
+
 def test_enumerator(view = False):
     sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
