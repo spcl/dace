@@ -2039,11 +2039,9 @@ class ProgramVisitor(ExtNodeVisitor):
             
             # TODO: What if two consecutive loops use the same symbol?
             if sym_name in self.symbols.keys():
-                raise NotImplementedError("Two for-loops using the same symbol "
-                                          "({}) in the same nested SDFG level. "
-                                          "This is not supported (yet).".format(
-                                              sym_name
-                                          ))
+                warnings.warn("Two for-loops using the same symbol ({}) in the "
+                              "same nested SDFG level. This is not officially "
+                              "supported (yet).".format(sym_name))
 
             extra_syms = {sym_name: sym_obj}
             self.symbols[sym_name] = subsets.Range(
@@ -2220,14 +2218,22 @@ class ProgramVisitor(ExtNodeVisitor):
                         target: Union[str, Tuple[str, subsets.Range]],
                         operand: Union[str, Tuple[str, subsets.Range]],
                         op: str = None):
+        # TODO: Refactor these if/else blocks. Maybe
+        # the subset should never be None?
         if isinstance(target, tuple):
             target_name, target_subset = target
+            if target_subset is None:
+                target_array = self.sdfg.arrays[target_name]
+                target_subset = subsets.Range.from_array(target_array)
         else:
             target_name = target
             target_array = self.sdfg.arrays[target_name]
             target_subset = subsets.Range.from_array(target_array)
         if isinstance(operand, tuple):
             op_name, op_subset = operand
+            if op_subset is None:
+                op_array = self.sdfg.arrays[op_name]
+                op_subset = subsets.Range.from_array(op_array)
         elif operand in self.sdfg.arrays:
             op_name = operand
             op_array = self.sdfg.arrays[op_name]
@@ -2960,8 +2966,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Remove newly-defined symbols from arguments
             if mapping is not None:
                 symbols -= set(mapping.keys())
-            if len(symbols) > 0:
-                mapping = mapping or {}
+            # if len(symbols) > 0:
+            #     mapping = mapping or {}
+            # TODO: Why above the None fix was applied when there were symbols?
+            mapping = mapping or {}
             args_to_remove = []
             for i, (aname, arg) in enumerate(args):
                 if aname in symbols:
@@ -2998,7 +3006,8 @@ class ProgramVisitor(ExtNodeVisitor):
             for i, (aname, arg) in enumerate(args):
                 if arg not in self.sdfg.arrays:
                     if isinstance(arg, str) and arg in self.scope_arrays:
-                        newarg = self._add_read_access(
+                        # TODO: Do we need to do something with the sqz range?
+                        newarg, _ = self._add_read_access(
                             arg,
                             subsets.Range.from_array(self.scope_arrays[arg]),
                             node)
