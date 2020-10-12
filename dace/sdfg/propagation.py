@@ -741,6 +741,7 @@ def propagate_subset(memlets: List[Memlet],
         :return: Memlet with propagated subset and volume.
     """
     # Propagate subset
+    defined_variables = defined_variables or set()
     variable_context = [
         defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]
     ]
