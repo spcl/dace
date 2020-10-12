@@ -788,7 +788,10 @@ class TaskletTransformer(ExtNodeTransformer):
         elif name in self.variables:
             return (self.variables[name], None)
         elif name in self.scope_vars:
-            return self._add_access(name, rng, 'r', target, new_name, arr_type)
+            # TODO: Does the TaskletTransformer need the double slice fix?
+            new_name, new_rng = self._add_access(name, rng, 'r', target,
+                                                 new_name, arr_type)
+            return (new_name, new_rng)
         else:
             raise NotImplementedError
 
@@ -2532,7 +2535,12 @@ class ProgramVisitor(ExtNodeVisitor):
         elif name in self.variables:
             return (self.variables[name], None)
         elif name in self.scope_vars:
-            return self._add_access(name, rng, 'r', target, new_name, arr_type)
+            new_name, new_rng = self._add_access(name, rng, 'r', target,
+                                                 new_name, arr_type)
+            full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
+            if full_rng != new_rng:
+                new_name, new_rng = self.make_slice(new_name, new_rng)
+            return (new_name, new_rng)
         else:
             raise NotImplementedError
 
@@ -3496,7 +3504,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if new_rng.ranges == full_rng.ranges:
                     return new_name
                 else:
-                    return NotImplementedError(
+                    raise NotImplementedError(
                         "Read accesses using nested for-loop symbols "
                         "are not supported yet")
 
@@ -3546,5 +3554,28 @@ class ProgramVisitor(ExtNodeVisitor):
                               wcr_str=expr.wcr,
                               other_subset_str=other_subset))
             return tmp
+    
+    def make_slice(self, arrname: str, rng: subsets.Range):
+
+        array = arrname
+        arrobj = self.sdfg.arrays[arrname]
+
+        # Add slicing state
+        # TODO: naming issue, we don't have the linenumber here
+        self._add_state('slice_%s' % (array))
+        rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
+        other_subset = copy.deepcopy(rng)
+        other_subset.squeeze()
+        tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(),
+                                                    arrobj.dtype,
+                                                    arrobj.storage)
+        wnode = self.last_state.add_write(tmp,
+                                            debuginfo=self.current_lineinfo)
+        self.last_state.add_nedge(
+            rnode, wnode,
+            Memlet.simple(array, rng,
+                            num_accesses=rng.num_elements(),
+                            other_subset_str=other_subset))
+        return tmp, other_subset
 
     ##################################
