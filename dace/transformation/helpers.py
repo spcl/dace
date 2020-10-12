@@ -281,7 +281,8 @@ def nest_state_subgraph(sdfg: SDFG,
 
     return nested_sdfg
 
-def state_fission(subgraph: graph.SubgraphView) -> SDFGState:
+
+def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     '''
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes from the original state the subgraph, connect the two states.
@@ -290,18 +291,27 @@ def state_fission(subgraph: graph.SubgraphView) -> SDFGState:
     '''
 
     state: SDFGState = subgraph.graph
-    newstate = SDFG.add_state_before(state)
+    newstate = sdfg.add_state_before(state)
 
     #save edges
-    orig_edges=subgraph.edges()
+    orig_edges = subgraph.edges()
     nodes_to_remove = set(subgraph.nodes())
-    nodes_to_remove -= set(n for n in subgraph.source_nodes() if state.in_degree(n) > 0)
-    nodes_to_remove -= set(n for n in subgraph.sink_nodes() if state.out_degree(n) > 0)
+    nodes_to_remove -= set(n for n in subgraph.source_nodes()
+                           if state.in_degree(n) > 0)
+    nodes_to_remove -= set(n for n in subgraph.sink_nodes()
+                           if state.out_degree(n) > 0)
     state.remove_nodes_from(nodes_to_remove)
+
+    for n in subgraph.nodes():
+        if isinstance(n, nodes.NestedSDFG):
+            #set the new parent
+            n.sdfg.parent = newstate
+
     newstate.add_nodes_from(subgraph.nodes())
 
     for e in orig_edges:
         newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+
     return newstate
 
 
