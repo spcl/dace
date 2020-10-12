@@ -6,7 +6,7 @@ from copy import deepcopy as dcpy
 from dace import data, properties, symbolic, dtypes, registry
 from dace.sdfg import graph, nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 def change_storage(sdfg, storage):
@@ -20,7 +20,7 @@ def change_storage(sdfg, storage):
 
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class CopyToDevice(pattern_matching.Transformation):
+class CopyToDevice(transformation.Transformation):
     """ Implements the copy-to-device transformation, which copies a nested
         SDFG and its dependencies to a given device.
 

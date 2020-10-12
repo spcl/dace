@@ -8,7 +8,7 @@ import dace.frontend.octave.parse as octave_frontend
 from dace.codegen import codegen
 from diode.DaceState import DaceState
 from dace.transformation.optimizer import SDFGOptimizer
-from dace.transformation.pattern_matching import Transformation
+from dace.transformation.transformation import Transformation
 from dace.sdfg.nodes import LibraryNode
 import inspect
 from flask import Flask, Response, request, redirect, url_for, abort, jsonify, send_from_directory, send_file
@@ -1203,11 +1203,10 @@ def main():
                         action="store_true",
                         help="Bind to localhost only")
 
-    parser.add_argument(
-        "-r",
-        "--remotedace",
-        action="store_true",
-        help="Use ssh commands instead of locally running dace")
+    parser.add_argument("-r",
+                        "--remotedace",
+                        action="store_true",
+                        help="Use ssh commands instead of locally running dace")
 
     parser.add_argument("-rd",
                         "--restoredace",

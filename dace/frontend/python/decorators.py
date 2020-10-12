@@ -6,11 +6,15 @@ from __future__ import print_function
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser
+from typing import Callable
 
 #############################################
 
+# Type hint specifically for the @dace.program decorator
+paramdec_program: Callable[..., Callable[..., parser.DaceProgram]] = paramdec
 
-@paramdec
+
+@paramdec_program
 def program(f, *args, **kwargs) -> parser.DaceProgram:
     """ DaCe program, entry point to a data-centric program. """
 
