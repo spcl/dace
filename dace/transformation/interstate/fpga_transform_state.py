@@ -74,6 +74,11 @@ class FPGATransformState(transformation.Transformation):
                                             graph.parent.constants):
                     return False
 
+                # Streams cannot have symbolic depth on FPGA
+                if dace.symbolic.issymbolic(nodedesc.buffer_size,
+                                            graph.parent.constants):
+                    return False
+
         for node in state.nodes():
 
             if (isinstance(node, nodes.AccessNode)

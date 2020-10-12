@@ -380,7 +380,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
             if buffer_length_dynamically_sized:
                 raise dace.codegen.codegen.CodegenError(
-                    "Buffer length of stream cannot have dynamic size on FPGA")
+                    "Buffer length of stream cannot have dynamic "
+                    f"size on FPGA: {nodedesc.buffer_size}")
 
             # Language-specific implementation
             ctype = self.define_stream(nodedesc.dtype, nodedesc.buffer_size,
