@@ -79,11 +79,14 @@ def test_function_in_condition():
 
 
 def test_2d_access():
+    print("Running without strict transformations ...")
     A = np.random.rand(4, 2)
     expected = A.copy()
     expected[0, 0] = 100.0 if expected[1, 1] < 0.5 else -100.0
 
-    arr2dtest(A)
+    # arr2dtest(A)
+    sdfg = arr2dtest.to_sdfg(strict=False)
+    sdfg(A=A)
     assert np.allclose(A, expected)
 
 
