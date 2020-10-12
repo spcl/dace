@@ -52,27 +52,60 @@ class Enumerator:
                     if dst_edge.dst in map_entries:
                         self.adjacency_list[map_entry].add(current_node)
 
-        # next up, create topologial labelling
-        label = len(map_entries)
-        self.labels = {}
-        entries = map_entries.copy()
-        while len(entries) > 0:
-
-        # add Null as root with all the nodes as children
         self.adjacency_list[None] = set(map_entries)
-        self.tree = []
-        self.build_tree()
         print(adjacency_list)
+
+        # build tree
+        self.build_tree()
 
 
     def build_tree(self, adjacency_list, prune = False):
+
+        self.root = TreeNode(None)
+        queue = deque([self.root])
+        processed = set()
+        while len(queue) > 0:
+            current = queue.popleft()
+            # append current as a node to our tree
+            # prune if necessary
+            # *copy* all other treenodes from earlier
+            # root branches, copy will do fine as this is read only
+
+            # search for all nodes whose children contain current and
+            # whose other children are already processed
+            # this has suboptimal complexity but we don't really
+            # care since what we are doing is NP
+            for map, children in self.adjacency_list.items():
+                if current in children and map not in processed
+                    and map not in queue and
+                    all[c in processed or c in queue]:
+
+                    queue.append(map)
+
+            children = {c:n for (c,n) in self.root.items()}
+            self.root.children[current] = TreeNode(current, children)
+
+        while len(entries) > 0:
+            current = None
+            for e in entries:
+                self.adjacency_list[]
+            # search for one entry whose entries are all
+        # add Null as root with all the nodes as children
+        while len(queue) > 0:
+            current = queue.popleft()
+
+
         queue = deque()
         queue.append(None)
-        # This is O(n^2)
-        while len(queue) > 0:
-            current = queue.l #TODO
 
 
+    def traverse(self, current, node):
+        current.append(node.map)
+        yield current
+        for child in node.children.values():
+            self.traverse(current, child)
+        current.pop()
 
     def __iter__():
-        self
+        for node in self.root.children.values():
+            yield self.traverse([], node)
