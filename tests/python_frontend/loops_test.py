@@ -335,6 +335,48 @@ def test_nested_for_map_for_loop_with_tasklet():
     assert(np.array_equal(val, ref))
 
 
+@dace.program
+def nested_map_for_loop_2(B: dace.int64[10, 10]):
+    A = np.ndarray([10, 10], dtype=np.int64)
+    for i in dace.map[0:10]:
+        for j in range(10):
+            A[i, j] = 2 * B[i, j] + i * 10 + j
+    return A
+
+
+def test_nested_map_for_loop_2():
+    B = np.ones([10, 10], dtype=np.int64)
+    ref = np.zeros([10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in range(10):
+            ref[i, j] = 2 + i * 10 + j
+    val = nested_map_for_loop_2(B)
+    assert(np.array_equal(val, ref))
+
+
+@dace.program
+def nested_map_for_loop_with_tasklet_2(B: dace.int64[10, 10]):
+    A = np.ndarray([10, 10], dtype=np.int64)
+    for i in dace.map[0:10]:
+        for j in range(10):
+            @dace.tasklet
+            def comp():
+                inp << B[i, j]
+                out >> A[i, j]
+                out = 2 * inp + i * 10 + j
+    return A
+
+
+def test_nested_map_for_loop_with_tasklet_2():
+    B = np.ones([10, 10], dtype=np.int64)
+    ref = np.zeros([10, 10], dtype=np.int64)
+    for i in range(10):
+        for j in range(10):
+            ref[i, j] = 2 + i * 10 + j
+    val = nested_map_for_loop_with_tasklet_2(B)
+    assert(np.array_equal(val, ref))
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
@@ -351,3 +393,5 @@ if __name__ == "__main__":
     test_nested_map_for_loop_with_tasklet()
     test_nested_map_for_for_loop_with_tasklet()
     test_nested_for_map_for_loop_with_tasklet()
+    test_nested_map_for_loop_2()
+    test_nested_map_for_loop_with_tasklet_2()
