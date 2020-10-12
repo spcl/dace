@@ -109,13 +109,27 @@ def enumerate(sdfg, graph):
     print("*************")
     for subgraph in enum:
         print(subgraph)
+    statistics = list(enum)
+    for i in range(1,7):
+        no_elements = sum([len(sg) == i for sg in statistics])
+        print("Subgraphs with", i, "elements:", no_elements)
+    print("__________________________")
+    print("Total:", len(statistics))
+    #print(next(test))
+    #a = list(test)
+    #print(type(a))
+    #print(a)
+    #print("RESULT")
+    #print(result)
 
-def test_enumerator():
+def test_enumerator(view = False):
     sdfg = test_program.to_sdfg()
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     prep(sdfg, graph)
+    if view:
+        sdfg.view()
     enumerate(sdfg, graph)
 
 if __name__ == "__main__":
-    test_enumerator()
+    test_enumerator(view = False)
