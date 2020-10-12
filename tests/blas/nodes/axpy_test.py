@@ -301,25 +301,15 @@ if __name__ == "__main__":
 
     cmdParser = argparse.ArgumentParser(allow_abbrev=False)
 
-    cmdParser.add_argument("--mkl", dest="mkl", action='store_true')
-    cmdParser.add_argument("--openblas", dest="openblas", action='store_true')
-    cmdParser.add_argument("--pure", dest="pure", action='store_true')
-    cmdParser.add_argument("--xilinx", dest="xilinx", action='store_true')
-    cmdParser.add_argument("--intel_fpga", dest="intel_fpga", action='store_true')
+    cmdParser.add_argument("--target", dest="target", default="pure")
 
     args = cmdParser.parse_args()
     
-    if args.pure:
+    if args.target == "MKL" or args.target == "OpenBLAS":
+        test_cpu(args.target)
+    elif args.target == "intel_fpga" or args.target == "xilinx":
+        test_fpga(args.target)
+    else:
         test_pure()
 
-    if args.mkl:
-        test_cpu("MKL")
-
-    if args.openblas:
-        test_cpu("OpenBLAS")
-
-    if args.xilinx:
-        test_fpga("xilinx")
-
-    if args.intel_fpga:
-        test_fpga("intel_fpga")
+        

@@ -114,7 +114,7 @@ run_all() {
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 "\n" 24
 
     ## BLAS
-    run_sample blas/nodes/axpy_test blas_axpy_test "\n" --intel_fpga
+    run_sample blas/nodes/axpy_test blas_axpy_test "\n" --target intel_fpga
 
 }
 

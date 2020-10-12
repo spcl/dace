@@ -77,7 +77,7 @@ run_all() {
     fi
 
     ## BLAS
-    run_sample blas/nodes/axpy_test axpy_test_x_0 1 --xilinx
+    run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
 
 }
 
