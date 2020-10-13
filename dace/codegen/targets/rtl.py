@@ -103,7 +103,7 @@ class RTLCodeGen(TargetCodeGenerator):
                         model = NULL;
                         """
     rtl_header = """\
-module top
+module {name}
 {parameters}
 ( input                  clk_i  // convention: clk_i clocks the design
 , input                  rst_i  // convention: rst_i resets the design
@@ -135,7 +135,7 @@ endmodule"""
         absolut_path = os.path.abspath(base_path)
 
         # construct parameters module header
-        if(len(sdfg.constants) == 0):
+        if len(sdfg.constants) == 0:
             parameter_string = ""
         else:
             parameter_string = """\
@@ -187,7 +187,7 @@ endmodule"""
             shutil.rmtree(absolut_path)
         os.makedirs(absolut_path)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
-            file.writelines(RTLCodeGen.rtl_header.format(parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs)))
+            file.writelines(RTLCodeGen.rtl_header.format(name=unique_name, parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs)))
             file.writelines(tasklet.code.code)
             file.writelines(RTLCodeGen.rtl_footer)
 
