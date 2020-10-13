@@ -34,8 +34,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Register copies to/from tensor cores
         gpu_storages = [
             dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned,
-            dace.StorageType.GPU_Shared, dace.StorageType.GPU_Stack,
-            dace.StorageType.Register
+            dace.StorageType.GPU_Shared, dace.StorageType.Register
         ]
         for src_storage, dst_storage in itertools.product(
                 _TC_STORAGE_TYPES, gpu_storages):
@@ -233,11 +232,11 @@ def tc_hgemm(A: dace.float16[N, N], B: dace.float16[N, N], C: dace.float32[N,
             btile = dace.ndarray([16, 16],
                                  dtype=dace.float16,
                                  storage=dace.StorageType.TensorCore_B)
-            atile << A[i:i + 16, k:k + 16]
-            btile << B[k:k + 16, j:j + 16]
+            atile[:] = A[i:i + 16, k:k + 16]
+            btile[:] = B[k:k + 16, j:j + 16]
             wmma(atile, btile, ctile)
 
-        ctile >> C[i:i + 16, j:j + 16]
+        C[i:i + 16, j:j + 16] = ctile
 
 
 ############################################################################
