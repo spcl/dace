@@ -1332,11 +1332,6 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
 
-    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream):
-        self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream)
-
     def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
                               sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
