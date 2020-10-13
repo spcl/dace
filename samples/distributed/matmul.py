@@ -109,6 +109,35 @@ if __name__ == "__main__":
 
     # TODO: Validate parameters
 
+    # Validate decomposition parameters
+    def validate_param(rank: int, size: int,
+                       param: List[dace.symbol], label: str) -> int:
+        param_int = [p.get() for p in param]
+        param_size = reduce(lambda a, b: a * b, param_int, 1)
+        if param_size > size:
+            default_size = [1] * (len(param) - 1) + [size]
+            if rank == 0:
+                print("Not enough ranks for the requested {l} decomposition "
+                      "(size = {s}, req_size = {ps}). Setting the parameters "
+                      " to {ns}".format(l=label, s=size, ps=param_size,
+                                        ns=default_size))
+            return default_size
+        return param_int
+    
+    A_decomp = validate_param(rank, size, [P0A, P1A], "A matrix")
+    P0A.set(A_decomp[0])
+    P1A.set(A_decomp[1])
+    B_decomp = validate_param(rank, size, [P0B, P1B], "B matrix")
+    P0B.set(B_decomp[0])
+    P1B.set(B_decomp[1])
+    C_decomp = validate_param(rank, size, [P0C, P1C], "C matrix")
+    P0C.set(C_decomp[0])
+    P1C.set(C_decomp[1])
+    I_decomp = validate_param(rank, size, [P0I, P1I, P2I], "iteration space")
+    P0I.set(I_decomp[0])
+    P1I.set(I_decomp[1])
+    P2I.set(I_decomp[2])
+
     if rank == 0:
         print("==== Program start ====")
         print('Matrix-Matrix Multiplication %dx%dx%d' % (S0.get(), S1.get(),
@@ -340,9 +369,6 @@ if __name__ == "__main__":
          P0I=P0I, P1I=P1I, P2I=P2I,
          B0A=B0A, B1A=B1A, B0B=B0B, B1B=B1B, B0C=B0C, B1C=B1C,
          B0I=B0I, B1I=B1I, B2I=B2I)
-    
-    print("(Python) Rank {r}: Size of (local) C is {s}".format(r=rank, s=local_C.size))
-    print("(Python) Rank {r}: Part of (local) C is {c}".format(r=rank, c=local_C[0, 0, 0, :4]))
 
     C_regression = A @ B
 
