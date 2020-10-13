@@ -144,8 +144,16 @@ endmodule"""
 )""".format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in enumerate(sdfg.constants)]))
 
         # construct input / output module header
-        inputs = [", input [{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1, inp) for inp in tasklet.in_connectors]
-        outputs = [", output reg [{}:0] {}".format(tasklet.out_connectors[inp].bytes*8-1, inp) for inp in tasklet.out_connectors]
+        MAX_PADDING = 17
+        inputs = [", input{padding}[{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1,
+                                                     inp,
+                                                     padding=" "*(MAX_PADDING-len("[{}:0]".format(tasklet.in_connectors[inp].bytes*8-1))))
+                  for inp in tasklet.in_connectors]
+        MAX_PADDING = 12
+        outputs = [", output reg{padding}[{}:0] {}".format(tasklet.out_connectors[inp].bytes*8-1,
+                                                  inp,
+                                                  padding=" "*(MAX_PADDING-len("[{}:0]".format(tasklet.out_connectors[inp].bytes*8-1))))
+                   for inp in tasklet.out_connectors]
 
         # generate cpp input reading/output writing code
         """
