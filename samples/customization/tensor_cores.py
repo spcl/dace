@@ -138,6 +138,12 @@ class TensorCoreCodegen(TargetCodeGenerator):
                     stride=dst_desc.strides[0 if row_major else 1]), sdfg,
                 state_id, [src_node, dst_node])
 
+    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
+                          edge, function_stream, callsite_stream):
+        # Output memlets that are directed at WMMA fragments can use the "auto"
+        # keyword for simplicity.
+        callsite_stream.write(f'auto& {edge.src_conn} = {edge.data.data};')
+
 
 ############################################################################
 # Tensor core frontend support
