@@ -2,7 +2,6 @@ import dace
 from dace import registry
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
-from dace.codegen.targets.cpp import unparse_tasklet
 import dace.codegen.prettycode
 
 import os
@@ -27,7 +26,7 @@ class RTLCodeGen(TargetCodeGenerator):
 
 
     # define cpp code templates
-    header_template = """
+    header_template = """\
                             // generic includes
                             #include <iostream>
                     
@@ -39,10 +38,7 @@ class RTLCodeGen(TargetCodeGenerator):
                             
                             // global simulation time cycle counter
                             vluint64_t main_time = 0;
-                            //long main_time = 0;
-                            
-                            // set debug level
-                            bool DEBUG = {debug};
+                            //long main_time = 0;\
                             """
     main_template = """
                         // instantiate model
@@ -143,6 +139,10 @@ endmodule"""
 {}
 )""".format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in enumerate(sdfg.constants)]))
 
+        # set default value for DEBUG to 'false'
+        if "DEBUG" not in sdfg.constants:
+            sdfg.add_constant("DEBUG", 0)
+
         # construct input / output module header
         MAX_PADDING = 17
         inputs = [", input{padding}[{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1,
@@ -175,19 +175,19 @@ endmodule"""
         """
         input_read_string = "\n".join(["model->{name} = {name};".format(name=var_name)
                                        if tasklet.in_connectors[var_name].veclen == 1 else
-                                       """
+                                       """\
                                        for(int i = 0; i < {veclen}; i++){{
                                          model->{name}[i] = {name}[i];
-                                       }}
+                                       }}\
                                        """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
                                        for var_name in tasklet.in_connectors])
 
         output_read_string = "\n".join(["{name} = (int)model->{name};".format(name=var_name)
                                        if tasklet.out_connectors[var_name].veclen == 1 else
-                                       """
+                                       """\
                                        for(int i = 0; i < {veclen}; i++){{
                                          {name}[i] = (int)model->{name}[i];
-                                       }}
+                                       }}\
                                        """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
                                        for var_name in tasklet.out_connectors])
         # write verilog to file
@@ -199,8 +199,7 @@ endmodule"""
             file.writelines(tasklet.code.code)
             file.writelines(RTLCodeGen.rtl_footer)
 
-        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
-                                                                           debug="true"))
+        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name))
 
         callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name, inputs=input_read_string, outputs=output_read_string),
                               sdfg=sdfg,
