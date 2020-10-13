@@ -78,6 +78,7 @@ import numpy as np
 import os
 import tokenize
 import dace
+from numbers import Number
 from six import StringIO
 from dace.codegen.tools import type_inference
 
@@ -534,7 +535,9 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, tuple):
+            if isinstance(value, Number):
+                self._Num(t)
+            elif isinstance(value, tuple):
                 self.write("(")
                 if len(value) == 1:
                     self._write_constant(value[0])

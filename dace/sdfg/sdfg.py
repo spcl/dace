@@ -98,7 +98,16 @@ class InterstateEdge(object):
             self.condition = CodeBlock(condition)
         else:
             self.condition = condition
-        self.assignments = assignments
+        self.assignments = {
+            k: InterstateEdge._convert_assignment(v)
+            for k, v in assignments.items()
+        }
+
+    @staticmethod
+    def _convert_assignment(assignment) -> str:
+        if isinstance(assignment, ast.AST):
+            return CodeBlock(assignment).as_string
+        return str(assignment)
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """

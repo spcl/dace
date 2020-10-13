@@ -73,6 +73,7 @@ tests/mpi_test.sh'''
             source /opt/intelFPGA_pro/19.1/hld/init_opencl.sh
             export PATH=~/.local/bin:$PATH
 export DACE_debugprint=1
+export DACE_compiler_default_data_types=C
 tests/intel_fpga_test.sh 
 '''
           }

@@ -52,6 +52,7 @@ class NestStateSubgraph(unittest.TestCase):
         @dace.program
         def multiply(a: dace.float32[N]):
             a *= 2
+            a *= 3
 
         sdfg = multiply.to_sdfg(strict=True)
         for state in sdfg.nodes():
