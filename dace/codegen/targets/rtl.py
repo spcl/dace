@@ -26,7 +26,7 @@ class RTLCodeGen(TargetCodeGenerator):
 
 
     # define cpp code templates
-    header_template = """\
+    header_template = """
                             // generic includes
                             #include <iostream>
                     
@@ -38,7 +38,8 @@ class RTLCodeGen(TargetCodeGenerator):
                             
                             // global simulation time cycle counter
                             vluint64_t main_time = 0;
-                            //long main_time = 0;\
+                            
+                            {debug}
                             """
     main_template = """
                         // instantiate model
@@ -75,22 +76,26 @@ class RTLCodeGen(TargetCodeGenerator):
                     
                             // report internal state
                             if(DEBUG){{
-                                VL_PRINTF("[%lx] clk_i=%x rst_i=%x a=%x b=%x\\n", main_time, model->clk_i, model->rst_i, model->a, model->b);
+                                VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
+                                VL_PRINTF("{internal_state_str}", {internal_state_var});
+                                std::cout << std::endl;
                             }}
                             
                             // negative clock edge
                             model->clk_i = !model->clk_i;
                             model->eval();
                         }}
-                    
+                   
+                        // report internal state
+                        if(DEBUG){{
+                            VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
+                            VL_PRINTF("{internal_state_str}", {internal_state_var});
+                            std::cout << std::endl;
+                        }}
+                   
                         // write result
                         {outputs}
-                        
-                        // report result
-                        if(DEBUG){{
-                            std::cout << b << std::endl;
-                        }}
-                    
+                                            
                         // final model cleanup
                         model->final();
                     
@@ -138,10 +143,6 @@ endmodule"""
 #(
 {}
 )""".format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in enumerate(sdfg.constants)]))
-
-        # set default value for DEBUG to 'false'
-        if "DEBUG" not in sdfg.constants:
-            sdfg.add_constant("DEBUG", 0)
 
         # construct input / output module header
         MAX_PADDING = 17
@@ -199,9 +200,16 @@ endmodule"""
             file.writelines(tasklet.code.code)
             file.writelines(RTLCodeGen.rtl_footer)
 
-        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name))
 
-        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name, inputs=input_read_string, outputs=output_read_string),
+        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
+                                                                           debug="// enable/disable debug log\n" +
+                                                                           "bool DEBUG = false;" if "DEBUG" not in sdfg.constants else ""))
+
+        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name,
+                                                                       inputs=input_read_string,
+                                                                       outputs=output_read_string,
+                                                                       internal_state_str=" ".join(["{}=0x%x".format(var_name) for var_name in {**tasklet.in_connectors, **tasklet.out_connectors}]),
+                                                                       internal_state_var=", ".join(["model->{}".format(var_name) for var_name in {**tasklet.in_connectors, **tasklet.out_connectors}])),
                               sdfg=sdfg,
                               state_id=state_id,
                               node_id=node)
