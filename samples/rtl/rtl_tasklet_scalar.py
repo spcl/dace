@@ -18,6 +18,9 @@ state = sdfg.add_state()
 sdfg.add_array('A', [1], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
 
+# enable debugging output
+sdfg.add_constant("DEBUG", 1)
+
 # add custom cpp tasklet
 tasklet = state.add_tasklet(
     name='rtl_tasklet',

@@ -18,6 +18,9 @@ state = sdfg.add_state()
 sdfg.add_array('A', [1], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
 
+# disable debugging output
+sdfg.add_constant("DEBUG", 1)
+
 # add parameters
 sdfg.add_constant("MAX_VAL", 42)
 
