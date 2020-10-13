@@ -176,6 +176,10 @@ def nest_state_subgraph(sdfg: SDFG,
             sym = sdfg.symbols[v]
             nsdfg.add_symbol(v, sym.dtype)
 
+    # Add constants to nested SDFG
+    for cstname, cstval in sdfg.constants.items():
+        nsdfg.add_constant(cstname, cstval)
+
     # Create nested state
     nstate = nsdfg.add_state()
 
