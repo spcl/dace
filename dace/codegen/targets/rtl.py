@@ -102,26 +102,24 @@ class RTLCodeGen(TargetCodeGenerator):
                         delete model;
                         model = NULL;
                         """
-    rtl_header = """
+    rtl_header = """\
 module top
 {parameters}
-  ( input                  clk_i  // convention: clk_i clocks the design
-  , input                  rst_i  // convention: rst_i resets the design
-  , input                  valid_i
-  , input                  ready_i
-  {inputs}
-  , output reg             ready_o
-  , output reg             valid_o
-  {outputs}
-  );
-    """
-    rtl_footer = """
+( input                  clk_i  // convention: clk_i clocks the design
+, input                  rst_i  // convention: rst_i resets the design
+, input                  valid_i
+, input                  ready_i
+{inputs}
+, output reg             ready_o
+, output reg             valid_o
+{outputs}
+);"""
+    rtl_footer = """\
   always@(*) begin
     if (valid_o)
       $finish; // convention: $finish; must eventually be called
   end
-endmodule
-    """
+endmodule"""
 
     @staticmethod
     def unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream: dace.codegen.prettycode.CodeIOStream,
@@ -137,16 +135,13 @@ endmodule
         absolut_path = os.path.abspath(base_path)
 
         # construct parameters module header
-        parameters = {}# {"WIDTH": 32, "TEST": 64} # TODO: forward real user-parameters
-
-        if(len(parameters) == 0):
+        if(len(sdfg.constants) == 0):
             parameter_string = ""
         else:
-            parameter_string = """
-            #(
-            {}
-            )
-            """.format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, parameters[key]) for i, key in enumerate(parameters)]))
+            parameter_string = """\
+#(
+{}
+)""".format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in enumerate(sdfg.constants)]))
 
         # construct input / output module header
         inputs = [", input [{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1, inp) for inp in tasklet.in_connectors]
