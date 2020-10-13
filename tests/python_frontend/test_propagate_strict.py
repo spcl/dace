@@ -20,22 +20,10 @@ def prog(X: dace.int32[2, 2]):
 
 def test_propagate_strict():
     strict_sdfg = prog.to_sdfg(strict=True)
-
-    strict_sdfgs = {
-        parent
-        for _, parent in strict_sdfg.all_nodes_recursive()
-        if isinstance(parent, dace.SDFG)
-    }
-    assert len(strict_sdfgs) == 1
+    assert len(list(strict_sdfg.all_sdfgs_recursive())) == 1
 
     non_strict_sdfg = prog.to_sdfg(strict=False)
-
-    non_strict_sdfgs = {
-        parent
-        for _, parent in non_strict_sdfg.all_nodes_recursive()
-        if isinstance(parent, dace.SDFG)
-    }
-    assert len(non_strict_sdfgs) > 1
+    assert len(list(non_strict_sdfg.all_sdfgs_recursive())) > 1
 
 
 if __name__ == "__main__":
