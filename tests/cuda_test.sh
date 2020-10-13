@@ -200,6 +200,9 @@ runall() {
     #runtestargs transformations/sfusion_sequential1_cudatest.py
     runtestargs transformations/subgraph_fusion/sequential2_cudatest.py
 
+    # BLAS library nodes
+    runtestargs blas/nodes/axpy_test.py '--cublas'
+
 }
 
 
