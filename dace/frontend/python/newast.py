@@ -122,7 +122,7 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typecl
 
 
 def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
-                       constants):
+                       constants, strict=None):
     """ Parses a `@dace.program` function into a _ProgramNode object.
         :param f: A Python function to parse.
         :param argtypes: An dictionary of (name, type) for the given
@@ -135,6 +135,7 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
         :param other_sdfgs: Other SDFG and DaceProgram objects in the context
                             of this function.
         :param constants: A dictionary from a name to a constant value.
+        :param strict: Whether to apply strict transformations after parsing nested dace programs.
         :return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
         @rtype: SDFG
@@ -175,7 +176,8 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
                         constants=constants,
                         scope_arrays=argtypes,
                         scope_vars={},
-                        other_sdfgs=other_sdfgs)
+                        other_sdfgs=other_sdfgs,
+                        strict=strict)
 
     sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
@@ -992,7 +994,8 @@ class ProgramVisitor(ExtNodeVisitor):
         scope_vars: Dict[str, str],
         other_sdfgs: Dict[str, SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
         nested: bool = False,
-        tmp_idx: int = 0):
+        tmp_idx: int = 0,
+        strict: Optional[bool] = None):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1005,6 +1008,7 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
             other_sdfgs {Dict[str, Union[SDFG, DaceProgram]]} -- Other SDFGs
+            strict {bool} -- Whether to apply strict transforms after parsing nested dace programs
 
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
@@ -1022,6 +1026,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.globals = global_vars
         self.other_sdfgs = other_sdfgs
         self.nested = nested
+        self.strict = strict
 
         # Keeps track of scope arrays, numbers, variables and accesses
         self.scope_arrays = OrderedDict()
@@ -2933,7 +2938,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.arrays,
                         **self.sdfg.symbols
                     }[arg] if isinstance(arg, str) else arg
-                                   for aname, arg in args)))
+                                   for aname, arg in args),
+                                 strict=self.strict))
 
             else:
                 raise DaceSyntaxError(
