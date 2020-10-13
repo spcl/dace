@@ -887,9 +887,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # FIXME: _packed_types influences how this offset is
             # generated from the FPGA codegen. We should find a nicer solution.
             if self._packed_types is True:
-                offset = cpp_array_expr(sdfg, memlet, False)
+                offset = cpp.cpp_array_expr(sdfg, memlet, False)
             else:
-                offset = cpp_array_expr(sdfg, memlet, False)
+                offset = cpp.cpp_array_expr(sdfg, memlet, False)
 
             # Compute address
             memlet_params.append(memlet_expr + " + " + offset)

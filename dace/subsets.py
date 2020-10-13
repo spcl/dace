@@ -5,7 +5,7 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import Set, Union
+from typing import List, Set, Union
 import warnings
 from dace.config import Config
 
@@ -293,7 +293,7 @@ class Range(Subset):
             else:
                 other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
-        if not indices:
+        if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
         for i in indices:
@@ -576,9 +576,22 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self):
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
         shape = self.size()
-        non_ones = [i for i, d in enumerate(shape) if d != 1]
+        non_ones = []
+        offset_indices = []
+        sqz_idx = 0
+        for i, d in enumerate(shape):
+            if i in ignore_indices:
+                non_ones.append(i)
+                sqz_idx += 1
+            elif d != 1:
+                non_ones.append(i)
+                offset_indices.append(sqz_idx)
+                sqz_idx += 1
+            else:
+                pass
         squeezed_ranges = [self.ranges[i] for i in non_ones]
         squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
         if not squeezed_ranges:
@@ -586,7 +599,7 @@ class Range(Subset):
             squeezed_tsizes = [1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.offset(self, True)
+        self.offset(self, True, indices=offset_indices)
         return non_ones
 
     def unsqueeze(self, axes):
@@ -814,10 +827,17 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
-    def squeeze(self):
-        num_dim = len(self.indices)
-        self.indices = [0]
-        return [num_dim - 1]
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
+        non_ones = []
+        for i in range(len(self.indices)):
+            if i in ignore_indices:
+                non_ones.append(i)
+        squeezed_indices = [self.indices[i] for i in non_ones]
+        if not squeezed_indices:
+            squeezed_indices = [0]
+        self.indices = squeezed_indices
+        return non_ones
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
