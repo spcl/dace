@@ -286,15 +286,17 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     '''
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
-    :param subgraph:
-    :return: the newly created SDFG state
+    :param subgraph: the subgraph to remove.
+    :return: the newly created SDFG state.
     '''
 
     state: SDFGState = subgraph.graph
     newstate = sdfg.add_state_before(state)
 
-    #save edges
+    # Save edges before removing nodes
     orig_edges = subgraph.edges()
+
+    # Mark boundary access nodes to keep after fission
     nodes_to_remove = set(subgraph.nodes())
     nodes_to_remove -= set(n for n in subgraph.source_nodes()
                            if state.in_degree(n) > 0)
@@ -304,7 +306,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
     for n in subgraph.nodes():
         if isinstance(n, nodes.NestedSDFG):
-            #set the new parent
+            # Set the new parent state
             n.sdfg.parent = newstate
 
     newstate.add_nodes_from(subgraph.nodes())

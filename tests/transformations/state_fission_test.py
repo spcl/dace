@@ -5,8 +5,6 @@
 
 import dace
 import numpy as np
-import argparse
-import subprocess
 
 from dace.memlet import Memlet
 from dace.transformation import helpers
@@ -135,15 +133,15 @@ def make_nested_sdfg_cpu():
     return sdfg
 
 
-if __name__ == "__main__":
+def test_state_fission():
+    '''
+    Tests state fission. The starting point is a stae SDFG with two
+    Nested SDFGs. The state is splitted into two
+    :return:
+    '''
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=32)
-    parser.add_argument("M", type=int, nargs="?", default=64)
-    args = vars(parser.parse_args())
-
-    size_n = args["N"]
-    size_m = args["M"]
+    size_n = 16
+    size_m = 32
     sdfg = make_nested_sdfg_cpu()
 
     # state fission
@@ -155,9 +153,12 @@ if __name__ == "__main__":
 
     subg = dace.sdfg.graph.SubgraphView(state,
                                         [node_x, node_y, vec_add1, node_z])
-    new_state = helpers.state_fission(sdfg, subg)
+    helpers.state_fission(sdfg, subg)
     sdfg.validate()
 
+    assert (len(sdfg.states()) == 2)
+
+    # run the program
     vec_add = sdfg.compile()
 
     x = np.random.rand(size_n).astype(np.float32)
@@ -175,13 +176,9 @@ if __name__ == "__main__":
 
     diff1 = np.linalg.norm(ref1 - z) / size_n
     diff2 = np.linalg.norm(ref2 - u) / size_m
-    print("Difference:", diff1)
-    if diff1 <= 1e-5 and diff2 <= 1e-5:
-        print("==== Program end ====")
-    else:
-        print("==== Program Error! ====")
 
-    # There is no need to check that the Nested SDFG has been generated only once. If this is not the case
-    # the test will fail while compiling
+    assert (diff1 <= 1e-5 and diff2 <= 1e-5)
 
-    exit(0 if diff1 <= 1e-5 or diff2 <= 1e-5 else 1)
+
+if __name__ == "__main__":
+    test_state_fission()
