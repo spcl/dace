@@ -202,9 +202,13 @@ class AffineSMemlet(SeparableMemletPattern):
 
             node_rb, node_re, node_rs = node_range[self.paramind]
             if node_rs != 1:
-                # Map ranges where the last index is not known
-                # exactly are not supported by this pattern.
-                return False
+                # Special case: i:i+stride for a begin:end:stride range
+                if bre + 1 == node_rs and step == 1:
+                    pass
+                else:
+                    # Map ranges where the last index is not known
+                    # exactly are not supported by this pattern.
+                    return False
             if (any(s not in defined_vars for s in node_rb.free_symbols)
                     or any(s not in defined_vars
                            for s in node_re.free_symbols)):
@@ -246,6 +250,11 @@ class AffineSMemlet(SeparableMemletPattern):
 
         result_begin = rb.subs(self.param, node_rb).expand()
         result_end = re.subs(self.param, node_re).expand()
+
+        # Special case: i:i+stride for a begin:end:stride range
+        if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1
+                and rt == 1):
+            return (node_rb, node_re, 1, 1)
 
         # Experimental
         # This should be using sympy.floor
