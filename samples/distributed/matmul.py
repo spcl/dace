@@ -3,6 +3,7 @@
 import argparse
 import dace
 from sympy import Mod, floor, ceiling
+import math
 import numpy as np
 import scipy as sp
 from mpi4py import MPI
@@ -63,15 +64,15 @@ if __name__ == "__main__":
     parser.add_argument("S0", type=int, nargs="?", default=128)
     parser.add_argument("S1", type=int, nargs="?", default=128)
     parser.add_argument("S2", type=int, nargs="?", default=128)
-    parser.add_argument("P0A", type=int, nargs="?", default=size)
-    parser.add_argument("P1A", type=int, nargs="?", default=size)
-    parser.add_argument("P0B", type=int, nargs="?", default=size)
-    parser.add_argument("P1B", type=int, nargs="?", default=size)
-    parser.add_argument("P0C", type=int, nargs="?", default=size)
-    parser.add_argument("P1C", type=int, nargs="?", default=size)
-    parser.add_argument("P0I", type=int, nargs="?", default=size)
-    parser.add_argument("P1I", type=int, nargs="?", default=size)
-    parser.add_argument("P2I", type=int, nargs="?", default=size)
+    parser.add_argument("P0A", type=int, nargs="?", default=2)
+    parser.add_argument("P1A", type=int, nargs="?", default=2)
+    parser.add_argument("P0B", type=int, nargs="?", default=2)
+    parser.add_argument("P1B", type=int, nargs="?", default=2)
+    parser.add_argument("P0C", type=int, nargs="?", default=2)
+    parser.add_argument("P1C", type=int, nargs="?", default=2)
+    parser.add_argument("P0I", type=int, nargs="?", default=2)
+    parser.add_argument("P1I", type=int, nargs="?", default=2)
+    parser.add_argument("P2I", type=int, nargs="?", default=1)
     parser.add_argument("B0A", type=int, nargs="?", default=16)
     parser.add_argument("B1A", type=int, nargs="?", default=16)
     parser.add_argument("B0B", type=int, nargs="?", default=16)
@@ -139,13 +140,17 @@ if __name__ == "__main__":
                                         'block': (B0I, B1I, B2I)}])
         sdfg.save('rma_matmul.sdfg')
         func = sdfg.compile()
+    
+    comm.Barrier()
 
-    # Initialize arrays: Randomize A and B, zero C
+    if rank > 0:
+        sdfg = SDFG.from_file("rma_matmul.sdfg")
+        func = CompiledSDFG(sdfg, ReloadableDLL(
+            '.dacecache/matmul/build/libmatmul.so', sdfg.name))
+
+    # Initialize arrays: Randomize A and B
     A = np.random.rand(S0.get(), S2.get()).astype(np.float64)
     B = np.random.rand(S2.get(), S1.get()).astype(np.float64)
-    C = np.zeros((S0.get(), S1.get()), dtype=np.float64)
-    C_regression = np.zeros((S0.get(), S1.get()), dtype=np.float64)
-
     
     # TODO: Fix validation
     # print('Verifying reshaping of array A ... ', end='')
@@ -257,13 +262,96 @@ if __name__ == "__main__":
     #             # assert(node.map.range == rng)
     #             print('OK!')
 
-    sdfg(A=A, B=B, C=C, S0=S0, S1=S1, S2=S2,
+    # Use rank 0's arrays
+    comm.Bcast(A, root=0)
+    comm.Bcast(B, root=0)
+
+    # Initialize regression arrays
+    C = np.zeros((S0.get(), S1.get()), dtype=np.float64)
+    C_regression = np.zeros((S0.get(), S1.get()), dtype=np.float64)
+
+    # Extract local data
+    def get_coords(rank: int,
+                   process_grid: List[dace.symbol]) -> Tuple[bool, List[int]]:
+        # Check if rank belongs to comm
+        pg_int = [p.get() for p in process_grid]
+        cart_size = reduce(lambda a, b: a * b, pg_int, 1)
+        if rank >= cart_size:
+            return False, []
+        # Compute strides
+        n = len(process_grid)
+        size = 1
+        strides = [None] * n
+        for i in range(n - 1, -1, -1):
+            strides[i] = size
+            size *= process_grid[i].get()
+        # Compute coords
+        rem = rank
+        coords = [None] * n
+        for i in range(n):
+            coords[i] = int(rem / strides[i])
+            rem %= strides[i]
+        return True, coords
+
+    def extract_local(global_data, rank: int,
+                      process_grid: List[dace.symbol],
+                      block_sizes: List[dace.symbol]):
+        
+        fits, coords = get_coords(rank, process_grid)
+        if not fits:
+            return np.empty([0], dtype=global_data.dtype)
+
+        local_shape = [math.ceil(n / (b.get() * p.get()))
+                       for n, p, b in zip(global_data.shape, process_grid,
+                                          block_sizes)]
+        local_shape.extend([b.get() for b in block_sizes])
+        local_data = np.zeros(local_shape, dtype=global_data.dtype)
+
+        n = len(global_data.shape)
+        for l in product(*[range(ls) for ls in local_shape[:n]]):
+            gstart = [(li * p.get() + c) * b.get()
+                      for li, p, c, b in zip(l, process_grid, coords,
+                                             block_sizes)]
+            gfinish = [min(n, s + b.get())
+                       for n, s, b in zip(global_data.shape, gstart,
+                                          block_sizes)]
+            gindex = tuple(slice(s, f, 1) for s, f in zip(gstart, gfinish))
+            # Validate range
+            rng = [f - s for s, f in zip(gstart, gfinish)]
+            if np.any(np.less(rng, 0)):
+                continue
+            block_slice = tuple(slice(0, r, 1) for r in rng)
+            lindex = l + block_slice
+            try:
+                local_data[lindex] = global_data[gindex]
+            except Exception as e:
+                print(rank, coords, process_grid, block_sizes)
+                print(l, lindex, gstart, gfinish, gindex)
+                raise e
+        
+        return local_data
+    
+    local_A = extract_local(A, rank, [P0A, P1A], [B0A, B1A])
+    local_B = extract_local(B, rank, [P0B, P1B], [B0B, B1B])
+    local_C = extract_local(C, rank, [P0C, P1C], [B0C, B1C])
+
+    func(A=local_A, B=local_B, C=local_C, S0=S0, S1=S1, S2=S2,
          P0A=P0A, P1A=P1A, P0B=P0B, P1B=P1B, P0C=P0C, P1C=P1C,
          P0I=P0I, P1I=P1I, P2I=P2I,
          B0A=B0A, B1A=B1A, B0B=B0B, B1B=B1B, B0C=B0C, B1C=B1C,
          B0I=B0I, B1I=B1I, B2I=B2I)
+    
+    print("(Python) Rank {r}: Size of (local) C is {s}".format(r=rank, s=local_C.size))
+    print("(Python) Rank {r}: Part of (local) C is {c}".format(r=rank, c=local_C[0, 0, 0, :4]))
 
-    # C_regression = A @ B
+    C_regression = A @ B
+
+    local_C_ref = extract_local(C_regression, rank, [P0C, P1C], [B0C, B1C])
+    if local_C.size > 0:
+        norm_diff = np.linalg.norm(local_C - local_C_ref)
+        norm_ref = np.linalg.norm(local_C_ref)
+        relerror = norm_diff / norm_ref
+        print("Rank {r} relative_error: {d}".format(r=rank, d=relerror))
 
     # diff = np.linalg.norm(C_regression - C) / np.linalg_norm(C_regression)
     # print("Difference:", diff)
