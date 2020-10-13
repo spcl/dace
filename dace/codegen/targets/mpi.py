@@ -214,6 +214,7 @@ void __dace_exit_mpi({params}) {{
         # Take care of map header
         assert len(dfg_scope.source_nodes()) == 1
         map_header = dfg_scope.source_nodes()[0]
+        map_footer = dfg_scope.sink_nodes()[0]
 
         function_stream.write("#include <mpi.h>\n"  # TODO: Where does this actually belong?
                               "#include <dace/mpi/cart.h>\n"
@@ -270,9 +271,7 @@ void __dace_exit_mpi({params}) {{
         #                       "MPI_Cart_coords({c}, __dace_comm_rank, "
         #                       "{n}, coords);".format(c=comm_name, n=ndims),
         #                       sdfg, state_id, map_header)
-        # TODO: We need to start passive epochs for all distributed data
-        # accessed in the map. Or maybe only the input data (gets)?
-        data_windows = set()
+        inp_windows = set()
         state = sdfg.nodes()[state_id]
         for e in state.in_edges(map_header):
             path = state.memlet_path(e)
@@ -281,9 +280,22 @@ void __dace_exit_mpi({params}) {{
                 data_name = path[0].src.data
                 nodedesc = sdfg.arrays[data_name]
                 if nodedesc.storage == dtypes.StorageType.Distributed:
-                    data_windows.add("__dace_win_{n}".format(n=data_name))
-        for win in data_windows:
+                    inp_windows.add("__dace_win_{n}".format(n=data_name))
+        out_windows = set()
+        state = sdfg.nodes()[state_id]
+        for e in state.out_edges(map_footer):
+            path = state.memlet_path(e)
+            # TODO: Output path, therefore input data in path[-1]?
+            if isinstance(path[-1].dst, nodes.AccessNode):
+                data_name = path[-1].dst.data
+                nodedesc = sdfg.arrays[data_name]
+                if nodedesc.storage == dtypes.StorageType.Distributed:
+                    out_windows.add("__dace_win_{n}".format(n=data_name))
+        for win in inp_windows:
             callsite_stream.write("MPI_Win_lock_all(0, {w});".format(w=win),
+                                  sdfg, state_id, map_header)
+        for win in out_windows:
+            callsite_stream.write("MPI_Win_fence(0, {w});".format(w=win),
                                   sdfg, state_id, map_header)
         
         state = sdfg.node(state_id)
@@ -318,11 +330,16 @@ void __dace_exit_mpi({params}) {{
                                            callsite_stream,
                                            skip_entry_node=True)
 
-        for win in data_windows:
+        for win in inp_windows:
             callsite_stream.write("MPI_Win_unlock_all({w});".format(w=win),
                                   sdfg, state_id, map_header)
-        callsite_stream.write("MPI_Barrier({c});".format(c="MPI_COMM_WORLD"),
-                              sdfg, state_id, map_header)
+        for win in out_windows:
+            callsite_stream.write("MPI_Win_fence(0, {w});".format(w=win),
+                                  sdfg, state_id, map_header)
+        if not out_windows:
+            callsite_stream.write(
+                "MPI_Barrier({c});".format(c="MPI_COMM_WORLD"),
+                sdfg, state_id, map_header)
 
     def copy_memory(
             self,
