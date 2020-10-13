@@ -602,7 +602,10 @@ if(DACE_ENABLE_RTL)
     include_directories(${VERILATOR_INCLUDE})
 
     # verilate design
-    verilate(VERILATED_LIB SOURCES ${RTL_FILE})
+    # -Wall: Enable all style warnings
+    # -Wno-fatal: Disable fatal exit on warnings
+    verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "-Wall" "-Wno-fatal")
+
 
     # add object library for linking
     set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
