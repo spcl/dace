@@ -51,7 +51,9 @@ class RTLCodeGen(TargetCodeGenerator):
                         // apply initial input values
                         model->rst_i = 0;
                         model->clk_i = 0;
-                        model->a = a; // TODO: make generic for all types of inputs (and multiple)
+                        
+                        // read inputs
+                        {inputs}
                         model->eval();
                     
                         // reset design
@@ -76,7 +78,7 @@ class RTLCodeGen(TargetCodeGenerator):
                             model->eval();
                     
                             // report internal state
-                            if(false){{
+                            if(DEBUG){{
                                 VL_PRINTF("[%lx] clk_i=%x rst_i=%x a=%x b=%x\\n", main_time, model->clk_i, model->rst_i, model->a, model->b);
                             }}
                             
@@ -85,13 +87,12 @@ class RTLCodeGen(TargetCodeGenerator):
                             model->eval();
                         }}
                     
-                        // write result TODO: make generic for all type of outputs
-                        int b_local = (int)model->b;
-                        b = b_local;
-
+                        // write result
+                        {outputs}
+                        
                         // report result
                         if(DEBUG){{
-                            std::cout << b_local << std::endl;
+                            std::cout << b << std::endl;
                         }}
                     
                         // final model cleanup
@@ -151,7 +152,41 @@ endmodule
         inputs = [", input [{}:0] {}".format(tasklet.in_connectors[inp].bytes*8-1, inp) for inp in tasklet.in_connectors]
         outputs = [", output reg [{}:0] {}".format(tasklet.out_connectors[inp].bytes*8-1, inp) for inp in tasklet.out_connectors]
 
+        # generate cpp input reading/output writing code
+        """
+        input:
+        for vectors:
+            for (int i = 0; i < 4; i++){{ 
+                model->a[i] = a[i];
+            }}
+        for scalars:
+            model->a = a;
+            
+        output:
+        for vectors:
+            for(int i = 0; i < 4; i++){{
+                b[i] = (int)model->b[i];
+            }}
+        for scalars:
+            b = (int)model->b;
+        """
+        input_read_string = "\n".join(["model->{name} = {name};".format(name=var_name)
+                                       if tasklet.in_connectors[var_name].veclen == 1 else
+                                       """
+                                       for(int i = 0; i < {veclen}; i++){{
+                                         model->{name}[i] = {name}[i];
+                                       }}
+                                       """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
+                                       for var_name in tasklet.in_connectors])
 
+        output_read_string = "\n".join(["{name} = (int)model->{name};".format(name=var_name)
+                                       if tasklet.out_connectors[var_name].veclen == 1 else
+                                       """
+                                       for(int i = 0; i < {veclen}; i++){{
+                                         {name}[i] = (int)model->{name}[i];
+                                       }}
+                                       """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
+                                       for var_name in tasklet.out_connectors])
         # write verilog to file
         if os.path.isdir(absolut_path):
             shutil.rmtree(absolut_path)
@@ -164,7 +199,7 @@ endmodule
         sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
                                                                            debug="true"))
 
-        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name),
+        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name, inputs=input_read_string, outputs=output_read_string),
                               sdfg=sdfg,
                               state_id=state_id,
                               node_id=node)
