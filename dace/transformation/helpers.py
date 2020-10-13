@@ -285,7 +285,7 @@ def nest_state_subgraph(sdfg: SDFG,
 def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     '''
     Given a subgraph, adds a new SDFG state before the state that contains it,
-    removes from the original state the subgraph, connect the two states.
+    removes the subgraph from the original state, and connects the two states.
     :param subgraph:
     :return: the newly created SDFG state
     '''
