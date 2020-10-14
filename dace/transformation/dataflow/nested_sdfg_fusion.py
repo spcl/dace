@@ -9,7 +9,7 @@ from dace.sdfg import utils
 from dace.sdfg import sdfg as dace_sdfg
 from dace.sdfg import state as dace_state
 
-from typing import Dict
+from typing import Dict, List
 import itertools
 
 
@@ -34,6 +34,26 @@ def add_nsdfg_array_prefix(parent_sdfg_state: dace_state.SDFGState,
 
     for edge in parent_sdfg_state.out_edges(nested_sdfg):
         edge.src_conn = prefix + edge.src_conn
+
+
+def get_all_node_paths(
+        sdfg_state: dace_state.SDFGState, src_node: dace_nodes.Node,
+        dst_node: dace_nodes.Node) -> List[List[dace_nodes.Node]]:
+
+    result: List[List[dace_nodes.Node]] = []
+
+    src_out_edges = sdfg_state.out_edges(src_node)
+
+    for edge in src_out_edges:
+        if edge.dst != dst_node:
+            tail_paths: List[List[dace_nodes.Node]] = get_all_node_paths(
+                sdfg_state, edge.dst, dst_node)
+            for tail_path in tail_paths:
+                result.append([src_node] + tail_path)
+        else:
+            result.append([src_node, dst_node])
+
+    return result
 
 
 @registry.autoregister_params(singlestate=True)
@@ -73,7 +93,17 @@ class NestedSDFGFusion(transformation.Transformation):
         nested_sdfg2 = sdfg_state.nodes()[candidate[
             NestedSDFGFusion._nested_sdfg2]]
 
-        # TODO: check that between nested_sdfg1 and nested_sdfg2 only transient accessnodes are present
+        # check that all paths from nested_sdfg1 to nested_sdfg2 have only a single AccessNode
+
+        node_paths = get_all_node_paths(sdfg_state, nested_sdfg1, nested_sdfg2)
+        for path in node_paths:
+            # check than path has 3 nodes NestedSDFG, AccessNode, NestedSDFG
+            if len(path) != 3:
+                return False
+
+            # check that intermediate node is AccessNode
+            if not isinstance(path[1], dace_nodes.AccessNode):
+                return False
 
         return True
 
@@ -130,8 +160,9 @@ class NestedSDFGFusion(transformation.Transformation):
             temp_node: dace_nodes.AccessNode = in_edge2.src
 
             node_in_edges = sdfg_state.in_edges(temp_node)
-            if len(node_in_edges) != 1:
-                raise Exception("Not implemented")
+
+            assert len(node_in_edges) == 1
+
             node_in_edge: dace_graph.MultiConnectorEdge = node_in_edges[0]
 
             if node_in_edge not in out_edges1:
