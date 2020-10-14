@@ -544,9 +544,12 @@ class TargetDispatcher(object):
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
     # Dispatches copy code for a memlet
-    def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id,
-                      function_stream, output_stream):
-        """ Dispatches a code generator for a memory copy operation. """
+    def _get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, dfg,
+                             state_id, function_stream, output_stream):
+        """ 
+        (Internal) Returns a code generator that should be dispatched for a
+        memory copy operation. 
+        """
 
         if isinstance(src_node, nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
@@ -611,10 +614,34 @@ class TargetDispatcher(object):
                     (str(src_storage), str(dst_storage), str(dst_schedule)) +
                     ' not found')
 
+        return target
+
+    def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id,
+                      function_stream, output_stream):
+        """ Dispatches a code generator for a memory copy operation. """
+        target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg,
+                                           state_id, function_stream,
+                                           output_stream)
+
         # Dispatch copy
         self._used_targets.add(target)
         target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge,
                            function_stream, output_stream)
+
+    # Dispatches definition code for a memlet that is outgoing from a tasklet
+    def dispatch_output_definition(self, src_node, dst_node, edge, sdfg, dfg,
+                                   state_id, function_stream, output_stream):
+        """ 
+        Dispatches a code generator for an output memlet definition in a 
+        tasklet. 
+        """
+        target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg,
+                                           state_id, function_stream,
+                                           output_stream)
+        # Dispatch
+        self._used_targets.add(target)
+        target.define_out_memlet(sdfg, dfg, state_id, src_node, dst_node, edge,
+                                 function_stream, output_stream)
 
 
 def make_absolute(path):
