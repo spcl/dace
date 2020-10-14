@@ -1,5 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the vectorization transformation. """
+
 from dace.registry import autoregister_params
 from dace.properties import make_properties
 from dace.transformation.transformation import Transformation
@@ -13,6 +13,28 @@ from dace.subsets import Range
 
 from typing import Dict
 import itertools
+
+def add_nsdfg_array_prefix(parent_sdfg_state: SDFGState, nested_sdfg: NestedSDFG, prefix: str):
+    """ Prepends prefix to all array, connector, and memlet names of given nested_sdfg. Operates inplace. """
+
+    def process_connectors_and_arrays(connectors):
+        new_in_connectors = {}
+        for name, dtype in connectors.items():
+            new_name = prefix + name
+            nested_sdfg.sdfg.replace(name, prefix + name)
+            new_in_connectors[new_name] = connectors[name]
+        connectors = new_in_connectors
+
+    process_connectors_and_arrays(nested_sdfg.in_connectors)
+    process_connectors_and_arrays(nested_sdfg.out_connectors)
+
+    for edge in parent_sdfg_state.in_edges(nested_sdfg):
+        edge.dst_conn = prefix + edge.dst_conn
+
+    for edge in parent_sdfg_state.out_edges(nested_sdfg):
+        edge.src_conn = prefix + edge.src_conn
+
+
 
 @autoregister_params(singlestate=True)
 @make_properties
@@ -61,35 +83,10 @@ class NestedSDFGFusion(Transformation):
         access_node = sdfg_state.nodes()[self.subgraph[NestedSDFGFusion._access_node]]
         nested_sdfg2: NestedSDFG = sdfg_state.nodes()[self.subgraph[NestedSDFGFusion._nested_sdfg2]]
 
-        # TODO: make names of arrays and therefore connectors unique
+        # make names of arrays and connectors unique for both nested sdfg
 
-        # new_in_connectors1 = {}
-        # for name, dtype in nested_sdfg1.in_connectors.items():
-        #     new_name = 'nested1_' + name
-        #     nested_sdfg1.sdfg.replace(name, 'nested1_' + name)
-        #     new_in_connectors1[new_name] = nested_sdfg1.in_connectors[name]
-        # nested_sdfg1.in_connectors = new_in_connectors1
-        #
-        # new_out_connectors1 = {}
-        # for name, dtype in nested_sdfg1.out_connectors.items():
-        #     new_name = 'nested1_' + name
-        #     nested_sdfg1.sdfg.replace(name, 'nested1_' + name)
-        #     new_out_connectors1[new_name] = nested_sdfg1.out_connectors[name]
-        # nested_sdfg1.out_connectors = new_out_connectors1
-        #
-        # new_in_connectors2 = {}
-        # for name, dtype in nested_sdfg2.in_connectors.items():
-        #     new_name = 'nested2_' + name
-        #     nested_sdfg2.sdfg.replace(name, 'nested2_' + name)
-        #     new_in_connectors2[new_name] = nested_sdfg2.in_connectors[name]
-        # nested_sdfg2.in_connectors = new_in_connectors2
-        #
-        # new_out_connectors2 = {}
-        # for name, dtype in nested_sdfg2.out_connectors.items():
-        #     new_name = 'nested2_' + name
-        #     nested_sdfg2.sdfg.replace(name, 'nested2_' + name)
-        #     new_out_connectors2[new_name] = nested_sdfg2.out_connectors[name]
-        # nested_sdfg2.out_connectors = new_out_connectors2
+        add_nsdfg_array_prefix(sdfg_state, nested_sdfg1, 'n1_')
+        add_nsdfg_array_prefix(sdfg_state, nested_sdfg2, 'n2_')
 
         # for each connector collect list of memlets
 
