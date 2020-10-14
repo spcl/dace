@@ -435,9 +435,12 @@ class StateGraphView(object):
 
         # Gather data descriptors from nodes
         descs = {}
+        scalars_with_nodes = set()
         for node in self.nodes():
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
+                if isinstance(node.desc(sdfg), dt.Scalar):
+                    scalars_with_nodes.add(node.data)
 
         # If a subgraph, and a node appears outside the subgraph as well,
         # it is externally allocated
@@ -470,8 +473,8 @@ class StateGraphView(object):
         for name, desc in descs.items():
             if name in data_args or name in scalar_args:
                 continue
-            # If scalar, always add
-            if isinstance(desc, dt.Scalar):
+            # If scalar, always add if there are no scalar nodes
+            if isinstance(desc, dt.Scalar) and name not in scalars_with_nodes:
                 scalar_args[name] = desc
             # If array/stream is not transient, then it is external
             elif not desc.transient:
@@ -1477,19 +1480,20 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                 dst_conn, edges[-1].dst.label))
 
         path = edges if propagate_forward else reversed(edges)
+        last_conn = None
         # Propagate and add edges
         for i, edge in enumerate(path):
             # Figure out source and destination connectors
             if propagate_forward:
-                sconn = src_conn if i == 0 else ("OUT_" +
-                                                 edge.src.last_connector())
-                dconn = (dst_conn if i == len(edges) - 1 else
-                         ("IN_" + edge.dst.next_connector()))
+                next_conn = edge.dst.next_connector(memlet.data)
+                sconn = src_conn if i == 0 else "OUT_" + last_conn
+                dconn = dst_conn if i == len(edges) - 1 else "IN_" + next_conn
             else:
-                sconn = (src_conn if i == len(edges) - 1 else
-                         ("OUT_" + edge.src.next_connector()))
-                dconn = dst_conn if i == 0 else ("IN_" +
-                                                 edge.dst.last_connector())
+                next_conn = edge.src.next_connector(memlet.data)
+                sconn = src_conn if i == len(edges) - 1 else "OUT_" + next_conn
+                dconn = dst_conn if i == 0 else "IN_" + last_conn
+            
+            last_conn = next_conn
 
             if cur_memlet.is_empty():
                 if propagate_forward:
