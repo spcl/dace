@@ -1,6 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.registry import autoregister_params
+from dace import registry
 from dace.properties import make_properties
 from dace.transformation.transformation import Transformation
 from dace.sdfg.nodes import NestedSDFG, Tasklet, Node, AccessNode
@@ -36,10 +36,10 @@ def add_nsdfg_array_prefix(parent_sdfg_state: SDFGState, nested_sdfg: NestedSDFG
 
 
 
-@autoregister_params(singlestate=True)
+@registry.autoregister_params(singlestate=True)
 @make_properties
 class NestedSDFGFusion(Transformation):
-    """ TODO
+    """ Fused a pair of nested SDFGs that are connected with a single AccessNode: NestedSDFG->AccessNode->NestedSDFG.
     """
 
 
