@@ -2650,10 +2650,10 @@ class ProgramVisitor(ExtNodeVisitor):
             if not (symbolic.issymbolic(result)
                     or isinstance(result, dtype_keys)
                     or result in self.sdfg.arrays):
-                    raise DaceSyntaxError(
-                        self, result, "In assignments, the rhs may only be "
-                                      "data, numerical/boolean constants "
-                                      "and symbols")
+                raise DaceSyntaxError(
+                    self, result, "In assignments, the rhs may only be "
+                                  "data, numerical/boolean constants "
+                                  "and symbols")
             if not true_name:
                 if (symbolic.issymbolic(result)
                         or isinstance(result, dtype_keys)):
@@ -2661,7 +2661,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         rtype = _sym_type(result)
                     else:
                         rtype = type(result)
-                    if target.id.startswith('__return'):
+                    if name.startswith('__return'):
                         true_name, new_data = self.sdfg.add_temp_transient(
                             [1], rtype)
                     else:
@@ -2676,8 +2676,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     defined_vars[name] = true_name
                 elif result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
-                    if (target.id.startswith('__return') and
-                            isinstance(result_data, data.Scalar)):
+                    if (name.startswith('__return')
+                            and isinstance(result_data, data.Scalar)):
                         true_name, new_data = self.sdfg.add_temp_transient(
                             [1], result_data.dtype)
                         self.variables[name] = true_name
