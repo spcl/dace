@@ -4,7 +4,7 @@
 import copy
 from dace import serialize
 from dace.dtypes import ScheduleType
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, infer_types
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation
 from dace.sdfg.graph import SubgraphView
 from dace.properties import make_properties, Property, DictProperty, SetProperty
@@ -336,11 +336,7 @@ class ExpandTransformation(Transformation):
         if isinstance(expansion, SDFG):
             # Modify internal schedules according to node schedule
             if node.schedule != ScheduleType.Default:
-                for nstate in expansion.nodes():
-                    topnodes = nstate.scope_dict(node_to_children=True)[None]
-                    for topnode in topnodes:
-                        if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
-                            topnode.schedule = node.schedule
+                infer_types.set_default_schedule_and_storage_types(expansion, node.schedule)
 
             expansion = state.add_nested_sdfg(expansion,
                                               sdfg,
