@@ -223,6 +223,10 @@ class ReduceExpansion(transformation.Transformation):
                 nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
                 nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
 
+            if shortcut:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
+
         if self.create_in_transient:
             # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data

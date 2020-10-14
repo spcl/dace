@@ -13,6 +13,7 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo
+from numbers import Integral, Number
 from typing import List, Set, Union
 
 ###############################################################################
@@ -582,8 +583,8 @@ class TransformationHistProperty(Property):
             return data
         if not isinstance(data, list):
             raise TypeError(
-                'TransformationHistProperty expects a list input, got %s' % data
-            )
+                'TransformationHistProperty expects a list input, got %s' %
+                data)
         return [dace.serialize.from_json(elem) for elem in data]
 
 
@@ -667,7 +668,10 @@ class DictProperty(Property):
                 for k, v in saved_dictionary.items()
             }
 
-        return saved_dictionary
+        # Sort by key before saving
+        return {k: v
+                for k, v in sorted(saved_dictionary.items())
+                } if None not in saved_dictionary else saved_dictionary
 
     @staticmethod
     def from_string(s):
@@ -1127,12 +1131,12 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (not isinstance(val, sp.expr.Expr) and not isinstance(val, int)
+        if (not isinstance(val, sp.expr.Expr) and not isinstance(val, Integral)
                 and not isinstance(val, str)):
             raise TypeError(
                 "Property {} must an int or symbolic expression".format(
                     self.attr_name))
-        if isinstance(val, (int, float, str, complex)):
+        if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
         super(SymbolicProperty, self).__set__(obj, val)
