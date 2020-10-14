@@ -255,22 +255,7 @@ void __dace_exit_mpi({params}) {{
             "{cart}.coords(__dace_comm_rank, {coords});".format(
                 n=ndims, dims=dims, name=name, coords=coords, cart=cart_name),
             sdfg, state_id, map_header)
-        callsite_stream.write('if (fits_cart_{name}) {{'.format(name=name),
-                              sdfg, state_id, map_header)
-        # callsite_stream.write("int dims[{n}];\n"
-        #                       "int coords[{n}];\n"
-        #                       "int periods[{n}];\n"
-        #                       "int reorder = 0;".format(c=comm_name, n=ndims),
-        #                       sdfg, state_id, map_header)  # TODO: Unique names?
-        # for i, s in enumerate(sdims):
-        #     callsite_stream.write("dims[{i}] = {s};\n"
-        #                           "periods[{i}] = 0;".format(i=i, s=s),
-        #                           sdfg, state_id, map_header)  # TODO: Assume non-periodic for now
-        # callsite_stream.write("MPI_Cart_create(MPI_COMM_WORLD, {n}, dims, "
-        #                       "periods, reorder, &{c});\n"
-        #                       "MPI_Cart_coords({c}, __dace_comm_rank, "
-        #                       "{n}, coords);".format(c=comm_name, n=ndims),
-        #                       sdfg, state_id, map_header)
+
         inp_windows = set()
         state = sdfg.nodes()[state_id]
         for e in state.in_edges(map_header):
@@ -297,6 +282,9 @@ void __dace_exit_mpi({params}) {{
         for win in out_windows:
             callsite_stream.write("MPI_Win_fence(0, {w});".format(w=win),
                                   sdfg, state_id, map_header)
+
+        callsite_stream.write('if (fits_cart_{name}) {{'.format(name=name),
+                              sdfg, state_id, map_header)
         
         state = sdfg.node(state_id)
         symtypes = map_header.new_symbols(sdfg, state,
