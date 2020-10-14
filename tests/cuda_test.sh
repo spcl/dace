@@ -209,6 +209,7 @@ runall() {
     runtestargs blas/nodes/axpy_test.py '--target OpenBLAS'
 
 
+    runopt samples/customization/tensor_cores.py $1
 }
 
 

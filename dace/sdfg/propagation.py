@@ -202,9 +202,13 @@ class AffineSMemlet(SeparableMemletPattern):
 
             node_rb, node_re, node_rs = node_range[self.paramind]
             if node_rs != 1:
-                # Map ranges where the last index is not known
-                # exactly are not supported by this pattern.
-                return False
+                # Special case: i:i+stride for a begin:end:stride range
+                if bre + 1 == node_rs and step == 1:
+                    pass
+                else:
+                    # Map ranges where the last index is not known
+                    # exactly are not supported by this pattern.
+                    return False
             if (any(s not in defined_vars for s in node_rb.free_symbols)
                     or any(s not in defined_vars
                            for s in node_re.free_symbols)):
@@ -246,6 +250,11 @@ class AffineSMemlet(SeparableMemletPattern):
 
         result_begin = rb.subs(self.param, node_rb).expand()
         result_end = re.subs(self.param, node_re).expand()
+
+        # Special case: i:i+stride for a begin:end:stride range
+        if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1
+                and rt == 1):
+            return (node_rb, node_re, 1, 1)
 
         # Experimental
         # This should be using sympy.floor
@@ -723,11 +732,12 @@ def propagate_memlet(dfg_state,
 
 
 # External API
-def propagate_subset(memlets: List[Memlet],
-                     arr: data.Data,
-                     params: List[str],
-                     rng: subsets.Subset,
-                     defined_variables: Set[str] = None) -> Memlet:
+def propagate_subset(
+        memlets: List[Memlet],
+        arr: data.Data,
+        params: List[str],
+        rng: subsets.Subset,
+        defined_variables: Set[symbolic.SymbolicType] = None) -> Memlet:
     """ Tries to propagate a list of memlets through a range (computes the 
         image of the memlet function applied on an integer set of, e.g., a 
         map range) and returns a new memlet object.
@@ -737,11 +747,23 @@ def propagate_subset(memlets: List[Memlet],
         :param rng: A subset with dimensionality len(params) that contains the
                     range to propagate with.
         :param defined_variables: A set of symbols defined that will remain the
-                                  same throughout propagation.
+                                  same throughout propagation. If None, assumes
+                                  that all symbols outside of `params` have been
+                                  defined.
         :return: Memlet with propagated subset and volume.
     """
+    # Argument handling
+    if defined_variables is None:
+        # Default defined variables is "everything but params"
+        defined_variables = set()
+        defined_variables |= rng.free_symbols
+        for memlet in memlets:
+            defined_variables |= memlet.free_symbols
+        defined_variables -= set(params)
+        defined_variables = set(
+            symbolic.pystr_to_symbolic(p) for p in defined_variables)
+
     # Propagate subset
-    defined_variables = defined_variables or set()
     variable_context = [
         defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]
     ]

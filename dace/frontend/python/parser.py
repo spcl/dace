@@ -106,7 +106,7 @@ def parse_from_function(function, *compilation_args, strict=None):
             'Function must be of type dace.frontend.python.DaceProgram')
 
     # Obtain DaCe program as SDFG
-    sdfg = function.generate_pdp(*compilation_args)
+    sdfg = function.generate_pdp(*compilation_args, strict=strict)
 
     # Apply strict transformations automatically
     if (strict == True or
@@ -265,9 +265,10 @@ class DaceProgram:
 
         return binaryobj(**kwargs)
 
-    def generate_pdp(self, *compilation_args):
+    def generate_pdp(self, *compilation_args, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
             :param compilation_args: Various compilation arguments e.g., dtypes.
+            :param strict: Whether to apply strict transforms when parsing nested dace programs.
             :return: A 2-tuple of (program, modules), where `program` is a
                      `dace.astnodes._ProgramNode` representing the parsed DaCe 
                      program, and `modules` is a dictionary mapping imported 
@@ -332,4 +333,4 @@ class DaceProgram:
 
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules, other_sdfgs, self.kwargs)
+                                         modules, other_sdfgs, self.kwargs, strict=strict)
