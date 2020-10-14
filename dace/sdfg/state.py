@@ -1492,7 +1492,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                 next_conn = edge.src.next_connector(memlet.data)
                 sconn = src_conn if i == len(edges) - 1 else "OUT_" + next_conn
                 dconn = dst_conn if i == 0 else "IN_" + last_conn
-
+            
             last_conn = next_conn
 
             if cur_memlet.is_empty():
