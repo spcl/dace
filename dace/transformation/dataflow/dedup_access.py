@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the access deduplication transformation. """
 
 from collections import defaultdict
@@ -86,20 +87,41 @@ class DeduplicateAccess(pattern_matching.Transformation):
     def match_to_str(graph, candidate):
         return str(graph.node(candidate[DeduplicateAccess._map_entry]))
 
-    def are_subsets_contiguous(self,
-                               subset_a: subsets.Subset,
+    @staticmethod
+    def are_subsets_contiguous(subset_a: subsets.Subset,
                                subset_b: subsets.Subset,
                                dim: int = None) -> bool:
         if dim is not None:
-            # TODO: A version that only checks for contiguity in certain
-            #       dimension (to prioritize stride-1 range)
-            raise NotImplementedError
+            # A version that only checks for contiguity in certain
+            # dimension (e.g., to prioritize stride-1 range)
+            if (not isinstance(subset_a, subsets.Range)
+                    or not isinstance(subset_b, subsets.Range)):
+                raise NotImplementedError('Contiguous subset check only '
+                                          'implemented for ranges')
+
+            # Other dimensions must be equal
+            for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
+                if i == dim:
+                    continue
+                if s1[0] != s2[0] or s1[1] != s2[1] or s1[2] != s2[2]:
+                    return False
+
+            # Set of conditions for contiguous dimension
+            ab = (subset_a[dim][1] + 1) == subset_b[dim][0]
+            a_overlap_b = subset_a[dim][1] >= subset_b[dim][0]
+            ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
+            b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
+            # NOTE: Must check with "==" due to sympy using special types
+            return (ab == True or a_overlap_b == True or ba == True
+                    or b_overlap_a == True)
+
+        # General case
         bbunion = subsets.bounding_box_union(subset_a, subset_b)
         return bbunion.num_elements() == (subset_a.num_elements() +
                                           subset_b.num_elements())
 
-    def find_contiguous_subsets(self,
-                                subset_list: List[subsets.Subset],
+    @staticmethod
+    def find_contiguous_subsets(subset_list: List[subsets.Subset],
                                 dim: int = None) -> Set[subsets.Subset]:
         """ 
         Finds the set of largest contiguous subsets in a list of subsets. 
@@ -108,7 +130,10 @@ class DeduplicateAccess(pattern_matching.Transformation):
         :return: A list of contiguous subsets.
         """
         # Currently O(n^3) worst case. TODO: improve
-        subset_set = set(subset_list)
+        subset_set = set(
+            subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
+                                                        ) else s
+            for s in subset_list)
         while True:
             for sa, sb in itertools.product(subset_set, subset_set):
                 if sa is sb:
@@ -119,7 +144,7 @@ class DeduplicateAccess(pattern_matching.Transformation):
                 elif sb.covers(sa):
                     subset_set.remove(sa)
                     break
-                elif self.are_subsets_contiguous(sa, sb, dim):
+                elif DeduplicateAccess.are_subsets_contiguous(sa, sb, dim):
                     subset_set.remove(sa)
                     subset_set.remove(sb)
                     subset_set.add(subsets.bounding_box_union(sa, sb))
