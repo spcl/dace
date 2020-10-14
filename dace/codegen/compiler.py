@@ -10,6 +10,7 @@ import os
 import six
 import shutil
 import subprocess
+from subprocess import PIPE
 import re
 from typing import Any, Dict, List
 import numpy as np
@@ -122,7 +123,7 @@ class ReloadableDLL(object):
             reason = ''
             if os.name == 'posix':
                 result = subprocess.run(['ld', self._library_filename],
-                                        capture_output=True)
+                    stdout=PIPE, stderr=PIPE)
                 stderr = result.stderr.decode('utf-8')
                 reason = 'Reason:\n' + '\n'.join(
                     [l for l in stderr.split('\n') if '_start' not in l])

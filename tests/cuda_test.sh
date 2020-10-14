@@ -117,7 +117,7 @@ runtestopt() {
 
 runtestargs() {
     TESTS=`expr $TESTS + 1`
-    yes 2>/dev/null | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/tests/$*
+    yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/tests/$*
     if [ $? -ne 0 ]; then
         bail "$PYTHON_BINARY $*"
         return 1
