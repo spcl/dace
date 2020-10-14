@@ -107,79 +107,21 @@ if __name__ == "__main__":
     B1I.set(args["B1I"])
     B2I.set(args["B2I"])
 
-    # TODO: Validate parameters
-
-    # Validate decomposition parameters
-    def validate_param(rank: int, size: int,
-                       param: List[dace.symbol], label: str) -> int:
-        param_int = [p.get() for p in param]
-        param_size = reduce(lambda a, b: a * b, param_int, 1)
-        if param_size > size:
-            default_size = [1] * (len(param) - 1) + [size]
-            if rank == 0:
-                print("Not enough ranks for the requested {l} decomposition "
-                      "(size = {s}, req_size = {ps}). Setting the parameters "
-                      " to {ns}".format(l=label, s=size, ps=param_size,
-                                        ns=default_size))
-            return default_size
-        return param_int
-    
-    A_decomp = validate_param(rank, size, [P0A, P1A], "A matrix")
-    P0A.set(A_decomp[0])
-    P1A.set(A_decomp[1])
-    B_decomp = validate_param(rank, size, [P0B, P1B], "B matrix")
-    P0B.set(B_decomp[0])
-    P1B.set(B_decomp[1])
-    C_decomp = validate_param(rank, size, [P0C, P1C], "C matrix")
-    P0C.set(C_decomp[0])
-    P1C.set(C_decomp[1])
-    I_decomp = validate_param(rank, size, [P0I, P1I, P2I], "iteration space")
-    P0I.set(I_decomp[0])
-    P1I.set(I_decomp[1])
-    P2I.set(I_decomp[2])
-
-    if rank == 0:
-        print("==== Program start ====")
-        print('Matrix-Matrix Multiplication %dx%dx%d' % (S0.get(), S1.get(),
-                                                         S2.get()))
-
-    # Create SDFG
-    if rank == 0:
-        from dace.transformation.dataflow import (BlockCyclicData,
-                                                  BlockCyclicMap)
-        sdfg = matmul.to_sdfg()
-        sdfg.apply_strict_transformations()
-        sdfg.add_process_grid("A", (P0A, P1A))
-        sdfg.add_process_grid("B", (P0B, P1B))
-        sdfg.add_process_grid("C", (P0C, P1C))
-        sdfg.add_process_grid("I", (P0I, P1I, P2I))
-        sdfg.apply_transformations([BlockCyclicData, BlockCyclicData,
-                                    BlockCyclicData, BlockCyclicMap],
-                                    options=[
-                                        {'dataname': 'A',
-                                        'gridname': 'A',
-                                        'block': (B0A, B1A)},
-                                        {'dataname': 'B',
-                                        'gridname': 'B',
-                                        'block': (B0B, B1B)},
-                                        {'dataname': 'C',
-                                        'gridname': 'C',
-                                        'block': (B0C, B1C)},
-                                        {'gridname': 'I',
-                                        'block': (B0I, B1I, B2I)}])
-        sdfg.save('rma_matmul.sdfg')
-        func = sdfg.compile()
-    
-    comm.Barrier()
-
-    if rank > 0:
-        sdfg = SDFG.from_file("rma_matmul.sdfg")
-        func = CompiledSDFG(sdfg, ReloadableDLL(
-            '.dacecache/matmul/build/libmatmul.so', sdfg.name))
-
-    # Initialize arrays: Randomize A and B
+    # Initialize arrays: Randomize A and B, set C to zero
     A = np.random.rand(S0.get(), S2.get()).astype(np.float64)
     B = np.random.rand(S2.get(), S1.get()).astype(np.float64)
+    C = np.zeros((S0.get(), S1.get()), dtype=np.float64)
+
+    from distr_helper import distr_exec
+    from dace.transformation.dataflow import MapFusion
+    args = {'A': A, 'B': B, 'C': C, 'S0': S0, 'S1': S1, 'S2': S2}
+    data_distr = {'A': ([P0A, P1A], [B0A, B1A]),
+                  'B': ([P0B, P1B], [B0B, B1B]),
+                  'C': ([P0C, P1C], [B0C, B1C])}
+    itsp_distr = ([P0I, P1I, P2I], [B0I, B1I, B2I])
+    distr_exec(matmul, args,
+               output=['C'], ref_func=lambda A, B: [A @ B],
+               data_distr=data_distr, itsp_distr=itsp_distr)
     
     # TODO: Fix validation
     # print('Verifying reshaping of array A ... ', end='')
@@ -290,96 +232,3 @@ if __name__ == "__main__":
     #             ])
     #             # assert(node.map.range == rng)
     #             print('OK!')
-
-    # Use rank 0's arrays
-    comm.Bcast(A, root=0)
-    comm.Bcast(B, root=0)
-
-    # Initialize regression arrays
-    C = np.zeros((S0.get(), S1.get()), dtype=np.float64)
-    C_regression = np.zeros((S0.get(), S1.get()), dtype=np.float64)
-
-    # Extract local data
-    def get_coords(rank: int,
-                   process_grid: List[dace.symbol]) -> Tuple[bool, List[int]]:
-        # Check if rank belongs to comm
-        pg_int = [p.get() for p in process_grid]
-        cart_size = reduce(lambda a, b: a * b, pg_int, 1)
-        if rank >= cart_size:
-            return False, []
-        # Compute strides
-        n = len(process_grid)
-        size = 1
-        strides = [None] * n
-        for i in range(n - 1, -1, -1):
-            strides[i] = size
-            size *= process_grid[i].get()
-        # Compute coords
-        rem = rank
-        coords = [None] * n
-        for i in range(n):
-            coords[i] = int(rem / strides[i])
-            rem %= strides[i]
-        return True, coords
-
-    def extract_local(global_data, rank: int,
-                      process_grid: List[dace.symbol],
-                      block_sizes: List[dace.symbol]):
-        
-        fits, coords = get_coords(rank, process_grid)
-        if not fits:
-            return np.empty([0], dtype=global_data.dtype)
-
-        local_shape = [math.ceil(n / (b.get() * p.get()))
-                       for n, p, b in zip(global_data.shape, process_grid,
-                                          block_sizes)]
-        local_shape.extend([b.get() for b in block_sizes])
-        local_data = np.zeros(local_shape, dtype=global_data.dtype)
-
-        n = len(global_data.shape)
-        for l in product(*[range(ls) for ls in local_shape[:n]]):
-            gstart = [(li * p.get() + c) * b.get()
-                      for li, p, c, b in zip(l, process_grid, coords,
-                                             block_sizes)]
-            gfinish = [min(n, s + b.get())
-                       for n, s, b in zip(global_data.shape, gstart,
-                                          block_sizes)]
-            gindex = tuple(slice(s, f, 1) for s, f in zip(gstart, gfinish))
-            # Validate range
-            rng = [f - s for s, f in zip(gstart, gfinish)]
-            if np.any(np.less(rng, 0)):
-                continue
-            block_slice = tuple(slice(0, r, 1) for r in rng)
-            lindex = l + block_slice
-            try:
-                local_data[lindex] = global_data[gindex]
-            except Exception as e:
-                print(rank, coords, process_grid, block_sizes)
-                print(l, lindex, gstart, gfinish, gindex)
-                raise e
-        
-        return local_data
-    
-    local_A = extract_local(A, rank, [P0A, P1A], [B0A, B1A])
-    local_B = extract_local(B, rank, [P0B, P1B], [B0B, B1B])
-    local_C = extract_local(C, rank, [P0C, P1C], [B0C, B1C])
-
-    func(A=local_A, B=local_B, C=local_C, S0=S0, S1=S1, S2=S2,
-         P0A=P0A, P1A=P1A, P0B=P0B, P1B=P1B, P0C=P0C, P1C=P1C,
-         P0I=P0I, P1I=P1I, P2I=P2I,
-         B0A=B0A, B1A=B1A, B0B=B0B, B1B=B1B, B0C=B0C, B1C=B1C,
-         B0I=B0I, B1I=B1I, B2I=B2I)
-
-    C_regression = A @ B
-
-    local_C_ref = extract_local(C_regression, rank, [P0C, P1C], [B0C, B1C])
-    if local_C.size > 0:
-        norm_diff = np.linalg.norm(local_C - local_C_ref)
-        norm_ref = np.linalg.norm(local_C_ref)
-        relerror = norm_diff / norm_ref
-        print("Rank {r} relative_error: {d}".format(r=rank, d=relerror))
-
-    # diff = np.linalg.norm(C_regression - C) / np.linalg_norm(C_regression)
-    # print("Difference:", diff)
-    # print("==== Program end ====")
-    # exit(0 if diff <= 1e-15 else 1)
