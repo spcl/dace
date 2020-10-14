@@ -1015,12 +1015,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return params, map_range
 
     def add_map(
-        self,
-        name,
-        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
-        schedule=dtypes.ScheduleType.Default,
-        unroll=False,
-        debuginfo=None,
+            self,
+            name,
+            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+            schedule=dtypes.ScheduleType.Default,
+            unroll=False,
+            debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
@@ -1244,12 +1244,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-        self,
-        wcr,
-        axes,
-        identity=None,
-        schedule=dtypes.ScheduleType.Default,
-        debuginfo=None,
+            self,
+            wcr,
+            axes,
+            identity=None,
+            schedule=dtypes.ScheduleType.Default,
+            debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation

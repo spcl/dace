@@ -26,8 +26,8 @@ class LoopPeeling(LoopUnroll):
     begin = Property(
         dtype=bool,
         default=True,
-        desc="If True, peels loop from beginning (first `count` "
-        "iterations), otherwise peels last `count` iterations.",
+        desc='If True, peels loop from beginning (first `count` '
+        'iterations), otherwise peels last `count` iterations.',
     )
 
     @staticmethod

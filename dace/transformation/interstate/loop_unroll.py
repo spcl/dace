@@ -22,8 +22,8 @@ class LoopUnroll(DetectLoop):
     count = Property(
         dtype=int,
         default=0,
-        desc="Number of iterations to unroll, or zero for all "
-        "iterations (loop must be constant-sized for 0)",
+        desc='Number of iterations to unroll, or zero for all '
+        'iterations (loop must be constant-sized for 0)',
     )
 
     @staticmethod
