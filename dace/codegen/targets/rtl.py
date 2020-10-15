@@ -115,12 +115,13 @@ module {name}
 , output reg             valid_o
 {outputs}
 );"""
-    rtl_footer = """\
-  always@(*) begin
-    if (valid_o)
-      $finish; // convention: $finish; must eventually be called
-  end
-endmodule"""
+    rtl_footer = """
+    always@(*) begin
+        if (valid_o)
+            $finish; // convention: $finish; must eventually be called
+    end
+endmodule
+"""
 
     @staticmethod
     def unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream: dace.codegen.prettycode.CodeIOStream,
