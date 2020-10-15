@@ -593,19 +593,23 @@ void __dace_exit_mpi({params}) {{
                     state_dfg = sdfg.nodes()[state_id]
 
                     if memlet.wcr is not None:
-                        # nc = not cpp.is_write_conflicted(
-                        #     dfg, edge, sdfg_schedule=self._toplevel_schedule)
-                        # result.write(
-                        #     codegen.write_and_resolve_expr(
-                        #         sdfg,
-                        #         memlet,
-                        #         nc,
-                        #         out_local_name,
-                        #         in_local_name,
-                        #         dtype=node.out_connectors[uconn]) + ';', sdfg,
-                        #     state_id, node)
-                        self.copy_memory(sdfg, dfg, state_id, node, dst_node,
-                                             edge, function_stream, result)
+                        if edge.data.dist_subset:
+                            self.copy_memory(
+                                sdfg, dfg, state_id, node, dst_node,
+                                edge, function_stream, result)
+                        else:
+                            nc = not cpp.is_write_conflicted(
+                                dfg, edge,
+                                sdfg_schedule=self._cpu_codegen._toplevel_schedule)
+                            result.write(
+                                self._cpu_codegen.write_and_resolve_expr(
+                                    sdfg,
+                                    memlet,
+                                    nc,
+                                    out_local_name,
+                                    in_local_name,
+                                    dtype=node.out_connectors[uconn]) + ';', sdfg,
+                                state_id, node)
                         continue
                     else:
                         try:
