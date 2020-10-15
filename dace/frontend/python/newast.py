@@ -259,13 +259,21 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
-def _subset_has_indirection(subset):
+def _subset_has_indirection(subset, PVisitor: 'ProgramVisitor' = None):
     for dim in subset:
         if not isinstance(dim, tuple):
             dim = [dim]
         for r in dim:
             if symbolic.contains_sympy_functions(r):
                 return True
+            if PVisitor:
+                for s in r.free_symbols:
+                    try:
+                        name = PVisitor._visitname(str(s), None)
+                        if name in PVisitor.sdfg.arrays:
+                            return True
+                    except DaceSyntaxError:
+                        continue
     return False
 
 
@@ -306,8 +314,16 @@ def add_indirection_subgraph(sdfg: SDFG,
 
         for i, r in enumerate(dim):
             for expr in symbolic.swalk(r, enter_functions=True):
+                fname = None
                 if symbolic.is_sympy_userfunction(expr):
                     fname = expr.func.__name__
+                try:
+                    rname = PVisitor._visitname(str(expr), None)
+                except DaceSyntaxError:
+                    continue
+                if rname in PVisitor.sdfg.arrays:
+                    fname = rname
+                if fname:
                     if fname not in accesses:
                         accesses[fname] = []
 
@@ -316,7 +332,11 @@ def add_indirection_subgraph(sdfg: SDFG,
                         aindex = accesses[fname].index(expr.args)
                         toreplace = 'index_' + fname + '_' + str(aindex)
                     else:
-                        accesses[fname].append(expr.args)
+                        if expr.args:
+                            accesses[fname].append(expr.args)
+                        else:
+                            # Scalar access
+                            accesses[fname].append(0)
                         toreplace = 'index_' + fname + '_' + str(
                             len(accesses[fname]) - 1)
 
@@ -1760,7 +1780,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
                     memlet = propagate_subset([memlet], arr, [s], r)
-                if _subset_has_indirection(memlet.subset):
+                if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
                         read_node = state.add_read(
@@ -1873,7 +1893,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
                     memlet = propagate_subset([memlet], arr, [s], r)
-                if _subset_has_indirection(memlet.subset):
+                if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
                         write_node = state.add_write(
@@ -2713,7 +2733,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     self._add_assignment(node, wtarget, result)
             else:  # Top-level SDFG
                 output_indirection = None
-                if _subset_has_indirection(rng):
+                if _subset_has_indirection(rng, self):
                     output_indirection = self.sdfg.add_state(
                         'slice_%s_%d' % (true_name, node.lineno))
                     wnode = output_indirection.add_write(
@@ -2727,7 +2747,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     wtarget = (true_name, rng)
                 if op:
-                    if _subset_has_indirection(rng):
+                    if _subset_has_indirection(rng, self):
                         self._add_state('slice_%s_%d' %
                                         (true_name, node.lineno))
                         rnode = self.last_state.add_read(
@@ -3554,7 +3574,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add slicing state
         self._add_state('slice_%s_%d' % (array, node.lineno))
         rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
-        if _subset_has_indirection(expr.subset):
+        if _subset_has_indirection(expr.subset, self):
             memlet = Memlet.simple(array,
                                    expr.subset,
                                    num_accesses=expr.accesses,
