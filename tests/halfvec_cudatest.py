@@ -129,7 +129,7 @@ def test_gelu_vec():
     out = sdfg(A=A, N=24)
     expected = 0.5 * A * (
         1 + np.tanh(math.sqrt(2.0 / math.pi) * (A + 0.044715 * (A**3))))
-    assert np.allclose(out, expected)
+    assert np.allclose(out, expected, rtol=1e-2, atol=1e-4)
 
 
 if __name__ == '__main__':
