@@ -10,6 +10,7 @@ from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import graph
 from dace.memlet import Memlet
 
 
@@ -175,6 +176,10 @@ def nest_state_subgraph(sdfg: SDFG,
             sym = sdfg.symbols[v]
             nsdfg.add_symbol(v, sym.dtype)
 
+    # Add constants to nested SDFG
+    for cstname, cstval in sdfg.constants.items():
+        nsdfg.add_constant(cstname, cstval)
+
     # Create nested state
     nstate = nsdfg.add_state()
 
@@ -279,6 +284,41 @@ def nest_state_subgraph(sdfg: SDFG,
             state.remove_node(edge.dst)
 
     return nested_sdfg
+
+
+def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
+    '''
+    Given a subgraph, adds a new SDFG state before the state that contains it,
+    removes the subgraph from the original state, and connects the two states.
+    :param subgraph: the subgraph to remove.
+    :return: the newly created SDFG state.
+    '''
+
+    state: SDFGState = subgraph.graph
+    newstate = sdfg.add_state_before(state)
+
+    # Save edges before removing nodes
+    orig_edges = subgraph.edges()
+
+    # Mark boundary access nodes to keep after fission
+    nodes_to_remove = set(subgraph.nodes())
+    nodes_to_remove -= set(n for n in subgraph.source_nodes()
+                           if state.in_degree(n) > 0)
+    nodes_to_remove -= set(n for n in subgraph.sink_nodes()
+                           if state.out_degree(n) > 0)
+    state.remove_nodes_from(nodes_to_remove)
+
+    for n in subgraph.nodes():
+        if isinstance(n, nodes.NestedSDFG):
+            # Set the new parent state
+            n.sdfg.parent = newstate
+
+    newstate.add_nodes_from(subgraph.nodes())
+
+    for e in orig_edges:
+        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+
+    return newstate
 
 
 def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):

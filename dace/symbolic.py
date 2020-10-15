@@ -34,7 +34,10 @@ class symbol(sympy.Symbol):
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
-        if 'integer' in assumptions or 'int' not in str(dtype):
+        dkeys = [k for k, v in dtypes.DTYPE_TO_TYPECLASS.items() if v == dtype]
+        is_integer = [issubclass(k, int) or issubclass(k, numpy.integer)
+                      for k in dkeys]
+        if 'integer' in assumptions or not numpy.any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
             # to modifying different references of symbols with the same name.
             self = sympy.Symbol.__xnew__(cls, name, **assumptions)

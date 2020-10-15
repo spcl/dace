@@ -5,9 +5,10 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import Set
+from typing import List, Set, Union
 import warnings
 from dace.config import Config
+
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
@@ -114,6 +115,10 @@ class Range(Subset):
                 parsed_tiles.append(symbolic.pystr_to_symbolic(r[3]))
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
+
+    @staticmethod
+    def from_indices(indices: 'Indices'):
+        return Range([(i, i, 1) for i in indices.indices])
 
     def to_json(self):
         ret = []
@@ -288,7 +293,7 @@ class Range(Subset):
             else:
                 other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
-        if not indices:
+        if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
         for i in indices:
@@ -571,9 +576,22 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self):
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
         shape = self.size()
-        non_ones = [i for i, d in enumerate(shape) if d != 1]
+        non_ones = []
+        offset_indices = []
+        sqz_idx = 0
+        for i, d in enumerate(shape):
+            if i in ignore_indices:
+                non_ones.append(i)
+                sqz_idx += 1
+            elif d != 1:
+                non_ones.append(i)
+                offset_indices.append(sqz_idx)
+                sqz_idx += 1
+            else:
+                pass
         squeezed_ranges = [self.ranges[i] for i in non_ones]
         squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
         if not squeezed_ranges:
@@ -581,7 +599,7 @@ class Range(Subset):
             squeezed_tsizes = [1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.offset(self, True)
+        self.offset(self, True, indices=offset_indices)
         return non_ones
 
     def unsqueeze(self, axes):
@@ -614,6 +632,30 @@ class Range(Subset):
                 rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
             self.tile_sizes[i] = (ts.subs(repl_dict)
                                   if symbolic.issymbolic(ts) else ts)
+
+    def intersects(self, other: 'Range'):
+        for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
+            if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1
+                    or other.tile_sizes[i] != 1):
+                # TODO: This function does not consider strides or tiles
+                return None
+
+            # Special case: ranges match
+            if rng[0] == orng[0] or rng[1] == orng[1]:
+                continue
+
+            # Since conditions can be indeterminate, we check them separately
+            # for being False, then make a check that may raise a TypeError
+            cond1 = (rng[0] <= orng[1])
+            cond2 = (orng[0] <= rng[1])
+            # NOTE: We have to use the "==" operator because of SymPy returning
+            #       a special boolean type!
+            if cond1 == False or cond2 == False:
+                return False
+            if not (cond1 and cond2):
+                return False
+
+        return True
 
 
 @dace.serialize.serializable
@@ -785,10 +827,17 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
-    def squeeze(self):
-        num_dim = len(self.indices)
-        self.indices = [0]
-        return [num_dim - 1]
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
+        non_ones = []
+        for i in range(len(self.indices)):
+            if i in ignore_indices:
+                non_ones.append(i)
+        squeezed_indices = [self.indices[i] for i in non_ones]
+        if not squeezed_indices:
+            squeezed_indices = [0]
+        self.indices = squeezed_indices
+        return non_ones
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
@@ -798,12 +847,22 @@ class Indices(Subset):
         for i, ind in enumerate(self.indices):
             self.indices[i] = (ind.subs(repl_dict)
                                if symbolic.issymbolic(ind) else ind)
+
     def pop(self, dimensions):
         new_indices = []
         for i in range(len(self.indices)):
             if i not in dimensions:
                 new_indices.append(self.indices[i])
         self.indices = new_indices
+
+    def intersects(self, other: 'Indices'):
+        return all(ind == oind
+                   for ind, oind in zip(self.indices, other.indices))
+
+    def intersection(self, other: 'Indices'):
+        if self.intersects(other):
+            return self
+        return None
 
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
@@ -818,14 +877,17 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
     if not symbolic_positive:
-        result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-            subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
-            subset_b.max_element())]
+        result = [(min(arb,
+                       brb), max(are, bre), 1) for arb, brb, are, bre in zip(
+                           subset_a.min_element(), subset_b.min_element(),
+                           subset_a.max_element(), subset_b.max_element())]
 
     else:
         result = []
-        for arb, brb, are, bre in zip(subset_a.min_element(), subset_b.min_element(),
-                                      subset_a.max_element(), subset_b.max_element()):
+        for arb, brb, are, bre in zip(subset_a.min_element(),
+                                      subset_b.min_element(),
+                                      subset_a.max_element(),
+                                      subset_b.max_element()):
             try:
                 minrb = min(arb, brb)
             except TypeError:
@@ -846,7 +908,6 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 else:
                     raise
             result.append((minrb, maxre, 1))
-
 
     return Range(result)
 
@@ -881,5 +942,28 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                 'Unrecognized Subset type %s in union, degenerating to'
                 ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
+    except TypeError:  # cannot determine truth value of Relational
+        return None
+
+
+def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
+    """ 
+    Returns True if two subsets intersect, False if they do not, or
+    None if the answer cannot be determined.
+        
+    :param subset_a: The first subset.
+    :param subset_b: The second subset.
+    :return: True if subsets intersect, False if not, None if indeterminate.
+    """
+    try:
+        if subset_a is None or subset_b is None:
+            return False
+        if isinstance(subset_a, Indices):
+            subset_a = Range.from_indices(subset_a)
+        if isinstance(subset_b, Indices):
+            subset_b = Range.from_indices(subset_b)
+        if type(subset_a) is type(subset_b):
+            return subset_a.intersects(subset_b)
+        return None
     except TypeError:  # cannot determine truth value of Relational
         return None
