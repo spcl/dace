@@ -61,7 +61,7 @@ class LoopUnroll(DetectLoop):
 
         # Find condition by matching expressions
         end: Optional[sp.Expr] = None
-        a = sp.Wild("a")
+        a = sp.Wild('a')
         match = condition.match(itersym < a)
         if match:
             end = match[a] - 1
@@ -126,7 +126,7 @@ class LoopUnroll(DetectLoop):
         # Loop must be unrollable
         if self.count == 0 and any(
                 symbolic.issymbolic(r, sdfg.constants) for r in rng):
-            raise ValueError("Loop cannot be fully unrolled, size is symbolic")
+            raise ValueError('Loop cannot be fully unrolled, size is symbolic')
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
@@ -187,14 +187,14 @@ class LoopUnroll(DetectLoop):
         # Using to/from JSON copies faster than deepcopy (which will also
         # copy the parent SDFG)
         new_states = [
-            sd.SDFGState.from_json(s.to_json(), context={"sdfg": sdfg})
+            sd.SDFGState.from_json(s.to_json(), context={'sdfg': sdfg})
             for s in loop_states
         ]
 
         # Replace iterate with value in each state
         for state in new_states:
-            state.set_label(state.label + "_" + itervar + "_" + (
-                state_suffix if state_suffix is not None else "%d" % value))
+            state.set_label(state.label + '_' + itervar + '_' + (
+                state_suffix if state_suffix is not None else '%d' % value))
             state.replace(itervar, value)
 
         # Add subgraph to original SDFG
