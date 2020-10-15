@@ -936,6 +936,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self._emit_copy(state_id, src_node, src_storage, dst_node, dst_storage,
                         dst_schedule, memlet, sdfg, dfg, callsite_stream)
 
+    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
+                          edge, function_stream, callsite_stream):
+        self._cpu_codegen.define_out_memlet(sdfg, state_dfg, state_id, src_node,
+                                            dst_node, edge, function_stream,
+                                            callsite_stream)
+
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         # Two modes: device-level state and if this state has active streams
         if self._toplevel_schedule in dtypes.GPU_SCHEDULES:

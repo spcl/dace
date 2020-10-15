@@ -1,8 +1,19 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
+from dace.subsets import Range
 
-M, N, K = 24, 24, 24
+M, N, K = 24, 25, 26
+
+
+@dace.program
+def add(A: dace.float64[M, N]):
+    return A + A
+
+
+@dace.program
+def addunk(A):
+    return A + A
 
 
 @dace.program
@@ -11,7 +22,36 @@ def gemm(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N],
     C[:] = alpha * A @ B + beta * C
 
 
-if __name__ == '__main__':
+def test_add():
+    A = np.random.rand(M, N)
+    sdfg = add.to_sdfg()
+    result = sdfg(A=A)
+
+    # Check validity of result
+    assert np.allclose(result, A + A)
+
+    # Check map sequence
+    me = next(n for n, _ in sdfg.all_nodes_recursive()
+              if isinstance(n, dace.nodes.MapEntry))
+    assert me.map.range == Range([(0, 23, 1), (0, 24, 1)])
+
+
+def test_add_11dim():
+    A = np.random.rand(*(2 if i < 9 else 3 for i in range(11)))
+    sdfg = addunk.to_sdfg(A)
+    result = sdfg(A=A)
+
+    # Check validity of result
+    assert np.allclose(result, A + A)
+
+    # Check map sequence
+    me = next(n for n, _ in sdfg.all_nodes_recursive()
+              if isinstance(n, dace.nodes.MapEntry))
+    assert me.map.range == Range([(0, 1, 1) if i < 9 else (0, 2, 1)
+                                  for i in range(11)])
+
+
+def test_gemm():
     A = np.random.rand(M, K).astype(np.float32)
     B = np.random.rand(K, N).astype(np.float32)
     C = np.random.rand(M, N).astype(np.float32)
@@ -23,3 +63,9 @@ if __name__ == '__main__':
     diff = np.linalg.norm(C - realC) / (M * N)
     print('Difference:', diff)
     exit(1 if diff >= 1e-5 else 0)
+
+
+if __name__ == '__main__':
+    test_add()
+    test_add_11dim()
+    test_gemm()
