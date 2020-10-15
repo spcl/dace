@@ -2571,8 +2571,9 @@ class ProgramVisitor(ExtNodeVisitor):
                          target: Union[ast.Name, ast.Subscript],
                          new_name: str = None,
                          arr_type: data.Data = None):
-
-        if (name, rng, 'w') in self.accesses:
+        if name in self.sdfg.arrays:
+            return (name, None)
+        elif (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
             return self.accesses[(name, rng, 'r')]
@@ -2595,6 +2596,8 @@ class ProgramVisitor(ExtNodeVisitor):
                           new_name: str = None,
                           arr_type: data.Data = None):
 
+        if name in self.sdfg.arrays:
+            return (name, None)
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
