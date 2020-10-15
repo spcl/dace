@@ -9,6 +9,10 @@ DACE_DFI half max(half a, half b) {
     return __hgt(a, b) ? a : b;
 }
 
+DACE_DFI half tanh(half val) {
+    return __float2half(tanhf(__half2float(val)));
+}
+
 DACE_DFI half exp(half val) {
     return hexp(val);
 }
@@ -21,30 +25,34 @@ DACE_DFI half reciprocal(half val) {
 struct __align__(8) half4 {
     enum { ELEMS = 4 };
 
-    union {
-        struct { half x, y, z, w; };
-        struct { half2 xy, zw; };
-        half h[ELEMS];
-    };
-
+    half h[ELEMS];
+    
     DACE_HDFI half4() {}
     DACE_HDFI half4(const half4& other) {
-        xy = other.xy;
-        zw = other.zw;
+        #pragma unroll
+        for (int i = 0; i < ELEMS; ++i)
+            h[i] = other.h[i];
     }
 
     DACE_HDFI half4& operator=(const half4& other) {
-        xy = other.xy;
-        zw = other.zw;
+        #pragma unroll
+        for (int i = 0; i < ELEMS; ++i)
+            h[i] = other.h[i];
         return *this;
     }
 
-    DACE_HDFI half4(half _x, half _y, half _z, half _w) : 
-        x(_x), y(_y), z(_z), w(_w) {
+    DACE_HDFI half4(const half& x, const half& y, const half& z, 
+                    const half& w) {
+        h[0] = x;
+        h[1] = y;
+        h[2] = z;
+        h[3] = w;
     }
 
-    DACE_HDFI half4(half2 _xy, half2 _zw)
-        : xy(_xy), zw(_zw) {}
+    DACE_HDFI half4(const half2& xy, const half2& zw) {
+        h2<0>() = xy;
+        h2<1>() = zw;
+    }
 
     DACE_HDFI 
     static half4 fillall(half value) {
@@ -456,15 +464,17 @@ half4 operator-(half4 a, half b) {
 
 DACE_DFI
 half4 operator+(half4 a, half b) {
-    a -= b;
+    a += b;
     return a;
 }
+DACE_DFI half4 operator+(half a, half4 b) { return b + a; }
 
 DACE_DFI
 half4 operator*(half4 a, half b) {
     a *= b;
     return a;
 }
+DACE_DFI half4 operator*(half a, half4 b) { return b * a; }
 
 DACE_DFI
 half8 operator-(half8 a, half b) {
@@ -474,15 +484,31 @@ half8 operator-(half8 a, half b) {
 
 DACE_DFI
 half8 operator+(half8 a, half b) {
-    a -= b;
+    a += b;
     return a;
 }
+DACE_DFI half8 operator+(half a, half8 b) { return b + a; }
 
 DACE_DFI
 half8 operator*(half8 a, half b) {
     a *= b;
     return a;
 }
+DACE_DFI half8 operator*(half a, half8 b) { return b * a; }
+
+// Unary mathematical vector operations
+#define HALF_VEC_UFUNC(op)                                                 \
+DACE_DFI half2 op(half2 x) { return make_half2(op(x.x), op(x.y)); }        \
+DACE_DFI half4 op(half4 x) { return half4(op(x.h2<0>()), op(x.h2<1>())); } \
+DACE_DFI half8 op(half8 x) {                                               \
+    return half8(op(x.h2<0>()), op(x.h2<1>()),                             \
+                 op(x.h2<2>()), op(x.h2<3>()));                            \
+}
+
+namespace dace { namespace math {
+    HALF_VEC_UFUNC(exp)
+    HALF_VEC_UFUNC(tanh)
+} }
 
 // Vector comparison functions
 DACE_DFI half2 max(half2 a, half2 b) {
@@ -491,17 +517,17 @@ DACE_DFI half2 max(half2 a, half2 b) {
 
 DACE_DFI half4 max(half4 a, half b) {
     half2 bvec = __half2half2(b);
-    return half4(max(a.xy, bvec), max(a.zw, bvec));
+    return half4(max(a.h2<0>(), bvec), max(a.h2<1>(), bvec));
 }
 DACE_DFI half4 max(half a, half4 b) { return max(b, a); }
 
 DACE_DFI half4 max(half4 a, half2 b) {
-    return half4(max(a.xy, b), max(a.zw, b));
+    return half4(max(a.h2<0>(), b), max(a.h2<1>(), b));
 }
 DACE_DFI half4 max(half2 a, half4 b) { return max(b, a); }
 
 DACE_DFI half4 max(half4 a, half4 b) {
-    return half4(max(a.xy, b.xy), max(a.zw, b.zw));
+    return half4(max(a.h2<0>(), b.h2<0>()), max(a.h2<1>(), b.h2<1>()));
 }
 
 DACE_DFI half8 max(half8 a, half b) {
