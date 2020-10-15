@@ -3,23 +3,36 @@
 #define __DACE_HALFVEC_H
 
 // Support for half-precision vector types in CUDA/HIP
+#ifdef __CUDACC__
+#include <cuda_fp16.h>
+#elif defined(__HIPCC__)
+#include <hip/hip_fp16.h>
+#endif
 
 // Scalar functions
-DACE_DFI half max(half a, half b) {
-    return __hgt(a, b) ? a : b;
-}
+namespace dace { namespace math {
+    DACE_DFI half max(half a, half b) {
+        return __hgt(a, b) ? a : b;
+    }
 
-DACE_DFI half tanh(half val) {
-    return __float2half(tanhf(__half2float(val)));
-}
+    DACE_DFI half tanh(half val) {
+        return __float2half(tanhf(__half2float(val)));
+    }
 
-DACE_DFI half exp(half val) {
-    return hexp(val);
-}
+    DACE_DFI half exp(half val) {
+        return hexp(val);
+    }
 
-DACE_DFI half reciprocal(half val) {
-    return hrcp(val);
-}
+    DACE_DFI half reciprocal(half val) {
+        return hrcp(val);
+    }
+}}
+
+using dace::math::max;
+using dace::math::tanh;
+using dace::math::exp;
+using dace::math::reciprocal;
+
 
 // Vector types
 struct __align__(8) half4 {
