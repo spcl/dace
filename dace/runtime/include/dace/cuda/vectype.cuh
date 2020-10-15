@@ -327,8 +327,6 @@ DEFINE_ALL_EXT_TYPES(float64,double);
     DEFINE_VECTYPE(float64, 2);
 
     // Special case for half-precision
-    // Only enable for supporting GPUs
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600
     template<>
     struct _vtype<half, 2>
     {
@@ -347,4 +345,3 @@ DEFINE_ALL_EXT_TYPES(float64,double);
         typedef half8 aligned;
         typedef aligned unaligned;
     };
-#endif

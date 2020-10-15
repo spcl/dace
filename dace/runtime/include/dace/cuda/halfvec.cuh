@@ -3,7 +3,7 @@
 #define __DACE_HALFVEC_H
 
 // Only enable for supporting GPUs
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 600
+#if __CUDA_ARCH__ >= 600 || !defined(__CUDA_ARCH__)
 
 // Support for half-precision vector types in CUDA/HIP
 #ifdef __CUDACC__
@@ -578,5 +578,14 @@ DACE_DFI half8 max(half8 a, half8 b) {
                  max(a.h2<3>(), b.h2<3>()));
 }
 
+#else  // __CUDA_ARCH__
+    // Dummy definitions of half4 and half8
+    struct __align__(8) half4 {
+        half h[4];
+    };
+
+    struct __align__(16) half8 {
+        half h[8];
+    };
 #endif  // __CUDA_ARCH__
 #endif  // __DACE_HALFVEC_H
