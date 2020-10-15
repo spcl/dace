@@ -41,6 +41,8 @@ def _define_local_ex(sdfg: SDFG,
                      dtype: dace.typeclass,
                      storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local array in a DaCe program. """
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
     return name
 
