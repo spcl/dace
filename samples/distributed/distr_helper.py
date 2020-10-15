@@ -262,9 +262,15 @@ def distr_exec(sdfg: Union[SDFG, dace.program],  # SDFG or DaceProgram
                 localdesc = extract_local(argdesc, rank, pgrid, bsizes)
                 valid_args[arg] = localdesc
             else:
-                valid_args[arg] = argdesc
+                if output and arg in output:
+                    valid_args[arg] = deepcopy(argdesc)
+                else:
+                    valid_args[arg] = argdesc
         else:
-            valid_args[arg] = argdesc
+            if output and arg in output:
+                valid_args[arg] = deepcopy(arg)
+            else:
+                valid_args[arg] = argdesc
     
     # Add distribution symbols to arguments
     for _, (pgrid, bsizes) in valid_data_distr.items():

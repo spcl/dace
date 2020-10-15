@@ -113,7 +113,6 @@ if __name__ == "__main__":
     C = np.zeros((S0.get(), S1.get()), dtype=np.float64)
 
     from distr_helper import distr_exec
-    from dace.transformation.dataflow import MapFusion
     args = {'A': A, 'B': B, 'C': C, 'S0': S0, 'S1': S1, 'S2': S2}
     data_distr = {'A': ([P0A, P1A], [B0A, B1A]),
                   'B': ([P0B, P1B], [B0B, B1B]),
