@@ -19,10 +19,12 @@ from dace.transformation.interstate.loop_detection import DetectLoop
 class LoopUnroll(DetectLoop):
     """ Unrolls a state machine for-loop into multiple states """
 
-    count = Property(dtype=int,
-                     default=0,
-                     desc="Number of iterations to unroll, or zero for all "
-                     "iterations (loop must be constant-sized for 0)")
+    count = Property(
+        dtype=int,
+        default=0,
+        desc='Number of iterations to unroll, or zero for all '
+        'iterations (loop must be constant-sized for 0)',
+    )
 
     @staticmethod
     def _loop_range(
@@ -38,14 +40,18 @@ class LoopUnroll(DetectLoop):
         """
         # Find starting expression and stride
         itersym = symbolic.symbol(itervar)
-        if (itervar in inedges[0].data.assignments[itervar]
-                and itervar not in inedges[1].data.assignments[itervar]):
+        if (itersym in symbolic.pystr_to_symbolic(
+                inedges[0].data.assignments[itervar]).free_symbols
+                and itersym not in symbolic.pystr_to_symbolic(
+                    inedges[1].data.assignments[itervar]).free_symbols):
             stride = (symbolic.pystr_to_symbolic(
                 inedges[0].data.assignments[itervar]) - itersym)
             start = symbolic.pystr_to_symbolic(
                 inedges[1].data.assignments[itervar])
-        elif (itervar in inedges[1].data.assignments[itervar]
-              and itervar not in inedges[0].data.assignments[itervar]):
+        elif (itersym in symbolic.pystr_to_symbolic(
+                inedges[1].data.assignments[itervar]).free_symbols
+              and itersym not in symbolic.pystr_to_symbolic(
+                  inedges[0].data.assignments[itervar]).free_symbols):
             stride = (symbolic.pystr_to_symbolic(
                 inedges[1].data.assignments[itervar]) - itersym)
             start = symbolic.pystr_to_symbolic(
@@ -169,9 +175,15 @@ class LoopUnroll(DetectLoop):
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)
 
-    def instantiate_loop(self, sdfg: sd.SDFG, loop_states: List[sd.SDFGState],
-                         loop_subgraph: gr.SubgraphView, itervar: str,
-                         value: symbolic.SymbolicType):
+    def instantiate_loop(
+        self,
+        sdfg: sd.SDFG,
+        loop_states: List[sd.SDFGState],
+        loop_subgraph: gr.SubgraphView,
+        itervar: str,
+        value: symbolic.SymbolicType,
+        state_suffix=None,
+    ):
         # Using to/from JSON copies faster than deepcopy (which will also
         # copy the parent SDFG)
         new_states = [
@@ -181,7 +193,8 @@ class LoopUnroll(DetectLoop):
 
         # Replace iterate with value in each state
         for state in new_states:
-            state.set_label(state.label + '_%s_%d' % (itervar, value))
+            state.set_label(state.label + '_' + itervar + '_' + (
+                state_suffix if state_suffix is not None else '%d' % value))
             state.replace(itervar, value)
 
         # Add subgraph to original SDFG
