@@ -36,10 +36,6 @@ def test_find_contiguous_subsets_nonsquare():
         Range([(i + 1, i + 1, 1), (j + 1, j + 1, 1)]),
     ]
 
-    # No prioritization
-    result = DeduplicateAccess.find_contiguous_subsets(subset_list, None)
-    assert len(result) == 3
-
     # Prioritize on first dimension
     result2 = DeduplicateAccess.find_contiguous_subsets(subset_list, 0)
     result2 = DeduplicateAccess.find_contiguous_subsets(result2, None)
