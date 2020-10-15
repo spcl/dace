@@ -1,16 +1,14 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop unroll transformation """
 
-import copy
 import sympy as sp
-import networkx as nx
-from typing import List, Optional, Tuple
+from typing import Optional
 
-from dace import dtypes, registry, sdfg as sd, symbolic
-from dace.properties import Property, make_properties
-from dace.sdfg import graph as gr, nodes
+from dace import registry, sdfg as sd, symbolic
+from dace.properties import Property, make_properties, CodeBlock
+from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
-from dace.frontend.python.astutils import ASTFindReplace
+from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 
@@ -51,6 +49,38 @@ class LoopPeeling(LoopUnroll):
             return False
 
         return True
+
+    def _modify_cond(self, condition, var, step):
+        condition = pystr_to_symbolic(condition.as_string)
+        itersym = pystr_to_symbolic(var)
+        # Find condition by matching expressions
+        end: Optional[sp.Expr] = None
+        a = sp.Wild('a')
+        op = ''
+        match = condition.match(itersym < a)
+        if match:
+            op = '<'
+            end = match[a] - self.count * step
+        if end is None:
+            match = condition.match(itersym <= a)
+            if match:
+                op = '<='
+                end = match[a] - self.count * step
+        if end is None:
+            match = condition.match(itersym > a)
+            if match:
+                op = '>'
+                end = match[a] - self.count * step
+        if end is None:
+            match = condition.match(itersym >= a)
+            if match:
+                op = '>='
+                end = match[a] - self.count * step
+        if len(op) == 0:
+            raise ValueError('Cannot match loop condition for peeling')
+
+        res = str(itersym) + op + str(end)
+        return res
 
     def apply(self, sdfg: sd.SDFG):
         ####################################################################
@@ -101,13 +131,17 @@ class LoopPeeling(LoopUnroll):
             # Add `count` states, each with instantiated iteration variable
             for i in range(self.count):
                 # Instantiate loop states with iterate value
+                state_name: str = 'start_' + itervar + str(i * rng[2])
+                state_name = state_name.replace('-',
+                                                'm').replace('+', 'p').replace(
+                                                    '*', 'M').replace('/', 'D')
                 new_states = self.instantiate_loop(
                     sdfg,
                     loop_states,
                     loop_subgraph,
                     itervar,
                     rng[0] + i * rng[2],
-                    "start_" + itervar + str(i * rng[2]),
+                    state_name,
                 )
 
                 # Connect states to before the loop with unconditional edges
@@ -122,56 +156,29 @@ class LoopPeeling(LoopUnroll):
         else:
             # If begin, change initialization assignment and prepend states before
             # guard
-            from dace.symbolic import pystr_to_symbolic
-
-            def modify_cond(condition, var, step):
-                condition = pystr_to_symbolic(condition.as_string)
-                itersym = pystr_to_symbolic(var)
-                # Find condition by matching expressions
-                end: Optional[sp.Expr] = None
-                a = sp.Wild("a")
-                match = condition.match(itersym < a)
-                if match:
-                    op = "<"
-                    end = match[a] - self.count * step
-                if end is None:
-                    match = condition.match(itersym <= a)
-                    if match:
-                        op = "<="
-                        end = match[a] - self.count * step
-                if end is None:
-                    match = condition.match(itersym > a)
-                    if match:
-                        op = ">"
-                        end = match[a] - self.count * step
-                if end is None:
-                    match = condition.match(itersym >= a)
-                    if match:
-                        op = ">="
-                        end = match[a] - self.count * step
-
-                res = str(itervar_sym) + op + str(end)
-                return res
-
-            from dace.properties import CodeBlock
-
             itervar_sym = pystr_to_symbolic(itervar)
             condition_edge.data.condition = CodeBlock(
-                modify_cond(condition_edge.data.condition, itervar, rng[2]))
+                self._modify_cond(condition_edge.data.condition, itervar,
+                                  rng[2]))
             not_condition_edge.data.condition = CodeBlock(
-                modify_cond(not_condition_edge.data.condition, itervar, rng[2]))
+                self._modify_cond(not_condition_edge.data.condition, itervar,
+                                  rng[2]))
             prepend_state = after_state
 
             # Add `count` states, each with instantiated iteration variable
             for i in reversed(range(self.count)):
                 # Instantiate loop states with iterate value
+                state_name: str = 'end_' + itervar + str(-i * rng[2])
+                state_name = state_name.replace('-',
+                                                'm').replace('+', 'p').replace(
+                                                    '*', 'M').replace('/', 'D')
                 new_states = self.instantiate_loop(
                     sdfg,
                     loop_states,
                     loop_subgraph,
                     itervar,
                     itervar_sym + i * rng[2],
-                    "end_" + itervar + str(-i * rng[2]),
+                    state_name,
                 )
 
                 # Connect states to before the loop with unconditional edges
