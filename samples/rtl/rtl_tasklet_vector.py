@@ -8,6 +8,9 @@ import dace
 
 import numpy as np
 
+# add symbol
+N = dace.symbol('N')
+
 # add sdfg
 sdfg = dace.SDFG('rtl_tasklet_demo')
 
@@ -15,7 +18,7 @@ sdfg = dace.SDFG('rtl_tasklet_demo')
 state = sdfg.add_state()
 
 # add arrays
-sdfg.add_array('A', [4], dtype=dace.int32)
+sdfg.add_array('A', [N], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
 
 # enable debugging output
@@ -24,7 +27,7 @@ sdfg.add_constant("DEBUG", 1)
 # add custom cpp tasklet
 tasklet = state.add_tasklet(
     name='rtl_tasklet',
-    inputs={'a': dace.vector(dace.int32, 4)},
+    inputs={'a': dace.vector(dace.int32, N)},
     outputs={'b'},
     code='''
     /*
@@ -62,7 +65,7 @@ A = state.add_read('A')
 B = state.add_write('B')
 
 # connect input/output array with the tasklet
-state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0'))
+state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0:N-1'))
 state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
 
 # validate sdfg
@@ -72,15 +75,17 @@ sdfg.validate()
 
 
 if __name__ == '__main__':
+
     # init data structures
-    a = np.random.randint(0, 100, 4).astype(np.int32)
+    n = 4
+    a = np.random.randint(0, 100, n).astype(np.int32)
     b = np.random.randint(0, 100, 1).astype(np.int32)
 
     # show initial values
     print("a={}, b={}".format(a, b))
 
     # call program
-    sdfg(A=a, B=b)
+    sdfg(A=a, B=b, N=n)
 
     # show result
     print("a={}, b={}".format(a, b))
