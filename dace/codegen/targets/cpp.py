@@ -1,4 +1,8 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+""" 
+Helper functions for C++ code generation. 
+NOTE: The C++ code generator is currently located in cpu.py.
+"""
 import ast
 import copy
 import functools

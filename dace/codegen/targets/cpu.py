@@ -9,7 +9,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
-                                         DefinedType)
+                                         DefinedType, TargetDispatcher)
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
@@ -29,7 +29,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
-        self._dispatcher = frame_codegen.dispatcher
+        self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
         dispatcher = self._dispatcher
 
@@ -1189,9 +1189,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
 
-                codegen.define_out_memlet(sdfg, state_dfg, state_id, node,
-                                          dst_node, edge, function_stream,
-                                          inner_stream)
+                self._dispatcher.dispatch_output_definition(
+                    node, dst_node, edge, sdfg, state_dfg, state_id,
+                     function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
@@ -1333,11 +1333,6 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
-
-    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream):
-        self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream)
 
     def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
                               sdfg_label):

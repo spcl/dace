@@ -325,3 +325,23 @@ DEFINE_ALL_EXT_TYPES(float64,double);
     DEFINE_VECTYPE(float32, 3);
     DEFINE_VECTYPE(float32, 4);
     DEFINE_VECTYPE(float64, 2);
+
+    // Special case for half-precision
+    template<>
+    struct _vtype<half, 2>
+    {
+        typedef half2 aligned;
+        typedef aligned unaligned;
+    };
+    template<>
+    struct _vtype<half, 4>
+    {
+        typedef half4 aligned;
+        typedef aligned unaligned;
+    };
+    template<>
+    struct _vtype<half, 8>
+    {
+        typedef half8 aligned;
+        typedef aligned unaligned;
+    };

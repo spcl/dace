@@ -122,7 +122,7 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typecl
 
 
 def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
-                       constants):
+                       constants, strict=None):
     """ Parses a `@dace.program` function into a _ProgramNode object.
         :param f: A Python function to parse.
         :param argtypes: An dictionary of (name, type) for the given
@@ -135,6 +135,7 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
         :param other_sdfgs: Other SDFG and DaceProgram objects in the context
                             of this function.
         :param constants: A dictionary from a name to a constant value.
+        :param strict: Whether to apply strict transformations after parsing nested dace programs.
         :return: Hierarchical tree of `astnodes._Node` objects, where the top
                  level node is an `astnodes._ProgramNode`.
         @rtype: SDFG
@@ -175,7 +176,8 @@ def parse_dace_program(f, argtypes, global_vars, modules, other_sdfgs,
                         constants=constants,
                         scope_arrays=argtypes,
                         scope_vars={},
-                        other_sdfgs=other_sdfgs)
+                        other_sdfgs=other_sdfgs,
+                        strict=strict)
 
     sdfg, _, _, _ = pv.parse_program(src_ast.body[0])
     sdfg.set_sourcecode(src, 'python')
@@ -992,7 +994,8 @@ class ProgramVisitor(ExtNodeVisitor):
         scope_vars: Dict[str, str],
         other_sdfgs: Dict[str, SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
         nested: bool = False,
-        tmp_idx: int = 0):
+        tmp_idx: int = 0,
+        strict: Optional[bool] = None):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1005,6 +1008,7 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
             other_sdfgs {Dict[str, Union[SDFG, DaceProgram]]} -- Other SDFGs
+            strict {bool} -- Whether to apply strict transforms after parsing nested dace programs
 
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
@@ -1022,6 +1026,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.globals = global_vars
         self.other_sdfgs = other_sdfgs
         self.nested = nested
+        self.strict = strict
 
         # Keeps track of scope arrays, numbers, variables and accesses
         self.scope_arrays = OrderedDict()
@@ -2645,10 +2650,10 @@ class ProgramVisitor(ExtNodeVisitor):
             if not (symbolic.issymbolic(result)
                     or isinstance(result, dtype_keys)
                     or result in self.sdfg.arrays):
-                    raise DaceSyntaxError(
-                        self, result, "In assignments, the rhs may only be "
-                                      "data, numerical/boolean constants "
-                                      "and symbols")
+                raise DaceSyntaxError(
+                    self, result, "In assignments, the rhs may only be "
+                                  "data, numerical/boolean constants "
+                                  "and symbols")
             if not true_name:
                 if (symbolic.issymbolic(result)
                         or isinstance(result, dtype_keys)):
@@ -2656,7 +2661,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         rtype = _sym_type(result)
                     else:
                         rtype = type(result)
-                    if target.id.startswith('__return'):
+                    if name.startswith('__return'):
                         true_name, new_data = self.sdfg.add_temp_transient(
                             [1], rtype)
                     else:
@@ -2671,8 +2676,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     defined_vars[name] = true_name
                 elif result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
-                    if (target.id.startswith('__return') and
-                            isinstance(result_data, data.Scalar)):
+                    if (name.startswith('__return')
+                            and isinstance(result_data, data.Scalar)):
                         true_name, new_data = self.sdfg.add_temp_transient(
                             [1], result_data.dtype)
                         self.variables[name] = true_name
@@ -2933,7 +2938,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.arrays,
                         **self.sdfg.symbols
                     }[arg] if isinstance(arg, str) else arg
-                                   for aname, arg in args)))
+                                   for aname, arg in args),
+                                 strict=self.strict))
 
             else:
                 raise DaceSyntaxError(
@@ -3336,7 +3342,11 @@ class ProgramVisitor(ExtNodeVisitor):
         if name not in self.scope_vars:
             raise DaceSyntaxError(self, node,
                                   'Use of undefined variable "%s"' % name)
-        return self.scope_vars[name]
+        rname = self.scope_vars[name]
+        if rname in self.scope_arrays:
+            rng = subsets.Range.from_array(self.scope_arrays[rname])
+            rname, _ = self._add_read_access(rname, rng, node)
+        return rname
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
@@ -3405,16 +3415,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 result.append(
                     (operand, type(self.sdfg.arrays[operand]).__name__))
             elif isinstance(operand, str) and operand in self.scope_arrays:
-                # TODO: Verify that this is correct
-                # Fix for scalars not being passed to nested SDFGs
-                if isinstance(self.scope_arrays[operand], data.Scalar):
-                    rng = subsets.Range([(0, 0, 1)])
-                    newop = self._add_read_access(operand, rng, opnode)
-                    result.append((newop,
-                                   type(self.sdfg.arrays[newop]).__name__))
-                else:
-                    result.append(
-                        (operand, type(self.scope_arrays[operand]).__name__))
+                result.append(
+                    (operand, type(self.scope_arrays[operand]).__name__))
             elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
                 if isinstance(operand, (bool, numpy.bool, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))

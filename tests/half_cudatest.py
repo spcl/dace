@@ -65,6 +65,9 @@ def test_dropout():
 
 
 if __name__ == '__main__':
+    # Prerequisite for test: CUDA compute capability >= 6.0
+    dace.Config.set('compiler', 'cuda', 'cuda_arch', value='60')
+
     test_relu()
     test_relu_2()
     test_dropout()
