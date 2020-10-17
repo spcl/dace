@@ -321,8 +321,11 @@ class ASTFindReplace(ast.NodeTransformer):
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
-            node.id = self.repldict[node.id]
-        return node
+            new_node = ast.copy_location(
+                ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            return new_node
+
+        return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword):
         if node.arg in self.repldict:

@@ -75,6 +75,7 @@ required:
                     Attempts to infer control flow constructs "if",
                     "for" and "while" from state transitions, allowing
                     code generators to generate appropriate code.
+
             symbolic_positive:
                 type: bool
                 default: true
@@ -83,6 +84,15 @@ required:
                     Every expression in which a symbolic value appears
                     is treated as strictly positive. This is necessary
                     for certain Range evaluations using Subgraph Fusion.
+
+            match_exception:
+                type: bool
+                default: false
+                title: Treat exceptions in "can_be_applied" as errors
+                description: >
+                    When an exception is raised in a transformation "can_be_applied"
+                    function, if True the exception is raised further. Otherwise
+                    the exception is printed as a warning.
     compiler:
         type: dict
         title: Compiler

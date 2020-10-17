@@ -8,9 +8,10 @@ import functools
 import sympy
 import warnings
 
-from dace import registry, subsets, symbolic, dtypes
+from dace import registry, subsets, symbolic, dtypes, data
 from dace.memlet import Memlet
 from dace.sdfg import nodes
+from typing import List, Set, Dict
 
 
 @registry.make_registry
@@ -18,7 +19,8 @@ class MemletPattern(object):
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
-    def match(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range,
+                       orig_edges):
         raise NotImplementedError
 
     def propagate(self, array, expressions, node_range):
@@ -29,8 +31,8 @@ class MemletPattern(object):
 class SeparableMemletPattern(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         raise NotImplementedError
 
     def propagate(self, array, dim_exprs, node_range):
@@ -40,7 +42,8 @@ class SeparableMemletPattern(object):
 @registry.autoregister
 class SeparableMemlet(MemletPattern):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
-    def match(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range,
+                       orig_edges):
         # Assuming correct dimensionality in each of the expressions
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
@@ -71,8 +74,9 @@ class SeparableMemlet(MemletPattern):
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.match(dexprs, variable_context, overapprox_range,
-                                   orig_edges, dim, data_dims):
+                if smpattern.can_be_applied(dexprs, variable_context,
+                                            overapprox_range, orig_edges, dim,
+                                            data_dims):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
@@ -117,8 +121,8 @@ class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
         of the form `a * {index} + b`.
     """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
 
         params = variable_context[-1]
         defined_vars = variable_context[-2]
@@ -198,9 +202,13 @@ class AffineSMemlet(SeparableMemletPattern):
 
             node_rb, node_re, node_rs = node_range[self.paramind]
             if node_rs != 1:
-                # Map ranges where the last index is not known
-                # exactly are not supported by this pattern.
-                return False
+                # Special case: i:i+stride for a begin:end:stride range
+                if bre + 1 == node_rs and step == 1:
+                    pass
+                else:
+                    # Map ranges where the last index is not known
+                    # exactly are not supported by this pattern.
+                    return False
             if (any(s not in defined_vars for s in node_rb.free_symbols)
                     or any(s not in defined_vars
                            for s in node_re.free_symbols)):
@@ -242,6 +250,11 @@ class AffineSMemlet(SeparableMemletPattern):
 
         result_begin = rb.subs(self.param, node_rb).expand()
         result_end = re.subs(self.param, node_re).expand()
+
+        # Special case: i:i+stride for a begin:end:stride range
+        if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1
+                and rt == 1):
+            return (node_rb, node_re, 1, 1)
 
         # Experimental
         # This should be using sympy.floor
@@ -297,8 +310,8 @@ class ModuloSMemlet(SeparableMemletPattern):
 
         Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
     """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         # Pattern does not support unions of expressions
         if len(dim_exprs) > 1: return False
         dexpr = dim_exprs[0]
@@ -320,8 +333,9 @@ class ModuloSMemlet(SeparableMemletPattern):
         self.subpattern = None
         for pattern_class in SeparableMemletPattern.s_smpatterns:
             smpattern = pattern_class()
-            if smpattern.match([self.subexpr], variable_context, node_range,
-                               orig_edges, dim_index, total_dims):
+            if smpattern.can_be_applied([self.subexpr], variable_context,
+                                        node_range, orig_edges, dim_index,
+                                        total_dims):
                 self.subpattern = smpattern
 
         return self.subpattern is not None
@@ -351,8 +365,8 @@ class ConstantSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
     """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         # Pattern does not support unions of expressions. TODO: Support
         if len(dim_exprs) > 1: return False
         dexpr = dim_exprs[0]
@@ -395,8 +409,8 @@ class ConstantSMemlet(SeparableMemletPattern):
 class GenericSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that detects any expression, and propagates 
         interval bounds. Used as a last resort. """
-    def match(self, dim_exprs, variable_context, node_range, orig_edges,
-              dim_index, total_dims):
+    def can_be_applied(self, dim_exprs, variable_context, node_range,
+                       orig_edges, dim_index, total_dims):
         dims = []
         for dim in dim_exprs:
             if isinstance(dim, tuple):
@@ -494,7 +508,8 @@ def _subexpr(dexpr, repldict):
 class ConstantRangeMemlet(MemletPattern):
     """ Memlet pattern that matches arbitrary expressions with constant range.
     """
-    def match(self, expressions, variable_context, node_range, orig_edges):
+    def can_be_applied(self, expressions, variable_context, node_range,
+                       orig_edges):
         constant_range = True
         for dim in node_range:
             for rngelem in dim:  # For (begin, end, skip)
@@ -532,17 +547,17 @@ class ConstantRangeMemlet(MemletPattern):
 
 def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
-        @note: This is an in-place operation on the SDFG.
+        :note: This is an in-place operation on the SDFG.
     """
     for state in sdfg.nodes():
-        _propagate_labels(state, sdfg)
+        propagate_memlets_state(sdfg, state)
 
 
-def _propagate_labels(g, sdfg):
+def propagate_memlets_state(sdfg, state):
     """ Propagates memlets throughout one SDFG state. 
-        :param g: The state to propagate in.
         :param sdfg: The SDFG in which the state is situated.
-        @note: This is an in-place operation on the SDFG state.
+        :param state: The state to propagate in.
+        :note: This is an in-place operation on the SDFG state.
     """
     # Algorithm:
     # 1. Start propagating information from tasklets outwards (their edges
@@ -568,14 +583,32 @@ def _propagate_labels(g, sdfg):
     #    Accumulate information about each array in the target node.
 
     # First, propagate nested SDFGs in a bottom-up fashion
-    for node in g.nodes():
+    for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
             propagate_memlets_sdfg(node.sdfg)
 
-    scopes_to_process = g.scope_leaves()
+    # Process scopes from the leaves upwards
+    propagate_memlets_scope(sdfg, state, state.scope_leaves())
+
+
+def propagate_memlets_scope(sdfg, state, scopes):
+    """ 
+    Propagate memlets from the given scopes outwards. 
+    :param sdfg: The SDFG in which the scopes reside.
+    :param state: The SDFG state in which the scopes reside.
+    :param scopes: The ScopeTree object or a list thereof to start from.
+    :note: This operation is performed in-place on the given SDFG.
+    """
+    from dace.sdfg.scope import ScopeTree
+
+    if isinstance(scopes, ScopeTree):
+        scopes_to_process = [scopes]
+    else:
+        scopes_to_process = scopes
+
     next_scopes = set()
 
-    # Process scopes from the leaves upwards, propagating edges at the
+    # Process scopes from the inputs upwards, propagating edges at the
     # entry and exit nodes
     while len(scopes_to_process) > 0:
         for scope in scopes_to_process:
@@ -583,10 +616,10 @@ def _propagate_labels(g, sdfg):
                 continue
 
             # Propagate out of entry
-            _propagate_node(g, scope.entry)
+            _propagate_node(state, scope.entry)
 
             # Propagate out of exit
-            _propagate_node(g, scope.exit)
+            _propagate_node(state, scope.exit)
 
             # Add parent to next frontier
             next_scopes.add(scope.parent)
@@ -682,70 +715,106 @@ def propagate_memlet(dfg_state,
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
-
-        variable_context = [
-            defined_vars,
-            [symbolic.pystr_to_symbolic(p) for p in mapnode.params]
-        ]
-
-        new_subset = None
-        for md in aggdata:
-            tmp_subset = None
-            for pclass in MemletPattern.extensions():
-                pattern = pclass()
-                if pattern.match([md.subset], variable_context, mapnode.range,
-                                 [md]):
-                    tmp_subset = pattern.propagate(arr, [md.subset],
-                                                   mapnode.range)
-                    break
-            else:
-                # No patterns found. Emit a warning and propagate the entire
-                # array
-                warnings.warn('Cannot find appropriate memlet pattern to '
-                              'propagate %s through %s' %
-                              (str(md.subset), str(mapnode.range)))
-                tmp_subset = subsets.Range.from_array(arr)
-
-            # Union edges as necessary
-            if new_subset is None:
-                new_subset = tmp_subset
-            else:
-                old_subset = new_subset
-                new_subset = subsets.union(new_subset, tmp_subset)
-                if new_subset is None:
-                    warnings.warn('Subset union failed between %s and %s ' %
-                                  (old_subset, tmp_subset))
-                    break
-
-        # Some unions failed
-        if new_subset is None:
-            new_subset = subsets.Range.from_array(arr)
-
-        assert new_subset is not None
+        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range,
+                                defined_vars)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
-        new_subset = subsets.Range.from_array(arr)
+        new_memlet = copy.copy(memlet)
+        new_memlet.subset = subsets.Range.from_array(arr)
+        new_memlet.other_subset = None
+        new_memlet.volume = 0
+        new_memlet.dynamic = True
+        return new_memlet
     else:
         raise NotImplementedError('Unimplemented primitive: %s' %
                                   type(entry_node))
+
+
+# External API
+def propagate_subset(
+        memlets: List[Memlet],
+        arr: data.Data,
+        params: List[str],
+        rng: subsets.Subset,
+        defined_variables: Set[symbolic.SymbolicType] = None) -> Memlet:
+    """ Tries to propagate a list of memlets through a range (computes the 
+        image of the memlet function applied on an integer set of, e.g., a 
+        map range) and returns a new memlet object.
+        :param memlets: The memlets to propagate.
+        :param arr: Array descriptor for memlet (used for obtaining extents).
+        :param params: A list of variable names.
+        :param rng: A subset with dimensionality len(params) that contains the
+                    range to propagate with.
+        :param defined_variables: A set of symbols defined that will remain the
+                                  same throughout propagation. If None, assumes
+                                  that all symbols outside of `params` have been
+                                  defined.
+        :return: Memlet with propagated subset and volume.
+    """
+    # Argument handling
+    if defined_variables is None:
+        # Default defined variables is "everything but params"
+        defined_variables = set()
+        defined_variables |= rng.free_symbols
+        for memlet in memlets:
+            defined_variables |= memlet.free_symbols
+        defined_variables -= set(params)
+        defined_variables = set(
+            symbolic.pystr_to_symbolic(p) for p in defined_variables)
+
+    # Propagate subset
+    variable_context = [
+        defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]
+    ]
+
+    new_subset = None
+    for md in memlets:
+        tmp_subset = None
+        for pclass in MemletPattern.extensions():
+            pattern = pclass()
+            if pattern.can_be_applied([md.subset], variable_context, rng, [md]):
+                tmp_subset = pattern.propagate(arr, [md.subset], rng)
+                break
+        else:
+            # No patterns found. Emit a warning and propagate the entire
+            # array
+            warnings.warn('Cannot find appropriate memlet pattern to '
+                          'propagate %s through %s' %
+                          (str(md.subset), str(rng)))
+            tmp_subset = subsets.Range.from_array(arr)
+
+        # Union edges as necessary
+        if new_subset is None:
+            new_subset = tmp_subset
+        else:
+            old_subset = new_subset
+            new_subset = subsets.union(new_subset, tmp_subset)
+            if new_subset is None:
+                warnings.warn('Subset union failed between %s and %s ' %
+                              (old_subset, tmp_subset))
+                break
+
+    # Some unions failed
+    if new_subset is None:
+        new_subset = subsets.Range.from_array(arr)
     ### End of subset propagation
 
-    new_memlet = copy.copy(memlet)
+    # Create new memlet
+    new_memlet = copy.copy(memlets[0])
     new_memlet.subset = new_subset
     new_memlet.other_subset = None
 
+    # Propagate volume:
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set (unbounded dynamic)
-    new_memlet.num_accesses = (
-        sum(m.num_accesses for m in aggdata) *
-        functools.reduce(lambda a, b: a * b, scope_node.map.range.size(), 1))
-    if any(m.dynamic for m in aggdata):
+    new_memlet.volume = (sum(m.volume for m in memlets) *
+                         functools.reduce(lambda a, b: a * b, rng.size(), 1))
+    if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
-    elif symbolic.issymbolic(new_memlet.num_accesses) and any(
-            s not in defined_vars
-            for s in new_memlet.num_accesses.free_symbols):
+    elif symbolic.issymbolic(new_memlet.volume) and any(
+            s not in defined_variables for s in new_memlet.volume.free_symbols):
         new_memlet.dynamic = True
-        new_memlet.num_accesses = 0
+        new_memlet.volume = 0
 
     return new_memlet

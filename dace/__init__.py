@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import sys
+from .version import __version__
 from .dtypes import *
 
 # Python frontend

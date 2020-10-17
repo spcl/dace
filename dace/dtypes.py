@@ -150,6 +150,7 @@ _CTYPES = {
     None: "void",
     int: "int",
     float: "float",
+    complex: "dace::complex64",
     bool: "bool",
     numpy.bool: "bool",
     numpy.int8: "char",
@@ -210,6 +211,7 @@ _FFI_CTYPES = {
     None: ctypes.c_void_p,
     int: ctypes.c_int,
     float: ctypes.c_float,
+    complex: ctypes.c_uint64,
     bool: ctypes.c_bool,
     numpy.bool: ctypes.c_bool,
     numpy.int8: ctypes.c_int8,
@@ -232,6 +234,7 @@ _BYTES = {
     None: 0,
     int: 4,
     float: 4,
+    complex: 8,
     bool: 1,
     numpy.bool: 1,
     numpy.int8: 1,
@@ -286,7 +289,14 @@ class typeclass(object):
                     "Unknown configuration for default_data_types: {}".format(
                         config_data_types))
         elif wrapped_type is complex:
-            wrapped_type = numpy.complex128
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.complex128
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.complex64
+            else:
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -814,7 +824,41 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
+# Helper function to determine whether a global variable is a constant
+_CONSTANT_TYPES = [
+    int,
+    float,
+    complex,
+    str,
+    bool,
+    numpy.bool_,
+    numpy.intc,
+    numpy.intp,
+    numpy.int8,
+    numpy.int16,
+    numpy.int32,
+    numpy.int64,
+    numpy.uint8,
+    numpy.uint16,
+    numpy.uint32,
+    numpy.uint64,
+    numpy.float16,
+    numpy.float32,
+    numpy.float64,
+    numpy.complex64,
+    numpy.complex128,
+    typeclass,  # , type
+]
+
+
+def isconstant(var):
+    """ Returns True if a variable is designated a constant (i.e., that can be
+        directly generated in code). """
+    return type(var) in _CONSTANT_TYPES
+
+
 bool = typeclass(numpy.bool)
+bool_ = typeclass(numpy.int8)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -830,11 +874,11 @@ complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
 DTYPE_TO_TYPECLASS = {
-    int: int32,
-    float: float32,
-    bool: uint8,
-    numpy.bool: uint8,
-    numpy.bool_: bool,
+    int: typeclass(int),
+    float: typeclass(float),
+    complex: typeclass(complex),
+    numpy.bool: bool,
+    numpy.bool_: bool_,
     numpy.int8: int8,
     numpy.int16: int16,
     numpy.int32: int32,
@@ -868,37 +912,6 @@ TYPECLASS_STRINGS = [
 
 #######################################################
 # Allowed types
-
-# Helper function to determine whether a global variable is a constant
-_CONSTANT_TYPES = [
-    int,
-    float,
-    complex,
-    str,
-    numpy.intc,
-    numpy.intp,
-    numpy.int8,
-    numpy.int16,
-    numpy.int32,
-    numpy.int64,
-    numpy.uint8,
-    numpy.uint16,
-    numpy.uint32,
-    numpy.uint64,
-    numpy.float16,
-    numpy.float32,
-    numpy.float64,
-    numpy.complex64,
-    numpy.complex128,
-    typeclass,  # , type
-]
-
-
-def isconstant(var):
-    """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code). """
-    return type(var) in _CONSTANT_TYPES
-
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
 _ALLOWED_MODULES = {

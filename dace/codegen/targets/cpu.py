@@ -13,7 +13,7 @@ from dace.codegen.targets import rtl
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, \
     DefinedType
 from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
-                                         DefinedType)
+                                         DefinedType, TargetDispatcher)
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
@@ -33,7 +33,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
-        self._dispatcher = frame_codegen.dispatcher
+        self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
         dispatcher = self._dispatcher
 
@@ -891,9 +891,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # FIXME: _packed_types influences how this offset is
             # generated from the FPGA codegen. We should find a nicer solution.
             if self._packed_types is True:
-                offset = cpp_array_expr(sdfg, memlet, False)
+                offset = cpp.cpp_array_expr(sdfg, memlet, False)
             else:
-                offset = cpp_array_expr(sdfg, memlet, False)
+                offset = cpp.cpp_array_expr(sdfg, memlet, False)
 
             # Compute address
             memlet_params.append(memlet_expr + " + " + offset)
@@ -1191,9 +1191,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
 
-                codegen.define_out_memlet(sdfg, state_dfg, state_id, node,
-                                          dst_node, edge, function_stream,
-                                          inner_stream)
+                self._dispatcher.dispatch_output_definition(
+                    node, dst_node, edge, sdfg, state_dfg, state_id,
+                     function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
@@ -1340,11 +1340,6 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
 
-    def _generate_EmptyTasklet(self, sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream):
-        self._generate_Tasklet(sdfg, dfg, state_id, node, function_stream,
-                               callsite_stream)
-
     def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
                               sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
@@ -1432,8 +1427,10 @@ class CPUCodeGen(TargetCodeGenerator):
         self._toplevel_schedule = node.schedule
 
         # Generate code for internal SDFG
-        global_code, local_code, used_targets, used_environments = self._frame.generate_code(
-            node.sdfg, node.schedule, sdfg_label)
+        (global_code, local_code, used_targets,
+         used_environments) = self._frame.generate_code(node.sdfg,
+                                                        node.schedule,
+                                                        sdfg_label)
         self._dispatcher._used_environments |= used_environments
 
         self._toplevel_schedule = old_schedule
