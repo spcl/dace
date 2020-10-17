@@ -67,7 +67,7 @@ class Transformation(object):
     expr_index = Property(dtype=int, category="(Debug)")
 
     @staticmethod
-    def annotates_memlets():
+    def annotates_memlets() -> bool:
         """ Indicates whether the transformation annotates the edges it creates
             or modifies with the appropriate memlets. This determines
             whether to apply memlet propagation after the transformation.
@@ -75,7 +75,7 @@ class Transformation(object):
         return False
 
     @staticmethod
-    def expressions():
+    def expressions() -> List[SubgraphView]:
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
@@ -84,7 +84,11 @@ class Transformation(object):
         raise NotImplementedError
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph: Union[SDFG, SDFGState],
+                       candidate: Dict['PatternNode', int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
             :param graph: SDFGState object if this Transformation is
@@ -101,18 +105,31 @@ class Transformation(object):
         """
         raise NotImplementedError
 
+    def apply(self, sdfg: SDFG) -> Union[Any, None]:
+        """
+        Applies this transformation instance on the matched pattern graph.
+        :param sdfg: The SDFG to apply the transformation to.
+        :return: A transformation-defined return value, which could be used
+                 to pass analysis data out, or nothing.
+        """
+        raise NotImplementedError
+
     @staticmethod
-    def match_to_str(graph, candidate):
+    def match_to_str(graph: Union[SDFG, SDFGState],
+                     candidate: Dict['PatternNode', int]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
             UI.
         """
         return str(list(candidate.values()))
 
-    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
-        """ Initializes an instance of Transformation.
+    def __init__(self, sdfg_id: int, state_id: int,
+                 subgraph: Dict['PatternNode', int], expr_index: int) -> None:
+        """ Initializes an instance of Transformation match.
             :param sdfg_id: A unique ID of the SDFG.
-            :param state_id: The node ID of the SDFG state, if applicable.
+            :param state_id: The node ID of the SDFG state, if applicable. If
+                             transformation does not operate on a single state,
+                             the value should be -1.
             :param subgraph: A mapping between node IDs returned from
                              `Transformation.expressions` and the nodes in
                              `graph`.
@@ -122,7 +139,7 @@ class Transformation(object):
                               Transformation.
             :raise TypeError: When state_id is not instance of int.
             :raise TypeError: When subgraph is not a dict of
-                              dace.sdfg.nodes.Node : int.
+                              PatternNode : int.
         """
 
         self.sdfg_id = sdfg_id
@@ -142,23 +159,27 @@ class Transformation(object):
     @property
     def subgraph(self):
         return self._subgraph_user
-
-    def query_node(
-        self, sdfg: SDFG, pattern_node: Union[nd.Node, SDFGState]
-    ) -> Union[nd.Node, SDFGState]:
+    def apply_pattern(self, sdfg: SDFG) -> Union[Any, None]:
         """ 
-        Returns the matched node object (from a subgraph pattern node) in its
-        original graph.
-        :param sdfg: The SDFG on which this transformation is applied.
-        :param pattern_node: The node object in the transformation properties.
-        :return: The node object in the matched graph.
+        Applies this transformation on the given SDFG, using the transformation
+        instance to find the right SDFG object (based on SDFG ID), and applying
+        memlet propagation as necessary.
+        :param sdfg: The SDFG (or an SDFG in the same hierarchy) to apply the
+                     transformation to.
+        :return: A transformation-defined return value, which could be used
+                 to pass analysis data out, or nothing.
         """
-        graph = sdfg if self.state_id == -1 else sdfg.node(self.state_id)
-        return graph.node(self.subgraph[pattern_node])
+        tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
+        sdfg.append_transformation(self)
+        retval = self.apply(tsdfg)
+        if not self.annotates_memlets():
+            propagation.propagate_memlets_sdfg(tsdfg)
+        return retval
 
-    def __lt__(self, other):
-        """ Comparing two transformations by their class name and node IDs
-            in match. Used for ordering transformations consistently.
+    def __lt__(self, other: 'Transformation') -> bool:
+        """ 
+        Comparing two transformations by their class name and node IDs
+        in match. Used for ordering transformations consistently.
         """
         if type(self) != type(other):
             return type(self).__name__ < type(other).__name__
@@ -193,18 +214,17 @@ class Transformation(object):
             if self_end:
                 return True
 
-    def apply_pattern(self, sdfg):
-        """ Applies this transformation on the given SDFG. """
-        sdfg.append_transformation(self)
-        self.apply(sdfg)
-        if not self.annotates_memlets():
-            propagation.propagate_memlets_sdfg(sdfg)
-
     @classmethod
-    def _get_pattern_nodes(cls) -> Dict[str, PatternNode]:
+    def _get_pattern_nodes(cls) -> Dict[str, 'PatternNode']:
+        """ 
+        Returns a dictionary of pattern-matching node in this transformation
+        subclass. Used internally for pattern-matching.
+        :return: A dictionary mapping between pattern-node name and its type.
+        """
         return {
             k: v
-            for k, v in cls.__dict__.items() if isinstance(v, PatternNode)
+            for k, v in cls.__dict__.items() if isinstance(v, PatternNode) or (
+                k.startswith('_') and isinstance(v, (nd.Node, SDFGState)))
         }
 
     @classmethod
@@ -257,9 +277,9 @@ class Transformation(object):
         # Check that all nodes in the pattern are set
         required_nodes = cls.expressions()[expr_index].nodes()
         required_node_names = {
-            pname[1:]: pval
-            for pname, pval in cls.__dict__.items()
-            if pname.startswith('_') and pval in required_nodes
+            pname: pval
+            for pname, pval in cls._get_pattern_nodes().items()
+            if pval in required_nodes
         }
         required = set(required_node_names.keys())
         intersection = required & set(where.keys())
@@ -288,9 +308,9 @@ class Transformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        instance.apply_pattern(sdfg)
+        return instance.apply_pattern(sdfg)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return type(self).__name__
 
     def print_match(self, sdfg: SDFG) -> str:
@@ -308,7 +328,7 @@ class Transformation(object):
         string += type(self).match_to_str(graph, self.subgraph)
         return string
 
-    def to_json(self, parent=None):
+    def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {
             'type': 'Transformation',
@@ -317,7 +337,7 @@ class Transformation(object):
         }
 
     @staticmethod
-    def from_json(json_obj, context=None):
+    def from_json(json_obj, context=None) -> 'Transformation':
         xform = next(ext for ext in Transformation.extensions().keys()
                      if ext.__name__ == json_obj['transformation'])
 
