@@ -7,7 +7,7 @@ from dace.sdfg import graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Dict, Iterator, List, Tuple, Type, Union
-from dace.transformation.transformation import Transformation
+from dace.transformation.transformation import Transformation, PatternNode
 
 
 def collapse_multigraph_to_nx(
@@ -61,6 +61,10 @@ def type_match(node_a, node_b):
         :raise KeyError: When at least one of the inputs is a dictionary,
                          but does not have a 'node' key.
     """
+    if isinstance(node_b['node'], PatternNode):
+        return isinstance(node_a['node'], node_b['node'].node)
+    elif isinstance(node_a['node'], PatternNode):
+        return isinstance(node_b['node'], node_a['node'].node)
     return isinstance(node_a['node'], type(node_b['node']))
 
 
@@ -85,6 +89,10 @@ def type_or_class_match(node_a, node_b):
         return issubclass(type(node_a['node']), node_b['node'])
     elif isinstance(node_a['node'], type):
         return issubclass(type(node_b['node']), node_a['node'])
+    elif isinstance(node_b['node'], PatternNode):
+        return isinstance(node_a['node'], node_b['node'].node)
+    elif isinstance(node_a['node'], PatternNode):
+        return isinstance(node_b['node'], node_a['node'].node)
     return isinstance(node_a['node'], type(node_b['node']))
 
 
