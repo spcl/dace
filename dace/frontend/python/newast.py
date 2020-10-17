@@ -259,18 +259,18 @@ def _disallow_stmt(visitor, node):
 ###############################################################
 
 
-def _subset_has_indirection(subset, PVisitor: 'ProgramVisitor' = None):
+def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
     for dim in subset:
         if not isinstance(dim, tuple):
             dim = [dim]
         for r in dim:
             if symbolic.contains_sympy_functions(r):
                 return True
-            if PVisitor:
+            if pvisitor:
                 for s in r.free_symbols:
                     try:
-                        name = PVisitor._visitname(str(s), None)
-                        if name in PVisitor.sdfg.arrays:
+                        name = pvisitor._visitname(str(s), None)
+                        if name in pvisitor.sdfg.arrays:
                             return True
                     except DaceSyntaxError:
                         continue
@@ -283,7 +283,7 @@ def add_indirection_subgraph(sdfg: SDFG,
                              dst: nodes.Node,
                              memlet: Memlet,
                              local_name: str,
-                             PVisitor: 'ProgramVisitor',
+                             pvisitor: 'ProgramVisitor',
                              output: bool = False):
     """ Replaces the specified edge in the specified graph with a subgraph that
         implements indirection without nested memlet subsets. """
@@ -319,10 +319,10 @@ def add_indirection_subgraph(sdfg: SDFG,
                     fname = expr.func.__name__
                 else:
                     try:
-                        rname = PVisitor._visitname(str(expr), None)
+                        rname = pvisitor._visitname(str(expr), None)
                     except DaceSyntaxError:
                         continue
-                    if rname in PVisitor.sdfg.arrays:
+                    if rname in pvisitor.sdfg.arrays:
                         fname = rname
                 if fname:
                     if fname not in accesses:
@@ -377,7 +377,7 @@ def add_indirection_subgraph(sdfg: SDFG,
             '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
             for i, (s, e, t) in enumerate(rng)
         },
-                                            debuginfo=PVisitor.current_lineinfo)
+                                            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -392,15 +392,15 @@ def add_indirection_subgraph(sdfg: SDFG,
             if not isinstance(access, (list, tuple)):
                 access = [access]
             conn = None
-            if PVisitor.nested:
+            if pvisitor.nested:
                 # TODO: Make this work for nested for-loops
                 arr_rng = dace.subsets.Range([(a, a, 1) for a in access])
                 if output:
-                    arrname, rng = PVisitor._add_write_access(arr_name,
+                    arrname, rng = pvisitor._add_write_access(arr_name,
                                                             arr_rng,
                                                             target=None)
                 else:
-                    arrname, rng = PVisitor._add_read_access(arr_name,
+                    arrname, rng = pvisitor._add_read_access(arr_name,
                                                            arr_rng,
                                                            target=None)
                 conn = 'index_%s_%d' % (arr_name, i)
@@ -412,8 +412,8 @@ def add_indirection_subgraph(sdfg: SDFG,
             indexMemlet = Memlet.simple(arrname, subset)
             input_index_memlets.append(indexMemlet)
             read_node = graph.add_read(arrname,
-                                       debuginfo=PVisitor.current_lineinfo)
-            if PVisitor.nested or not isinstance(src, nodes.EntryNode):
+                                       debuginfo=pvisitor.current_lineinfo)
+            if pvisitor.nested or not isinstance(src, nodes.EntryNode):
                 path = [read_node] + inp_base_path
             else:
                 if output:
@@ -482,15 +482,15 @@ def add_indirection_subgraph(sdfg: SDFG,
     if src is None:
         if start_src:
             src = graph.add_access(tmp_name,
-                                   debuginfo=PVisitor.current_lineinfo)
+                                   debuginfo=pvisitor.current_lineinfo)
         else:
-            src = graph.add_read(tmp_name, debuginfo=PVisitor.current_lineinfo)
+            src = graph.add_read(tmp_name, debuginfo=pvisitor.current_lineinfo)
     elif dst is None:
         if end_dst:
             dst = graph.add_access(tmp_name,
-                                   debuginfo=PVisitor.current_lineinfo)
+                                   debuginfo=pvisitor.current_lineinfo)
         else:
-            dst = graph.add_write(tmp_name, debuginfo=PVisitor.current_lineinfo)
+            dst = graph.add_write(tmp_name, debuginfo=pvisitor.current_lineinfo)
 
     tmp_shape = storage.shape
     indirectRange = subsets.Range([(0, s - 1, 1) for s in tmp_shape])
@@ -507,7 +507,7 @@ def add_indirection_subgraph(sdfg: SDFG,
     if output:
         if isinstance(dst, nodes.ExitNode):
             full_write_node = graph.add_write(
-                memlet.data, debuginfo=PVisitor.current_lineinfo)
+                memlet.data, debuginfo=pvisitor.current_lineinfo)
             path = out_base_path + [dst, full_write_node]
         elif isinstance(dst, nodes.AccessNode):
             path = out_base_path + [dst]
@@ -519,7 +519,7 @@ def add_indirection_subgraph(sdfg: SDFG,
     else:
         if isinstance(src, nodes.EntryNode):
             full_read_node = graph.add_read(memlet.data,
-                                            debuginfo=PVisitor.current_lineinfo)
+                                            debuginfo=pvisitor.current_lineinfo)
             path = [full_read_node, src] + inp_base_path
         elif isinstance(src, nodes.AccessNode):
             path = [src] + inp_base_path
@@ -2576,11 +2576,6 @@ class ProgramVisitor(ExtNodeVisitor):
         self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
 
         inner_indices = set(non_squeezed)
-        # From TaskletTransformer
-        # inner_indices = set()
-        # for n, r in reversed(list(enumerate(squeezed_rng))):
-        #     if r == rng[n]:
-        #         inner_indices.add(n)
 
         if access_type == 'r':
             if _subset_has_indirection(rng, self):
@@ -2596,13 +2591,6 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 self.outputs[var_name] = (dace.Memlet.simple(
                     parent_name, rng), inner_indices)
-
-        # if access_type == 'r':
-        #     self.inputs[var_name] = (dace.Memlet.simple(parent_name,
-        #                                                 rng), inner_indices)
-        # else:
-        #     self.outputs[var_name] = (dace.Memlet.simple(parent_name,
-        #                                                  rng), inner_indices)
 
         return (var_name, squeezed_rng)
 
