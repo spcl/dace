@@ -18,7 +18,7 @@ state = sdfg.add_state()
 sdfg.add_array('A', [1], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
 
-# disable debugging output
+# enable debugging output
 sdfg.add_constant("DEBUG", 1)
 
 # add parameters
@@ -50,7 +50,7 @@ tasklet = state.add_tasklet(
         end else if (valid_i) begin // case: load a 
             b <= a;
             ready_o <= 1'b0;
-        end if (b < MAX_VAL) // case: increment counter b
+        end else if (b < MAX_VAL) // case: increment counter b
             b <= b + 1;
         else
             b <= b; 
