@@ -15,6 +15,8 @@ from typing import Any, Dict, List
 import numpy as np
 import sympy as sp
 import warnings
+from os import listdir
+from os.path import isfile, join
 
 import dace
 from dace.frontend import operations
@@ -413,14 +415,13 @@ def generate_program_folder(sdfg,
         :return: Path to the program folder.
     """
 
+    # add rtl files to filelist: TODO: proper implementation
+    filelist = list()
     src_path = os.path.join(out_path, "src")
-
     os.makedirs(src_path, exist_ok=True)
-
-    from os import listdir
-    from os.path import isfile, join
     rtl_src_path = os.path.join(src_path, "rtl")
-    filelist = ["{},{},{}".format("rtl", "", f) for f in listdir(rtl_src_path) if isfile(join(rtl_src_path, f))]
+    if os.path.exists(rtl_src_path):
+        filelist = ["{},{},{}".format("rtl", "", f) for f in listdir(rtl_src_path) if isfile(join(rtl_src_path, f))]
 
     # Write each code object to a file
     for code_object in code_objects:
