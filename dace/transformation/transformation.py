@@ -156,9 +156,25 @@ class Transformation(object):
         self._subgraph_user = subgraph
         self.expr_index = expr_index
 
+        # Ease-of-use API: Set new pattern-nodes with information about this
+        # instance.
+        for pname, pval in self._get_pattern_nodes().items():
+            # Create new pattern node from existing field
+            new_pnode = PatternNode(
+                pval.node if isinstance(pval, PatternNode) else type(pval))
+            new_pnode.match_instance = self
+
+            # Append existing values in subgraph dictionary
+            if pval in self._subgraph_user:
+                self._subgraph_user[new_pnode] = self._subgraph_user[pval]
+
+            # Override static field with the new node in this instance only
+            setattr(self, pname, new_pnode)
+
     @property
     def subgraph(self):
         return self._subgraph_user
+
     def apply_pattern(self, sdfg: SDFG) -> Union[Any, None]:
         """ 
         Applies this transformation on the given SDFG, using the transformation
@@ -222,9 +238,10 @@ class Transformation(object):
         :return: A dictionary mapping between pattern-node name and its type.
         """
         return {
-            k: v
-            for k, v in cls.__dict__.items() if isinstance(v, PatternNode) or (
-                k.startswith('_') and isinstance(v, (nd.Node, SDFGState)))
+            k: getattr(cls, k)
+            for k in dir(cls)
+            if isinstance(getattr(cls, k), PatternNode) or (k.startswith(
+                '_') and isinstance(getattr(cls, k), (nd.Node, SDFGState)))
         }
 
     @classmethod
@@ -386,6 +403,30 @@ class PatternNode(object):
                           or a node type in a state).
         """
         self.node = nodeclass
+        self.match_instance: Optional[Transformation] = None
+
+    def __call__(self, sdfg: SDFG) -> Union[nd.Node, SDFGState]:
+        """
+        Returns the matched node corresponding to this pattern node in the
+        given SDFG. Requires the match (Transformation class) instance to
+        be set.
+        :param sdfg: The SDFG on which the transformation was applied.
+        :return: The SDFG state or node that corresponds to this pattern node
+                 in the given SDFG.
+        :raise ValueError: If the transformation match instance is not set.
+        """
+        if self.match_instance is None:
+            raise ValueError('Cannot query matched node. Transformation '
+                             'instance not initialized')
+        node_id: int = self.match_instance.subgraph[self]
+        state_id: int = self.match_instance.state_id
+
+        # Inter-state transformation
+        if state_id == -1:
+            return sdfg.node(node_id)
+
+        # Single-state transformation
+        return sdfg.node(state_id).node(node_id)
 
 
 class ExpandTransformation(Transformation):
