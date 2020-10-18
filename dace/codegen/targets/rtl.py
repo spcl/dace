@@ -1,5 +1,5 @@
 import dace
-from dace import registry
+from dace import registry, symbolic
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
 import dace.codegen.prettycode
@@ -152,10 +152,20 @@ endmodule
         for inp in tasklet.in_connectors:
             # add vector index
             idx_str = ""
-            if tasklet.in_connectors[inp].veclen > 1:
-                idx_str = "[{}:0]".format(tasklet.in_connectors[inp].veclen-1)
+            # catch symbolic (compile time variables)
+            if symbolic.issymbolic(tasklet.in_connectors[inp].veclen, sdfg.constants):
+                pass
+                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
+            if symbolic.issymbolic(tasklet.in_connectors[inp].bytes, sdfg.constants):
+                pass
+                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
+            vec_len = int(symbolic.evaluate(tasklet.in_connectors[inp].veclen, sdfg.constants))
+            total_size = int(symbolic.evaluate(tasklet.in_connectors[inp].bytes, sdfg.constants))
+
+            if vec_len > 1:
+                idx_str = "[{}:0]".format(vec_len - 1)
             # add element index
-            idx_str += "[{}:0]".format(int(tasklet.in_connectors[inp].bytes / tasklet.in_connectors[inp].veclen) * 8 - 1)
+            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
             # generate padded string and add to list
             inputs.append(", input{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING-len(idx_str)),
                                                                     idx_str=idx_str,
@@ -166,7 +176,17 @@ endmodule
         for inp in tasklet.out_connectors:
             # add vector index
             idx_str = ""
-            if tasklet.out_connectors[inp].veclen > 1:
+            # catch symbolic (compile time variables)
+            if symbolic.issymbolic(tasklet.out_connectors[inp].veclen, sdfg.constants):
+                pass
+                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
+            if symbolic.issymbolic(tasklet.out_connectors[inp].bytes, sdfg.constants):
+                pass
+                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
+            vec_len = int(symbolic.evaluate(tasklet.out_connectors[inp].veclen, sdfg.constants))
+            total_size = int(symbolic.evaluate(tasklet.out_connectors[inp].bytes, sdfg.constants))
+
+            if vec_len > 1:
                 idx_str = "[{}:0]".format(tasklet.out_connectors[inp].veclen-1)
             # add element index
             idx_str += "[{}:0]".format(int(tasklet.out_connectors[inp].bytes / tasklet.out_connectors[inp].veclen) * 8 - 1)
