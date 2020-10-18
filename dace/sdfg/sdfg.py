@@ -279,9 +279,11 @@ class SDFG(OrderedDiGraph):
         """
         tmp = super().to_json()
 
+        # Convert all keys to strings
+        constants_prop = {str(k): tmp['attributes']['constants_prop'][k] for k in tmp['attributes']['constants_prop']}
+
         # Ensure properties are serialized correctly
-        tmp['attributes']['constants_prop'] = json.loads(
-            dace.serialize.dumps(tmp['attributes']['constants_prop']))
+        tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(constants_prop))
 
         # Location in the SDFG list
         self.reset_sdfg_list()
