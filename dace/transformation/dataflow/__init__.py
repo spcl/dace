@@ -21,6 +21,7 @@ from .local_storage import InLocalStorage, OutLocalStorage
 from .double_buffering import DoubleBuffering
 
 # Complexity reduction
+from .dedup_access import DeduplicateAccess
 from .redundant_array import RedundantArray, RedundantSecondArray
 from .redundant_array_copying import (RedundantArrayCopying,
                                       RedundantArrayCopying2,

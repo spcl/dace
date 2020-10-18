@@ -209,16 +209,17 @@ runall() {
     #runtestargs transformations/sfusion_sequential1_cudatest.py
     runtestargs transformations/subgraph_fusion/sequential2_cudatest.py
 
-
+    runtestargs half_cudatest.py
+    runtestargs halfvec_cudatest.py
+    runopt samples/customization/tensor_cores.py $1
+    
     ## BLAS library nodes
     # MKL
     runtestargs blas/nodes/axpy_test.py '--target MKL'
 
     # OpenBLAS
     runtestargs blas/nodes/axpy_test.py '--target OpenBLAS'
-
-
-    runopt samples/customization/tensor_cores.py $1
+    
 }
 
 
