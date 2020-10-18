@@ -153,7 +153,7 @@ class Transformation(object):
         # Serializable subgraph with node IDs as keys
         expr = self.expressions()[expr_index]
         self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
-        self._subgraph_user = subgraph
+        self._subgraph_user = copy.copy(subgraph)
         self.expr_index = expr_index
 
         # Ease-of-use API: Set new pattern-nodes with information about this
