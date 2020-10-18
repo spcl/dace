@@ -261,6 +261,6 @@ class MapWCRFusion(pm.Transformation):
             self.sdfg_id, self.state_id, {
                 MapFusion.first_map_exit:
                 self.subgraph[MapWCRFusion._tmap_exit],
-                MapFusion._second_map_entry: graph.node_id(map_entry)
+                MapFusion.second_map_entry: graph.node_id(map_entry)
             }, 0)
         map_fusion.apply(sdfg)
