@@ -583,8 +583,8 @@ class TransformationHistProperty(Property):
             return data
         if not isinstance(data, list):
             raise TypeError(
-                'TransformationHistProperty expects a list input, got %s' % data
-            )
+                'TransformationHistProperty expects a list input, got %s' %
+                data)
         return [dace.serialize.from_json(elem) for elem in data]
 
 
@@ -668,7 +668,10 @@ class DictProperty(Property):
                 for k, v in saved_dictionary.items()
             }
 
-        return saved_dictionary
+        # Sort by key before saving
+        return {k: v
+                for k, v in sorted(saved_dictionary.items())
+                } if None not in saved_dictionary else saved_dictionary
 
     @staticmethod
     def from_string(s):
