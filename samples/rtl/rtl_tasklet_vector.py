@@ -14,6 +14,9 @@ N = dace.symbol('N')
 # add sdfg
 sdfg = dace.SDFG('rtl_tasklet_demo')
 
+# define compile-time constant
+sdfg.specialize({N: 4})
+
 # add state
 state = sdfg.add_state()
 
@@ -50,7 +53,7 @@ tasklet = state.add_tasklet(
         end else if (valid_i) begin // case: load a 
             b <= a[31:0];
             ready_o <= 1'b0;
-        end if (b < 100) // case: increment counter b
+        end else if (b < 100) // case: increment counter b
             b <= b + 1;
         else
             b <= b; 
@@ -77,15 +80,14 @@ sdfg.validate()
 if __name__ == '__main__':
 
     # init data structures
-    n = 4
-    a = np.random.randint(0, 100, n).astype(np.int32)
+    a = np.random.randint(0, 100, dace.symbolic.evaluate(N, sdfg.constants)).astype(np.int32)
     b = np.random.randint(0, 100, 1).astype(np.int32)
 
     # show initial values
     print("a={}, b={}".format(a, b))
 
     # call program
-    sdfg(A=a, B=b, N=n)
+    sdfg(A=a, B=b)
 
     # show result
     print("a={}, b={}".format(a, b))
