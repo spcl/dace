@@ -5,7 +5,7 @@
 # Import MKL for BLAS testing
 export MKLROOT=/opt/intel/mkl
 export LD_LIBRARY_PATH=/opt/intel/compilers_and_libraries/linux/mkl/lib:$LD_LIBRARY_PATH
-export LIBRARY_PATH=/opt/intel/compilers_and_libraries/linux/mkl/lib:$LD_LIBRARY_PATH
+export LIBRARY_PATH=/opt/intel/compilers_and_libraries/linux/mkl/lib:$LIBRARY_PATH
 export CMAKE_PREFIX_PATH=/opt/intel/compilers_and_libraries/linux/mkl:$CMAKE_PREFIX_PATH
 export CPATH=/opt/intel/compilers_and_libraries/linux/mkl/include:$CPATH
 
