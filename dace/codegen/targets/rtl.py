@@ -143,7 +143,7 @@ endmodule
             parameter_string = """\
 #(
 {}
-)""".format("\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in
+)""".format(" " + "\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in
                        enumerate(sdfg.constants)]))
 
         # construct input / output module header
