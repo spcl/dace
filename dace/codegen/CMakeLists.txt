@@ -576,7 +576,7 @@ if(DACE_ENABLE_RTL)
   endif()
 
   # check minimal version requirements
-  set(VERILATOR_MIN_VERSION "4.039")
+  set(VERILATOR_MIN_VERSION "4.028")
   if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
     message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
@@ -589,7 +589,7 @@ if(DACE_ENABLE_RTL)
 
     # add verilated .cpp files
     set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
-    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Slow.cpp")
+    #set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Slow.cpp")
     set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
     set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
     set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
