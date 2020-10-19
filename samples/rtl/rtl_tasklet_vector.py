@@ -51,7 +51,7 @@ tasklet = state.add_tasklet(
             b <= 0;
             ready_o <= 1'b1;
         end else if (valid_i) begin // case: load a 
-            b <= a[31:0];
+            b <= a[0];
             ready_o <= 1'b0;
         end else if (b < 100) // case: increment counter b
             b <= b + 1;
