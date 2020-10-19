@@ -948,10 +948,17 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
 
 
 def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
+<<<<<<< HEAD
     """
     Returns True if two subsets intersect, False if they do not, or
     None if the answer cannot be determined.
 
+=======
+    """
+    Returns True if two subsets intersect, False if they do not, or
+    None if the answer cannot be determined.
+
+>>>>>>> upstream/master
     :param subset_a: The first subset.
     :param subset_b: The second subset.
     :return: True if subsets intersect, False if not, None if indeterminate.

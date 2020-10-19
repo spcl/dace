@@ -5,6 +5,7 @@ import ast
 import copy
 import itertools
 from functools import reduce
+from numbers import Number, Integral
 from typing import Any, Dict, Union, Callable, Tuple, List
 
 import dace
@@ -20,6 +21,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic
 
 import numpy as np
+import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
 ShapeTuple = Tuple[Size]
@@ -39,6 +41,8 @@ def _define_local_ex(sdfg: SDFG,
                      dtype: dace.typeclass,
                      storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local array in a DaCe program. """
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
     return name
 
@@ -239,6 +243,8 @@ def _simple_call(sdfg: SDFG,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
+    if isinstance(inpname, (list, tuple)):  # TODO investigate this
+        inpname = inpname[0]
     inparr = sdfg.arrays[inpname]
     if restype is None:
         restype = sdfg.arrays[inpname].dtype
@@ -380,6 +386,7 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.max')
+@oprepo.replaces('numpy.amax')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg,
                    state,
@@ -390,6 +397,7 @@ def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.min')
+@oprepo.replaces('numpy.amin')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg,
                    state,
@@ -420,7 +428,7 @@ def _argminmax(sdfg: SDFG,
 
     assert func in ['min', 'max']
 
-    if axis is None or type(axis) is not int:
+    if axis is None or not isinstance(axis, Integral):
         raise SyntaxError('Axis must be an int')
 
     a_arr = sdfg.arrays[a]
@@ -530,34 +538,6 @@ def _argminmax(sdfg: SDFG,
 # Python operation replacements ##############################################
 ##############################################################################
 
-
-def _assignop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
-    """ Implements a general element-wise array assignment operator. """
-    arr1 = sdfg.arrays[op1]
-
-    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
-    write_memlet = None
-    if opcode:
-        write_memlet = Memlet.simple(
-            name,
-            ','.join(['__i%d' % i for i in range(len(arr1.shape))]),
-            wcr_str='lambda x, y: x %s y' % opcode)
-    else:
-        write_memlet = Memlet.simple(
-            name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
-    state.add_mapped_tasklet(
-        "_%s_" % opname,
-        {'__i%d' % i: '0:%s' % s
-         for i, s in enumerate(arr1.shape)}, {
-             '__in1':
-             Memlet.simple(
-                 op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))
-         },
-        '__out = __in1', {'__out': write_memlet},
-        external_edges=True)
-    return name
-
-
 def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
@@ -662,16 +642,6 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
 
 
 # Defined as a function in order to include the op and the opcode in the closure
-def _makeassignop(op, opcode):
-    @oprepo.replaces_operator('Array', op)
-    def _op(visitor: 'ProgramVisitor',
-            sdfg: SDFG,
-            state: SDFGState,
-            op1: str,
-            op2=None):
-        return _assignop(sdfg, state, op1, opcode, op)
-
-
 def _makeunop(op, opcode):
     @oprepo.replaces_operator('Array', op)
     def _op(visitor: 'ProgramVisitor',
@@ -680,35 +650,97 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         return _unop(sdfg, state, op1, opcode, op)
+    
+    @oprepo.replaces_operator('Scalar', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: str,
+            op2=None):
+        scalar1 = sdfg.arrays[op1]
+        restype = scalar1.dtype
+        op2 = sdfg.temp_data_name()
+        _, scalar2 = sdfg.add_scalar(op2, restype, transient=True)
+        tasklet = state.add_tasklet("_%s_" % op, {'__in'}, {'__out'},
+                                    "__out = %s __in" % opcode)
+        node1 = state.add_read(op1)
+        node2 = state.add_write(op2)
+        state.add_edge(node1, None, tasklet, '__in',
+                       dace.Memlet.from_array(op1, scalar1))
+        state.add_edge(tasklet, '__out', node2, None,
+                        dace.Memlet.from_array(op2, scalar2))
+        return op2
+    
+    @oprepo.replaces_operator('NumConstant', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: Number,
+            op2=None):
+        expr = '{o}(op1)'.format(o=opcode)
+        vars = {'op1': op1}
+        return eval(expr, vars)
+
+    @oprepo.replaces_operator('BoolConstant', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: Number,
+            op2=None):
+        expr = '{o}(op1)'.format(o=opcode)
+        vars = {'op1': op1}
+        return eval(expr, vars) 
+    
+    @oprepo.replaces_operator('symbol', op)
+    def _op(visitor: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            op1: 'symbol',
+            op2=None):
+        expr = '{o}(op1)'.format(o=opcode)
+        vars = {'op1': op1}
+        return eval(expr, vars)  
 
 
-@oprepo.replaces_operator('int', 'USub', None)
-@oprepo.replaces_operator('float', 'USub', None)
-def _neg(visitor: 'ProgramVisitor',
-         sdfg: SDFG,
-         state: SDFGState,
-         op1: Union[int, float],
-         op2=None):
-    return -op1
+# @oprepo.replaces_operator('int', 'USub', None)
+# @oprepo.replaces_operator('float', 'USub', None)
+# def _neg(visitor: 'ProgramVisitor',
+#          sdfg: SDFG,
+#          state: SDFGState,
+#          op1: Union[int, float],
+#          op2=None):
+#     return -op1
 
 
-@oprepo.replaces_operator('symbol', 'Add', 'int')
-@oprepo.replaces_operator('symbol', 'Add', 'float')
-def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-            op1: symbolic.symbol, op2: Union[int, float]):
-    return op1 + op2
+# @oprepo.replaces_operator('symbol', 'Add', 'int')
+# @oprepo.replaces_operator('symbol', 'Add', 'float')
+# def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+#             op1: symbolic.symbol, op2: Union[int, float]):
+#     return op1 + op2
 
 
-@oprepo.replaces_operator('symbol', 'Gt', 'symbol')
-def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-           op1: symbolic.symbol, op2: Union[int, float]):
-    return op1 > op2
+# @oprepo.replaces_operator('symbol', 'Gt', 'symbol')
+# def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+#            op1: symbolic.symbol, op2: Union[int, float]):
+#     return op1 > op2
 
 
-def _is_scalar(sdfg: SDFG, arrname: str):
-    """ Checks whether array is pseudo-scalar (shape=(1,)). """
-    shape = sdfg.arrays[arrname].shape
-    if len(shape) == 1 and shape[0] == 1:
+# def _is_scalar(sdfg: SDFG, arrname: str):
+#     """ Checks whether array is pseudo-scalar (shape=(1,)). """
+#     shape = sdfg.arrays[arrname].shape
+#     if len(shape) == 1 and shape[0] == 1:
+#         return True
+#     return False
+
+
+def _is_op_arithmetic(op: str):
+    if op in {'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod'}:
+        return True
+    return False
+
+
+def _is_op_bitwise(op: str):
+    if op in {'LShift', 'RShift', 'BitOr', 'BitXor', 'BitAnd'}:
         return True
     return False
 
@@ -719,85 +751,682 @@ def _is_op_boolean(op: str):
     return False
 
 
-def _array_x_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-                   op1: str, op2: str, op: str, opcode: str):
+def _sym_type(expr: Union[symbolic.symbol, sp.Expr]) -> dtypes.typeclass:
+    if isinstance(expr, symbolic.symbol):
+        return expr.dtype
+    freesym = [s for s in expr.free_symbols]
+    if len(freesym) == 1:
+        return freesym[0].dtype
+    typeclasses = [s.dtype.type for s in freesym]
+    return dtypes.DTYPE_TO_TYPECLASS[np.result_type(*typeclasses).type]
 
-    arr1 = sdfg.arrays[op1]
-    type1 = arr1.dtype.type
-    isscal1 = _is_scalar(sdfg, op1)
-    isnum1 = isscal1 and (op1 in visitor.numbers.values())
-    if isnum1:
-        type1 = inverse_dict_lookup(visitor.numbers, op1)
-    arr2 = sdfg.arrays[op2]
-    type2 = arr2.dtype.type
-    isscal2 = _is_scalar(sdfg, op2)
-    isnum2 = isscal2 and (op2 in visitor.numbers.values())
-    if isnum2:
-        type2 = inverse_dict_lookup(visitor.numbers, op2)
-    if _is_op_boolean(op):
-        restype = dace.bool
-    else:
-        restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
 
-    if isscal1 and isscal2:
-        arr1 = sdfg.arrays[op1]
-        arr2 = sdfg.arrays[op2]
-        op3, arr3 = sdfg.add_temp_transient([1], restype, arr2.storage)
-        tasklet = state.add_tasklet('_SS%s_' % op, {'s1', 's2'}, {'s3'},
-                                    's3 = s1 %s s2' % opcode)
-        n1 = state.add_read(op1)
-        n2 = state.add_read(op2)
-        n3 = state.add_write(op3)
-        state.add_edge(n1, None, tasklet, 's1',
-                       dace.Memlet.from_array(op1, arr1))
-        state.add_edge(n2, None, tasklet, 's2',
-                       dace.Memlet.from_array(op2, arr2))
-        state.add_edge(tasklet, 's3', n3, None,
-                       dace.Memlet.from_array(op3, arr3))
-        return op3
+def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
+
+    complex_types = {dace.complex64, dace.complex128,
+                     np.complex64, np.complex128}
+    float_types = {dace.float16, dace.float32, dace.float64,
+                   np.float16, np.float32, np.float64}
+    signed_types = {dace.int8, dace.int16, dace.int32, dace.int64,
+                    np.int8, np.int16, np.int32, np.int64}
+    # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
+
+    if dtype1 in complex_types:
+        type1 = 3  # complex
+    elif dtype1 in float_types:
+        type1 = 2  # float
+    elif dtype1 in signed_types:
+        type1 = 1  # signed integer, bool
     else:
-        return _binop(sdfg, state, op1, op2, opcode, op, restype)
+        type1 = 0  # unsigned integer
+    
+    if dtype2 in complex_types:
+        type2 = 3  # complex
+    elif dtype2 in float_types:
+        type2 = 2  # float
+    elif dtype2 in signed_types:
+        type2 = 1  # signed integer, bool
+    else:
+        type2 = 0  # unsigned integer
+
+    left_cast = None
+    right_cast = None
+
+    if _is_op_arithmetic(operator):
+
+        # Float division between integers
+        if operator == 'Div' and max(type1, type2) < 2:
+            max_bytes = max(dtype1.bytes, dtype2.bytes)
+            if type1 == type2 and type1 == 0:  # Unsigned integers
+                result_type = eval('dace.uint{}'.format(4 * max_bytes))
+            else:
+                result_type = eval('dace.int{}'.format(4 * max_bytes))
+        # Floor division with at least one complex argument
+        elif operator == 'FloorDiv' and max(type1, type2) == 3:
+            raise TypeError("can't take floor of complex number")
+        # Floor division with at least one float argument
+        elif operator == 'FloorDiv' and max(type1, type2) == 2:
+            result_type = dace.int64
+        # Floor division between integers
+        elif operator == 'FloorDiv' and max(type1, type2) < 2:
+            max_bytes = max(dtype1.bytes, dtype2.bytes)
+            if type1 == type2 and type1 == 0:  # Unsigned integers
+                result_type = eval('dace.uint{}'.format(4 * max_bytes))
+            else:
+                result_type = eval('dace.int{}'.format(4 * max_bytes))
+            # TODO: Improve this performance-wise?
+            right_cast = dace.float64
+        # Power with base integer and exponent signed integer
+        elif (operator == 'Pow' and max(type1, type2) < 2 and
+                dtype2 in signed_types):
+            result_type = dace.float64
+            left_cast = dace.float64
+            right_cast = dace.float64
+        # All other arithmetic operators and cases of the above operators
+        else:
+            # TODO: Does this always make sense?
+            result_type = dace.DTYPE_TO_TYPECLASS[
+                np.result_type(dtype1.type, dtype2.type).type]
+            if max(type1, type2) == 3:
+                if type1 < 3:
+                    left_cast = dtype2
+                elif type2 < 3:
+                    right_cast = dtype1
+    
+    elif _is_op_bitwise(operator):
+        # Only integers may be arguments of bitwise and shifting operations
+        if max(type1, type2) > 1:
+            raise TypeError("unsupported operand type(s) for {}: "
+                            "'{}' and '{}'".format(operator, dtype1, dtype2))
+        max_bytes = max(dtype1.bytes, dtype2.bytes)
+        result_type = eval('dace.int{}'.format(4 * max_bytes))
+    
+    elif _is_op_boolean(operator):
+        result_type = dace.int8
+                
+    return result_type, left_cast, right_cast
+
+
+def _array_array_binop(visitor: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       left_operand: str,
+                       right_operand: str,
+                       operator: str,
+                       opcode: str):
+    '''Both operands are Arrays (or Data in general)'''
+
+    left_arr = sdfg.arrays[left_operand]
+    right_arr = sdfg.arrays[right_operand]
+
+    left_type = left_arr.dtype
+    right_type = right_arr.dtype
+
+    # Implicit Python coversion implemented as casting
+    tasklet_args = ['__in1', '__in2']
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+    if right_cast is not None:
+        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+    
+    left_shape = left_arr.shape
+    right_shape = right_arr.shape
+
+    (out_shape, all_idx_dict, out_idx,
+     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+
+    # Fix for Scalars
+    if isinstance(left_arr, data.Scalar):
+        left_idx = subsets.Range([(0, 0, 1)])
+    if isinstance(right_arr, data.Scalar):
+        right_idx = subsets.Range([(0, 0, 1)])
+
+    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
+                                                   left_arr.storage)
+    
+    if list(out_shape) == [1]:
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            {'__in1', '__in2'},
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
+        )
+        n1 = state.add_read(left_operand)
+        n2 = state.add_read(right_operand)
+        n3 = state.add_write(out_operand)
+        state.add_edge(n1, None, tasklet, '__in1',
+                       dace.Memlet.from_array(left_operand, left_arr))
+        state.add_edge(n2, None, tasklet, '__in2',
+                       dace.Memlet.from_array(right_operand, right_arr))
+        state.add_edge(tasklet, '__out', n3, None,
+                       dace.Memlet.from_array(out_operand, out_arr))
+    else:
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            {
+                '__in1': Memlet.simple(left_operand, left_idx),
+                '__in2': Memlet.simple(right_operand, right_idx)
+            },
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True
+        )
+    
+    return out_operand
+
+
+def _array_const_binop(visitor: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       left_operand: str,
+                       right_operand: str,
+                       operator: str,
+                       opcode: str):
+    '''Operands are an Array and a Constant'''
+
+    if left_operand in sdfg.arrays:
+        left_arr = sdfg.arrays[left_operand]
+        left_type = left_arr.dtype
+        left_shape = left_arr.shape
+        storage = left_arr.storage
+        right_arr = None
+        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+        right_shape = [1]
+        tasklet_args = ['__in1', str(right_operand)]
+    else:
+        left_arr = None
+        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+        left_shape = [1]
+        right_arr = sdfg.arrays[right_operand]
+        right_type = right_arr.dtype
+        right_shape = right_arr.shape
+        storage = right_arr.storage
+        tasklet_args = [str(left_operand), '__in2']
+
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
+                                            o=tasklet_args[0])
+    if right_cast is not None:
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+                                            o=tasklet_args[1])
+
+    (out_shape, all_idx_dict, out_idx,
+     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+
+    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
+                                                   storage)
+    
+    if list(out_shape) == [1]:
+        if left_arr:
+            inp_conn = {'__in1'}
+            n1 = state.add_read(left_operand)
+        else:
+            inp_conn = {'__in2'}
+            n2 = state.add_read(right_operand)
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            inp_conn,
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
+        )
+        n3 = state.add_write(out_operand)
+        if left_arr:
+            state.add_edge(n1, None, tasklet, '__in1',
+                           dace.Memlet.from_array(left_operand, left_arr))
+        else:
+            state.add_edge(n2, None, tasklet, '__in2',
+                           dace.Memlet.from_array(right_operand, right_arr))
+        state.add_edge(tasklet, '__out', n3, None,
+                       dace.Memlet.from_array(out_operand, out_arr))
+    else:
+        if left_arr:
+            inp_memlets = {'__in1': Memlet.simple(left_operand, left_idx)}
+        else:
+            inp_memlets = {'__in2': Memlet.simple(right_operand, right_idx)}
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            inp_memlets,
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True
+        )
+    
+    return out_operand
+
+
+def _array_sym_binop(visitor: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     left_operand: str,
+                     right_operand: str,
+                     operator: str,
+                     opcode: str):
+    '''Operands are an Array and a Symbol'''
+
+    if left_operand in sdfg.arrays:
+        left_arr = sdfg.arrays[left_operand]
+        left_type = left_arr.dtype
+        left_shape = left_arr.shape
+        storage = left_arr.storage
+        right_arr = None
+        right_type = _sym_type(right_operand)
+        right_shape = [1]
+        tasklet_args = ['__in1', str(right_operand)]
+    else:
+        left_arr = None
+        left_type = _sym_type(left_operand)
+        left_shape = [1]
+        right_arr = sdfg.arrays[right_operand]
+        right_type = right_arr.dtype
+        right_shape = right_arr.shape
+        storage = right_arr.storage
+        tasklet_args = [str(left_operand), '__in2']
+
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
+                                            o=tasklet_args[0])
+    if right_cast is not None:
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+                                            o=tasklet_args[1])
+
+    (out_shape, all_idx_dict, out_idx,
+     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+
+    out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
+                                                   storage)
+    
+    if list(out_shape) == [1]:
+        if left_arr:
+            inp_conn = {'__in1'}
+            n1 = state.add_read(left_operand)
+        else:
+            inp_conn = {'__in2'}
+            n2 = state.add_read(right_operand)
+        tasklet = state.add_tasklet(
+            '_%s_' % operator,
+            inp_conn,
+            {'__out'},
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
+        )
+        n3 = state.add_write(out_operand)
+        if left_arr:
+            state.add_edge(n1, None, tasklet, '__in1',
+                           dace.Memlet.from_array(left_operand, left_arr))
+        else:
+            state.add_edge(n2, None, tasklet, '__in2',
+                           dace.Memlet.from_array(right_operand, right_arr))
+        state.add_edge(tasklet, '__out', n3, None,
+                       dace.Memlet.from_array(out_operand, out_arr))
+    else:
+        if left_arr:
+            inp_memlets = {'__in1': Memlet.simple(left_operand, left_idx)}
+        else:
+            inp_memlets = {'__in2': Memlet.simple(right_operand, right_idx)}
+        state.add_mapped_tasklet(
+            "_%s_" % operator,
+            all_idx_dict,
+            inp_memlets,
+            '__out = {i1} {op} {i2}'.format(
+                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            {'__out': Memlet.simple(out_operand, out_idx)},
+            external_edges=True
+        )
+    
+    return out_operand
+
+
+def _scalar_scalar_binop(visitor: 'ProgramVisitor',
+                         sdfg: SDFG,
+                         state: SDFGState,
+                         left_operand: str,
+                         right_operand: str,
+                         operator: str,
+                         opcode: str):
+    '''Both operands are Scalars'''
+
+    left_scal = sdfg.arrays[left_operand]
+    right_scal = sdfg.arrays[right_operand]
+
+    left_type = left_scal.dtype
+    right_type = right_scal.dtype
+
+    # Implicit Python coversion implemented as casting
+    tasklet_args = ['__in1', '__in2']
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
+    if right_cast is not None:
+        tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
+
+    out_operand = sdfg.temp_data_name()
+    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+                                  storage=left_scal.storage)
+    
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        {'__in1', '__in2'},
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(
+                i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
+    )
+    n1 = state.add_read(left_operand)
+    n2 = state.add_read(right_operand)
+    n3 = state.add_write(out_operand)
+    state.add_edge(n1, None, tasklet, '__in1',
+                   dace.Memlet.from_array(left_operand, left_scal))
+    state.add_edge(n2, None, tasklet, '__in2',
+                   dace.Memlet.from_array(right_operand, right_scal))
+    state.add_edge(tasklet, '__out', n3, None,
+                   dace.Memlet.from_array(out_operand, out_scal))
+    
+    return out_operand
+
+
+def _scalar_const_binop(visitor: 'ProgramVisitor',
+                        sdfg: SDFG,
+                        state: SDFGState,
+                        left_operand: str,
+                        right_operand: str,
+                        operator: str,
+                        opcode: str):
+    '''Operands are a Scalar and a Constant'''
+
+    if left_operand in sdfg.arrays:
+        left_scal = sdfg.arrays[left_operand]
+        left_type = left_scal.dtype
+        storage = left_scal.storage
+        right_scal = None
+        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+        tasklet_args = ['__in1', str(right_operand)]
+    else:
+        left_scal = None
+        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+        right_scal = sdfg.arrays[right_operand]
+        right_type = right_scal.dtype
+        storage = right_scal.storage
+        tasklet_args = [str(left_operand), '__in2']
+
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
+                                            o=tasklet_args[0])
+    if right_cast is not None:
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+                                            o=tasklet_args[1])
+    
+    out_operand = sdfg.temp_data_name()
+    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+                                  storage=storage)
+    
+    if left_scal:
+        inp_conn = {'__in1'}
+        n1 = state.add_read(left_operand)
+    else:
+        inp_conn = {'__in2'}
+        n2 = state.add_read(right_operand)
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        inp_conn,
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode,
+                                        i2=tasklet_args[1])
+    )
+    n3 = state.add_write(out_operand)
+    if left_scal:
+        state.add_edge(n1, None, tasklet, '__in1',
+                       dace.Memlet.from_array(left_operand, left_scal))
+    else:
+        state.add_edge(n2, None, tasklet, '__in2',
+                       dace.Memlet.from_array(right_operand, right_scal))
+    state.add_edge(tasklet, '__out', n3, None,
+                   dace.Memlet.from_array(out_operand, out_scal))
+    
+    return out_operand
+
+
+def _scalar_sym_binop(visitor: 'ProgramVisitor',
+                      sdfg: SDFG,
+                      state: SDFGState,
+                      left_operand: str,
+                      right_operand: str,
+                      operator: str,
+                      opcode: str):
+    '''Operands are a Scalar and a Symbol'''
+
+    if left_operand in sdfg.arrays:
+        left_scal = sdfg.arrays[left_operand]
+        left_type = left_scal.dtype
+        storage = left_scal.storage
+        right_scal = None
+        right_type = _sym_type(right_operand)
+        tasklet_args = ['__in1', str(right_operand)]
+    else:
+        left_scal = None
+        left_type = _sym_type(left_operand)
+        right_scal = sdfg.arrays[right_operand]
+        right_type = right_scal.dtype
+        storage = right_scal.storage
+        tasklet_args = [str(left_operand), '__in2']
+
+    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                       operator)
+    if left_cast is not None:
+        tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
+                                            o=tasklet_args[0])
+    if right_cast is not None:
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+                                            o=tasklet_args[1])
+    
+    out_operand = sdfg.temp_data_name()
+    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+                                  storage=storage)
+    
+    if left_scal:
+        inp_conn = {'__in1'}
+        n1 = state.add_read(left_operand)
+    else:
+        inp_conn = {'__in2'}
+        n2 = state.add_read(right_operand)
+    tasklet = state.add_tasklet(
+        '_%s_' % operator,
+        inp_conn,
+        {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode,
+                                        i2=tasklet_args[1])
+    )
+    n3 = state.add_write(out_operand)
+    if left_scal:
+        state.add_edge(n1, None, tasklet, '__in1',
+                       dace.Memlet.from_array(left_operand, left_scal))
+    else:
+        state.add_edge(n2, None, tasklet, '__in2',
+                       dace.Memlet.from_array(right_operand, right_scal))
+    state.add_edge(tasklet, '__out', n3, None,
+                   dace.Memlet.from_array(out_operand, out_scal))
+    
+    return out_operand
+
+
+def _const_const_binop(visitor: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       left_operand: str,
+                       right_operand: str,
+                       operator: str,
+                       opcode: str):
+    '''Both operands are Constants or Symbols'''
+
+    if isinstance(left_operand, Number):
+        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+    else:
+        left_type = None
+    if isinstance(right_operand, Number):
+        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    else:
+        right_type = None
+
+    if left_type and right_type:
+        _, left_cast, right_cast = _convert_type(left_type, right_type,
+                                                 operator)
+    else:
+        left_cast = None
+        right_cast = None
+
+    if isinstance(left_operand, Number) and left_cast is not None:
+        left = left_cast(left_operand)
+    else:
+        left = left_operand
+    if isinstance(right_operand, Number) and right_cast is not None:
+        right = right_cast(right_operand)
+    else:
+        right = right_operand
+
+    expr = 'l {o} r'.format(o=opcode)
+    vars = {'l': left, 'r': right}
+    return eval(expr, vars)
 
 
 def _makebinop(op, opcode):
     @oprepo.replaces_operator('Array', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
-
-    @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
-            op2: str):
-        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Array', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Array', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Array', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
-        return _array_x_binop(visitor, sdfg, state, op1, op2, op, opcode)
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
+    @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_scalar_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Scalar', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Scalar', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Scalar', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
-# Define all standard Python augmented assignment operators
-for op, opcode in [
-    ('None', None),
-    ('Add', '+'),
-    ('Sub', '-'),
-    ('Mult', '*'),
-    ('Div', '/'),
-    ('FloorDiv', '//'),
-    ('Mod', '%'),
-    ('Pow', '**'),
-    ('LShift', '<<'),
-    ('RShift', '>>'),
-    ('BitOr', '|'),
-    ('BitXor', '^'),
-    ('BitAnd', '&'),
-]:
-    _makeassignop(op, opcode)
+    @oprepo.replaces_operator('NumConstant', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('NumConstant', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('NumConstant', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('BoolConstant', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('symbol', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('symbol', op, otherclass='Scalar')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('symbol', op, otherclass='NumConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('symbol', op, otherclass='BoolConstant')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('symbol', op, otherclass='symbol')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
+
 
 # Define all standard Python unary operators
 for op, opcode in [('UAdd', '+'), ('USub', '-'), ('Not', 'not'),
