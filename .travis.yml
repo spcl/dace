@@ -24,13 +24,14 @@ before_script:
   - papi_avail
 
 script:
-  - export NOSTATUSBAR=1
-  - export PYTHONPATH=`pwd`:$PYTHONPATH
-  - export COVERAGE_RCFILE=`pwd`/.coveragerc
-  - export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
-  - export DACE_optimizer_interface=" "
-  - ./test_all.sh
-  - cd tests; coverage combine . */; coverage report; coverage xml
+  - python3 tests/rtl/simulation_test.py
+  #- export NOSTATUSBAR=1
+  #- export PYTHONPATH=`pwd`:$PYTHONPATH
+  #- export COVERAGE_RCFILE=`pwd`/.coveragerc
+  #- export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+  #- export DACE_optimizer_interface=" "
+  #- ./test_all.sh
+  #- cd tests; coverage combine . */; coverage report; coverage xml
 
-after_success:
-  - codecov
+#after_success:
+#- codecov
