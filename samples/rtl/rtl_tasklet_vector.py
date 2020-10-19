@@ -15,7 +15,7 @@ N = dace.symbol('N')
 sdfg = dace.SDFG('rtl_tasklet_demo')
 
 # define compile-time constant
-sdfg.specialize({N: 4})
+sdfg.specialize(dict(N=4))
 
 # add state
 state = sdfg.add_state()
@@ -42,7 +42,7 @@ tasklet = state.add_tasklet(
         -->| {inputs}                             reg {outputs} |-->
            |                                                    |
         <--| ready_o (ready for data)       (data avail) valid_o|-->
-        -->| valid_i (new data avail)    (data consumed) yumi_i |<--
+        -->| valid_i (new data avail)    (data consumed) ready_i|<--
            |----------------------------------------------------|
     */
 

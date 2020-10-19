@@ -39,7 +39,7 @@ tasklet = state.add_tasklet(
         -->| {inputs}                             reg {outputs} |-->
            |                                                    |
         <--| ready_o (ready for data)       (data avail) valid_o|-->
-        -->| valid_i (new data avail)    (data consumed) yumi_i |<--
+        -->| valid_i (new data avail)    (data consumed) ready_i|<--
            |----------------------------------------------------|
     */
 
