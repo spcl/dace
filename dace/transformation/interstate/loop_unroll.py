@@ -141,12 +141,12 @@ class LoopUnroll(DetectLoop):
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        #start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
         try:
             start, end, stride = (r for r in rng)
-            # evaluate stride, we HAVE to know that one
+            # evaluate stride, this must be const and thus
+            # be able to be evaluated
             stride = symbolic.evaluate(stride, sdfg.constants)
-            # start and end can contain variables,
+            # NOTE: start and end can contain variables,
             # but they their difference ought to be const
             self.count = int(symbolic.evaluate(end-start+1, sdfg.constants))
         except TypeError:
@@ -182,6 +182,7 @@ class LoopUnroll(DetectLoop):
     def instantiate_loop(self, sdfg: sd.SDFG, loop_states: List[sd.SDFGState],
                          loop_subgraph: gr.SubgraphView, itervar: str,
                          value: symbolic.SymbolicType, iteration_index: int):
+
         # Using to/from JSON copies faster than deepcopy (which will also
         # copy the parent SDFG)
         new_states = [

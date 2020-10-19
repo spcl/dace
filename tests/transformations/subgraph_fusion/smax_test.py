@@ -109,7 +109,6 @@ def test_1fuse():
     expand_maps(sdfg, sdfg.nodes()[0])
     fusion(sdfg, sdfg.nodes()[0])
 
-    #sdfg.specialize({'SM':SM})
     csdfg = sdfg.compile()
     res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
 
@@ -128,6 +127,7 @@ def test_1fuse():
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    del csdfg
 
     expand_reduce(sdfg, sdfg.nodes()[0])
     expand_maps(sdfg, sdfg.nodes()[0])
@@ -136,12 +136,12 @@ def test_1fuse():
     #sdfg.specialize({'SM':SM})
     csdfg = sdfg.compile()
     res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    del csdfg
 
     print(np.linalg.norm(res1))
     print(np.linalg.norm(res2))
     assert np.allclose(res1, res2)
     print("PASS")
-    return
 
 
 if __name__ == "__main__":

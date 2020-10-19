@@ -35,7 +35,7 @@ class ReduceExpansion(transformation.Transformation):
 
     _reduce = stdlib.Reduce()
 
-    debug = Property(desc="Debug Info", dtype=bool, default=True)
+    debug = Property(desc="Debug Info", dtype=bool, default=False)
 
     create_in_transient = Property(desc="Create local in-transient"
                                    "in registers",

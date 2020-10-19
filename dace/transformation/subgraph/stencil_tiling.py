@@ -146,7 +146,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         # first get dicts of parents and children for each map_entry
         # get source maps as a starting point for BFS
         # these are all map entries reachable from source nodes
-        source_nodes = set(sdutil.find_source_nodes(graph))
+        source_nodes = set(graph.source_nodes())
         maps_reachable_source = set()
         sink_maps = set()
         while len(source_nodes) > 0:

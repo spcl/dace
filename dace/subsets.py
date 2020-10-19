@@ -9,6 +9,7 @@ from typing import Set
 import warnings
 from dace.config import Config
 
+
 class Subset(object):
     """ Defines a subset of a data descriptor. """
     def covers(self, other):
@@ -798,6 +799,7 @@ class Indices(Subset):
         for i, ind in enumerate(self.indices):
             self.indices[i] = (ind.subs(repl_dict)
                                if symbolic.issymbolic(ind) else ind)
+
     def pop(self, dimensions):
         new_indices = []
         for i in range(len(self.indices)):
@@ -818,14 +820,17 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
     if not symbolic_positive:
-        result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-            subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
-            subset_b.max_element())]
+        result = [(min(arb,
+                       brb), max(are, bre), 1) for arb, brb, are, bre in zip(
+                           subset_a.min_element(), subset_b.min_element(),
+                           subset_a.max_element(), subset_b.max_element())]
 
     else:
         result = []
-        for arb, brb, are, bre in zip(subset_a.min_element_approx(), subset_b.min_element_approx(),
-                                      subset_a.max_element_approx(), subset_b.max_element_approx()):
+        for arb, brb, are, bre in zip(subset_a.min_element_approx(),
+                                      subset_b.min_element_approx(),
+                                      subset_a.max_element_approx(),
+                                      subset_b.max_element_approx()):
             try:
                 minrb = min(arb, brb)
             except TypeError:
@@ -846,7 +851,6 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 else:
                     raise
             result.append((minrb, maxre, 1))
-
 
     return Range(result)
 

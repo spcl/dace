@@ -88,7 +88,7 @@ class MapTiling(transformation.Transformation):
                 tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[dim_idx])
                 tile_stride = symbolic.pystr_to_symbolic(tile_strides[dim_idx])
 
-            if dim_idx == len(self.tile_offset):
+            if dim_idx >= len(self.tile_offset):
                 offset = self.tile_offset[-1]
             else:
                 offset = self.tile_offset[dim_idx]

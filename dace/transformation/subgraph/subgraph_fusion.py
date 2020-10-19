@@ -41,7 +41,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     """
 
-    debug = Property(desc="Show debug info", dtype=bool, default=True)
+    debug = Property(desc="Show debug info", dtype=bool, default=False)
 
     transient_allocation = Property(
         desc="Storage Location to push transients to that are "
