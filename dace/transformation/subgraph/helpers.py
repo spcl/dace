@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+''' Subgraph Transformation Helper API'''
 from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
@@ -19,6 +20,7 @@ import itertools
 # ****************
 # Helper functions
 
+
 def common_map_base_ranges(maps: List[nodes.Map]) -> List[subsets.Range]:
     """ Finds a maximal set of ranges that can be found
         in every instance of the maps in the given list
@@ -38,11 +40,11 @@ def common_map_base_ranges(maps: List[nodes.Map]) -> List[subsets.Range]:
 
         map_base = map_base_new
 
-
     return map_base
 
 
-def find_reassignment(maps: List[nodes.Map], map_base_ranges) -> Dict[nodes.Map, List]:
+def find_reassignment(maps: List[nodes.Map],
+                      map_base_ranges) -> Dict[nodes.Map, List]:
     """ Provided a list of maps and their common base ranges
         (found via common_map_base_ranges()),
         for each map greedily assign each loop to an index so that
@@ -79,17 +81,26 @@ def find_reassignment(maps: List[nodes.Map], map_base_ranges) -> Dict[nodes.Map,
 
     return result
 
-########################################################################
 
-def toplevel_scope_subgraph(graph, subgraph, scope_dict = None):
+
+def outermost_scope_from_subgraph(graph, subgraph, scope_dict=None):
     """
-    returns the toplevel scope of a subgraph
+    Returns the outermost scope of a subgraph.
+    If the subgraph is not connected, there might be several
+    scopes that are locally outermost. In this case, it
+    throws an Exception.
     """
-    if not scope_dict:
+    if scope_dict is None:
         scope_dict = graph.scope_dict()
     scopes = set()
     for element in subgraph:
         scopes.add(scope_dict[element])
+    # usual case: Root of scope tree is in subgraph,
+    # return None (toplevel scope)
+    if None in scopes:
+        return None
+
+    toplevel_candidates = set()
     for scope in scopes:
         # search the one whose parent is not in scopes
         # that must be the top level one
@@ -97,53 +108,79 @@ def toplevel_scope_subgraph(graph, subgraph, scope_dict = None):
         while current_scope and current_scope not in scopes:
             current_scope = scope_dict[current_scope]
         if current_scope is None:
-            return scope
+            toplevel_candidates.add(scope)
+
+    if len(toplevel_candidates) != 1:
+        raise TypeError("There are several locally top-level nodes. "
+                        "Please check your subgraph and see to it "
+                        "being connected.")
+    else:
+        return toplevel_candidates.pop()
 
 
-    raise RuntimeError("Subgraph is not sound")
-
-def toplevel_scope_maps(graph, maps, scope_dict = None):
+def outermost_scope_from_maps(graph, maps, scope_dict=None):
     """
-    returns the toplevel scope of a set of given maps
+    Returns the outermost scope of a set of given maps.
+    If the underlying maps are not topologically connected
+    to each other, there might be several scopes that are
+    locally outermost. In this case it throws an Exception
     """
     if not scope_dict:
         scope_dict = graph.scope_dict()
     scopes = set()
     for map in maps:
         scopes.add(scope_dict[map])
+    # usual case: Root of scope tree is in subgraph,
+    # return None (toplevel scope)
+    if None in scopes:
+        return None
+
+    toplevel_candidates = set()
     for scope in scopes:
         current_scope = scope_dict[scope]
         while current_scope and current_scope not in scopes:
             current_scope = scope_dict[current_scope]
         if current_scope is None:
-            return scope
+            toplevel_candidates.add(scope)
 
-    raise RuntimeError("Map structure is not sound (underlying subgraph must be connected)")
+    if len(toplevel_candidates) != 1:
+        raise TypeError("There are several locally top-level nodes. "
+                        "Please check your subgraph and see to it "
+                        "being connected.")
+    else:
+        return toplevel_candidates.pop()
 
 
-def get_highest_scope_maps(sdfg, graph, subgraph = None):
+def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     """
-    returns the Map Entries of the highest scope maps
-    that reside inside a given subgraph.
-    If subgraph = None, the whole graph is taken
+    Returns all Map Entries inside of a given subgraph
+    that have the outermost scope.
+    If the underlying subgraph is not connected, there
+    might be multiple locally outermost scopes. In this
+    ambiguous case, the method returns an empty list.
+    If subgraph == None, the whole graph is taken
+    for analysis.
     """
     subgraph = graph if not subgraph else subgraph
-    scope_dict = graph.scope_dict()
+    if scope_dict is None:
+        scope_dict = graph.scope_dict()
 
-    def is_lowest_scope(node):
-        while scope_dict[node]:
-            if scope_dict[node] in subgraph.nodes():
-                return False
-            node = scope_dict[node]
+    # first, get the toplevel scope of the underlying subgraph
+    # if not found, return empty list (ambiguous)
+    try:
+        outermost_scope = outermost_scope_from_subgraph(graph, subgraph, scope_dict)
+    except TypeError:
+        return []
 
-        return True
-
-    maps = [node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
-                                              and is_lowest_scope(node)]
+    maps = [
+        node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
+        and scope_dict[node] == outermost_scope
+    ]
 
     return maps
 
-def subgraph_from_maps(sdfg, graph, map_entries, scope_dict = None):
+
+def subgraph_from_maps(sdfg, graph, map_entries, scope_dict=None):
     """
     given a list of map entries in a single graph,
     return a subgraph view that includes all nodes
@@ -162,44 +199,73 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_dict = None):
 
 
 def are_subsets_contiguous(subset_a: subsets.Subset,
-                           subset_b: subsets.Subset) -> bool:
-    ''' If subsets are contiguous, return True '''
-    bbunion = subsets.bounding_box_union(subset_a, subset_b)
-
-    return all([bbsz == asz + bsz for (bbsz, asz, bsz) \
-                    in zip(bbunion.size(), subset_a.bounding_box_size(), subset_b.bounding_box_size())])
+                           subset_b: subsets.Subset,
+                           dim: int = None) -> bool:
     '''
+    Checks whether two subsets are contiguous.
+    Outfactored from DeduplicateAccess.
+    '''
+    if dim is not None:
+        # A version that only checks for contiguity in certain
+        # dimension (e.g., to prioritize stride-1 range)
+        if (not isinstance(subset_a, subsets.Range)
+                or not isinstance(subset_b, subsets.Range)):
+            raise NotImplementedError('Contiguous subset check only '
+                                      'implemented for ranges')
+
+        # Other dimensions must be equal
+        for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
+            if i == dim:
+                continue
+            if s1[0] != s2[0] or s1[1] != s2[1] or s1[2] != s2[2]:
+                return False
+
+        # Set of conditions for contiguous dimension
+        ab = (subset_a[dim][1] + 1) == subset_b[dim][0]
+        a_overlap_b = subset_a[dim][1] >= subset_b[dim][0]
+        ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
+        b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
+        # NOTE: Must check with "==" due to sympy using special types
+        return (ab == True or a_overlap_b == True or ba == True
+                or b_overlap_a == True)
+
+    # General case
+    bbunion = subsets.bounding_box_union(subset_a, subset_b)
     return bbunion.num_elements() == (subset_a.num_elements() +
                                       subset_b.num_elements())
-    '''
 
-def find_contiguous_subsets(
-        subset_list: List[subsets.Subset]) -> Set[subsets.Subset]:
-    """
-    Finds the set of largest contiguous subsets in a list of subsets.
-    :param subsets: Iterable of subset objects.
-    :return: A list of contiguous subsets.
-    """
-    # Currently O(n^2) worst case.
-    subset_set = set(subset_list)
-    while True:
-        for sa, sb in itertools.product(subset_set, subset_set):
-            if sa is sb:
-                continue
-            if sa.covers(sb):
-                subset_set.remove(sb)
+def find_contiguous_subsets(subset_list: List[subsets.Subset],
+                                dim: int = None) -> Set[subsets.Subset]:
+        """
+        Finds the set of largest contiguous subsets in a list of subsets.
+        :param subsets: Iterable of subset objects.
+        :param dim: Check for contiguity only for the specified dimension.
+        :return: A list of contiguous subsets.
+        """
+        # Currently O(n^3) worst case. TODO: improve
+        subset_set = set(
+            subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
+                                                        ) else s
+            for s in subset_list)
+        while True:
+            for sa, sb in itertools.product(subset_set, subset_set):
+                if sa is sb:
+                    continue
+                if sa.covers(sb):
+                    subset_set.remove(sb)
+                    break
+                elif sb.covers(sa):
+                    subset_set.remove(sa)
+                    break
+                elif DeduplicateAccess.are_subsets_contiguous(sa, sb, dim):
+                    subset_set.remove(sa)
+                    subset_set.remove(sb)
+                    subset_set.add(subsets.bounding_box_union(sa, sb))
+                    break
+            else:  # No modification performed
                 break
-            elif sb.covers(sa):
-                subset_set.remove(sa)
-                break
-            elif are_subsets_contiguous(sa, sb):
-                subset_set.remove(sa)
-                subset_set.remove(sb)
-                subset_set.add(subsets.bounding_box_union(sa, sb))
-                break
-        else:  # No modification performed
-            break
-    return subset_set
+        return subset_set
+
 def deduplicate(sdfg, graph, map_entry, out_connector, edges):
     ''' applies Deduplication to ALL edges coming from the same
         out_connector specified in out_connector.
@@ -235,8 +301,8 @@ def deduplicate(sdfg, graph, map_entry, out_connector, edges):
                 edge_mapping[ind].append(e)
                 break
         else:
-            raise ValueError(
-                "Failed to find contiguous subset for edge %s" % e.data)
+            raise ValueError("Failed to find contiguous subset for edge %s" %
+                             e.data)
 
     # Create transients for subsets and redirect edges
     for ind, subset in enumerate(contiguous_subsets):

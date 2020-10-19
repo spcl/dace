@@ -7,16 +7,16 @@ import dace
 from dace import registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.symbolic import pystr_to_symbolic, simplify_ext
-from dace.subsets import Range
 from dace.sdfg.propagation import _propagate_node
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.strip_mining import StripMining
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.interstate.loop_detection import DetectLoop
+from dace.transformation.subgraph import SubgraphFusion
 
 from copy import deepcopy as dcpy
 
@@ -146,50 +146,31 @@ class StencilTiling(transformation.SubgraphTransformation):
         # first get dicts of parents and children for each map_entry
         # get source maps as a starting point for BFS
         # these are all map entries reachable from source nodes
-        source_nodes = set(graph.source_nodes())
-        maps_reachable_source = set()
         sink_maps = set()
-        while len(source_nodes) > 0:
-            # traverse and find source maps
-            node = source_nodes.pop()
-            if isinstance(node, nodes.MapEntry) and node in map_entries:
-                maps_reachable_source.add(node)
-            else:
-                for e in graph.out_edges(node):
-                    source_nodes.add(e.dst)
-
-        # traverse graph
-        maps_queued = set(maps_reachable_source)
-        maps_processed = set()
-
         children_dict = defaultdict(set)
         parent_dict = defaultdict(set)
+        map_exits = {graph.exit_node(entry):entry for entry in map_entries}
 
-        # get sink nodes, children_dict, parent_dict using BFS/DFS
-        while len(maps_queued) > 0:
-            maps_added = 0
-            current_map = maps_queued.pop()
-            if current_map in maps_processed:
-                continue
-
-            nodes_following = set([e.dst for e in graph.out_edges(current_map)])
-            while len(nodes_following) > 0:
-                current_node = nodes_following.pop()
-                if isinstance(current_node,
-                              nodes.MapEntry) and current_node in map_entries:
-                    if current_node not in maps_processed or maps_queued:
-                        maps_queued.add(current_node)
-                    maps_added += 1
-                    children_dict[current_map].add(current_node)
-                    parent_dict[current_node].add(current_map)
-                else:
-                    for e in graph.out_edges(current_node):
-                        nodes_following.add(e.dst)
-
-            if maps_added == 0:
-                sink_maps.add(current_map)
-
-            maps_processed.add(current_map)
+        for map_entry in map_entries:
+            map_exit = graph.exit_node(map_entry)
+            for e in graph.in_edges(map_entry):
+                if isinstance(e.src, nodes.AccessNode):
+                    for ie in graph.in_edges(e.src):
+                        if ie.src in map_exits:
+                            other_entry = map_exits[ie.src]
+                            children_dict[other_entry].add(map_entry)
+                            parent_dict[map_entry].add(other_entry)
+            out_counter = 0
+            for e in graph.out_edges(map_exit):
+                if isinstance(e.dst, nodes.AccessNode):
+                    for oe in graph.out_edges(e.dst):
+                        if oe.dst in map_entries:
+                            other_entry = oe.dst
+                            children_dict[map_entry].add(other_entry)
+                            parent_dict[other_entry].add(map_entry)
+                            out_counter += 1
+            if out_counter == 0:
+                sink_maps.add(map_entry)
 
         return (children_dict, parent_dict, sink_maps)
 
@@ -198,7 +179,7 @@ class StencilTiling(transformation.SubgraphTransformation):
     def can_be_applied(sdfg, subgraph) -> bool:
         # get highest scope maps
         graph = subgraph.graph
-        map_entries = set(helpers.get_highest_scope_maps(sdfg, graph, subgraph))
+        map_entries = set(helpers.get_outermost_scope_maps(sdfg, graph, subgraph))
         if len(map_entries) < 1:
             return False
 
@@ -222,15 +203,23 @@ class StencilTiling(transformation.SubgraphTransformation):
                 if len((r1[1] - r2[1]).free_symbols) > 0:
                     return False
 
+        # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
+        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
+        (_, intermediate_nodes, out_nodes) = node_config
+
+        # check whether topologically feasible
+        if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
+            return False
+
         # get coverages for every map entry
         coverages = {}
         for map_entry in map_entries:
             coverages[map_entry] = StencilTiling.coverage_dicts(
                 sdfg, graph, map_entry)
 
-        # get topology information
-        result = StencilTiling.topology(sdfg, graph, map_entries)
-        (children_dict, parent_dict, sink_maps) = result
+        # get DAG neighbours for each map
+        dag_neighbors = StencilTiling.topology(sdfg, graph, map_entries)
+        (children_dict, parent_dict, sink_maps) = dag_neighbors
 
         # we now check coverage:
         # each outgoing coverage for a data memlet has to
@@ -254,9 +243,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     return False
 
         # last condition: we want all sink maps to have the same
-        # range, if not we cannot form a common map range for fusion later
-        # last condition: we want all incoming memlets into sink maps
-        # to have the same ranges
+        # range size
 
         assert len(sink_maps) > 0
         first_sink_map = next(iter(sink_maps))
@@ -272,9 +259,9 @@ class StencilTiling(transformation.SubgraphTransformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         subgraph = self.subgraph_view(sdfg)
-        map_entries = helpers.get_highest_scope_maps(sdfg, graph, subgraph)
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
 
-        result = self.topology(sdfg, graph, map_entries)
+        result = StencilTiling.topology(sdfg, graph, map_entries)
         (children_dict, parent_dict, sink_maps) = result
 
 
@@ -350,8 +337,8 @@ class StencilTiling(transformation.SubgraphTransformation):
                 else:
                     variable_mapping[e.data.data] = mapping
 
-            # now do mapping data -> indent
-            # and from that infer mapping variable -> indent
+            # now do mapping data name -> outer range
+            # and from that infer mapping variable -> outer range
             local_ranges = {dn: None for dn in coverage[map_entry][1].keys()}
             for data_name, cov in coverage[map_entry][1].items():
                 local_ranges[data_name] = subsets.union(local_ranges[data_name],
@@ -375,9 +362,9 @@ class StencilTiling(transformation.SubgraphTransformation):
                         inferred_ranges[map_entry][param] = subsets.union(
                             inferred_ranges[map_entry][param], rng)
 
-
-        # outer range of one of the sink maps TODO comment better
+        # get parameters -- should all be the same
         params = next(iter(map_entries)).map.params.copy()
+        # define reference range as inferred range of one of the sink maps
         self.reference_range = inferred_ranges[next(iter(sink_maps))]
         if self.debug:
             print("StencilTiling::Reference Range", self.reference_range)
@@ -388,7 +375,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             if self.reference_range[p] is None:
                 invariant_dims.append(idx)
                 warnings.warn(
-                    f"StencilTiling::No Tiling Indent for parameter {p}")
+                    f"StencilTiling::No Stencil pattern detected for parameter {p}")
                 continue
             for m in map_entries:
                 if inferred_ranges[m][p] != self.reference_range[p]:
@@ -397,11 +384,9 @@ class StencilTiling(transformation.SubgraphTransformation):
             if not different:
                 invariant_dims.append(idx)
                 warnings.warn(
-                    f"StencilTiling::No Tiling Indent for parameter {p}")
+                    f"StencilTiling::No Stencil pattern detected for parameter {p}")
 
         # with inferred_ranges constructed, we can begin to strip mine
-        from dace.transformation.dataflow.map_collapse import MapCollapse
-        from dace.transformation.dataflow.strip_mining import StripMining
         for map_entry in map_entries:
             # Retrieve map entry and exit nodes.
             map = map_entry.map
@@ -453,8 +438,8 @@ class StencilTiling(transformation.SubgraphTransformation):
 
 
                     self.tile_sizes.append(tile_stride + max_diff + min_diff)
-                    self.tile_offset_lower.append(pystr_to_symbolic(str(min_diff)))
-                    self.tile_offset_upper.append(pystr_to_symbolic(str(max_diff)))
+                    self.tile_offset_lower.append(symbolic.pystr_to_symbolic(str(min_diff)))
+                    self.tile_offset_upper.append(symbolic.pystr_to_symbolic(str(max_diff)))
 
 
                 # get calculated parameters
@@ -522,7 +507,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                                              self.tile_offset_upper[-1]),
                                             old_range[2])
 
-                # We have to propagate here - else nasty nasty
+                # We have to propagate here for correct outer volume and subset sizes
                 _propagate_node(graph, map_entry)
                 _propagate_node(graph, graph.exit_node(map_entry))
 
@@ -540,7 +525,9 @@ class StencilTiling(transformation.SubgraphTransformation):
                     mapcollapse.apply(sdfg)
                 last_map_entry = graph.in_edges(map_entry)[0].src
 
-            # Loop Unroll Feature: only unroll if it makes sense
+            # Map Unroll Feature: only unroll if conditions are met:
+            # Only unroll if at least one of the inner map ranges is strictly larger than 1
+            # Only unroll if strides all are one
             if self.unroll_loops and all(s == 1 for s in self.strides) and any(
                     s not in [0, 1] for s in map_entry.range.size()):
                 l = len(map_entry.params)
