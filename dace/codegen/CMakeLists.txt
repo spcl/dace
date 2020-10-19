@@ -601,15 +601,10 @@ if(DACE_ENABLE_RTL)
     set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir")
     include_directories(${VERILATOR_INCLUDE})
 
-    message(WARNING "VERILATOR_ROOT: ${VERILATOR_ROOT}")
-    message(WARNING "VERILATOR_INCLUDE: ${VERILATOR_INCLUDE}")
-    message(WARNING "VERILATOR_SRC: ${VERILATOR_SRC}")
-
     # verilate design
     # -Wall: Enable all style warnings
     # -Wno-fatal: Disable fatal exit on warnings
     verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "-Wall" "-Wno-fatal")
-
 
     # add object library for linking
     set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
