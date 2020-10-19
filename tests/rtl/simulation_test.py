@@ -87,3 +87,7 @@ def test_tasklet_scalar():
 
     # check result
     assert b == 100
+
+
+if __name__ == '__main__':
+    test_tasklet_scalar()
