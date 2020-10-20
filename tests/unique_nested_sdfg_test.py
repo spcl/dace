@@ -223,6 +223,10 @@ def single_state_test(size_n: int, size_m: int):
 
     diff1 = np.linalg.norm(ref1 - z) / size_n
     diff2 = np.linalg.norm(ref2 - u) / size_m
+
+    # There is no need to check that the Nested SDFG has been generated only once. If this is not the case
+    # the test will fail while compiling
+
     if diff1 <= 1e-5 and diff2 <= 1e-5:
         print("==== Program end ====")
         return 0
@@ -235,7 +239,6 @@ def two_states_test(size_n: int, size_m: int):
     sdfg = make_nested_sdfg_cpu_two_states()
 
     two_axpy = sdfg.compile()
-    sdfg.save("two_axpy.sdfg")
     x = np.random.rand(size_n).astype(np.float32)
     y = np.random.rand(size_n).astype(np.float32)
     z = np.random.rand(size_n).astype(np.float32)
