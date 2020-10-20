@@ -532,6 +532,8 @@ if(DACE_ENABLE_INTELFPGA)
     string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
     set(DACE_AOC_KERNEL_FILES ${DACE_AOC_KERNEL_FILES} ${DACE_KERNEL_FILE})
 
+    # The output AOCX file will be named as the last OpenCL file given in input to the compiler
+    get_filename_component(DACE_AOC_OUTPUT_FILE ${DACE_KERNEL_FILE} NAME_WE)
   endforeach()
 
   string(REPLACE " " ";" DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL
@@ -560,7 +562,7 @@ if(DACE_ENABLE_INTELFPGA)
     ${DACE_AOC_BUILD_FLAGS}
     -march=emulator
     ${DACE_AOC_KERNEL_FILES}
-    -o ${DACE_PROGRAM_NAME}_emulator.aocx
+    COMMAND mv ${DACE_AOC_OUTPUT_FILE}.aocx  ${DACE_PROGRAM_NAME}_emulator.aocx
     DEPENDS ${DACE_AOC_KERNEL_FILES})
 
   add_custom_command(
@@ -568,7 +570,7 @@ if(DACE_ENABLE_INTELFPGA)
     COMMAND ${IntelFPGAOpenCL_AOC}
     ${DACE_AOC_BUILD_FLAGS}
     ${DACE_AOC_KERNEL_FILES}
-    -o ${DACE_PROGRAM_NAME}_hardware.aocx
+    COMMAND mv ${DACE_AOC_OUTPUT_FILE}.aocx  ${DACE_PROGRAM_NAME}_emulator.aocx
     DEPENDS ${DACE_AOC_KERNEL_FILES})
 
 endif()
