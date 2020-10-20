@@ -12,8 +12,8 @@ import subprocess
 
 from dace.memlet import Memlet
 
-def make_vecAdd_sdfg(symbol_name: str, sdfg_name:str, access_nodes_dict : dict, dtype = dace.float32):
-    n = dace.symbol(symbol_name)
+def make_vecAdd_sdfg(sdfg_name:str, dtype = dace.float32):
+    n = dace.symbol("size")
     vecAdd_sdfg = dace.SDFG(sdfg_name)
     vecAdd_state = vecAdd_sdfg.add_state()
 
@@ -22,9 +22,9 @@ def make_vecAdd_sdfg(symbol_name: str, sdfg_name:str, access_nodes_dict : dict, 
     # ACCESS NODES
     # ---------- ----------
 
-    x_name = access_nodes_dict["x"]
-    y_name = access_nodes_dict["y"]
-    z_name = access_nodes_dict["z"]
+    x_name = "x"
+    y_name = "y"
+    z_name = "z"
 
     vecAdd_sdfg.add_array(x_name, [n], dtype=dtype)
     vecAdd_sdfg.add_array(y_name, [n], dtype=dtype)
@@ -79,10 +79,9 @@ def make_nested_sdfg_cpu():
     state = sdfg.add_state("state")
 
     # build the first axpy: works with x,y, and z of n-elements
-    access_nodes_dict = {"x": "x", "y": "y", "z": "z"}
 
     # ATTENTION: this two nested SDFG must have the same name as they are equal
-    to_nest = make_vecAdd_sdfg("n", "vecAdd", access_nodes_dict)
+    to_nest = make_vecAdd_sdfg("vecAdd")
 
     sdfg.add_array("x", [n], dace.float32)
     sdfg.add_array("y", [n], dace.float32)
@@ -91,7 +90,8 @@ def make_nested_sdfg_cpu():
     y = state.add_read("y")
     z = state.add_write("z")
 
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"},{"z"})
+    # add it as nested SDFG, with proper symbol mapping
+    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"},{"z"}, {"size" : "n"})
 
     state.add_memlet_path(x,
                           nested_sdfg,
@@ -108,8 +108,7 @@ def make_nested_sdfg_cpu():
 
 
     # Build the second axpy: works with v,w and u of m elements
-    access_nodes_dict = {"x": "v", "y": "w", "z": "u"}
-    to_nest = make_vecAdd_sdfg("m", "vecAdd", access_nodes_dict)
+    to_nest = make_vecAdd_sdfg("vecAdd")
 
     sdfg.add_array("v", [m], dace.float32)
     sdfg.add_array("w", [m], dace.float32)
@@ -118,19 +117,19 @@ def make_nested_sdfg_cpu():
     w = state.add_read("w")
     u = state.add_write("u")
 
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"v", "w"}, {"u"})
+    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size" : "m"})
 
     state.add_memlet_path(v,
                           nested_sdfg,
-                          dst_conn="v",
+                          dst_conn="x",
                           memlet=Memlet.simple(v, "0:m", num_accesses=m))
     state.add_memlet_path(w,
                           nested_sdfg,
-                          dst_conn="w",
+                          dst_conn="y",
                           memlet=Memlet.simple(w, "0:m", num_accesses=m))
     state.add_memlet_path(nested_sdfg,
                           u,
-                          src_conn="u",
+                          src_conn="z",
                           memlet=Memlet.simple(u, "0:m", num_accesses=m))
 
     return sdfg
