@@ -532,7 +532,9 @@ if(DACE_ENABLE_INTELFPGA)
     string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
     set(DACE_AOC_KERNEL_FILES ${DACE_AOC_KERNEL_FILES} ${DACE_KERNEL_FILE})
 
-    # The output AOCX file will be named as the last OpenCL file given in input to the compiler
+    # Intel compiler does not allow to specify the output file if more than input file is used.
+    # In this case, the output AOCX file will be named as the last OpenCL file given in input to the compiler.
+    # We need to save the name of the last input file, so that later we can assign a proper name to the produced bitstream.
     get_filename_component(DACE_AOC_OUTPUT_FILE ${DACE_KERNEL_FILE} NAME_WE)
   endforeach()
 
