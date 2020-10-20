@@ -77,7 +77,7 @@ sdfg.validate()
 if __name__ == '__main__':
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
-    b = np.random.randint(0, 100, 1).astype(np.int32)
+    b = np.array([0]).astype(np.int32)
 
     # show initial values
     print("a={}, b={}".format(a, b))
