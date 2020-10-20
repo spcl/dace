@@ -340,16 +340,38 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                     ]) - variate_dimensions
         return invariant_dimensions
 
-    def redirect_edge(self,
+    def copy_edge(self,
                       graph,
                       edge,
                       new_src=None,
                       new_src_conn=None,
                       new_dst=None,
                       new_dst_conn=None,
-                      new_data=None):
+                      new_data=None,
+                      remove_old = False):
+        '''
+        Copies an edge going from source to dst.
+        If no destination is specified, the edge is copied with the same
+        destination and port as the original edge, else the edge is copied
+        with the new destination and the new port.
+        If no source is specified, the edge is copied with the same
+        source and port as the original edge, else the edge is copied
+        with the new source and the new port
+        If remove_old is specified, the old edge is removed immediately
+        If new_data is specified, inserts new_data as a memlet, else
+        else makes a deepcopy of the current edges memlet
+        '''
+        data = new_data if new_data else dcpy(edge.data)
+        src = edge.src if new_src is None else new_src
+        src_conn = edge.src_conn if new_src is None else new_src_conn
+        dst = edge.dst if new_dst is None else new_dst
+        dst_conn = edge.dst_conn if new_dst is None else new_dst_conn
 
-        data = new_data if new_data else edge.data
+        ret = graph.add_edge(src, src_conn, dst, dst_conn, data)
+
+        if remove_old:
+            graph.remove_edge(edge)
+        '''
         if new_src:
             ret = graph.add_edge(new_src, new_src_conn, edge.dst, edge.dst_conn,
                                  data)
@@ -358,7 +380,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             ret = graph.add_edge(edge.src, edge.src_conn, new_dst, new_dst_conn,
                                  data)
             graph.remove_edge(edge)
-
+        '''
         return ret
 
     def adjust_arrays_nsdfg(self, sdfg, nsdfg, name, nname):
@@ -403,7 +425,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             edges = list(graph.out_edges(original_node))
             for edge in edges:
                 if edge.dst not in map_entries:
-                    self.redirect_edge(graph, edge, new_src=redirect_node)
+                    self.copy_edge(graph, edge, new_src=redirect_node, remove_old = True)
 
             graph.add_edge(original_node, None, redirect_node, None, Memlet())
 
@@ -584,7 +606,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                         in_conn = inconnectors_dict[src][1]
                         out_conn = inconnectors_dict[src][2]
+                        '''
                         graph.remove_edge(edge)
+                        '''
 
                     else:
                         next_conn = global_map_entry.next_connector()
@@ -596,36 +620,38 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         inconnectors_dict[src] = (edge, in_conn, out_conn)
 
                         # reroute in edge via global_map_entry
-                        self.redirect_edge(graph, edge, new_dst = global_map_entry, \
+                        self.copy_edge(graph, edge, new_dst = global_map_entry, \
                                                         new_dst_conn = in_conn)
 
                     # map out edges to new map
                     for out_edge in out_edges:
-                        self.redirect_edge(graph, out_edge, new_src = global_map_entry, \
+                        self.copy_edge(graph, out_edge, new_src = global_map_entry, \
                                                             new_src_conn = out_conn)
 
                 else:
                     # connect directly
                     for out_edge in out_edges:
                         mm = dcpy(out_edge.data)
-                        self.redirect_edge(graph,
-                                           out_edge,
-                                           new_src=src,
-                                           new_data=mm)
-
+                        self.copy_edge(graph,
+                                       out_edge,
+                                       new_src=src,
+                                       new_src_conn = None,
+                                       new_data=mm)
+                    '''
                     graph.remove_edge(edge)
+                    '''
 
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections
                 if not edge.src_conn:
-                    self.redirect_edge(graph, edge, new_src=global_map_entry)
+                    self.copy_edge(graph, edge, new_src=global_map_entry)
 
             ######################################
 
             for edge in graph.in_edges(map_exit):
                 if not edge.dst_conn:
                     # no destination connector, path ends here.
-                    self.redirect_edge(graph, edge, new_dst=global_map_exit)
+                    self.copy_edge(graph, edge, new_dst=global_map_exit)
                     continue
                 # find corresponding out_edges for current edge, cannot use mmt anymore
                 out_edges = [
@@ -666,16 +692,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for e in graph.out_edges(dst):
                             if e.dst == dst_transient:
                                 graph.remove_edge(e)
-                                removed = True
                                 break
-
-                        if self.debug:
-                            assert removed == True
 
                     # handle separately: intermediate_nodes and pure out nodes
                     # case 1: intermediate_nodes: can just redirect edge
                     if dst in intermediate_nodes:
-                        self.redirect_edge(graph,
+                        self.copy_edge(graph,
                                            out_edge,
                                            new_src=edge.src,
                                            new_src_conn=edge.src_conn,
@@ -689,13 +711,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             out_conn = 'OUT_' + next_conn
                             global_map_exit.add_in_connector(in_conn)
                             global_map_exit.add_out_connector(out_conn)
-                            self.redirect_edge(graph,
+                            self.copy_edge(graph,
                                                edge,
                                                new_dst=global_map_exit,
                                                new_dst_conn=in_conn)
                             port_created = (in_conn, out_conn)
-                            #edge.dst = global_map_exit
-                            #edge.dst_conn = in_conn
 
                         else:
                             conn_nr = edge.dst_conn[3:]
@@ -705,13 +725,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # map
                         graph.add_edge(global_map_exit, out_conn, dst, None,
                                        dcpy(out_edge.data))
+                        '''
                         graph.remove_edge(out_edge)
+                        '''
 
                 # remove the edge if it has not been used by any pure out node
+                '''
                 if not port_created:
                     graph.remove_edge(edge)
-
+                '''
             # maps are now ready to be discarded
+            # all connected edges will be finally removed as well
             graph.remove_node(map_entry)
             graph.remove_node(map_exit)
 

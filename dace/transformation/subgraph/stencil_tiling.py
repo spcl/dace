@@ -531,13 +531,14 @@ class StencilTiling(transformation.SubgraphTransformation):
             if self.unroll_loops and all(s == 1 for s in self.strides) and any(
                     s not in [0, 1] for s in map_entry.range.size()):
                 l = len(map_entry.params)
-                subgraph = {
-                    MapExpansion._map_entry: graph.nodes().index(map_entry)
-                }
-                trafo_expansion = MapExpansion(sdfg.sdfg_id,
-                                               sdfg.nodes().index(graph),
-                                               subgraph, 0)
-                trafo_expansion.apply(sdfg)
+                if l > 1:
+                    subgraph = {
+                        MapExpansion._map_entry: graph.nodes().index(map_entry)
+                    }
+                    trafo_expansion = MapExpansion(sdfg.sdfg_id,
+                                                   sdfg.nodes().index(graph),
+                                                   subgraph, 0)
+                    trafo_expansion.apply(sdfg)
                 maps = [map_entry]
                 for _ in range(l - 1):
                     map_entry = graph.out_edges(map_entry)[0].dst

@@ -257,7 +257,7 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset],
                 elif sb.covers(sa):
                     subset_set.remove(sa)
                     break
-                elif DeduplicateAccess.are_subsets_contiguous(sa, sb, dim):
+                elif are_subsets_contiguous(sa, sb, dim):
                     subset_set.remove(sa)
                     subset_set.remove(sb)
                     subset_set.add(subsets.bounding_box_union(sa, sb))
