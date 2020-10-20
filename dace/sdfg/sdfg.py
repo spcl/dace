@@ -1495,7 +1495,7 @@ class SDFG(OrderedDiGraph):
 
         # Update constants
         for k, v in syms.items():
-            self.add_constant(k, v)
+            self.add_constant(str(k), v)
 
     def optimize(self, optimizer=None) -> 'SDFG':
         """ 
