@@ -154,14 +154,13 @@ endmodule
             idx_str = ""
             # catch symbolic (compile time variables)
             if symbolic.issymbolic(tasklet.in_connectors[inp].veclen, sdfg.constants):
-                pass
-                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
             if symbolic.issymbolic(tasklet.in_connectors[inp].bytes, sdfg.constants):
-                pass
-                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
+            # extract parameters
             vec_len = int(symbolic.evaluate(tasklet.in_connectors[inp].veclen, sdfg.constants))
             total_size = int(symbolic.evaluate(tasklet.in_connectors[inp].bytes, sdfg.constants))
-
+            # generate vector representation
             if vec_len > 1:
                 idx_str = "[{}:0]".format(vec_len - 1)
             # add element index
@@ -170,7 +169,6 @@ endmodule
             inputs.append(", input{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING-len(idx_str)),
                                                                     idx_str=idx_str,
                                                                     name=inp))
-
         MAX_PADDING = 12
         outputs = list()
         for inp in tasklet.out_connectors:
@@ -178,22 +176,21 @@ endmodule
             idx_str = ""
             # catch symbolic (compile time variables)
             if symbolic.issymbolic(tasklet.out_connectors[inp].veclen, sdfg.constants):
-                pass
-                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
             if symbolic.issymbolic(tasklet.out_connectors[inp].bytes, sdfg.constants):
-                pass
-                # TODO: raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
+            # extract parameters
             vec_len = int(symbolic.evaluate(tasklet.out_connectors[inp].veclen, sdfg.constants))
             total_size = int(symbolic.evaluate(tasklet.out_connectors[inp].bytes, sdfg.constants))
-
+            # generate vector representation
             if vec_len > 1:
-                idx_str = "[{}:0]".format(tasklet.out_connectors[inp].veclen-1)
+                idx_str = "[{}:0]".format(vec_len - 1)
             # add element index
-            idx_str += "[{}:0]".format(int(tasklet.out_connectors[inp].bytes / tasklet.out_connectors[inp].veclen) * 8 - 1)
+            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
             # generate padded string and add to list
             outputs.append(", output reg{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING-len(idx_str)),
-                                                                    idx_str=idx_str,
-                                                                    name=inp))
+                                                                          idx_str=idx_str,
+                                                                          name=inp))
         # generate cpp input reading/output writing code
         """
         input:
