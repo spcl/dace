@@ -336,14 +336,13 @@ if(DACE_ENABLE_XILINX)
 
   # Add synthesis and build commands
   set(DACE_SYNTHESIS_TARGETS)
+
   foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
     get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
     get_filename_component(DACE_KERNEL_DIRECTORY ${DACE_KERNEL_FILE} DIRECTORY)
     string(REGEX REPLACE "(.+).cpp" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
     string(REPLACE " " ";" DACE_XILINX_SYNTHESIS_FLAGS_INTERNAL ${DACE_XILINX_SYNTHESIS_FLAGS})
     set(DACE_VITIS_KERNEL_FILES ${DACE_VITIS_KERNEL_FILES} ${DACE_KERNEL_FILE})
-    set(DACE_VITIS_KERNELS ${DACE_VITIS_KERNELS} --kernel ${DACE_KERNEL_NAME})
-
     configure_file(${CMAKE_SOURCE_DIR}/Xilinx_HLS.tcl.in Synthesize_${DACE_KERNEL_NAME}.tcl)
     add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${Vitis_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl) 
     set(DACE_SYNTHESIS_TARGETS ${DACE_SYNTHESIS_TARGETS} xilinx_synthesis_${DACE_KERNEL_NAME})
@@ -370,7 +369,6 @@ if(DACE_ENABLE_XILINX)
     endforeach()
 
   endforeach()
-  set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} "${DACE_VITIS_KERNELS}")
 
   add_custom_target(xilinx_synthesis DEPENDS ${DACE_SYNTHESIS_TARGETS})
 
@@ -428,58 +426,85 @@ if(DACE_ENABLE_XILINX)
 
   else()
 
-    add_custom_command(
-      OUTPUT ${DACE_PROGRAM_NAME}_sw_emu.xo
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
-      ${VITIS_BUILD_FLAGS}
-      -c
-      -t sw_emu
-      ${DACE_VITIS_KERNEL_FILES}
-      -o ${DACE_PROGRAM_NAME}_sw_emu.xo
-      DEPENDS ${DACE_VITIS_KERNEL_FILES})
+    # Since with Vitis only one kernel can be compiled at a time,
+    # for the general case we have first to compile each kernel
+    # and then link together the generated .xo files
+
+    foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
+      # Compile .xo files
+
+      # The kernel name is given by the file name
+      get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME_WE)
+      set(DACE_VITIS_KERNELS ${DACE_VITIS_KERNELS} ${DACE_KERNEL_NAME})
+
+      add_custom_command(
+        OUTPUT ${DACE_KERNEL_NAME}_sw_emu.xo
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+        ${VITIS_BUILD_FLAGS}
+        -c
+        -t sw_emu
+        ${DACE_KERNEL_FILE}
+        --kernel ${DACE_KERNEL_NAME}
+        -o ${DACE_KERNEL_NAME}_sw_emu.xo
+        DEPENDS ${DACE_VITIS_KERNEL_FILES})
+
+      set(DACE_VITIS_KERNELS_SW_EMU ${DACE_VITIS_KERNELS_SW_EMU} ${DACE_KERNEL_NAME}_sw_emu.xo)
+
+
+      add_custom_command(
+        OUTPUT ${DACE_KERNEL_NAME}_hw_emu.xo
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+        ${VITIS_BUILD_FLAGS}
+        -c
+        -t hw_emu
+        ${DACE_KERNEL_FILE}
+        --kernel ${DACE_KERNEL_NAME}
+        -o ${DACE_KERNEL_NAME}_hw_emu.xo
+        DEPENDS ${DACE_VITIS_KERNEL_FILES})
+
+      set(DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${DACE_KERNEL_NAME}_hw_emu.xo)
+
+
+      add_custom_command(
+        OUTPUT ${DACE_KERNEL_NAME}_hw.xo
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+        ${VITIS_BUILD_FLAGS}
+        -c
+        -t hw
+        ${DACE_KERNEL_FILE}
+        --kernel ${DACE_KERNEL_NAME}
+        -o ${DACE_KERNEL_NAME}_hw.xo
+        DEPENDS ${DACE_VITIS_KERNEL_FILES})
+
+      set(DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${DACE_KERNEL_NAME}_hw.xo)
+
+    endforeach()
+
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation
-                      DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
+                        DEPENDS ${DACE_VITIS_KERNELS_SW_EMU})
     add_custom_target(xilinx_compile_software_emulation DEPENDS
                       xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation)
 
-    add_custom_command(
-      OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xo
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
-      ${VITIS_BUILD_FLAGS}
-      -c
-      -t hw_emu
-      ${DACE_VITIS_KERNEL_FILES}
-      -o ${DACE_PROGRAM_NAME}_hw_emu.xo
-      DEPENDS ${DACE_VITIS_KERNEL_FILES})
-
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation
-                      DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
+                        DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
     add_custom_target(xilinx_compile_hardware_emulation DEPENDS
-                      xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation)
-
-    add_custom_command(
-      OUTPUT ${DACE_PROGRAM_NAME}_hw.xo
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
-      ${VITIS_BUILD_FLAGS}
-      -c
-      -t hw
-      ${DACE_VITIS_KERNEL_FILES}
-      -o ${DACE_PROGRAM_NAME}_hw.xo
-      DEPENDS ${DACE_VITIS_KERNEL_FILES})
+                        xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation)
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_hardware DEPENDS
-                      ${DACE_PROGRAM_NAME}_hw.xo)
+                        ${DACE_VITIS_KERNELS_HW})
     add_custom_target(xilinx_compile_hardware DEPENDS
-                      xilinx_compile_${DACE_PROGRAM_NAME}_hardware)
+                        xilinx_compile_${DACE_PROGRAM_NAME}_hardware)
 
+
+    # Linking
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
       -l
       -t sw_emu
-      ${DACE_PROGRAM_NAME}_sw_emu.xo
+      "${DACE_VITIS_KERNELS_SW_EMU}"
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
 
@@ -489,7 +514,7 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t hw_emu
-      ${DACE_PROGRAM_NAME}_hw_emu.xo
+      "${DACE_VITIS_KERNELS_HW_EMU}"
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
                      
@@ -504,7 +529,7 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t hw
-      ${DACE_PROGRAM_NAME}_hw.xo
+      "${DACE_VITIS_KERNELS_HW}"
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
 
