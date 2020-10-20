@@ -159,6 +159,5 @@ if __name__ == "__main__":
     if diff1 <= 1e-5 and diff2 <= 1e-5:
         print("==== Program end ====")
     else:
-        print("==== Program Error! ====")
+        raise Exception("==== Program Error! ====")
 
-    exit(0 if diff1 <= 1e-5 or diff2 <= 1e-5 else 1)
