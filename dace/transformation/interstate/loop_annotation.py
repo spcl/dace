@@ -1,10 +1,12 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop annotation transformation """
 
+import math
 import sympy as sp
 import networkx as nx
 from sympy.sets.sets import Interval
 from sympy.sets.setexpr import SetExpr
+from sympy.concrete.summations import Sum
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace import sdfg as sd, symbolic, registry
 from dace.sdfg import graph as gr, utils as sdutil
@@ -88,7 +90,9 @@ class AnnotateLoop(DetectLoop):
                 proposed_executions=1,
                 proposed_dynamic=False,
                 idom=idom,
-                visited_states=[state]
+                visited_states=[state],
+                nested_loop_ranges=[],
+                dominating_loop_guard=None
             )
         elif out_degree > 1:
             # XXX: Can this happen? If yes, conditional split here.
@@ -105,6 +109,7 @@ class AnnotateLoop(DetectLoop):
         proposed_dynamic: bool,
         idom: Dict[sd.SDFGState, sd.SDFGState],
         visited_states: List[sd.SDFGState],
+        nested_loop_ranges: List[Dict],
         dominating_loop_guard: Optional[sd.SDFGState]=None
     ) -> None:
         """
@@ -119,6 +124,8 @@ class AnnotateLoop(DetectLoop):
                                  dynamic number of executions.
         :param idom: Dictionary of immediate dominators for each state.
         :param visited_states: States that have already been traversed.
+        :param nested_loop_ranges: Stack of applicable loop ranges if this
+                                   traversal is inside of a loop nest.
         :param dominating_loop_guard: If the current pivot state is part of a
                                       loop, this is the guard state of that
                                       loop.
@@ -159,6 +166,7 @@ class AnnotateLoop(DetectLoop):
                 state.dynamic_executions,
                 idom,
                 visited_states,
+                nested_loop_ranges,
                 dominating_loop_guard
             )
         elif out_degree == 2:
@@ -182,9 +190,25 @@ class AnnotateLoop(DetectLoop):
                         start = loop_range[0]
                         stop = loop_range[1]
                         stride = loop_range[2]
-                        loop_executions = (
-                            (((stop + 1) - start) / stride) * state.executions
-                        )
+
+                        # Calculate the number of loop executions using a sum of
+                        # sums if this loop is nested inside one or more other
+                        # loop(s). Values are converted to strings to make sure
+                        # that sympy doesn't look at two identical symbolic
+                        # expressions as different, because they're not the same
+                        # Expr object.
+                        loop_executions = Sum(1/stride, (str(itvar), str(start), str(stop)))
+                        if len(nested_loop_ranges) > 0:
+                            for lrange in reversed(nested_loop_ranges):
+                                l_start = lrange['loop_range'][0]
+                                l_stop = lrange['loop_range'][1]
+                                l_stride = lrange['loop_range'][2]
+                                new_loop_executions = Sum(
+                                    loop_executions / l_stride,
+                                    (str(lrange['itvar']), str(l_start), str(l_stop))
+                                )
+                                loop_executions = new_loop_executions
+                        loop_executions = math.ceil(loop_executions.doit())
 
                         dynamic = False
                         if isinstance(loop_executions, sp.Basic):
@@ -198,6 +222,11 @@ class AnnotateLoop(DetectLoop):
                         # out of the loop.
                         previous_dominating_loop_guard = dominating_loop_guard
 
+                        nested_loop_ranges.append({
+                            'itvar': itvar,
+                            'loop_range': loop_range,
+                        })
+
                         # Traverse down the loop.
                         AnnotateLoop._traverse_annotate(
                             sdfg,
@@ -207,8 +236,12 @@ class AnnotateLoop(DetectLoop):
                             dynamic,
                             idom,
                             visited_states,
-                            dominating_loop_guard=state
+                            nested_loop_ranges,
+                            state
                         )
+
+                        # Pop the last added nested loop range.
+                        nested_loop_ranges.pop()
 
                         # Traverse down the non-loop side (loop end).
                         end_edge = out_edges[0] if out_edges[1] == condition_edge else out_edges[1]
@@ -220,7 +253,8 @@ class AnnotateLoop(DetectLoop):
                             end_node_dynamic,
                             idom,
                             visited_states,
-                            dominating_loop_guard=previous_dominating_loop_guard
+                            nested_loop_ranges,
+                            previous_dominating_loop_guard
                         )
 
                         return
@@ -235,6 +269,7 @@ class AnnotateLoop(DetectLoop):
                 True, # XXX: should this instead be `state.dynamic_executions`?
                 idom,
                 visited_states,
+                nested_loop_ranges,
                 dominating_loop_guard
             )
         return
