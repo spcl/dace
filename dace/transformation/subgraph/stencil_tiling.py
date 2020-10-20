@@ -149,7 +149,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         sink_maps = set()
         children_dict = defaultdict(set)
         parent_dict = defaultdict(set)
-        map_exits = {graph.exit_node(entry):entry for entry in map_entries}
+        map_exits = {graph.exit_node(entry): entry for entry in map_entries}
 
         for map_entry in map_entries:
             map_exit = graph.exit_node(map_entry)
@@ -174,12 +174,12 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         return (children_dict, parent_dict, sink_maps)
 
-
     @staticmethod
     def can_be_applied(sdfg, subgraph) -> bool:
         # get highest scope maps
         graph = subgraph.graph
-        map_entries = set(helpers.get_outermost_scope_maps(sdfg, graph, subgraph))
+        map_entries = set(
+            helpers.get_outermost_scope_maps(sdfg, graph, subgraph))
         if len(map_entries) < 1:
             return False
 
@@ -204,11 +204,13 @@ class StencilTiling(transformation.SubgraphTransformation):
                     return False
 
         # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
-        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
+        node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph,
+                                                        map_entries)
         (_, intermediate_nodes, out_nodes) = node_config
 
         # check whether topologically feasible
-        if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
+        if not SubgraphFusion.check_topo_feasibility(
+                sdfg, graph, map_entries, intermediate_nodes, out_nodes):
             return False
 
         # get coverages for every map entry
@@ -229,12 +231,14 @@ class StencilTiling(transformation.SubgraphTransformation):
         # account for ranges too long
         for map_entry in map_entries:
             map_coverage = coverages[map_entry][1]
-            for (data_name,cov) in map_coverage.items():
+            for (data_name, cov) in map_coverage.items():
                 parent_coverage = cov
                 children_coverage = None
                 for child_entry in children_dict[map_entry]:
                     if data_name in coverages[child_entry][0]:
-                        children_coverage = subsets.union(children_coverage, coverages[child_entry][0][data_name])
+                        children_coverage = subsets.union(
+                            children_coverage,
+                            coverages[child_entry][0][data_name])
                 # if there are no children data edges at all, we just ignore
                 # this is just an ordinary exit to an array
                 # however, if there are any, we make sure that the children union
@@ -255,7 +259,6 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         return True
 
-
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         subgraph = self.subgraph_view(sdfg)
@@ -263,7 +266,6 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         result = StencilTiling.topology(sdfg, graph, map_entries)
         (children_dict, parent_dict, sink_maps) = result
-
 
         # next up, calculate inferred ranges for each map
         # for each map entry, this contains a tuple of dicts:
@@ -321,8 +323,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         raise NotImplementedError(
                             "One incoming or outgoing stencil subset is indexed "
                             "by multiple map parameters. "
-                            "This is not supported yet."
-                        )
+                            "This is not supported yet.")
                     try:
                         mapping.append(syms.pop())
                     except KeyError:
@@ -375,7 +376,8 @@ class StencilTiling(transformation.SubgraphTransformation):
             if self.reference_range[p] is None:
                 invariant_dims.append(idx)
                 warnings.warn(
-                    f"StencilTiling::No Stencil pattern detected for parameter {p}")
+                    f"StencilTiling::No Stencil pattern detected for parameter {p}"
+                )
                 continue
             for m in map_entries:
                 if inferred_ranges[m][p] != self.reference_range[p]:
@@ -384,7 +386,8 @@ class StencilTiling(transformation.SubgraphTransformation):
             if not different:
                 invariant_dims.append(idx)
                 warnings.warn(
-                    f"StencilTiling::No Stencil pattern detected for parameter {p}")
+                    f"StencilTiling::No Stencil pattern detected for parameter {p}"
+                )
 
         # with inferred_ranges constructed, we can begin to strip mine
         for map_entry in map_entries:
@@ -436,11 +439,11 @@ class StencilTiling(transformation.SubgraphTransformation):
                                            "ranges failed. Please check "
                                            "your parameters and match.")
 
-
                     self.tile_sizes.append(tile_stride + max_diff + min_diff)
-                    self.tile_offset_lower.append(symbolic.pystr_to_symbolic(str(min_diff)))
-                    self.tile_offset_upper.append(symbolic.pystr_to_symbolic(str(max_diff)))
-
+                    self.tile_offset_lower.append(
+                        symbolic.pystr_to_symbolic(str(min_diff)))
+                    self.tile_offset_upper.append(
+                        symbolic.pystr_to_symbolic(str(max_diff)))
 
                 # get calculated parameters
                 tile_size = self.tile_sizes[-1]
@@ -559,7 +562,8 @@ class StencilTiling(transformation.SubgraphTransformation):
 
                     guard = trafo_for_loop.guard
                     end = trafo_for_loop.after_state
-                    begin = next(e.dst for e in nsdfg.out_edges(guard) if e.dst != end)
+                    begin = next(e.dst for e in nsdfg.out_edges(guard)
+                                 if e.dst != end)
 
                     subgraph = {
                         DetectLoop._loop_guard: nsdfg.nodes().index(guard),
