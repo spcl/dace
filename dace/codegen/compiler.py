@@ -415,11 +415,12 @@ def generate_program_folder(sdfg,
         :return: Path to the program folder.
     """
 
+    src_path = os.path.join(out_path, "src")
+
     # add rtl files to filelist: TODO: proper implementation
     filelist = list()
-    src_path = os.path.join(out_path, "src")
-    os.makedirs(src_path, exist_ok=True)
     rtl_src_path = os.path.join(src_path, "rtl")
+    os.makedirs(rtl_src_path, exist_ok=True)
     if os.path.exists(rtl_src_path):
         filelist = ["{},{},{}".format("rtl", "", f) for f in listdir(rtl_src_path) if isfile(join(rtl_src_path, f))]
 
