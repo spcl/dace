@@ -581,6 +581,13 @@ if(DACE_ENABLE_RTL)
     message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
 
+  set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
+
+  if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
+    # -Wall: Enable all style warnings
+    # -Wno-fatal: Disable fatal exit on warnings
+    set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
+  endif()
 
   foreach(RTL_FILE "${DACE_RTL_FILES}")
 
@@ -602,9 +609,7 @@ if(DACE_ENABLE_RTL)
     include_directories(${VERILATOR_INCLUDE})
 
     # verilate design
-    # -Wall: Enable all style warnings
-    # -Wno-fatal: Disable fatal exit on warnings
-    verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "-Wall" "-Wno-fatal")
+    verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
 
     # add object library for linking
     set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})

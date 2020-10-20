@@ -24,6 +24,22 @@ class RTLCodeGen(TargetCodeGenerator):
         self.codegen = self._dispatcher.get_generic_node_dispatcher()
         self.sdfg = sdfg
 
+    @staticmethod
+    def cmake_options():
+        """ Prepare CMake options. """
+        # get flags from config
+        verbose = Config.get_bool("compiler", "rtl", "verbose")
+        verilator_flags = Config.get("compiler", "rtl", "verilator_flags")
+        verilator_lint_warnings = Config.get_bool("compiler", "rtl", "verilator_lint_warnings")
+        # create options list
+        options = [
+            "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
+            "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags),
+            "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(verilator_lint_warnings)
+        ]
+        return options
+
+
     # define cpp code templates
     header_template = """
                             // generic includes
@@ -238,7 +254,7 @@ endmodule
         sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
                                                                            debug="// enable/disable debug log\n" +
                                                                                  "bool DEBUG = false;" if "DEBUG" not in sdfg.constants else ""))
-
+        #dace.config.Config.get()
         callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name,
                                                                        inputs=input_read_string,
                                                                        outputs=output_read_string,
@@ -254,13 +270,3 @@ endmodule
                               state_id=state_id,
                               node_id=node)
 
-    @staticmethod
-    def cmake_options():
-        """ Prepare CMake options. """
-        # get flags from config
-        verilator_flags = Config.get("compiler", "rtl", "verilator_flags")  # COVERAGE, TRACE
-        # create options list
-        options = [
-            "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags)
-        ]
-        return options

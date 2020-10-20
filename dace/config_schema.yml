@@ -433,6 +433,29 @@ required:
                             std::future. This also allows each kernel to measure its own runtime from the host code.
 
             #############################################
+            # RTL (SystemVerilog) compiler
+            rtl:
+                type: dict
+                title: RTL
+                description: RTL (SystemVerilog) compiler preferences
+                required:
+                    verbose:
+                        type: bool
+                        default: false
+                        title: Verbose Build & Execution Output
+                        description: Output full build and execution (incl internal state) log.
+                    verilator_flags:
+                        type: str
+                        default: ''
+                        title: Additional Verilator Arguments
+                        description: Additional arguments feed to verilator.
+                    verilator_lint_warnings:
+                        type: bool
+                        default: true
+                        title: Verilator Lint Warnings
+                        description: Enable/Disable detailed SV lint checker output.
+
+            #############################################
             # MPI compiler
             mpi:
                 type: dict
