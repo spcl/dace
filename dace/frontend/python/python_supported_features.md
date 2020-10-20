@@ -8,7 +8,7 @@ The comparison is made against the [Python Language Reference](https://docs.pyth
 ### 2.1 Line Structure
 The DaCe Python-Frontend uses the Python AST module to parse code.
 Therefore, full support of the line structure section is expected.
-However, we explicitly test for the following subsections (`tests/python_fronted/line_structure_test.py`):
+However, we explicitly test for the following subsections (`tests/python_frontend/line_structure_test.py`):
 - 2.1.3 Comments
 - 2.1.5 Explicit Line Joining
 - 2.1.6 Implicit Line Joining
@@ -95,7 +95,7 @@ DaCe and Numpy modules
 ### 6.4 Await expression
 Unsupported  
 
-### 6.5 The power operator
+### 6.5 The power (**) operator
 Supported. If the base is an integer and the exponent a signed integer, both
 operands are cast to float64 and the result is also of type float64.
 
@@ -135,7 +135,7 @@ Supported only for (supported) method arguments that expect a list/tuple
 Supported
 
 ### 6.17 Operator precedence
-Supported
+Evaluated exactly as in Python.
 
 ## 7 Simple Statements
 
@@ -147,8 +147,6 @@ mode is not supported.
 Assignment statements with single or multiple targets are supported, both with
 and without parentheses. Statements with starred targets are not supported.
 Targets may only be identifiers, and subscriptions/slices of Numpy arrays.
-(TODO: We should support targets that are attribute references of dace.struct
-objects)
 
 #### 7.2.1 Augmented assignment statements
 Supported with the same constraints for targets as in assignment statements.
@@ -160,19 +158,19 @@ Unsupported
 Unsupported
 
 ### 7.4 The pass statement
-Unsupported
+Supported
 
 ### 7.5 The del statement
 Unsupported
 
-### 7.6 The resunt statement
-Supported (TODO: Maybe we need to provide more details here on how it works)
+### 7.6 The return statement
+Supported
 
 ### 7.7 The yield statement
 Unsupported
 
 ### 7.8 The raise statement
-Unsusupported
+Unsupported
 
 ### 7.9 The break statement
 Supported for for/while loops, as long as the break statement is in the same
@@ -183,7 +181,7 @@ Supported for for/while loops, as long as the continue statement is in the same
 SDFG-level as the for/while statement.
 
 ### 7.11 The import statement
-Unsupported, inclduing 7.11.1 Future statements
+Unsupported, including 7.11.1 Future statements
 
 ### 7.12 The global statement
 Unsupported
@@ -193,11 +191,10 @@ Unsupported
 
 ## 8 Compound Statements
 ### 8.1 The if statement
-Supported  
-TODO: Perhaps we should document some interesting side-effects of not redefining
-variables in SDFGs. E.g., in the following code, variable b will be of type
-dace.int always, even if `a[0] == np.float32(np.pi)`, unless it is explcitly
-declared as such:
+Supported. Note that if the type of some variable depends on the branch taken,
+then the variable will always have the type of the first branch. E.g., in the
+following code, variable b will be of type dace.int always, even if
+`a[0] == np.float32(np.pi)`, unless it is explicitly declared as such:
 ```python
 @dace.program
 def single_target(a: dace.float32[1]):
@@ -214,7 +211,7 @@ def single_target(a: dace.float32[1]):
 Supported
 
 ### 8.3 The for statement
-Supported
+Supported, but only with `range`, `parrange`, and `dace.map`.
 
 ### 8.4 The try statement
 Unsupported

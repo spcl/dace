@@ -41,6 +41,8 @@ def _define_local_ex(sdfg: SDFG,
                      dtype: dace.typeclass,
                      storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local array in a DaCe program. """
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
     return name
 
@@ -241,6 +243,8 @@ def _simple_call(sdfg: SDFG,
                  func: str,
                  restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
+    if isinstance(inpname, (list, tuple)):  # TODO investigate this
+        inpname = inpname[0]
     inparr = sdfg.arrays[inpname]
     if restype is None:
         restype = sdfg.arrays[inpname].dtype
@@ -382,6 +386,7 @@ def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.max')
+@oprepo.replaces('numpy.amax')
 def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg,
                    state,
@@ -392,6 +397,7 @@ def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.min')
+@oprepo.replaces('numpy.amin')
 def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg,
                    state,
@@ -608,9 +614,9 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
     out_shape = tuple(reversed([all_idx_dict[idx] for idx in all_idx]))
 
-    all_idx_dict = {k: "0:" + str(v) for k, v in all_idx_dict.items()}
+    all_idx_tup = [(k, "0:" + str(all_idx_dict[k])) for k in reversed(all_idx)]
 
-    return out_shape, all_idx_dict, to_string(all_idx), to_string(
+    return out_shape, all_idx_tup, to_string(all_idx), to_string(
         a1_idx), to_string(a2_idx)
 
 
@@ -620,12 +626,12 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str,
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
 
-    out_shape, all_idx_dict, all_idx, arr1_idx, arr2_idx = _broadcast_together(
+    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = _broadcast_together(
         arr1.shape, arr2.shape)
 
     name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
     state.add_mapped_tasklet("_%s_" % opname,
-                             all_idx_dict, {
+                             all_idx_tup, {
                                  '__in1': Memlet.simple(op1, arr1_idx),
                                  '__in2': Memlet.simple(op2, arr2_idx)
                              },

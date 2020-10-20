@@ -4,6 +4,8 @@ import numpy as np
 
 N = dace.symbol('N')
 
+# yapf: disable
+
 
 @dace.program
 def comments(A: dace.float32[N], B: dace.float32[N]):
@@ -71,6 +73,11 @@ def blank_lines(A: dace.float32[N], B: dace.float32[N]):
                          
     B[:] = tmp[:]  # for i in 0 .. N-1; B[i] = tmp[i]
 
+<<<<<<< HEAD
+=======
+# yapf: enable
+
+>>>>>>> master
 
 def test_blank_lines():
     N.set(128)

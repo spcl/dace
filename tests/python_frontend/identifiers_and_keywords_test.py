@@ -251,4 +251,4 @@ if __name__ == "__main__":
     # test_keyword_while()
     # test_keyword_return()
     test_keyword_notor()
-    test_keyword_lambda()
+    test_keyword_lambda()r
