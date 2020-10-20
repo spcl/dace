@@ -581,38 +581,43 @@ if(DACE_ENABLE_RTL)
     message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
 
+  # get verilator flags from dace.conf
   set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
 
+  # add lint verilator flags
   if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
     # -Wall: Enable all style warnings
     # -Wno-fatal: Disable fatal exit on warnings
     set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
   endif()
 
-  foreach(RTL_FILE "${DACE_RTL_FILES}")
+  message(WARNING "${DACE_RTL_FILES}")
+  foreach(RTL_FILE ${DACE_RTL_FILES})
 
     # extract design name
     get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
 
     # add verilated .cpp files
-    set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
-    #set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Slow.cpp")
-    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
+    set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
+    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
     set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
     set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
     # add verilated design
-    add_library(VERILATED_LIB OBJECT)
+    #add_library(VERILATED_LIB OBJECT)
+    add_library("${RTL_FILE_NAME}" OBJECT)
 
     # include verilator
-    set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/VERILATED_LIB.dir/V${RTL_FILE_NAME}.dir")
+    set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir")
     include_directories(${VERILATOR_INCLUDE})
 
     # verilate design
-    verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
-
+    #verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
+    verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
+    message(WARNING "ASDF: ${RTL_FILE}")
     # add object library for linking
-    set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
+    #set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
+    set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
 
   endforeach()
 

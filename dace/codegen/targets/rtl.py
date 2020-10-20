@@ -52,11 +52,13 @@ class RTLCodeGen(TargetCodeGenerator):
                             #include "V{name}.h"
                             
                             // global simulation time cycle counter
-                            vluint64_t main_time = 0;
+                            //vluint64_t main_time = 0;
                             
                             {debug}
                             """
     main_template = """
+                        vluint64_t main_time = 0;
+                        
                         // instantiate model
                         V{name}* model = new V{name};
                     
