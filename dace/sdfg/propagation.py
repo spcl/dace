@@ -549,8 +549,12 @@ def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
         :note: This is an in-place operation on the SDFG.
     """
+    from dace.transformation.interstate.loop_annotation import AnnotateLoop
+
     for state in sdfg.nodes():
         propagate_memlets_state(sdfg, state)
+
+    AnnotateLoop._annotate(sdfg)
 
 
 def propagate_memlets_state(sdfg, state):

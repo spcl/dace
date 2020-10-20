@@ -592,6 +592,14 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                           desc="Measure execution statistics with given method",
                           default=dtypes.InstrumentationType.No_Instrumentation)
 
+    executions = SymbolicProperty(default=0,
+                                  desc="The number of times this state gets "
+                                  "executed (can be a range)")
+    dynamic_executions = Property(dtype=bool,
+                                  default=True,
+                                  desc="The number of executions of this state "
+                                  "is dynamic")
+
     location = DictProperty(
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,
