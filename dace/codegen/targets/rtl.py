@@ -133,7 +133,7 @@ endmodule
 
         # construct paths
         unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
-        base_path = os.path.join(".dacecache", sdfg.name, "src", "rtl")
+        base_path = os.path.join(sdfg.build_folder, "src", "rtl")
         absolut_path = os.path.abspath(base_path)
 
         # construct parameters module header
@@ -230,9 +230,7 @@ endmodule
                                         """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
                                         for var_name in tasklet.out_connectors])
         # write verilog to file
-        if os.path.isdir(absolut_path):
-            shutil.rmtree(absolut_path)
-        os.makedirs(absolut_path)
+        os.makedirs(absolut_path, exist_ok=True)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
             file.writelines(
                 RTLCodeGen.rtl_header.format(name=unique_name, parameters=parameter_string, inputs="\n".join(inputs),
