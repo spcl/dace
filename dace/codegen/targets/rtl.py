@@ -57,6 +57,8 @@ class RTLCodeGen(TargetCodeGenerator):
                             {debug}
                             """
     main_template = """
+                        std::cout << "SIM START" << std::endl;
+
                         vluint64_t main_time = 0;
                         
                         // instantiate model
@@ -82,7 +84,8 @@ class RTLCodeGen(TargetCodeGenerator):
                         model->eval();
                     
                         // simulate until $finish
-                        while (!Verilated::gotFinish()) {{
+                        //while (!Verilated::gotFinish()) {{
+                        while (!model->valid_o) {{
                     
                             // increment time
                             main_time++;
@@ -119,6 +122,8 @@ class RTLCodeGen(TargetCodeGenerator):
                         // clean up resources
                         delete model;
                         model = NULL;
+                        
+                        std::cout << "SIM END" << std::endl;
                         """
     rtl_header = """\
 module {name}
@@ -133,10 +138,10 @@ module {name}
 {outputs}
 );"""
     rtl_footer = """
-    always@(*) begin
-        if (valid_o)
-            $finish; // convention: $finish; must eventually be called
-    end
+    //always@(*) begin
+    //    if (valid_o)
+    //        $finish; // convention: $finish; must eventually be called
+    //end
 endmodule
 """
 
