@@ -366,6 +366,7 @@ def test_multi_tasklet():
     print("a={}, b={}, c={}".format(a, b, c))
 
     # check result
+    assert b == 80
     assert c == 100
 
 
