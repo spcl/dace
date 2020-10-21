@@ -6,6 +6,7 @@ import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
+from typing import Any, List
 
 
 class NodeNotFoundError(Exception):
@@ -257,13 +258,17 @@ class Graph(object):
     def neighbors(self, node):
         return itertools.chain(self.predecessors(node), self.successors(node))
 
-    def in_degree(self, node):
+    def in_degree(self, node) -> int:
         """Returns the number of incoming edges to the specified node."""
         raise self._not_implemented_error()
 
-    def out_degree(self, node):
+    def out_degree(self, node) -> int:
         """Returns the number of outgoing edges from the specified node."""
         raise self._not_implemented_error()
+
+    def degree(self, node) -> int:
+        """Returns the number of edges connected to/from the specified node."""
+        return self.in_degree(node) + self.out_degree(node)
 
     def number_of_nodes(self):
         """Returns the total number of nodes in the graph."""
@@ -331,11 +336,11 @@ class Graph(object):
                 except StopIteration:
                     stack.pop()
 
-    def source_nodes(self):
+    def source_nodes(self) -> List[Any]:
         """Returns nodes with no incoming edges."""
         return [n for n in self.nodes() if self.in_degree(n) == 0]
 
-    def sink_nodes(self):
+    def sink_nodes(self) -> List[Any]:
         """Returns nodes with no outgoing edges."""
         return [n for n in self.nodes() if self.out_degree(n) == 0]
 

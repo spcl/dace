@@ -179,9 +179,17 @@ class Node(object):
                 continue
         return next_number
 
-    def next_connector(self) -> str:
-        """ Returns the next unused connector ID (as a string). Used for
-            filling connectors when adding edges to scopes. """
+    def next_connector(self, try_name: str = None) -> str:
+        """ 
+        Returns the next unused connector ID (as a string). Used for
+        filling connectors when adding edges to scopes. 
+        :param try_name: First try the connector with this name. If already 
+                         exists, use the next integer connector.
+        """
+        if (try_name and 'IN_' + try_name not in self.in_connectors
+                and 'OUT_' + try_name not in self.out_connectors):
+            return try_name
+
         return str(self._next_connector_int())
 
     def last_connector(self) -> str:
