@@ -85,10 +85,10 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                     continue
                 # If inputs to tasklets are not arrays, skip
                 for tinput in state.in_edges(edge.src):
-                    if not isinstance(tinput, nodes.AccessNode):
+                    if not isinstance(tinput.src, nodes.AccessNode):
                         candidates.remove(candidate)
                         break
-                    if isinstance(sdfg.arrays[tinput.data], dt.Stream):
+                    if isinstance(sdfg.arrays[tinput.src.data], dt.Stream):
                         candidates.remove(candidate)
                         break
                 else:
