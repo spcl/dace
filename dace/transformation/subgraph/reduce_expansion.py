@@ -204,9 +204,9 @@ class ReduceExpansion(transformation.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage._node_a:
+                LocalStorage.node_a:
                 nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
-                LocalStorage._node_b:
+                LocalStorage.node_b:
                 nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
@@ -231,9 +231,9 @@ class ReduceExpansion(transformation.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage._node_a:
+                LocalStorage.node_a:
                 nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
-                LocalStorage._node_b:
+                LocalStorage.node_b:
                 nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
             }
 
