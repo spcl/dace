@@ -115,6 +115,9 @@ run_all() {
 
     ## Multiple kernels
     run_sample fpga/multiple_kernels multiple_kernels "\n"
+
+    # Nested SDFG with symbol mapping
+    run_sample fpga/symbol_mapping symbol_mapping "\n"
 }
 
 # Check if aoc is vailable

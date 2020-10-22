@@ -662,8 +662,18 @@ __kernel void \\
                                            state_dfg, state_id, function_stream,
                                            callsite_stream)
 
-        callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
-                              node)
+        # Deal with symbol mapping (if any)
+        defined_symbols = state_dfg.symbols_defined_at(node)
+        result = ""
+        for inner_symb, outer_symb in node.symbol_mapping.items():
+            result += "{} {} = {};".format(defined_symbols[outer_symb.name],
+                                           inner_symb, outer_symb.name)
+            self._dispatcher.defined_vars.add(inner_symb, DefinedType.Scalar,
+                                              defined_symbols[outer_symb.name])
+
+        callsite_stream.write(result)
+
+        callsite_stream.write('\n  ///////////////////\n', sdfg, state_id, node)
 
         sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
 
@@ -676,8 +686,7 @@ __kernel void \\
         function_stream.write(global_code)
         callsite_stream.write(local_code)
 
-        callsite_stream.write('    ///////////////////\n\n', sdfg, state_id,
-                              node)
+        callsite_stream.write('  ///////////////////\n\n', sdfg, state_id, node)
 
         # Process outgoing memlets with the internal SDFG
         self.process_out_memlets(sdfg, state_id, node, state_dfg,

@@ -75,6 +75,9 @@ run_all() {
       run_sample ../samples/fpga/filter_fpga filter_fpga 1 8192 0.5
       run_sample ../samples/fpga/jacobi_fpga_stream jacobi_fpga_stream_Hx128xT 1 128 128 8
     fi
+
+    # Nested SDFG with symbol mapping
+    run_sample fpga/symbol_mapping symbol_mapping 0
 }
 
 # Check if xocc is vailable
