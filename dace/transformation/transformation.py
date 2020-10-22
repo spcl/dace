@@ -473,7 +473,7 @@ class ExpandTransformation(Transformation):
             # Modify internal schedules according to node schedule
             if node.schedule != ScheduleType.Default:
                 for nstate in expansion.nodes():
-                    topnodes = nstate.scope_dict(node_to_children=True)[None]
+                    topnodes = nstate.scope_children()[None]
                     for topnode in topnodes:
                         if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
                             topnode.schedule = node.schedule
