@@ -44,7 +44,7 @@ class MapExpansion(pm.Transformation):
     @staticmethod
     def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
                                                             int]) -> str:
-        map_entry = graph.nodes()[candidate[MapExpansion.map_entry]]
+        map_entry = graph.node(candidate[MapExpansion.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
     def apply(self, sdfg: dace.SDFG):

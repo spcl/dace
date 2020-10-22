@@ -16,7 +16,6 @@ from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation
-from dace.sdfg.graph import SubgraphView
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
 from typing import Any, Dict, List, Optional, Set, Type, Union
@@ -75,7 +74,7 @@ class Transformation(object):
         return False
 
     @staticmethod
-    def expressions() -> List[SubgraphView]:
+    def expressions() -> List[gr.SubgraphView]:
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
@@ -354,7 +353,8 @@ class Transformation(object):
         }
 
     @staticmethod
-    def from_json(json_obj, context=None) -> 'Transformation':
+    def from_json(json_obj: Dict[str, Any],
+                  context: Dict[str, Any] = None) -> 'Transformation':
         xform = next(ext for ext in Transformation.extensions().keys()
                      if ext.__name__ == json_obj['transformation'])
 
@@ -525,10 +525,10 @@ class SubgraphTransformation(object):
                            desc='Subgraph in transformation instance')
 
     def __init__(self,
-                 subgraph: Union[Set[int], SubgraphView],
+                 subgraph: Union[Set[int], gr.SubgraphView],
                  sdfg_id: int = None,
                  state_id: int = None):
-        if (not isinstance(subgraph, (SubgraphView, SDFG, SDFGState))
+        if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState))
                 and (sdfg_id is None or state_id is None)):
             raise TypeError(
                 'Subgraph transformation either expects a SubgraphView or a '
@@ -536,9 +536,9 @@ class SubgraphTransformation(object):
 
         # An entire graph is given as a subgraph
         if isinstance(subgraph, (SDFG, SDFGState)):
-            subgraph = SubgraphView(subgraph, subgraph.nodes())
+            subgraph = gr.SubgraphView(subgraph, subgraph.nodes())
 
-        if isinstance(subgraph, SubgraphView):
+        if isinstance(subgraph, gr.SubgraphView):
             self.subgraph = set(
                 subgraph.graph.node_id(n) for n in subgraph.nodes())
 
@@ -557,14 +557,15 @@ class SubgraphTransformation(object):
             self.sdfg_id = sdfg_id
             self.state_id = state_id
 
-    def subgraph_view(self, sdfg: SDFG) -> SubgraphView:
+    def subgraph_view(self, sdfg: SDFG) -> gr.SubgraphView:
         graph = sdfg.sdfg_list[self.sdfg_id]
         if self.state_id != -1:
             graph = graph.node(self.state_id)
-        return SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
+        return gr.SubgraphView(graph,
+                               [graph.node(idx) for idx in self.subgraph])
 
     @staticmethod
-    def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
+    def can_be_applied(sdfg: SDFG, subgraph: gr.SubgraphView) -> bool:
         """
         Tries to match the transformation on a given subgraph, returning
         True if this transformation can be applied.
@@ -585,7 +586,7 @@ class SubgraphTransformation(object):
     @classmethod
     def apply_to(cls,
                  sdfg: SDFG,
-                 *where: Union[nd.Node, SDFGState, SubgraphView],
+                 *where: Union[nd.Node, SDFGState, gr.SubgraphView],
                  verify: bool = True,
                  **options: Any):
         """
@@ -618,7 +619,7 @@ class SubgraphTransformation(object):
         if len(where) == 1:
             if isinstance(where[0], (list, tuple)):
                 where = where[0]
-            elif isinstance(where[0], SubgraphView):
+            elif isinstance(where[0], gr.SubgraphView):
                 subgraph = where[0]
         if len(where) == 0:
             raise ValueError('At least one node is required')
@@ -639,7 +640,7 @@ class SubgraphTransformation(object):
                                 type(sample_node).__name__)
 
             # Construct subgraph and instantiate transformation
-            subgraph = SubgraphView(graph, where)
+            subgraph = gr.SubgraphView(graph, where)
             instance = cls(subgraph, sdfg.sdfg_id, state_id)
         else:
             # Construct instance from subgraph directly
@@ -669,7 +670,8 @@ class SubgraphTransformation(object):
         }
 
     @staticmethod
-    def from_json(json_obj, context=None):
+    def from_json(json_obj: Dict[str, Any],
+                  context: Dict[str, Any] = None) -> 'SubgraphTransformation':
         xform = next(ext for ext in SubgraphTransformation.extensions().keys()
                      if ext.__name__ == json_obj['transformation'])
 

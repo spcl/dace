@@ -10,17 +10,17 @@ from dace import registry, symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation.transformation import Transformation, PatternNode
+from dace.transformation import transformation as xf
 
 
 @make_properties
-class LocalStorage(Transformation, ABC):
+class LocalStorage(xf.Transformation, ABC):
     """ Implements the Local Storage prototype transformation, which adds a
         transient data node between two nodes.
     """
 
-    node_a = PatternNode(nodes.Node)
-    node_b = PatternNode(nodes.Node)
+    node_a = xf.PatternNode(nodes.Node)
+    node_b = xf.PatternNode(nodes.Node)
 
     array = Property(
         dtype=str,
