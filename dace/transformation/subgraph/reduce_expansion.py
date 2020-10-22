@@ -140,6 +140,7 @@ class ReduceExpansion(transformation.Transformation):
         nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
 
         # find the new nodes in the nested sdfg created
+        # TODO SCOPE_DICT => SCOPE CHILDREN?
         nstate = nsdfg.sdfg.nodes()[0]
         for node, scope in nstate.scope_dict().items():
             if isinstance(node, nodes.MapEntry):
@@ -479,7 +480,7 @@ class ReduceExpansion(transformation.Transformation):
         node.add_out_connector('_out')
 
         if node.schedule != dtypes.ScheduleType.Default:
-            topnodes = nstate.scope_dict(node_to_children=True)[None]
+            topnodes = nstate.scope_children()[None]
             for topnode in topnodes:
                 if isinstance(topnode, (nodes.EntryNode, nodes.LibraryNode)):
                     topnode.schedule = node.schedule

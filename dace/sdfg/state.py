@@ -69,7 +69,7 @@ class StateGraphView(object):
     def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
         """ Returns the exit node leaving the context opened by
             the given entry node. """
-        node_to_children = self.scope_dict(True)
+        node_to_children = self.scope_children()
         return next(v for v in node_to_children[entry_node]
                     if isinstance(v, nd.ExitNode))
 
@@ -236,8 +236,8 @@ class StateGraphView(object):
                 and self._scope_tree_cached is not None):
             return copy.copy(self._scope_tree_cached)
 
-        sdp = self.scope_dict(node_to_children=False)
-        sdc = self.scope_dict(node_to_children=True)
+        sdp = self.scope_dict()
+        sdc = self.scope_children()
 
         result = {}
 
@@ -280,49 +280,67 @@ class StateGraphView(object):
         return copy.copy(self._scope_leaves_cached)
 
     def scope_dict(self,
-                   node_to_children=False,
-                   return_ids=False,
-                   validate=True):
-        """ Returns a dictionary that segments an SDFG state into
-            entry-node/exit-node scopes.
+                   return_ids: bool = False,
+                   validate: bool = True) -> Dict[nd.Node, Optional[nd.Node]]:
+        """ Returns a dictionary that maps each SDFG node to its parent entry
+            node, or to None if the node is not in any scope.
 
-            :param node_to_children: If False (default), returns a mapping
-                                     of each node to its parent scope
-                                     (ScopeEntry) node. If True, returns a
-                                     mapping of each parent node to a list of
-                                     children nodes.
-            :type node_to_children: bool
             :param return_ids: Return node ID numbers instead of node objects.
-            :type return_ids: bool
             :param validate: Ensure that the graph is not malformed when
                              computing dictionary.
-            :return: The mapping from a node to its parent scope node, or the
-                     mapping from a node to a list of children nodes.
-            :rtype: dict(Node, Node) or dict(Node, list(Node))
+            :return: The mapping from a node to its parent scope entry node.
         """
         from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
         result = None
-        if not node_to_children and self._scope_dict_toparent_cached is not None:
-            result = copy.copy(self._scope_dict_toparent_cached)
-        elif node_to_children and self._scope_dict_tochildren_cached is not None:
-            result = copy.copy(self._scope_dict_tochildren_cached)
+        result = copy.copy(self._scope_dict_toparent_cached)
 
         if result is None:
             result = {}
             node_queue = collections.deque(self.source_nodes())
-            eq = _scope_dict_inner(self, node_queue, None, node_to_children,
-                                   result)
+            eq = _scope_dict_inner(self, node_queue, None, False, result)
 
             # Sanity check
             if validate and len(eq) != 0:
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 
             # Cache result
-            if node_to_children:
-                self._scope_dict_tochildren_cached = result
-            else:
-                self._scope_dict_toparent_cached = result
+            self._scope_dict_toparent_cached = result
+            result = copy.copy(result)
 
+        if return_ids:
+            return _scope_dict_to_ids(self, result)
+        return result
+
+    def scope_children(
+        self,
+        return_ids: bool = False,
+        validate: bool = True
+    ) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
+        """ Returns a dictionary that maps each SDFG entry node to its children,
+            not including the children of children entry nodes. The key `None`
+            contains a list of top-level nodes (i.e., not in any scope).
+
+            :param return_ids: Return node ID numbers instead of node objects.
+            :param validate: Ensure that the graph is not malformed when
+                             computing dictionary.
+            :return: The mapping from a node to a list of children nodes.
+        """
+        from dace.sdfg.scope import _scope_dict_inner, _scope_dict_to_ids
+        result = None
+        if self._scope_dict_tochildren_cached is not None:
+            result = copy.copy(self._scope_dict_tochildren_cached)
+
+        if result is None:
+            result = {}
+            node_queue = collections.deque(self.source_nodes())
+            eq = _scope_dict_inner(self, node_queue, None, True, result)
+
+            # Sanity check
+            if validate and len(eq) != 0:
+                raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            # Cache result
+            self._scope_dict_tochildren_cached = result
             result = copy.copy(result)
 
         if return_ids:
@@ -550,10 +568,10 @@ class StateGraphView(object):
 
     def top_level_transients(self):
         """Iterate over top-level transients of this state."""
-        sdict = self.scope_dict(node_to_children=True)
+        schildren = self.scope_children()
         sdfg = self.parent
         result = set()
-        for node in sdict[None]:
+        for node in schildren[None]:
             if isinstance(node, nd.AccessNode) and node.desc(sdfg).transient:
                 result.add(node.data)
         return result
@@ -718,8 +736,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             scope_dict = {
                 k: sorted(v)
                 for k, v in sorted(
-                    self.scope_dict(node_to_children=True,
-                                    return_ids=True).items())
+                    self.scope_children(return_ids=True).items())
             }
         except RuntimeError:
             scope_dict = {}
@@ -1492,7 +1509,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                 next_conn = edge.src.next_connector(memlet.data)
                 sconn = src_conn if i == len(edges) - 1 else "OUT_" + next_conn
                 dconn = dst_conn if i == 0 else "IN_" + last_conn
-            
+
             last_conn = next_conn
 
             if cur_memlet.is_empty():
