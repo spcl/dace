@@ -959,7 +959,7 @@ class CodeBlock(object):
         return set()
 
     @property
-    def as_string(self):
+    def as_string(self) -> str:
         if isinstance(self.code, str) or self.code is None:
             return self.code
         return unparse(self.code)
