@@ -666,8 +666,8 @@ __kernel void \\
         defined_symbols = state_dfg.symbols_defined_at(node)
         result = ""
         for inner_symb, outer_symb in node.symbol_mapping.items():
-            # define the variable if is not already a symbol in the nested SDFG
-            if outer_symb.name not in node.sdfg.symbols:
+            # define the variable if it is not already a symbol in the nested SDFG
+            if isinstance(outer_symb, dace.symbol) and outer_symb.name not in node.sdfg.symbols:
                 result += "{} {} = {};".format(defined_symbols[outer_symb.name],
                                                inner_symb, outer_symb.name)
                 self._dispatcher.defined_vars.add(
