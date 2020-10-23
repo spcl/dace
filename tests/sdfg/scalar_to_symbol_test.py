@@ -181,7 +181,7 @@ def test_promote_array_assignment():
         j = A[1, 1]
         A[:] += j
 
-    sdfg: dace.SDFG = testprog.to_sdfg()
+    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -210,7 +210,7 @@ def test_promote_array_assignment_tasklet():
             out = inp
         A[:] += j
 
-    sdfg: dace.SDFG = testprog.to_sdfg()
+    sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
