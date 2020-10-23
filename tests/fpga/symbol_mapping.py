@@ -179,7 +179,6 @@ if __name__ == "__main__":
     size= args["N"]
     sdfg = make_nested_sdfg_fpga()
 
-    sdfg.save('/tmp/out.sdfg')
     vecAdd = sdfg.compile()
     x = np.random.rand(size).astype(np.float32)
     y = np.random.rand(size).astype(np.float32)
