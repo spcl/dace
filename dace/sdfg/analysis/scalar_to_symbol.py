@@ -2,15 +2,17 @@
 """ Scalar to symbol promotion functionality. """
 
 import ast
+import collections
+from platform import node
+from dace import symbolic
 from dace.sdfg.sdfg import InterstateEdge
-from dace.frontend.python.astutils import ASTFindReplace
 from dace import (dtypes, nodes, sdfg as sd, data as dt, properties as props,
-                  memlet as mm)
+                  memlet as mm, subsets)
 from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, Dict, Set
+from typing import Any, DefaultDict, Dict, List, Set, Tuple
 
 
 def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
@@ -56,6 +58,20 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
             # If candidate is read-only, continue normally
             if state.in_degree(node) == 0:
                 continue
+
+            # If candidate is read by a library node, skip
+            removed = False
+            for oe in state.out_edges(node):
+                for e in state.memlet_tree(oe):
+                    if isinstance(e.dst, nodes.LibraryNode):
+                        candidates.remove(candidate)
+                        removed = True
+                        break
+                if removed:
+                    break
+            if removed:
+                continue
+            # End of read check
 
             # Candidate may only be accessed in a top-level scope
             if state.entry_node(node) is not None:
@@ -168,6 +184,278 @@ class TaskletPromoter(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class TaskletIndirectionPromoter(ast.NodeTransformer):
+    """
+    Promotes indirect memory access in Tasklets to symbolic memlets.
+    After visiting an AST, self.{in,out}_mapping will be filled with mappings
+    from unique new connector names to sets of individual memlets.
+    """
+    def __init__(self, in_connectors: Set[str], out_connectors: Set[str],
+                 sdfg: sd.SDFG, defined_syms: Set[str]) -> None:
+        """
+        Initializes AST transformer.
+        
+        """
+        self.iconns = in_connectors
+        self.oconns = out_connectors
+        self.sdfg = sdfg
+        self.defined = defined_syms
+        self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
+        self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
+        self.do_not_remove: Set[str] = set()
+        self.latest: DefaultDict[str, int] = collections.defaultdict(int)
+
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        # Convert subscript to symbol name
+        node_name = astutils.rname(node)
+        if node_name in self.iconns:
+            self.latest[node_name] += 1
+            new_name = f'{node_name}_{self.latest[node_name]}'
+            subset = subsets.Range(
+                astutils.subscript_to_slice(node, self.sdfg.arrays)[1])
+            # Check if range can be collapsed
+            if _range_is_promotable(subset, self.defined):
+                self.in_mapping[new_name] = (node_name, subset)
+                return ast.copy_location(ast.Name(id=new_name, ctx=ast.Load()),
+                                         node)
+            else:
+                self.do_not_remove.add(node_name)
+        elif node_name in self.oconns:
+            self.latest[node_name] += 1
+            new_name = f'{node_name}_{self.latest[node_name]}'
+            subset = subsets.Range(
+                astutils.subscript_to_slice(node, self.sdfg.arrays)[1])
+            # Check if range can be collapsed
+            if _range_is_promotable(subset, self.defined):
+                self.out_mapping[new_name] = (node_name, subset)
+                return ast.copy_location(ast.Name(id=new_name, ctx=ast.Store()),
+                                         node)
+            else:
+                self.do_not_remove.add(node_name)
+        return self.generic_visit(node)
+
+
+def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
+    """ Helper function that determines whether a range is promotable. """
+    # Some free symbols remain, we cannot promote
+    if len(subset.free_symbols - defined) > 0:
+        return False
+    return True
+
+
+def _handle_connectors(state: sd.SDFGState, node: nodes.Tasklet,
+                       mapping: Dict[str, Tuple[str, subsets.Range]],
+                       ignore: Set[str], in_edges: bool) -> bool:
+    """ 
+    Adds new connectors and removes unused connectors after indirection
+    promotion. 
+    """
+    if in_edges:
+        orig_edges = {e.dst_conn: e for e in state.in_edges(node)}
+    else:
+        orig_edges = {e.src_conn: e for e in state.out_edges(node)}
+    for cname, (orig, subset) in mapping.items():
+        if in_edges:
+            node.add_in_connector(cname)
+        else:
+            node.add_out_connector(cname)
+        # Add new edge
+        orig_edge = orig_edges[orig]
+        if in_edges:
+            state.add_edge(orig_edge.src, orig_edge.src_conn, orig_edge.dst,
+                           cname,
+                           mm.Memlet(data=orig_edge.data.data, subset=subset))
+        else:
+            state.add_edge(orig_edge.src, cname, orig_edge.dst,
+                           orig_edge.dst_conn,
+                           mm.Memlet(data=orig_edge.data.data, subset=subset))
+    # Remove connectors and edges
+    conns_to_remove = set(v[0] for v in mapping.values()) - ignore
+    for conn in conns_to_remove:
+        state.remove_edge(orig_edges[conn])
+        if in_edges:
+            node.remove_in_connector(conn)
+        else:
+            node.remove_out_connector(conn)
+
+
+def _cpp_indirection_promoter(
+    code: str, in_connectors: Set[str], out_connectors: Set[str], sdfg: sd.SDFG,
+    defined_syms: Set[str]
+) -> Tuple[str, Dict[str, Tuple[str, subsets.Range]], Dict[str, Tuple[
+        str, subsets.Range]], Set[str]]:
+    """
+    Promotes indirect memory access in C++ Tasklets to symbolic memlets.
+    """
+    in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
+    out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
+    do_not_remove: Set[str] = set()
+    latest: DefaultDict[str, int] = collections.defaultdict(int)
+
+    # String replacement
+    repl: Dict[Tuple[int, int], str] = {}
+
+    # Find all occurrences of "aname[subexpr]"
+    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*)\[(.*?)\]', code):
+        node_name = m.group(1)
+        subexpr = m.group(2)
+        if node_name in (in_connectors | out_connectors):
+            try:
+                # NOTE: This is not necessarily a Python string. If fails,
+                #       we skip this indirection.
+                symexpr = symbolic.pystr_to_symbolic(subexpr)
+            except TypeError:
+                do_not_remove.add(node_name)
+                continue
+
+            # subexpr is always a one-dimensional index
+            latest[node_name] += 1
+            new_name = f'{node_name}_{latest[node_name]}'
+            subset = subsets.Range([(subexpr, subexpr, 1)])
+
+            # Check if range can be collapsed
+            if _range_is_promotable(subset, defined_syms):
+                if node_name in in_connectors:
+                    in_mapping[new_name] = (node_name, subset)
+                else:
+                    out_mapping[new_name] = (node_name, subset)
+                repl[m.span()] = new_name
+            else:
+                do_not_remove.add(node_name)
+
+    # Make all string replacements
+    for (begin, end), replacement in reversed(sorted(repl.items())):
+        code = code[:begin] + replacement + code[end:]
+
+    return code, in_mapping, out_mapping, do_not_remove
+
+
+def remove_symbol_indirection(sdfg: sd.SDFG):
+    """
+    Converts indirect memory accesses that involve only symbols into explicit
+    memlets.
+
+    :param sdfg: The SDFG to run the pass on.
+    :note: Operates in-place.
+    """
+    for state in sdfg.nodes():
+        for node in state.nodes():
+            if not isinstance(node, nodes.Tasklet):
+                continue
+            # Strip subscripts one by one
+            changed = True
+            # NOTE: Might be slow
+            defined_syms = set(state.symbols_defined_at(node).keys())
+            while True:
+                in_mapping = {}
+                out_mapping = {}
+                do_not_remove = {}
+                if node.code.language is dtypes.Language.Python:
+                    promo = TaskletIndirectionPromoter(
+                        set(node.in_connectors.keys()),
+                        set(node.out_connectors.keys()), sdfg, defined_syms)
+                    for stmt in node.code.code:
+                        promo.visit(stmt)
+                    in_mapping = promo.in_mapping
+                    out_mapping = promo.out_mapping
+                    do_not_remove = promo.do_not_remove
+                elif node.code.language is dtypes.Language.CPP:
+                    (node.code.code, in_mapping, out_mapping,
+                     do_not_remove) = _cpp_indirection_promoter(
+                         node.code.as_string, set(node.in_connectors.keys()),
+                         set(node.out_connectors.keys()), sdfg, defined_syms)
+
+                # Nothing more to do
+                if len(in_mapping) + len(out_mapping) == 0:
+                    break
+
+                # Handle input/output connectors
+                _handle_connectors(state, node, in_mapping, do_not_remove, True)
+                _handle_connectors(state, node, out_mapping, do_not_remove,
+                                   False)
+
+
+def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
+    """
+    Removes all instances of a promoted symbol's read accesses in an SDFG.
+    This removes each read-only access node as well as all of its descendant
+    edges (in memlet trees) and connectors. Descends recursively to nested
+    SDFGs and modifies tasklets (Python and C++).
+    :param sdfg: The SDFG to operate on.
+    :param array_names: Mapping between scalar names to replace and their
+                        replacement symbol name.
+    :note: Operates in-place on the SDFG.
+    """
+    for state in sdfg.nodes():
+        scalar_nodes = [
+            n for n in state.nodes()
+            if isinstance(n, nodes.AccessNode) and n.data in array_names
+        ]
+        for node in scalar_nodes:
+            symname = array_names[node.data]
+            for out_edge in state.out_edges(node):
+                for e in state.memlet_tree(out_edge):
+                    # Step 3.1
+                    dst = e.dst
+                    state.remove_edge_and_connectors(e)
+                    if isinstance(dst, nodes.Tasklet):
+                        # Step 3.2
+                        if dst.language is dtypes.Language.Python:
+                            promo = TaskletPromoter(e.dst_conn, symname)
+                            for stmt in dst.code.code:
+                                promo.visit(stmt)
+                        elif dst.language is dtypes.Language.CPP:
+                            # Replace whole-word matches (identifiers) in code
+                            dst.code.code = re.sub(
+                                r'\b%s\b' % re.escape(e.dst_conn), symname,
+                                dst.code.as_string)
+                    elif isinstance(dst, nodes.AccessNode):
+                        # Step 3.3
+                        t = state.add_tasklet('symassign', {}, {'__out'},
+                                              '__out = %s' % symname)
+                        state.add_edge(
+                            t, '__out', dst, e.dst_conn,
+                            mm.Memlet(data=dst.data,
+                                      subset=e.data.dst_subset,
+                                      volume=1))
+                        # Reassign destination for check below
+                        dst = t
+                    elif isinstance(dst, nodes.NestedSDFG):
+                        tmp_symname = symname
+                        val = 1
+                        while (tmp_symname in dst.sdfg.symbols
+                               or tmp_symname in dst.sdfg.arrays):
+                            # Find new symbol name
+                            tmp_symname = f'{symname}_{val}'
+                            val += 1
+
+                        # Descend recursively to remove scalar
+                        remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
+
+                        # Set symbol mapping
+                        dst.sdfg.remove_data(e.dst_conn, validate=False)
+                        dst.remove_in_connector(e.dst_conn)
+                        dst.sdfg.symbols[tmp_symname] = sdfg.arrays[
+                            symname].dtype
+                        dst.symbol_mapping[tmp_symname] = symname
+                    elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
+                        # Skip
+                        continue
+                    else:
+                        raise ValueError(
+                            'Node type "%s" not supported for promotion' %
+                            type(dst).__name__)
+
+                    # If nodes were disconnected, reconnect with empty memlet
+                    if (isinstance(e.src, nodes.EntryNode)
+                            and len(state.edges_between(e.src, dst)) == 0):
+                        state.add_nedge(e.src, dst, mm.Memlet())
+
+        # Remove newly-isolated nodes
+        state.remove_nodes_from(
+            [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
+
+
 def promote_scalars_to_symbols(sdfg: sd.SDFG):
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
@@ -194,6 +482,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG):
     # 7. Make indirections with symbols a single memlet
 
     to_promote = find_promotable_scalars(sdfg)
+    if len(to_promote) == 0:
+        return
 
     for state in sdfg.nodes():
         scalar_nodes = [
@@ -248,39 +538,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG):
             if isinstance(n, nodes.AccessNode) and n.data in to_promote
         ]
 
-        # Step 3: Scalar reads
-        for node in scalar_nodes:
-            for out_edge in state.out_edges(node):
-                for e in state.memlet_tree(out_edge):
-                    # Step 3.1
-                    dst = e.dst
-                    state.remove_edge_and_connectors(e)
-                    if isinstance(dst, nodes.Tasklet):
-                        # Step 3.2
-                        if dst.language is dtypes.Language.Python:
-                            promo = TaskletPromoter(e.dst_conn, node.data)
-                            for stmt in dst.code.code:
-                                promo.visit(stmt)
-                        elif dst.language is dtypes.Language.CPP:
-                            # Replace whole-word matches (identifiers) in code
-                            dst.code = re.sub(r'\b%s\b' % re.escape(e.dst_conn),
-                                              node.data, dst.code.as_string)
-                    elif isinstance(dst, nodes.AccessNode):
-                        # Step 3.3
-                        t = state.add_tasklet('symassign', {}, {'__out'},
-                                              '__out = %s' % node.data)
-                        state.add_edge(
-                            t, '__out', dst, e.dst_conn,
-                            mm.Memlet(data=dst.data,
-                                      subset=e.data.dst_subset,
-                                      volume=1))
-                        # Reassign destination for check below
-                        dst = t
-
-                    # If nodes were disconnected, reconnect with empty memlet
-                    if (isinstance(e.src, nodes.EntryNode)
-                            and len(state.edges_between(e.src, dst)) == 0):
-                        state.add_nedge(e.src, dst, mm.Memlet())
+    # Step 3: Scalar reads
+    remove_scalar_reads(sdfg, {k: k for k in to_promote})
 
     # Step 4: Isolated nodes
     for state in sdfg.nodes():
@@ -316,4 +575,4 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG):
                     assignment.strip())
 
     # Step 7: Indirection
-    # TODO
+    remove_symbol_indirection(sdfg)

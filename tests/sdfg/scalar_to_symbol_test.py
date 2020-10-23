@@ -309,32 +309,120 @@ def test_promote_indirection():
                 a << A(1)[:]
                 ii << i
                 b1in << B[m]
-                b2in << B[2 * m]
+                b2in << B[m + 2]
 
                 c = a[0, 0, 0, ii]
                 b1 = c + 1
                 b2 = b2in + 1
 
                 b1 >> B[m]
-                b2 >> B[2 * m]
+                b2 >> B[m + 2]
 
     sdfg: dace.SDFG = testprog.to_sdfg()
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j', 'k'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_strict_transformations()
 
-    # Assertions on SDFG
+    assert sdfg.number_of_nodes() == 2
 
     # Check result
     A = np.random.rand(2, 3, 4, 5)
     B = np.random.rand(4)
-    expected = A[0, 2, :, 1]
-    expected[0:2] += A[0, 0, 0, 2]
+    expected = np.copy(A[0, 2, :, 1])
+    expected[0:2] = A[0, 0, 0, 2] + 1
     expected[2:4] += 1
 
     sdfg(A=A, B=B)
 
     assert np.allclose(B, expected)
+
+
+def test_promote_output_indirection():
+    """ Indirect output access in promotion. """
+    @dace.program
+    def testprog(A: dace.float64[10]):
+        i = 2
+        with dace.tasklet:
+            ii << i
+            a >> A(2)[:]
+            a[ii] = ii
+            a[ii + 1] = ii + 1
+
+    sdfg: dace.SDFG = testprog.to_sdfg()
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.apply_strict_transformations()
+
+    assert sdfg.number_of_nodes() == 2
+
+    # Check result
+    A = np.random.rand(10)
+    expected = np.copy(A)
+    expected[2] = 2
+    expected[3] = 3
+    sdfg(A=A)
+
+    assert np.allclose(A, expected)
+
+
+def test_promote_indirection_c():
+    """ Indirect access in promotion with C++ tasklets. """
+    @dace.program
+    def testprog(A: dace.float64[10]):
+        i = 2
+        with dace.tasklet(dace.Language.CPP):
+            ii << i
+            a << A(1)[:]
+            aout >> A(2)[:]
+            '''
+            aout[ii] = a[ii + 1];
+            aout[ii + 1] = ii + 1;
+            '''
+
+    sdfg: dace.SDFG = testprog.to_sdfg()
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.apply_strict_transformations()
+
+    assert sdfg.number_of_nodes() == 2
+    assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
+
+    # Check result
+    A = np.random.rand(10)
+    expected = np.copy(A)
+    expected[2] = A[3]
+    expected[3] = 3
+    sdfg(A=A)
+
+    assert np.allclose(A, expected)
+
+
+def test_promote_indirection_impossible():
+    """ Indirect access that cannot be promoted. """
+    @dace.program
+    def testprog(A: dace.float64[20, 20], scal: dace.int32):
+        i = 2
+        with dace.tasklet:
+            s << scal
+            a << A(1)[:, :]
+            out >> A(1)[:, :]
+            out[i, s] = a[s, i]
+
+    sdfg: dace.SDFG = testprog.to_sdfg()
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.apply_strict_transformations()
+
+    # [A,scal->Tasklet->A]
+    assert sdfg.number_of_nodes() == 2
+    assert sdfg.sink_nodes()[0].number_of_nodes() == 4
+
+    A = np.random.rand(20, 20)
+    expected = np.copy(A)
+    expected[2, 1] = expected[1, 2]
+    sdfg(A=A, scal=1)
+
+    assert np.allclose(A, expected)
 
 
 if __name__ == '__main__':
@@ -347,4 +435,7 @@ if __name__ == '__main__':
     test_promote_array_assignment_tasklet()
     test_promote_loop()
     test_promote_loops()
-    # test_promote_indirection()
+    test_promote_indirection()
+    test_promote_indirection_c()
+    test_promote_output_indirection()
+    test_promote_indirection_impossible()
