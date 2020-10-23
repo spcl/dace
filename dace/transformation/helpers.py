@@ -4,7 +4,7 @@ import copy
 
 from numpy.core.numeric import full
 from dace.subsets import Range, Subset, union
-from typing import Dict, List, Optional, Tuple
+from typing import AnyStr, Dict, List, Optional, Tuple, Set
 
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
@@ -409,3 +409,21 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     new_exit.map = new_entry.map
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
+
+
+def read_and_write_set(state: SDFGState) -> Tuple(Set[AnyStr], Set):
+    """
+    Determines which data containers are read and which are written in the
+    given SDFG state.
+    :param state: An SDFG state.
+    :return: A tuple of strings denoting (container read, containers written).
+    """
+    data_nodes = state.data_nodes()
+    read_set = set()
+    write_set = set()
+    for n in data_nodes:
+        if len(state.in_edges(n)) > 0:
+            write_set.add(n.data)
+        if len(state.out_edges(n)) > 0:
+            read_set.add(n.data)
+    return read_set, write_set
