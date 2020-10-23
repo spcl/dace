@@ -81,8 +81,8 @@ class GPUTransformSDFG(transformation.Transformation):
                 return False
 
         for state in sdfg.nodes():
-            sdict = state.scope_dict(node_to_children=True)
-            for node in sdict[None]:
+            schildren = state.scope_children()
+            for node in schildren[None]:
                 # If two top-level tasklets are connected with a code->code
                 # memlet, they will transform into an invalid SDFG
                 if (isinstance(node, nodes.CodeNode) and any(

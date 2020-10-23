@@ -829,7 +829,7 @@ class FPGACodeGen(TargetCodeGenerator):
             return (desc.as_arg(with_types=True, name=name))
 
     def get_next_scope_entries(self, sdfg, dfg, scope_entry):
-        parent_scope_entry = dfg.scope_dict()[scope_entry]
+        parent_scope_entry = dfg.entry_node(scope_entry)
         parent_scope = dfg.scope_subgraph(parent_scope_entry)
 
         # Get all scopes from the same level
@@ -872,7 +872,7 @@ class FPGACodeGen(TargetCodeGenerator):
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dace.dtypes.StorageType.Register
             try:
-                src_parent = dfg.scope_dict()[src_node]
+                src_parent = dfg.entry_node(src_node)
             except KeyError:
                 src_parent = None
             dst_schedule = (None
@@ -886,7 +886,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dst_storage = dst_node.desc(sdfg).storage
 
         try:
-            dst_parent = dfg.scope_dict()[dst_node]
+            dst_parent = dfg.entry_node(dst_node)
         except KeyError:
             dst_parent = None
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
@@ -922,7 +922,7 @@ class FPGACodeGen(TargetCodeGenerator):
             elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
                 for state in x.sdfg:
                     if not self._is_innermost(state.nodes(),
-                                              state.scope_dict(True), x.sdfg):
+                                              state.scope_children(), x.sdfg):
                         return False
         return True
 
@@ -955,9 +955,9 @@ class FPGACodeGen(TargetCodeGenerator):
             callsite_stream.write('{', sdfg, state_id, node)
 
             # Pipeline innermost loops
-            scope_dict = dfg.scope_dict(True)
-            scope = scope_dict[node]
-            is_innermost = self._is_innermost(scope, scope_dict, sdfg)
+            scope_children = dfg.scope_children()
+            scope = scope_children[node]
+            is_innermost = self._is_innermost(scope, scope_children, sdfg)
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
@@ -1071,7 +1071,7 @@ class FPGACodeGen(TargetCodeGenerator):
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
                                                  node)
         allocated = set()
-        for child in dfg.scope_dict(node_to_children=True)[node]:
+        for child in dfg.scope_children()[node]:
             if not isinstance(child, dace.sdfg.nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:

@@ -31,8 +31,8 @@ class StateFusion(transformation.Transformation):
         access hazards are created.
     """
 
-    _first_state = sdfg.SDFGState()
-    _second_state = sdfg.SDFGState()
+    first_state = transformation.PatternNode(sdfg.SDFGState)
+    second_state = transformation.PatternNode(sdfg.SDFGState)
 
     @staticmethod
     def annotates_memlets():
@@ -41,8 +41,8 @@ class StateFusion(transformation.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(StateFusion._first_state,
-                                   StateFusion._second_state)
+            sdutil.node_path_graph(StateFusion.first_state,
+                                   StateFusion.second_state)
         ]
 
     @staticmethod
@@ -120,8 +120,8 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        first_state = graph.nodes()[candidate[StateFusion._first_state]]
-        second_state = graph.nodes()[candidate[StateFusion._second_state]]
+        first_state = graph.nodes()[candidate[StateFusion.first_state]]
+        second_state = graph.nodes()[candidate[StateFusion.second_state]]
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -331,14 +331,14 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        first_state = graph.nodes()[candidate[StateFusion._first_state]]
-        second_state = graph.nodes()[candidate[StateFusion._second_state]]
+        first_state = graph.nodes()[candidate[StateFusion.first_state]]
+        second_state = graph.nodes()[candidate[StateFusion.second_state]]
 
         return " -> ".join(state.label for state in [first_state, second_state])
 
     def apply(self, sdfg):
-        first_state = sdfg.nodes()[self.subgraph[StateFusion._first_state]]
-        second_state = sdfg.nodes()[self.subgraph[StateFusion._second_state]]
+        first_state = sdfg.nodes()[self.subgraph[StateFusion.first_state]]
+        second_state = sdfg.nodes()[self.subgraph[StateFusion.second_state]]
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)
