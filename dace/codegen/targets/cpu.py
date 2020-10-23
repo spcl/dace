@@ -1401,7 +1401,7 @@ class CPUCodeGen(TargetCodeGenerator):
         nested_dfg_unique_name = node.sdfg.unique_name
         sdfg_label = "%s_%d_%d_%d" % (
             node.sdfg.name, sdfg.sdfg_id, state_id, dfg.node_id(node)
-        ) if nested_dfg_unique_name == "" else nested_dfg_unique_name
+        ) if nested_dfg_unique_name == "" else "%s_%s" % (nested_dfg_unique_name, "nested")
 
         code_already_generated = False
         # Use hashing to check whether this Nested SDFG has been already generated
