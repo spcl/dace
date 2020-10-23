@@ -237,7 +237,6 @@ class AccumulateTransient(transformation.Transformation):
         from dace.sdfg.graph import SubgraphView
         from dace.sdfg.state import SDFGState
 
-
         sdfg_state: SDFGState = sdfg.node(self.state_id)
 
         map_entry = sdfg_state.entry_node(map_exit)
@@ -248,7 +247,12 @@ class AccumulateTransient(transformation.Transformation):
 
         from dace.sdfg.nodes import NestedSDFG
 
-        nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg, state=sdfg_state, subgraph=SubgraphView(sdfg_state, [map_entry, tasklet, map_exit]))
+        nested_sdfg: NestedSDFG = nest_state_subgraph(
+            sdfg=sdfg,
+            state=sdfg_state,
+            subgraph=SubgraphView(
+                sdfg_state,
+                sdfg_state.all_nodes_between(map_entry, map_exit) | {map_exit}))
 
         dace.Config.set(*dtypes_key, value=old_dtype)
 
@@ -263,12 +267,17 @@ class AccumulateTransient(transformation.Transformation):
         init_state.add_mapped_tasklet(
             name='acctrans_init',
             map_ranges={
-                '_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(temp_array.shape)
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(temp_array.shape)
             },
             inputs={},
             code='out = %s' % self.identity,
             outputs={
-                'out': dace.Memlet.simple(data=data_node.data, subset_str=','.join(['0:%d' % i for i in temp_array.shape]))
+                'out':
+                    dace.Memlet.simple(data=data_node.data,
+                                       subset_str=','.join([
+                                           '0:%d' % i for i in temp_array.shape
+                                       ]))
             },
             external_edges=True)
 
