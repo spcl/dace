@@ -2099,13 +2099,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 symrng = pystr_to_symbolic(rng)
                 for atom in symrng.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
+                        astr = str(atom)
                         # Check for undefined variables
-                        if str(atom) not in self.defined:
+                        if astr not in self.defined:
                             raise DaceSyntaxError(
                                 self, node, 'Undefined variable "%s"' % atom)
-                        # Add to global SDFG symbols
-                        if str(atom) not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(str(atom), atom.dtype)
+                        # Add to global SDFG symbols if not a scalar
+                        if (astr not in self.sdfg.symbols
+                                and astr not in self.variables):
+                            self.sdfg.add_symbol(astr, atom.dtype)
 
             # Add an initial loop state with a None last_state (so as to not
             # create an interstate edge)
@@ -2156,12 +2158,29 @@ class ProgramVisitor(ExtNodeVisitor):
             self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
-        # Add loop to SDFG
+        # Get loop condition expression
         loop_cond = astutils.unparse(node.test)
-        _, loop_guard, loop_end = self.sdfg.add_loop(
-            laststate, first_loop_state, end_loop_state, None,
-            None, loop_cond, None, last_loop_state)
-        
+
+        # Add symbols from test as necessary
+        symcond = pystr_to_symbolic(loop_cond)
+        for atom in symcond.free_symbols:
+            if symbolic.issymbolic(atom, self.sdfg.constants):
+                astr = str(atom)
+                # Check for undefined variables
+                if astr not in self.defined:
+                    raise DaceSyntaxError(self, node,
+                                          'Undefined variable "%s"' % atom)
+                # Add to global SDFG symbols if not a scalar
+                if astr not in self.sdfg.symbols and astr not in self.variables:
+                    self.sdfg.add_symbol(astr, atom.dtype)
+
+        # Add loop to SDFG
+        _, loop_guard, loop_end = self.sdfg.add_loop(laststate,
+                                                     first_loop_state,
+                                                     end_loop_state, None, None,
+                                                     loop_cond, None,
+                                                     last_loop_state)
+
         continue_states = self.continue_states.pop()
         while continue_states:
             next_state = continue_states.pop()
