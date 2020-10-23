@@ -36,6 +36,7 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
         candidates.add(aname)
 
     # Check all occurrences of candidates in SDFG and filter out
+    candidates_seen: Set[str] = set()
     for state in sdfg.nodes():
         candidates_in_state: Set[str] = set()
 
@@ -111,6 +112,10 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                         break
             else:  # If input is not an acceptable node type, skip
                 candidates.remove(candidate)
+        candidates_seen |= candidates_in_state
+
+    # Only keep candidates that were found in SDFG
+    candidates &= candidates_seen
 
     return candidates
 
