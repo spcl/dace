@@ -666,10 +666,13 @@ __kernel void \\
         defined_symbols = state_dfg.symbols_defined_at(node)
         result = ""
         for inner_symb, outer_symb in node.symbol_mapping.items():
-            result += "{} {} = {};".format(defined_symbols[outer_symb.name],
-                                           inner_symb, outer_symb.name)
-            self._dispatcher.defined_vars.add(inner_symb, DefinedType.Scalar,
-                                              defined_symbols[outer_symb.name])
+            # define the variable if not already defined
+            if outer_symb.name not in defined_symbols and not self._dispatcher.defined_vars.has(outer_symb.name):
+                result += "{} {} = {};".format(defined_symbols[outer_symb.name],
+                                               inner_symb, outer_symb.name)
+                self._dispatcher.defined_vars.add(
+                    inner_symb, DefinedType.Scalar,
+                    defined_symbols[outer_symb.name])
 
         callsite_stream.write(result)
 
