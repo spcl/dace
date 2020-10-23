@@ -643,7 +643,7 @@ class SDFG(OrderedDiGraph):
             self._sdfg_list = sub_sdfg_list
 
     @property
-    def sdfg_list(self):
+    def sdfg_list(self) -> List['SDFG']:
         return self._sdfg_list
 
     def set_sourcecode(self, code: str, lang=None):

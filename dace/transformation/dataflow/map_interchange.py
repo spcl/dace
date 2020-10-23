@@ -19,14 +19,14 @@ class MapInterchange(transformation.Transformation):
         Map-interchange takes two nested maps and interchanges their position.
     """
 
-    _outer_map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _inner_map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    outer_map_entry = transformation.PatternNode(nodes.MapEntry)
+    inner_map_entry = transformation.PatternNode(nodes.MapEntry)
 
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(MapInterchange._outer_map_entry,
-                                   MapInterchange._inner_map_entry)
+            sdutil.node_path_graph(MapInterchange.outer_map_entry,
+                                   MapInterchange.inner_map_entry)
         ]
 
     @staticmethod
@@ -38,9 +38,9 @@ class MapInterchange(transformation.Transformation):
 
         # Check the edges between the entries of the two maps.
         outer_map_entry = graph.nodes()[candidate[
-            MapInterchange._outer_map_entry]]
+            MapInterchange.outer_map_entry]]
         inner_map_entry = graph.nodes()[candidate[
-            MapInterchange._inner_map_entry]]
+            MapInterchange.inner_map_entry]]
 
         # Check that inner map range is independent of outer range
         map_deps = set()
@@ -89,9 +89,9 @@ class MapInterchange(transformation.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         outer_map_entry = graph.nodes()[candidate[
-            MapInterchange._outer_map_entry]]
+            MapInterchange.outer_map_entry]]
         inner_map_entry = graph.nodes()[candidate[
-            MapInterchange._inner_map_entry]]
+            MapInterchange.inner_map_entry]]
 
         return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
                            for entry in [outer_map_entry, inner_map_entry])
@@ -100,9 +100,9 @@ class MapInterchange(transformation.Transformation):
         # Extract the parameters and ranges of the inner/outer maps.
         graph: SDFGState = sdfg.nodes()[self.state_id]
         outer_map_entry = graph.nodes()[self.subgraph[
-            MapInterchange._outer_map_entry]]
+            MapInterchange.outer_map_entry]]
         inner_map_entry = graph.nodes()[self.subgraph[
-            MapInterchange._inner_map_entry]]
+            MapInterchange.inner_map_entry]]
         inner_map_exit = graph.exit_node(inner_map_entry)
         outer_map_exit = graph.exit_node(outer_map_entry)
 

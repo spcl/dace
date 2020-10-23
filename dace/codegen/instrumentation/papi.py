@@ -12,6 +12,7 @@ from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
 from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
+from dace.sdfg.state import StateGraphView
 
 import sympy as sp
 import os
@@ -24,8 +25,7 @@ import warnings
 VECTOR_COUNTER_SET = ('0x40000025', '0x40000026', '0x40000027', '0x40000028',
                       '0x40000021', '0x40000022', '0x40000023', '0x40000024')
 MEM_COUNTER_SET = ('PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS')
-CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN',
-                     'PAPI_CA_ITV')
+CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV')
 
 
 def _unified_id(node_id: int, state_id: int) -> int:
@@ -70,14 +70,12 @@ class PAPIInstrumentation(InstrumentationProvider):
         PAPIInstrumentation._counters &= set(counters.keys())
 
         # Compiler arguments for vectorization output
-        if Config.get_bool('instrumentation', 'papi',
-                           'vectorization_analysis'):
+        if Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
             Config.append(
                 'compiler',
                 'cpu',
                 'args',
-                value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt '
-            )
+                value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt ')
 
         # If no PAPI counters are available, disable PAPI
         if len(self._counters) == 0:
@@ -122,9 +120,8 @@ dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
             uid = _unified_id(-1, sdfg.node_id(state))
             local_stream.write("__perf_store.markSuperSectionStart(%d);" % uid)
 
-    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge,
-                      local_stream, global_stream, copy_shape, src_strides,
-                      dst_strides):
+    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream,
+                      global_stream, copy_shape, src_strides, dst_strides):
         if not self._papi_used:
             return
 
@@ -349,8 +346,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if self.should_instrument_entry(node):
             # Mark the SuperSection start (if possible)
             result.write(
-                self.perf_get_supersection_start_string(
-                    node, state, unified_id),
+                self.perf_get_supersection_start_string(node, state,
+                                                        unified_id),
                 sdfg,
                 state_id,
                 node,
@@ -377,8 +374,8 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         # (instead of per-thread). This incurs additional overhead.
         if self.should_instrument_entry(node):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n"
-                 .format(id=unified_id)) +
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
+                 format(id=unified_id)) +
                 self.perf_counter_start_measurement_string(
                     unified_id,
                     "__perf_tlp_{id}.getAndIncreaseCounter()".format(
@@ -437,10 +434,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         return cond
 
     @staticmethod
-    def has_surrounding_perfcounters(node, dfg: SubgraphView):
+    def has_surrounding_perfcounters(node, dfg: StateGraphView):
         """ Returns true if there is a possibility that this node is part of a
             section that is profiled. """
-        parent = dfg.scope_dict()[node]
+        parent = dfg.entry_node(node)
 
         if isinstance(parent, MapEntry):
             if (parent.map.schedule not in
@@ -573,8 +570,8 @@ class PAPIUtils(object):
             # Resolve all symbols using the retparams-dict
 
             for x in dyn_syms:
-                target = sp.functions.Min(
-                    retparams[x] * (retparams[x] - 1) / 2, 0)
+                target = sp.functions.Min(retparams[x] * (retparams[x] - 1) / 2,
+                                          0)
                 bstr = str(element)
                 element = symbolic.pystr_to_symbolic(bstr)
                 element = element.subs(
@@ -662,8 +659,9 @@ class PAPIUtils(object):
         return memlet.volume * memdata.dtype.bytes
 
     @staticmethod
-    def get_out_memlet_costs(sdfg, state_id, node, dfg):
-        scope_dict = sdfg.nodes()[state_id].scope_dict()
+    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node,
+                             dfg: StateGraphView):
+        scope_dict = sdfg.node(state_id).scope_dict()
 
         out_costs = 0
         for edge in dfg.out_edges(node):
@@ -697,9 +695,8 @@ class PAPIUtils(object):
         return out_costs
 
     @staticmethod
-    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode,
-                                  dfg: dace.sdfg.ScopeSubgraphView, sdfg,
-                                  state_id):
+    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: StateGraphView,
+                                  sdfg: dace.SDFG, state_id: int) -> str:
         """ Get the amount of bytes processed by `tasklet`. The formula is
             sum(inedges * size) + sum(outedges * size) """
         in_accum = []
@@ -719,13 +716,14 @@ class PAPIUtils(object):
         return "(" + sym2cpp(sum(full)) + ")"
 
     @staticmethod
-    def get_parents(outermost_node, node, sdfg, state_id):
+    def get_parents(outermost_node: nodes.Node, node: nodes.Node,
+                    sdfg: dace.SDFG, state_id: int) -> List[nodes.Node]:
 
         parent = None
         # Because dfg is only a subgraph view, it does not contain the entry
         # node for a given entry. This O(n) solution is suboptimal
         for state in sdfg.nodes():
-            s_d = state.scope_dict(node_to_children=False)
+            s_d = state.scope_dict()
             try:
                 scope = s_d[node]
             except KeyError:
@@ -758,15 +756,14 @@ class PAPIUtils(object):
         return sym2cpp(input_size)
 
     @staticmethod
-    def accumulate_byte_movement(outermost_node, node,
-                                 dfg: dace.sdfg.ScopeSubgraphView, sdfg,
-                                 state_id):
+    def accumulate_byte_movement(outermost_node, node, dfg: StateGraphView,
+                                 sdfg, state_id):
 
         itvars = dict()  # initialize an empty dict
 
         # First, get a list of children
         if isinstance(node, MapEntry):
-            children = dfg.scope_dict(node_to_children=True)[node]
+            children = dfg.scope_children()[node]
         else:
             children = []
         assert not (node in children)
@@ -808,7 +805,7 @@ class PAPIUtils(object):
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
                 return itcount * symbolic.pystr_to_symbolic(
-                    PAPIUtils.get_tasklet_byte_accesses(
-                        node, dfg, sdfg, state_id))
+                    PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg,
+                                                        state_id))
             else:
                 raise NotImplementedError
