@@ -201,9 +201,10 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
+            result_begin = subexpr.subs(self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
-                if bre + 1 == node_rs and step == 1:
+                if node_rb == result_begin and bre + 1 == node_rs and step == 1:
                     pass
                 else:
                     # Map ranges where the last index is not known
