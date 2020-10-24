@@ -10,11 +10,11 @@ from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation as xf
 
 
 @registry.autoregister_params(singlestate=True)
-class DeduplicateAccess(pattern_matching.Transformation):
+class DeduplicateAccess(xf.Transformation):
     """ 
     This transformation takes a node that is connected to multiple destinations
     with overlapping memlets, and consolidates those accesses through a 

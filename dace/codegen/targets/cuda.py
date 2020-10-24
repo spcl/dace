@@ -570,8 +570,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if (isinstance(e.src, nodes.EntryNode)
                             and e.src.schedule in dtypes.GPU_SCHEDULES):
                         e.src._cs_childpath = False
-                    elif state.scope_dict()[e.src] is not None:
-                        parent = state.scope_dict()[e.src]
+                    elif state.entry_node(e.src) is not None:
+                        parent = state.entry_node(e.src)
                         if parent.schedule in dtypes.GPU_SCHEDULES:
                             e.src._cs_childpath = False
                 else:
@@ -919,7 +919,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     function_stream, callsite_stream):
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
-            src_parent = dfg.scope_dict()[src_node]
+            src_parent = dfg.entry_node(src_node)
             dst_schedule = None if src_parent is None else src_parent.map.schedule
         else:
             src_storage = src_node.desc(sdfg).storage
@@ -929,7 +929,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         else:
             dst_storage = dst_node.desc(sdfg).storage
 
-        dst_parent = dfg.scope_dict()[dst_node]
+        dst_parent = dfg.entry_node(dst_node)
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
 
         # Emit actual copy
@@ -1610,7 +1610,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         scope_entry = dfg_scope.source_nodes()[0]
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
         allocated = set()
-        for child in dfg_scope.scope_dict(node_to_children=True)[node]:
+        for child in dfg_scope.scope_children()[node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
@@ -1665,7 +1665,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._grid_dims = None
 
     def get_next_scope_entries(self, dfg, scope_entry):
-        parent_scope_entry = dfg.scope_dict()[scope_entry]
+        parent_scope_entry = dfg.entry_node(scope_entry)
         # We're in a nested SDFG, use full graph
         if parent_scope_entry is None:
             parent_scope = dfg
@@ -1911,7 +1911,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Emit internal array allocation (deallocation handled at MapExit)
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
         allocated = set()
-        for child in dfg_scope.scope_dict(node_to_children=True)[scope_entry]:
+        for child in dfg_scope.scope_children()[scope_entry]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:

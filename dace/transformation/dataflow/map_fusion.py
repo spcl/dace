@@ -39,9 +39,9 @@ class MapFusion(transformation.Transformation):
              two maps. Alternatively, this access node should not be adjacent to
              the first map entry.
     """
-    _first_map_exit = nodes.ExitNode()
-    _array = nodes.AccessNode("_")
-    _second_map_entry = nodes.EntryNode()
+    first_map_exit = transformation.PatternNode(nodes.ExitNode)
+    array = transformation.PatternNode(nodes.AccessNode)
+    second_map_entry = transformation.PatternNode(nodes.EntryNode)
 
     @staticmethod
     def annotates_memlets():
@@ -51,9 +51,9 @@ class MapFusion(transformation.Transformation):
     def expressions():
         return [
             sdutil.node_path_graph(
-                MapFusion._first_map_exit,
-                MapFusion._array,
-                MapFusion._second_map_entry,
+                MapFusion.first_map_exit,
+                MapFusion.array,
+                MapFusion.second_map_entry,
             )
         ]
 
@@ -91,9 +91,9 @@ class MapFusion(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        first_map_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
+        first_map_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
         first_map_entry = graph.entry_node(first_map_exit)
-        second_map_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
+        second_map_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
 
         for _in_e in graph.in_edges(first_map_exit):
             if _in_e.data.wcr is not None:
@@ -185,8 +185,8 @@ class MapFusion(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        first_exit = graph.nodes()[candidate[MapFusion._first_map_exit]]
-        second_entry = graph.nodes()[candidate[MapFusion._second_map_entry]]
+        first_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
+        second_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
 
         return " -> ".join(entry.map.label + ": " + str(entry.map.params)
                            for entry in [first_exit, second_entry])
@@ -213,9 +213,9 @@ class MapFusion(transformation.Transformation):
 
         """
         graph = sdfg.nodes()[self.state_id]
-        first_exit = graph.nodes()[self.subgraph[MapFusion._first_map_exit]]
+        first_exit = graph.nodes()[self.subgraph[MapFusion.first_map_exit]]
         first_entry = graph.entry_node(first_exit)
-        second_entry = graph.nodes()[self.subgraph[MapFusion._second_map_entry]]
+        second_entry = graph.nodes()[self.subgraph[MapFusion.second_map_entry]]
         second_exit = graph.exit_node(second_entry)
 
         intermediate_nodes = set()

@@ -678,7 +678,7 @@ def propagate_memlet(dfg_state,
         entry_node = scope_node
         neighboring_edges = dfg_state.out_edges(scope_node)
     elif isinstance(scope_node, nodes.ExitNode):
-        entry_node = dfg_state.scope_dict()[scope_node]
+        entry_node = dfg_state.entry_node(scope_node)
         neighboring_edges = dfg_state.in_edges(scope_node)
     else:
         raise TypeError('Trying to propagate through a non-scope node')

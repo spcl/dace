@@ -39,7 +39,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # Find the top-level scope
     scope_tree = state.scope_tree()
     scope_dict = state.scope_dict()
-    scope_dict_children = state.scope_dict(True)
+    scope_dict_children = state.scope_children()
     top_scopenode = -1  # Initialized to -1 since "None" already means top-level
 
     for node in subgraph.nodes():

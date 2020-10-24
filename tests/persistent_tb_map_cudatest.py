@@ -27,8 +27,10 @@ def test_persistent_thread_block():
     sdfg.apply_transformations(StripMining, options={'tile_size': '256'})
 
     for state in sdfg:
-        for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
-            if state.scope_dict()[scope] is None:
+        for scope in state.nodes():
+            if not isinstance(scope, nodes.EntryNode):
+                continue
+            if state.entry_node(scope) is None:
                 scope.map.schedule = ScheduleType.GPU_Device
             else:
                 scope.map.schedule = ScheduleType.GPU_ThreadBlock

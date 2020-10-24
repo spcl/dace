@@ -747,7 +747,7 @@ def local_transients(sdfg, dfg, entry_node):
     """ Returns transients local to the scope defined by the specified entry
         node in the dataflow graph. """
     state: SDFGState = dfg._graph
-    scope_dict = state.scope_dict(node_to_children=True)
+    scope_children = state.scope_children()
     scope_tree = state.scope_tree()
     current_scope = scope_tree[entry_node]
 
@@ -755,13 +755,13 @@ def local_transients(sdfg, dfg, entry_node):
     defined_transients = set(sdfg.shared_transients())
 
     # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_dict)
+    transients = _transients_in_scope(sdfg, current_scope, scope_children)
 
     # Add transients defined in parent scopes
     while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_dict))
+            _transients_in_scope(sdfg, current_scope, scope_children))
 
     return sorted(list(transients - defined_transients))
 
