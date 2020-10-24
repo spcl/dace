@@ -862,6 +862,13 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if any([len(set(c) - internal_nodes) > 1 for c in cycles]):
                     continue
 
+                # Filter out loops with conditions and assignments that would
+                # generate code within the loop
+                if (entry_edge.data.assignments or exit_edge.data.assignments
+                        or not back_edge.data.is_unconditional()
+                        or not previous_edge.data.is_unconditional()):
+                    continue
+
                 # This is a loop! Generate the necessary annotation objects.
                 loop_scope = cflow.LoopScope(internal_nodes)
 
