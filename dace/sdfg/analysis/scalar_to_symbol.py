@@ -522,7 +522,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
                     memlet_str: str = e.data.data
-                    if e.data.subset is not None:
+                    if (e.data.subset is not None and not isinstance(
+                            sdfg.arrays[memlet_str], dt.Scalar)):
                         memlet_str += '[%s]' % e.data.subset
                     newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn),
                                      memlet_str, newcode)
@@ -530,7 +531,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 new_isedge.data.assignments[node.data] = newcode
             elif isinstance(input, nodes.AccessNode):
                 memlet: mm.Memlet = in_edge.data
-                if memlet.src_subset:
+                if (memlet.src_subset and
+                        not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
                     new_isedge.data.assignments[
                         node.data] = '%s[%s]' % (input.data, memlet.src_subset)
                 else:
