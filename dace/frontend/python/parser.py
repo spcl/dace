@@ -103,6 +103,7 @@ def parse_from_function(function, *compilation_args, strict=None):
     """
     # Avoid import loop
     from dace.sdfg.analysis import scalar_to_symbol as scal2sym
+    from dace.transformation import helpers as xfh
 
     if not isinstance(function, DaceProgram):
         raise TypeError(
@@ -123,6 +124,10 @@ def parse_from_function(function, *compilation_args, strict=None):
                   ', '.join(p for p in sorted(promoted)))
 
         sdfg.apply_strict_transformations()
+
+        # Split back edges with assignments and conditions to allow richer
+        # control flow detection in code generation
+        xfh.split_interstate_edges(sdfg)
 
     # Save the SDFG (again)
     sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
