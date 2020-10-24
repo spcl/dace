@@ -831,16 +831,20 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # all incoming edges to node
             in_edges = graph.in_edges(node)
             # outgoing edges going to another fused part
-            inter_edges = []
-            # outgoing edges that exit global map
-            out_edges = []
-            for e in graph.out_edges(node):
-                if e.dst == global_map_exit:
-                    out_edges.append(e)
-                else:
-                    inter_edges.append(e)
+            out_edges = graph.out_edges(node)
 
-            # offset memlets where necessary
+            # memlets of created transient:
+            # correct data names
+            if node in transients_created:
+                transient_in_edges = graph.in_edges(transients_created[node])
+                transient_out_edges = graph.out_edges(transients_created[node])
+                for edge in chain(transient_in_edges, transient_out_edges):
+                    for e in graph.memlet_tree(edge):
+                        if e.data.data == node.data:
+                            e.data.data += '_OUT'
+
+            # memlets of all in between transients:
+            # offset memlets if array has been augmented
             if subgraph_contains_data[node.data]:
                 # get min_offset
                 min_offset = min_offsets[node.data]
@@ -858,7 +862,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data,
                                                  nested_data_name)
 
-                for cedge in inter_edges:
+                for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
                         if edge.data.data == node.data:
                             edge.data.subset.offset(min_offset, True)
@@ -875,17 +879,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # put other_subset into out_edges for correctness
                 if len(in_edges) > 1:
                     for oedge in out_edges:
-                        oedge.data.other_subset = dcpy(oedge.data.subset)
-                        oedge.data.other_subset.offset(min_offset, True)
+                        if oedge.data.other_subset is None:
+                            oedge.data.other_subset = dcpy(oedge.data.subset)
+                            oedge.data.other_subset.offset(min_offset, True)
 
-            # also correct memlets of created transient
-            if node in transients_created:
-                transient_in_edges = graph.in_edges(transients_created[node])
-                transient_out_edges = graph.out_edges(transients_created[node])
-                for edge in chain(transient_in_edges, transient_out_edges):
-                    for e in graph.memlet_tree(edge):
-                        if e.data.data == node.data:
-                            e.data.data += '_OUT'
+
 
         if self.consolidate:
             consolidate_edges_scope(graph, global_map_entry)
