@@ -48,8 +48,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of traversed nodes
         self._generated_nodes = set()
 
-        # Keep track of generated NestedSDG
-        self._generated_nested_sdfg = set()
+        # Keep track of generated NestedSDG, and the name of the assigned function
+        self._generated_nested_sdfg = dict()
 
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
@@ -1191,7 +1191,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 self._dispatcher.dispatch_output_definition(
                     node, dst_node, edge, sdfg, state_dfg, state_id,
-                     function_stream, inner_stream)
+                    function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
@@ -1398,18 +1398,19 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit nested SDFG as a separate function
         nested_stream = CodeIOStream()
         nested_global_stream = CodeIOStream()
-        nested_dfg_unique_name = node.sdfg.unique_name
-        sdfg_label = "%s_%d_%d_%d" % (
-            node.sdfg.name, sdfg.sdfg_id, state_id, dfg.node_id(node)
-        ) if nested_dfg_unique_name == "" else "%s_%s" % (nested_dfg_unique_name, "nested")
 
         code_already_generated = False
-        # Use hashing to check whether this Nested SDFG has been already generated
+
+        # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
+        # use the saved name to call it, otherwise save the hash and the associated name
         hash = node.sdfg.hash_sdfg()
         if hash in self._generated_nested_sdfg:
             code_already_generated = True
+            sdfg_label = self._generated_nested_sdfg[hash]
         else:
-            self._generated_nested_sdfg.add(hash)
+            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id,
+                                          state_id, dfg.node_id(node))
+            self._generated_nested_sdfg[hash] = sdfg_label
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
