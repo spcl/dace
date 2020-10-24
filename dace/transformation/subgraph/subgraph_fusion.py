@@ -879,7 +879,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # put other_subset into out_edges for correctness
                 if len(in_edges) > 1:
                     for oedge in out_edges:
-                        if oedge.data.other_subset is None:
+                        if oedge.dst == global_map_exit and \
+                                            oedge.data.other_subset is None:
                             oedge.data.other_subset = dcpy(oedge.data.subset)
                             oedge.data.other_subset.offset(min_offset, True)
 
