@@ -16,7 +16,7 @@ def for_loop():
 def test_for_loop():
     A = for_loop()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -35,7 +35,7 @@ def for_loop_with_break_continue():
 def test_for_loop_with_break_continue():
     A = for_loop_with_break_continue()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -61,7 +61,7 @@ def test_nested_for_loop():
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -78,7 +78,7 @@ def while_loop():
 def test_while_loop():
     A = while_loop()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -99,7 +99,7 @@ def while_loop_with_break_continue():
 def test_while_loop_with_break_continue():
     A = while_loop_with_break_continue()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -129,7 +129,7 @@ def test_nested_while_loop():
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -157,7 +157,7 @@ def test_nested_for_while_loop():
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -185,7 +185,7 @@ def test_nested_while_for_loop():
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @dace.program
@@ -207,7 +207,7 @@ def test_map_with_break_continue():
     except Exception as e:
         if isinstance(e, DaceSyntaxError):
             return 0
-    assert(False)
+    assert (False)
 
 
 @dace.program
@@ -225,7 +225,7 @@ def test_nested_map_for_loop():
         for j in range(10):
             ref[i, j] = i * 10 + j
     val = nested_map_for_loop()
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -245,7 +245,7 @@ def test_nested_map_for_for_loop():
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
     val = nested_map_for_for_loop()
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -265,7 +265,7 @@ def test_nested_for_map_for_loop():
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
     val = nested_for_map_for_loop()
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -273,10 +273,12 @@ def nested_map_for_loop_with_tasklet():
     A = np.ndarray([10, 10], dtype=np.int64)
     for i in dace.map[0:10]:
         for j in range(10):
+
             @dace.tasklet
             def comp():
                 out >> A[i, j]
                 out = i * 10 + j
+
     return A
 
 
@@ -286,7 +288,7 @@ def test_nested_map_for_loop_with_tasklet():
         for j in range(10):
             ref[i, j] = i * 10 + j
     val = nested_map_for_loop_with_tasklet()
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -295,10 +297,12 @@ def nested_map_for_for_loop_with_tasklet():
     for i in dace.map[0:10]:
         for j in range(10):
             for k in range(10):
+
                 @dace.tasklet
                 def comp():
                     out >> A[i, j, k]
                     out = i * 100 + j * 10 + k
+
     return A
 
 
@@ -309,7 +313,7 @@ def test_nested_map_for_for_loop_with_tasklet():
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
     val = nested_map_for_for_loop_with_tasklet()
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -318,10 +322,12 @@ def nested_for_map_for_loop_with_tasklet():
     for i in range(10):
         for j in dace.map[0:10]:
             for k in range(10):
+
                 @dace.tasklet
                 def comp():
                     out >> A[i, j, k]
                     out = i * 100 + j * 10 + k
+
     return A
 
 
@@ -332,7 +338,7 @@ def test_nested_for_map_for_loop_with_tasklet():
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
     val = nested_for_map_for_loop_with_tasklet()
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -351,7 +357,7 @@ def test_nested_map_for_loop_2():
         for j in range(10):
             ref[i, j] = 2 + i * 10 + j
     val = nested_map_for_loop_2(B)
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 @dace.program
@@ -359,11 +365,13 @@ def nested_map_for_loop_with_tasklet_2(B: dace.int64[10, 10]):
     A = np.ndarray([10, 10], dtype=np.int64)
     for i in dace.map[0:10]:
         for j in range(10):
+
             @dace.tasklet
             def comp():
                 inp << B[i, j]
                 out >> A[i, j]
                 out = 2 * inp + i * 10 + j
+
     return A
 
 
@@ -374,7 +382,7 @@ def test_nested_map_for_loop_with_tasklet_2():
         for j in range(10):
             ref[i, j] = 2 + i * 10 + j
     val = nested_map_for_loop_with_tasklet_2(B)
-    assert(np.array_equal(val, ref))
+    assert (np.array_equal(val, ref))
 
 
 if __name__ == "__main__":
