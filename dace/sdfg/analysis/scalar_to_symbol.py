@@ -119,6 +119,11 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                     if isinstance(sdfg.arrays[tinput.src.data], dt.Stream):
                         candidates.remove(candidate)
                         break
+                    # If input is not a single-element memlet, skip
+                    if (tinput.data.dynamic
+                            or tinput.data.subset.num_elements() != 1):
+                        candidates.remove(candidate)
+                        break
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
