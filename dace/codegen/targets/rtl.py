@@ -50,10 +50,7 @@ class RTLCodeGen(TargetCodeGenerator):
                             
                             // include model header, generated from verilating the sv design
                             #include "V{name}.h"
-                            
-                            // global simulation time cycle counter
-                            //vluint64_t main_time = 0;
-                            
+                                                       
                             {debug}
                             """
     main_template = """
@@ -138,10 +135,6 @@ module {name}
 {outputs}
 );"""
     rtl_footer = """
-    //always@(*) begin
-    //    if (valid_o)
-    //        $finish; // convention: $finish; must eventually be called
-    //end
 endmodule
 """
 
