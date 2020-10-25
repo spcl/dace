@@ -46,20 +46,26 @@ tasklet = state.add_tasklet(
            |----------------------------------------------------|
     */
 
+    typedef enum [1:0] {READY, BUSY, DONE} state_e;
+    state_e state;
+
     always@(posedge clk_i) begin
         if (rst_i) begin // case: reset
             b <= 0;
             ready_o <= 1'b1;
-        end else if (valid_i) begin // case: load a 
+            state <= READY;
+        end else if (valid_i && state == READY) begin // case: load a 
             b <= a[0];
             ready_o <= 1'b0;
+            state <= BUSY;
         end else if (b < 100) // case: increment counter b
             b <= b + 1;
         else
-            b <= b; 
+            b <= b;
+            state <= DONE;
     end    
 
-    assign valid_o = (b >= 100) ? 1'b1:1'b0; 
+    assign valid_o = (b >= 100) ? 1'b1:1'b0;  
     ''',
     language=dace.Language.RTL)
 
