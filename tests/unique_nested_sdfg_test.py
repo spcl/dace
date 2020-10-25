@@ -274,4 +274,4 @@ if __name__ == "__main__":
 
     ret1 = single_state_test(size_n, size_m)
     ret2 = two_states_test(size_n, size_m)
-    exit(ret1 == 0 and ret2 == 0)
+    exit(ret1 != 0 or ret2 != 0)
