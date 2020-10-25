@@ -25,6 +25,10 @@ class MPICodeGen(TargetCodeGenerator):
         fileheader = CodeIOStream()
         self._frame.generate_fileheader(sdfg, fileheader)
 
+        params_comma = sdfg.signature()
+        if params_comma:
+            params_comma = ', ' + params_comma
+
         self._codeobj = CodeObject(
             sdfg.name + '_mpi', """
 #include <dace/dace.h>
@@ -36,7 +40,7 @@ int __dace_comm_rank = 0;
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_mpi({sdfg.name}_t *__state, {params});
+DACE_EXPORTED int __dace_init_mpi({sdfg.name}_t *__state{params});
 DACE_EXPORTED void __dace_exit_mpi({sdfg.name}_t *__state);
 
 int __dace_init_mpi({sdfg.name}_t *__state, {params}) {{
@@ -64,7 +68,7 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
 }}
-""".format(params=sdfg.signature(),
+""".format(params=params_comma,
            sdfg=sdfg,
            file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
 

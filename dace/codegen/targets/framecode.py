@@ -177,18 +177,20 @@ struct {sdfg.name}_t {{
         callsite_stream.write('}', sdfg)
 
         # Write awkward footer to avoid 'extern "C"' issues
+        params_comma = (', ' + params) if params else ''
+        paramnames_comma = (', ' + paramnames) if paramnames else ''
         callsite_stream.write(
             f'''
-DACE_EXPORTED void __program_{fname}({fname}_t *__state, {params})
+DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
 {{
-    __program_{fname}_internal(__state, {paramnames});
+    __program_{fname}_internal(__state{paramnames_comma});
 }}''', sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_init_%s(%s_t *__state, %s);\n' %
-                    (target.target_name, sdfg.name, params), sdfg)
+                    'DACE_EXPORTED int __dace_init_%s(%s_t *__state%s);\n' %
+                    (target.target_name, sdfg.name, params_comma), sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
                     'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' %
@@ -206,8 +208,8 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({params})
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s(__state, %s);' %
-                    (target.target_name, paramnames), sdfg)
+                    '__result |= __dace_init_%s(__state%s);' %
+                    (target.target_name, paramnames_comma), sdfg)
         for env in environments:
             if env.init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
@@ -1035,9 +1037,12 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                  header_global_stream, header_stream)
 
             # Open program function
+            params = sdfg.signature()
+            if params:
+                params = ', ' + params
             function_signature = (
-                'void __program_%s_internal(%s_t *__state, %s)\n{\n' %
-                (sdfg.name, sdfg.name, sdfg.signature()))
+                'void __program_%s_internal(%s_t *__state%s)\n{\n' %
+                (sdfg.name, sdfg.name, params))
 
             self.generate_footer(sdfg, self._dispatcher.used_environments,
                                  footer_global_stream, footer_stream)

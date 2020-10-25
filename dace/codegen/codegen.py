@@ -24,13 +24,15 @@ def generate_headers(sdfg: SDFG) -> str:
                    sdfg.signature(with_types=True,
                                   for_call=False,
                                   with_arrays=False))
-    params = (sdfg.name, sdfg.name,
-              sdfg.signature(with_types=True, for_call=False))
+    call_params = sdfg.signature(with_types=True, for_call=False)
+    if len(call_params) > 0:
+        call_params = ', ' + call_params
+    params = (sdfg.name, sdfg.name, call_params)
     exit_params = (sdfg.name, sdfg.name)
     proto += 'typedef void * %sHandle_t;\n' % sdfg.name
     proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
-    proto += 'extern "C" int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
-    proto += 'extern "C" void __program_%s(%sHandle_t handle, %s);\n' % params
+    proto += 'extern "C" void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+    proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
     return proto
 
 
@@ -44,6 +46,8 @@ def generate_dummy(sdfg: SDFG) -> str:
                                  for_call=True,
                                  with_arrays=False)
     params = sdfg.signature(with_types=False, for_call=True)
+    if len(params) > 0:
+        params = ', ' + params
 
     allocations = ''
     deallocations = ''
@@ -75,7 +79,7 @@ int main(int argc, char **argv) {{
 {allocations}
 
     handle = __dace_init_{sdfg.name}({init_params});
-    __program_{sdfg.name}(handle, {params});
+    __program_{sdfg.name}(handle{params});
     __dace_exit_{sdfg.name}(handle);
 
 {deallocations}

@@ -178,6 +178,9 @@ class CUDACodeGen(TargetCodeGenerator):
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
+        params_comma = self._global_sdfg.signature()
+        if params_comma:
+            params_comma = ', ' + params_comma
         self._codeobject.code = """
 #include <{backend_header}>
 #include <dace/dace.h>
@@ -185,7 +188,7 @@ class CUDACodeGen(TargetCodeGenerator):
 {file_header}
 
 struct {sdfg.name}_t;
-DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *handle, {params});
+DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *handle{params});
 DACE_EXPORTED void __dace_exit_cuda({sdfg.name}_t *handle);
 
 {other_globalcode}
@@ -197,7 +200,7 @@ namespace dace {{ namespace cuda {{
     int num_events = {nevents};
 }} }}
 
-int __dace_init_cuda({sdfg.name}_t *handle, {params}) {{
+int __dace_init_cuda({sdfg.name}_t *handle{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -244,7 +247,7 @@ void __dace_exit_cuda({sdfg.name}_t *handle) {{
 }}
 
 {localcode}
-""".format(params=self._global_sdfg.signature(),
+""".format(params=params_comma,
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
