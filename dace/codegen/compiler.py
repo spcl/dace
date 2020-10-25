@@ -14,22 +14,11 @@ from typing import List
 
 import dace
 from dace.config import Config
+from dace.codegen import exceptions as cgx
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
 from dace.codegen import compiled_sdfg as csd
 from dace.codegen.targets.target import make_absolute
-
-
-# Specialized exception classes
-class CompilerConfigurationError(Exception):
-    """ An exception that is raised whenever CMake encounters a configuration
-        error. """
-    pass
-
-
-class CompilationError(Exception):
-    """ An exception that is raised whenever a compilation error occurs. """
-    pass
 
 
 def generate_program_folder(sdfg,
@@ -262,7 +251,7 @@ def configure_and_compile(program_folder,
         except KeyError:
             pass
         except ValueError as ex:  # Cannot find compiler executable
-            raise CompilerConfigurationError(str(ex))
+            raise cgx.CompilerConfigurationError(str(ex))
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(libraries)))
 
@@ -299,10 +288,10 @@ def configure_and_compile(program_folder,
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
-                raise CompilerConfigurationError('Configuration failure')
+                raise cgx.CompilerConfigurationError('Configuration failure')
             else:
-                raise CompilerConfigurationError('Configuration failure:\n' +
-                                                 ex.output)
+                raise cgx.CompilerConfigurationError(
+                    'Configuration failure:\n' + ex.output)
 
         with open(cmake_filename, "w") as fp:
             fp.write(cmake_command)
@@ -317,9 +306,9 @@ def configure_and_compile(program_folder,
     except subprocess.CalledProcessError as ex:
         # If unsuccessful, print results
         if Config.get_bool('debugprint'):
-            raise CompilationError('Compiler failure')
+            raise cgx.CompilationError('Compiler failure')
         else:
-            raise CompilationError('Compiler failure:\n' + ex.output)
+            raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 
     shared_library_path = os.path.join(
         build_folder,

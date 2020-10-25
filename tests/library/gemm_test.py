@@ -4,7 +4,7 @@ import itertools
 import dace
 import random
 import numpy as np
-from dace.codegen.compiler import CompilerConfigurationError, CompilationError
+from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.blas import Gemm
 
 M = dace.symbol('M')
@@ -52,9 +52,7 @@ def run_test(implementation,
              C_shape=["M", "N"]):
     if C_shape is not None:
         replace_map = dict(M=M, N=N)
-        C_shape = [
-            s if isinstance(s, int) else replace_map[s] for s in C_shape
-        ]
+        C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
 
     dace.Config.set("library",
                     "blas",

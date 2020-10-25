@@ -12,14 +12,9 @@ import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, symbolic
+from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
-
-
-# Specialized exception classes
-class DuplicateDLLError(Exception):
-    """ An exception that is raised whenever a library is loaded twice. """
-    pass
 
 
 class ReloadableDLL(object):
@@ -87,7 +82,7 @@ class ReloadableDLL(object):
                                     self._library_filename + '_')
                     self._library_filename += '_'
                 except shutil.Error:
-                    raise DuplicateDLLError(
+                    raise cgx.DuplicateDLLError(
                         'Library %s is already loaded somewhere else ' %
                         os.path.basename(self._library_filename) +
                         'and cannot be unloaded. Please use a different name ' +
@@ -363,6 +358,6 @@ class CompiledSDFG(object):
 
             return self._return_arrays
         except (RuntimeError, TypeError, UnboundLocalError, KeyError,
-                DuplicateDLLError, ReferenceError):
+                cgx.DuplicateDLLError, ReferenceError):
             self._lib.unload()
             raise
