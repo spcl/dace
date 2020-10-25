@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-    Simple RTL tasklet with a single scalar input and a single scalar output. It increments b from a up to 100.
+    Pipelined, axi-handshake compliant example that increments b from a up to 100.
 """
 
 import dace
