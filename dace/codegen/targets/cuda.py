@@ -212,6 +212,7 @@ int __dace_init_cuda({params}) {{
     // Initialize {backend} before we run the application
     float *dev_X;
     {backend}Malloc((void **) &dev_X, 1);
+    {backend}Free(dev_X);
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
