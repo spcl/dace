@@ -11,9 +11,11 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
+from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import make_absolute, DefinedType
+from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 
 REDUCTION_TYPE_TO_HLSLIB = {
@@ -86,7 +88,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             xcl_emulation_mode = None
             xilinx_sdx = None
         else:
-            raise dace.codegen.codegen.CodegenError(
+            raise cgx.CodegenError(
                 "Unknown Xilinx execution mode: {}".format(execution_mode))
 
         set_env_vars = ""
@@ -96,8 +98,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
-                         is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else
+                         unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -561,7 +564,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 kernel_args_module += ["int " + p for p in scope.params]
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
-                        raise dace.codegen.codegen.CodegenError(
+                        raise cgx.CodegenError(
                             "Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
