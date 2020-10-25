@@ -62,30 +62,61 @@ class RTLCodeGen(TargetCodeGenerator):
                         V{name}* model = new V{name};
                     
                         // apply initial input values
-                        model->rst_i = 0;
-                        model->clk_i = 0;
+                        model->rst_i = 0;  // no reset
+                        model->clk_i = 0; // neg clock
+                        model->valid_i = 0; // not valid
+                        model->ready_i = 0; // not ready 
+                        model->eval();
                         
                         // read inputs
-                        {inputs}
-                        model->eval();
+                        //{{inputs}}
+                        //model->eval();
                     
                         // reset design
                         model->rst_i = 1;
-                        model->clk_i = !model->clk_i;
+                        model->clk_i = 1; // rising
                         model->eval();
-                        model->clk_i = !model->clk_i;
+                        model->clk_i = 0; // falling
                         model->eval();
                         model->rst_i = 0;
+                        model->clk_i = 1; // rising
                         model->eval();
-                        model->clk_i = !model->clk_i;
+                        model->clk_i = 0; // falling
                         model->eval();
-                    
-                        // simulate until $finish
-                        //while (!Verilated::gotFinish()) {{
-                        while (!model->valid_o) {{
+                        
+                        // simulate until in_handshakes = out_handshakes = num_elements
+                        bool read_input_hs = false, write_output_hs = false;
+                        int in_ptr = 0, out_ptr = 0;
+                        {num_elements}
+                        
+                        while (out_ptr < num_elements) {{
                     
                             // increment time
                             main_time++;
+                    
+                            // check if valid_i and ready_o have been asserted at the rising clock edge -> input read handshake
+                            if (model->ready_o == 1 && model->valid_i == 1){{
+                                read_input_hs = true;
+                            }} 
+                            // feed new element
+                            if(model->valid_i == 0 && in_ptr < num_elements){{
+                                std::cout << "feed new element" << std::endl;
+                                //model->a = a[in_ptr++];
+                                {inputs}
+                                model->valid_i = 1;
+                            }}
+                    
+                            // export element
+                            if(model->valid_o == 1){{
+                                std::cout << "export element" << std::endl;
+                                //b[out_ptr++] = model->b;
+                                {outputs}
+                                model->ready_i = 1;
+                            }}
+                            // check if valid_o and ready_i have been asserted at the rising clock edge -> output write handshake
+                            if (model->ready_i == 1 && model->valid_o == 1){{
+                                write_output_hs = true;
+                            }}
                     
                             // positive clock edge
                             model->clk_i = !model->clk_i;
@@ -97,6 +128,23 @@ class RTLCodeGen(TargetCodeGenerator):
                                 VL_PRINTF("{internal_state_str}", {internal_state_var});
                                 std::cout << std::endl;
                             }}
+                            
+                            // check if valid_i and ready_o have been asserted at the rising clock edge
+                            if (read_input_hs){{
+                                // remove valid_i flag
+                                std::cout << "remove read_input_hs flag" << std::endl;
+                                model->valid_i = 0;
+                                read_input_hs = false;
+                            }}
+                    
+                            // check if valid_o and ready_i have been asserted at the rising clock edge
+                            if (write_output_hs){{
+                                // remove valid_i flag
+                                std::cout << "remove write_output_hs flag" << std::endl;
+                                model->ready_i = 0;
+                                write_output_hs = false;
+                            }}
+                            
                             
                             // negative clock edge
                             model->clk_i = !model->clk_i;
@@ -111,7 +159,7 @@ class RTLCodeGen(TargetCodeGenerator):
                         }}
                    
                         // write result
-                        {outputs}
+                        //{{outputs}}
                                             
                         // final model cleanup
                         model->final();
@@ -225,23 +273,29 @@ endmodule
         for scalars:
             b = (int)model->b;
         """
-        input_read_string = "\n".join(["model->{name} = {name};".format(name=var_name)
-                                       if tasklet.in_connectors[var_name].veclen == 1 else
+
+        input_read_string = "\n".join(["model->{name} = {name}[in_ptr++];".format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
+                                       if isinstance(tasklet.in_connectors[var_name], dace.dtypes.pointer) else
                                        """\
                                        for(int i = 0; i < {veclen}; i++){{
                                          model->{name}[i] = {name}[i];
                                        }}\
                                        """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-                                       for var_name in tasklet.in_connectors])
+                                       if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector)  else
+                                      "model->{name} = {name}; in_ptr++;".format(name=var_name)
+                                      for var_name in tasklet.in_connectors])
 
-        output_read_string = "\n".join(["{name} = (int)model->{name};".format(name=var_name)
-                                        if tasklet.out_connectors[var_name].veclen == 1 else
+        output_read_string = "\n".join(["{name}[out_ptr++] = (int)model->{name};".format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
+                                        if isinstance(tasklet.out_connectors[var_name], dace.dtypes.pointer) else
                                         """\
                                         for(int i = 0; i < {veclen}; i++){{
                                           {name}[i] = (int)model->{name}[i];
                                         }}\
                                         """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
+                                        if isinstance(tasklet.out_connectors[var_name], dace.dtypes.vector) else
+                                        "{name} = (int)model->{name}; out_ptr++;".format(name=var_name)
                                         for var_name in tasklet.out_connectors])
+
         # write verilog to file
         os.makedirs(absolut_path, exist_ok=True)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
@@ -251,6 +305,9 @@ endmodule
             file.writelines(tasklet.code.code)
             file.writelines(RTLCodeGen.rtl_footer)
 
+        # compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
+        num_elements_string = "int num_elements = {};".format(1)
+
         sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
                                                                            debug="// enable/disable debug log\n" +
                                                                                  "bool DEBUG = false;" if "DEBUG" not in sdfg.constants else ""))
@@ -258,6 +315,7 @@ endmodule
         callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name,
                                                                        inputs=input_read_string,
                                                                        outputs=output_read_string,
+                                                                       num_elements=num_elements_string,
                                                                        internal_state_str=" ".join(
                                                                            ["{}=0x%x".format(var_name) for var_name in
                                                                             {**tasklet.in_connectors,
