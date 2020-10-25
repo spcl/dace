@@ -124,9 +124,8 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= set(
-                map(str,
-                    symbolic.pystr_to_symbolic(assign).free_symbols))
+            result |= symbolic.free_symbols_and_functions(
+                symbolic.pystr_to_symbolic(assign))
 
         return result - set(self.assignments.keys())
 
