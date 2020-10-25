@@ -59,7 +59,7 @@ def test_edge_split_loop_detection():
             i += 2
         return A
 
-    sdfg: dace.SDFG = looptest.to_sdfg()
+    sdfg: dace.SDFG = looptest.to_sdfg(strict=True)
     assert 'for (' in sdfg.generate_code()[0].code
 
     A = looptest()
