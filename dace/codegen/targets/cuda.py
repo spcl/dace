@@ -184,8 +184,9 @@ class CUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda({params});
-DACE_EXPORTED void __dace_exit_cuda({params});
+struct {sdfg.name}_t;
+DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *handle, {params});
+DACE_EXPORTED void __dace_exit_cuda({sdfg.name}_t *handle);
 
 {other_globalcode}
 
@@ -196,7 +197,7 @@ namespace dace {{ namespace cuda {{
     int num_events = {nevents};
 }} }}
 
-int __dace_init_cuda({params}) {{
+int __dace_init_cuda({sdfg.name}_t *handle, {params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -230,7 +231,7 @@ int __dace_init_cuda({params}) {{
     return 0;
 }}
 
-void __dace_exit_cuda({params}) {{
+void __dace_exit_cuda({sdfg.name}_t *handle) {{
     {exitcode}
 
     // Destroy {backend} streams and events
@@ -252,7 +253,8 @@ void __dace_exit_cuda({params}) {{
            nstreams=max(1, self._cuda_streams),
            nevents=max(1, self._cuda_events),
            backend=self.backend,
-           backend_header=backend_header)
+           backend_header=backend_header,
+           sdfg=self._global_sdfg)
 
         return [self._codeobject]
 

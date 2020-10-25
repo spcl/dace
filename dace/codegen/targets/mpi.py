@@ -36,10 +36,10 @@ int __dace_comm_rank = 0;
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_mpi({params});
-DACE_EXPORTED void __dace_exit_mpi({params});
+DACE_EXPORTED int __dace_init_mpi({sdfg.name}_t *__state, {params});
+DACE_EXPORTED void __dace_exit_mpi({sdfg.name}_t *__state);
 
-int __dace_init_mpi({params}) {{
+int __dace_init_mpi({sdfg.name}_t *__state, {params}) {{
     int isinit = 0;
     if (MPI_Initialized(&isinit) != MPI_SUCCESS)
         return 1;
@@ -57,15 +57,16 @@ int __dace_init_mpi({params}) {{
     return 0;
 }}
 
-void __dace_exit_mpi({params}) {{
+void __dace_exit_mpi({sdfg.name}_t *__state) {{
     MPI_Comm_free(&__dace_mpi_comm);
     MPI_Finalize();
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
 }}
-""".format(params=sdfg.signature(), file_header=fileheader.getvalue()), 'cpp',
-            MPICodeGen, 'MPI')
+""".format(params=sdfg.signature(),
+           sdfg=sdfg,
+           file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
 
         # Register dispatchers
         dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)

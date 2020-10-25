@@ -863,7 +863,7 @@ class SDFG(OrderedDiGraph):
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
 
-    def arglist(self) -> Dict[str, dt.Data]:
+    def arglist(self, scalars_only=False) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
@@ -880,11 +880,15 @@ class SDFG(OrderedDiGraph):
                  the arguments, sorted as defined here.
         """
         # Start with data descriptors
-        data_args = {
-            k: v
-            for k, v in self.arrays.items()
-            if not v.transient and not isinstance(v, dt.Scalar)
-        }
+        if scalars_only:
+            data_args = {}
+        else:
+            data_args = {
+                k: v
+                for k, v in self.arrays.items()
+                if not v.transient and not isinstance(v, dt.Scalar)
+            }
+
         scalar_args = {
             k: v
             for k, v in self.arrays.items() if not v.transient
@@ -905,20 +909,28 @@ class SDFG(OrderedDiGraph):
 
         return result
 
-    def signature_arglist(self, with_types=True, for_call=False):
+    def signature_arglist(self,
+                          with_types=True,
+                          for_call=False,
+                          with_arrays=True) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
             v.as_arg(name=k, with_types=with_types, for_call=for_call)
-            for k, v in self.arglist().items()
+            for k, v in self.arglist(scalars_only=not with_arrays).items()
         ]
 
-    def signature(self, with_types=True, for_call=False):
+    def signature(self,
+                  with_types=True,
+                  for_call=False,
+                  with_arrays=True) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
             :param with_types: If True, includes argument types (can be used
                                for a function prototype). If False, only
@@ -926,8 +938,11 @@ class SDFG(OrderedDiGraph):
                                calls).
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
         """
-        return ", ".join(self.signature_arglist(with_types, for_call))
+        return ", ".join(
+            self.signature_arglist(with_types, for_call, with_arrays))
 
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter

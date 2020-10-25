@@ -127,7 +127,15 @@ class DaCeCodeGenerator(object):
                     "\n".join("#include \"" + h + "\"" for h in env.headers),
                     sdfg)
 
-        global_stream.write("\n", sdfg)
+        self.statestruct = []
+        structstr = '\n'.join(self.statestruct)
+        global_stream.write(
+            f'''
+struct {sdfg.name}_t {{
+    {structstr}
+}};
+
+''', sdfg)
 
         self.generate_fileheader(sdfg, global_stream, 'frame')
 
@@ -170,34 +178,35 @@ class DaCeCodeGenerator(object):
 
         # Write awkward footer to avoid 'extern "C"' issues
         callsite_stream.write(
-            """
-DACE_EXPORTED void __program_%s(%s)
-{
-    __program_%s_internal(%s);
-}
-""" % (fname, params, fname, paramnames), sdfg)
+            f'''
+DACE_EXPORTED void __program_{fname}({fname}_t *__state, {params})
+{{
+    __program_{fname}_internal(__state, {paramnames});
+}}''', sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_init_%s(%s);\n' %
-                    (target.target_name, params), sdfg)
+                    'DACE_EXPORTED int __dace_init_%s(%s_t *__state, %s);\n' %
+                    (target.target_name, sdfg.name, params), sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_exit_%s(%s);\n' %
-                    (target.target_name, params), sdfg)
+                    'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' %
+                    (target.target_name, sdfg.name), sdfg)
 
         callsite_stream.write(
-            """
-DACE_EXPORTED int __dace_init_%s(%s)
-{
+            f"""
+DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({params})
+{{
     int __result = 0;
-""" % (sdfg.name, params), sdfg)
+    {sdfg.name}_t *__state = new {sdfg.name}_t;
+
+            """, sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s(%s);' %
+                    '__result |= __dace_init_%s(__state, %s);' %
                     (target.target_name, paramnames), sdfg)
         for env in environments:
             if env.init_code:
@@ -214,13 +223,17 @@ DACE_EXPORTED int __dace_init_%s(%s)
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
         callsite_stream.write(
-            """
-    return __result;
-}
+            f"""
+    if (__result) {{
+        delete __state;
+        return nullptr;
+    }}
+    return __state;
+}}
 
-DACE_EXPORTED void __dace_exit_%s(%s)
-{
-""" % (sdfg.name, params), sdfg)
+DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
+{{
+""", sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
@@ -232,8 +245,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
                 callsite_stream.write(
-                    '__dace_exit_%s(%s);' % (target.target_name, paramnames),
-                    sdfg)
+                    '__dace_exit_%s(__state);' % target.target_name, sdfg)
         for env in environments:
             if env.finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
@@ -241,7 +253,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 callsite_stream.write(env.init_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write('}\n', sdfg)
+        callsite_stream.write('delete __state;\n}\n', sdfg)
 
     def generate_state(self,
                        sdfg,
@@ -1023,8 +1035,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                  header_global_stream, header_stream)
 
             # Open program function
-            function_signature = 'void __program_%s_internal(%s)\n{\n' % (
-                sdfg.name, sdfg.signature())
+            function_signature = (
+                'void __program_%s_internal(%s_t *__state, %s)\n{\n' %
+                (sdfg.name, sdfg.name, sdfg.signature()))
 
             self.generate_footer(sdfg, self._dispatcher.used_environments,
                                  footer_global_stream, footer_stream)

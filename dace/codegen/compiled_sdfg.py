@@ -148,12 +148,14 @@ class CompiledSDFG(object):
         self._sdfg = sdfg
         self._lib = lib
         self._initialized = False
+        self._libhandle = ctypes.c_void_p(0)
         self._lastargs = ()
         self._return_arrays: List[np.ndarray] = []
         self._return_kwarrays: Dict[str, np.ndarray] = {}
         self._return_syms: Dict[str, Any] = {}
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
+        self._init.restype = ctypes.c_void_p
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
@@ -165,10 +167,46 @@ class CompiledSDFG(object):
     def sdfg(self):
         return self._sdfg
 
+    def initialize(self, *argtuple):
+        if self._init is not None:
+            res = ctypes.c_void_p(self._init(*argtuple))
+            if res == ctypes.c_void_p(0):
+                raise RuntimeError('DaCe application failed to initialize')
+
+            self._libhandle = res
+            self._initialized = True
+
+    def finalize(self):
+        if self._exit is not None:
+            self._exit(self._libhandle)
+
+    def __call__(self, **kwargs):
+        try:
+            argtuple = self._construct_args(**kwargs)
+
+            # Call initializer function if necessary, then SDFG
+            if self._initialized is False:
+                self._lib.load()
+                self.initialize(*argtuple)
+
+            # PROFILING
+            if Config.get_bool('profiling'):
+                operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
+                                    self._libhandle, *argtuple)
+            else:
+                self._cfunc(self._libhandle, *argtuple)
+
+            return self._return_arrays
+        except (RuntimeError, TypeError, UnboundLocalError, KeyError,
+                cgx.DuplicateDLLError, ReferenceError):
+            self._lib.unload()
+            raise
+
     def __del__(self):
         if self._initialized is True:
-            self.finalize(*self._lastargs)
+            self.finalize()
             self._initialized = False
+            self._libhandle = ctypes.c_void_p(0)
         self._lib.unload()
 
     def _construct_args(self, **kwargs):
@@ -327,37 +365,3 @@ class CompiledSDFG(object):
             self._return_arrays = tuple(self._return_arrays)
 
         return self._return_kwarrays
-
-    def initialize(self, *argtuple):
-        if self._init is not None:
-            res = self._init(*argtuple)
-            if res != 0:
-                raise RuntimeError('DaCe application failed to initialize')
-
-        self._initialized = True
-
-    def finalize(self, *argtuple):
-        if self._exit is not None:
-            self._exit(*argtuple)
-
-    def __call__(self, **kwargs):
-        try:
-            argtuple = self._construct_args(**kwargs)
-
-            # Call initializer function if necessary, then SDFG
-            if self._initialized is False:
-                self._lib.load()
-                self.initialize(*argtuple)
-
-            # PROFILING
-            if Config.get_bool('profiling'):
-                operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
-                                    *argtuple)
-            else:
-                self._cfunc(*argtuple)
-
-            return self._return_arrays
-        except (RuntimeError, TypeError, UnboundLocalError, KeyError,
-                cgx.DuplicateDLLError, ReferenceError):
-            self._lib.unload()
-            raise
