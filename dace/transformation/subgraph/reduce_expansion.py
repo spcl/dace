@@ -140,6 +140,7 @@ class ReduceExpansion(transformation.Transformation):
         nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
 
         # find the new nodes in the nested sdfg created
+        # TODO SCOPE_DICT => SCOPE CHILDREN?
         nstate = nsdfg.sdfg.nodes()[0]
         for node, scope in nstate.scope_dict().items():
             if isinstance(node, nodes.MapEntry):
@@ -203,9 +204,9 @@ class ReduceExpansion(transformation.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage._node_a:
+                LocalStorage.node_a:
                 nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
-                LocalStorage._node_b:
+                LocalStorage.node_b:
                 nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
@@ -233,9 +234,9 @@ class ReduceExpansion(transformation.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage._node_a:
+                LocalStorage.node_a:
                 nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
-                LocalStorage._node_b:
+                LocalStorage.node_b:
                 nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
             }
 
@@ -483,7 +484,7 @@ class ReduceExpansion(transformation.Transformation):
         node.add_out_connector('_out')
 
         if node.schedule != dtypes.ScheduleType.Default:
-            topnodes = nstate.scope_dict(node_to_children=True)[None]
+            topnodes = nstate.scope_children()[None]
             for topnode in topnodes:
                 if isinstance(topnode, (nodes.EntryNode, nodes.LibraryNode)):
                     topnode.schedule = node.schedule

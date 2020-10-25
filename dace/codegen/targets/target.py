@@ -565,9 +565,9 @@ class TargetDispatcher(object):
                 and not isinstance(dst_node, nodes.Tasklet)):
             # Special case: Copying from a tasklet to an array, schedule of
             # the copy is in the copying tasklet
-            dst_schedule_node = dfg.scope_dict()[src_node]
+            dst_schedule_node = dfg.entry_node(src_node)
         else:
-            dst_schedule_node = dfg.scope_dict()[dst_node]
+            dst_schedule_node = dfg.entry_node(dst_node)
 
         if dst_schedule_node is not None:
             dst_schedule = dst_schedule_node.map.schedule

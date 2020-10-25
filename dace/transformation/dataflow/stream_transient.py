@@ -214,8 +214,8 @@ class AccumulateTransient(transformation.Transformation):
         from dace.transformation.dataflow.local_storage import LocalStorage
 
         local_storage_subgraph = {
-            LocalStorage._node_a: self.subgraph[AccumulateTransient._map_exit],
-            LocalStorage._node_b:
+            LocalStorage.node_a: self.subgraph[AccumulateTransient._map_exit],
+            LocalStorage.node_b:
             self.subgraph[AccumulateTransient._outer_map_exit]
         }
         sdfg_id = sdfg.sdfg_id

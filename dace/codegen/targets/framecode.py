@@ -734,6 +734,11 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         interstate_symbols = {}
         for e in sdfg.edges():
             symbols = e.data.new_symbols(global_symbols)
+            # Inferred symbols only take precedence if not None
+            symbols = {
+                k: v if v is not None else global_symbols[k]
+                for k, v in symbols.items()
+            }
             interstate_symbols.update(symbols)
             global_symbols.update(symbols)
 
@@ -855,6 +860,13 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 # cycle, by checking that there's no reachable node *not*
                 # included in any cycle between the first and last node.
                 if any([len(set(c) - internal_nodes) > 1 for c in cycles]):
+                    continue
+
+                # Filter out loops with conditions and assignments that would
+                # generate code within the loop
+                if (entry_edge.data.assignments or exit_edge.data.assignments
+                        or not back_edge.data.is_unconditional()
+                        or not previous_edge.data.is_unconditional()):
                     continue
 
                 # This is a loop! Generate the necessary annotation objects.

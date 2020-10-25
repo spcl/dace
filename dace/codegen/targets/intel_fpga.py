@@ -514,9 +514,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
-        scope_dict = subgraph.scope_dict(node_to_children=True)
+        scope_children = subgraph.scope_children()
         top_scopes = [
-            n for n in scope_dict[None]
+            n for n in scope_children[None]
             if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0

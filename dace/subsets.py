@@ -564,9 +564,9 @@ class Range(Subset):
                         new_subset.append(rb + rs * other[idx])
 
         else:
-            raise ValueError("Dimension mismatch in composition:"
-                             "Subset composed must be either completely"
-                             "stripped of all non-data dimensions"
+            raise ValueError("Dimension mismatch in composition: "
+                             "Subset composed must be either completely "
+                             "stripped of all non-data dimensions "
                              "or be not stripped of latter at all.")
 
         if isinstance(other, Range):

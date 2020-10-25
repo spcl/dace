@@ -101,6 +101,10 @@ def parse_from_function(function, *compilation_args, strict=None):
                        uses configuration-defined value). 
         :return: The generated SDFG object.
     """
+    # Avoid import loop
+    from dace.sdfg.analysis import scalar_to_symbol as scal2sym
+    from dace.transformation import helpers as xfh
+
     if not isinstance(function, DaceProgram):
         raise TypeError(
             'Function must be of type dace.frontend.python.DaceProgram')
@@ -112,7 +116,18 @@ def parse_from_function(function, *compilation_args, strict=None):
     if (strict == True or
         (strict is None
          and Config.get_bool('optimizer', 'automatic_strict_transformations'))):
+
+        # Promote scalars to symbols as necessary
+        promoted = scal2sym.promote_scalars_to_symbols(sdfg)
+        if Config.get_bool('debugprint') and len(promoted) > 0:
+            print('Promoted scalars {%s} to symbols.' %
+                  ', '.join(p for p in sorted(promoted)))
+
         sdfg.apply_strict_transformations()
+
+        # Split back edges with assignments and conditions to allow richer
+        # control flow detection in code generation
+        xfh.split_interstate_edges(sdfg)
 
     # Save the SDFG (again)
     sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
@@ -332,5 +347,10 @@ class DaceProgram:
         }
 
         # Parse AST to create the SDFG
-        return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules, other_sdfgs, self.kwargs, strict=strict)
+        return newast.parse_dace_program(dace_func,
+                                         argtypes,
+                                         global_vars,
+                                         modules,
+                                         other_sdfgs,
+                                         self.kwargs,
+                                         strict=strict)
