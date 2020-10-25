@@ -158,6 +158,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                        'h',
                        cpu.CPUCodeGen,
                        'CallHeader',
+                       target_type='../../include',
                        linkable=False)
     target_objects.append(dummy)
 
@@ -166,7 +167,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        generate_dummy(sdfg),
                        'cpp',
                        cpu.CPUCodeGen,
-                       'DummyMain',
+                       'SampleMain',
+                       target_type='../../sample',
                        linkable=False)
     target_objects.append(dummy)
 
