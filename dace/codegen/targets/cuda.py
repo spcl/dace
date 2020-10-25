@@ -2083,13 +2083,21 @@ void  *{kname}_args[] = {{ {kargs} }};
     def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
                               sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, state, node, memlet_references, sdfg_label)
+            sdfg,
+            state,
+            node,
+            memlet_references,
+            sdfg_label,
+            state_struct=False)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_call(sdfg, state, node,
+        return self._cpu_codegen.generate_nsdfg_call(sdfg,
+                                                     state,
+                                                     node,
                                                      memlet_references,
-                                                     sdfg_label)
+                                                     sdfg_label,
+                                                     state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)

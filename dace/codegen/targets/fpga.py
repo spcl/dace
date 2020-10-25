@@ -260,10 +260,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    and n.desc(scope).storage ==
+                                    dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -692,10 +692,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(
+                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage ==
+                                    dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -1184,15 +1184,21 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
                               sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, node,
+        return self._cpu_codegen.generate_nsdfg_header(sdfg,
+                                                       state,
+                                                       node,
                                                        memlet_references,
-                                                       sdfg_label)
+                                                       sdfg_label,
+                                                       state_struct=False)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_call(sdfg, state, node,
+        return self._cpu_codegen.generate_nsdfg_call(sdfg,
+                                                     state,
+                                                     node,
                                                      memlet_references,
-                                                     sdfg_label)
+                                                     sdfg_label,
+                                                     state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, state, node):
         return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
