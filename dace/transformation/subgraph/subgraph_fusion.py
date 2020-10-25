@@ -926,6 +926,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # create a hook for outside access to global_map
         self._global_map_entry = global_map_entry
         if self.schedule_innermaps is not None:
-            for node in graph.scope_dict(True)[global_map_entry]:
+            for node in graph.scope_children()[global_map_entry]:
                 if isinstance(node, nodes.MapEntry):
                     node.map.schedule = self.schedule_innermaps
