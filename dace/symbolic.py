@@ -3,7 +3,7 @@ import ast
 import sympy
 import pickle
 import re
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Set, Union
 import warnings
 import numpy
 
@@ -35,8 +35,9 @@ class symbol(sympy.Symbol):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
         dkeys = [k for k, v in dtypes.DTYPE_TO_TYPECLASS.items() if v == dtype]
-        is_integer = [issubclass(k, int) or issubclass(k, numpy.integer)
-                      for k in dkeys]
+        is_integer = [
+            issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys
+        ]
         if 'integer' in assumptions or not numpy.any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
             # to modifying different references of symbols with the same name.
@@ -230,6 +231,10 @@ class SymExpr(object):
         if isinstance(other, SymExpr):
             return self.expr == other.expr and self.approx == other.approx
         return self == pystr_to_symbolic(other)
+
+
+# Type hint for symbolic expressions
+SymbolicType = Union[sympy.Basic, SymExpr]
 
 
 def symvalue(val):
@@ -445,6 +450,14 @@ def contains_sympy_functions(expr):
         if contains_sympy_functions(arg):
             return True
     return False
+
+
+def free_symbols_and_functions(expr: SymbolicType) -> Set[str]:
+    result = {str(k) for k in expr.free_symbols}
+    for atom in swalk(expr):
+        if is_sympy_userfunction(atom):
+            result.add(str(atom.func))
+    return result
 
 
 def sympy_numeric_fix(expr):
@@ -728,7 +741,3 @@ class SympyAwareUnpickler(pickle.Unpickler):
             return _sunpickle(value)
         else:
             raise pickle.UnpicklingError("unsupported persistent object")
-
-
-# Type hint for symbolic expressions
-SymbolicType = Union[sympy.Basic, SymExpr]
