@@ -93,6 +93,18 @@ class DaCeCodeGenerator(object):
         # Write constants
         self.generate_constants(sdfg, global_stream)
 
+        #########################################################
+        # Write state struct
+        self.statestruct = []
+        structstr = '\n'.join(self.statestruct)
+        global_stream.write(
+            f'''
+struct {sdfg.name}_t {{
+    {structstr}
+}};
+
+''', sdfg)
+
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.global_code:
                 global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
@@ -126,16 +138,6 @@ class DaCeCodeGenerator(object):
                 global_stream.write(
                     "\n".join("#include \"" + h + "\"" for h in env.headers),
                     sdfg)
-
-        self.statestruct = []
-        structstr = '\n'.join(self.statestruct)
-        global_stream.write(
-            f'''
-struct {sdfg.name}_t {{
-    {structstr}
-}};
-
-''', sdfg)
 
         self.generate_fileheader(sdfg, global_stream, 'frame')
 

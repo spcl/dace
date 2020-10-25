@@ -43,7 +43,7 @@ int __dace_comm_rank = 0;
 DACE_EXPORTED int __dace_init_mpi({sdfg.name}_t *__state{params});
 DACE_EXPORTED void __dace_exit_mpi({sdfg.name}_t *__state);
 
-int __dace_init_mpi({sdfg.name}_t *__state, {params}) {{
+int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
     int isinit = 0;
     if (MPI_Initialized(&isinit) != MPI_SUCCESS)
         return 1;
