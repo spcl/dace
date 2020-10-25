@@ -87,14 +87,14 @@ def test_quantitatively(sdfg, graph):
 def test_out_transient1():
     # non-transient
     sdfg = test_program1.to_sdfg()
-    sdfg.apply_transformations_repeated(StateFusion)
+    sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     test_quantitatively(sdfg, graph)
 
 def test_out_transient2():
     # transient
     sdfg = test_program2.to_sdfg()
-    sdfg.apply_transformations_repeated(StateFusion)
+    sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     test_quantitatively(sdfg, graph)
 
