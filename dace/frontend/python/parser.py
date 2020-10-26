@@ -143,7 +143,7 @@ def _get_locals_and_globals():
         stack. This is used to retrieve variables around and defined before
         @dace.programs for adding symbols. """
     frame = inspect.currentframe()
-    outer_frame = frame.f_back.f_back.f_back.f_back
+    outer_frame = frame.f_back.f_back.f_back.f_back.f_back
     result = {}
     # Update globals, then locals
     result.update(outer_frame.f_globals)
