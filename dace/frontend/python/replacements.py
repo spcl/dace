@@ -579,14 +579,14 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
 
-        elif dim1 == 1:
+        elif dim1 == 1 and dim2 is not None:
             a1_idx.append("0")
             # dim2 != 1 must hold here
             a2_idx.append(get_idx(i))
 
             all_idx_dict[get_idx(i)] = dim2
 
-        elif dim2 == 1:
+        elif dim2 == 1 and dim1 is not None:
             # dim1 != 1 must hold here
             a1_idx.append(get_idx(i))
             a2_idx.append("0")
