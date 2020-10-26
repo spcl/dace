@@ -71,6 +71,9 @@ class RTLCodeGen(TargetCodeGenerator):
                         // read inputs
                         //{{inputs}}
                         //model->eval();
+                        
+                        // init vector
+                        {vector_init}
                     
                         // reset design
                         model->rst_i = 1;
@@ -296,6 +299,14 @@ endmodule
                                         "{name} = (int)model->{name}; out_ptr++;".format(name=var_name)
                                         for var_name in tasklet.out_connectors])
 
+        init_vector_string = "\n".join(["""\
+                                       for(int i = 0; i < {veclen}; i++){{
+                                         model->{name}[i] = 0;
+                                       }}\
+                                       """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
+                                        if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else ""
+                                        for var_name in tasklet.in_connectors])
+
         # write verilog to file
         os.makedirs(absolut_path, exist_ok=True)
         with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
@@ -316,6 +327,7 @@ endmodule
                                                                        inputs=input_read_string,
                                                                        outputs=output_read_string,
                                                                        num_elements=num_elements_string,
+                                                                       vector_init=init_vector_string,
                                                                        internal_state_str=" ".join(
                                                                            ["{}=0x%x".format(var_name) for var_name in
                                                                             {**tasklet.in_connectors,
