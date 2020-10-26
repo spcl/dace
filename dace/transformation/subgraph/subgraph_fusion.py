@@ -257,20 +257,26 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                out_nodes):
         # For each intermediate and out node: must never reach any map
         # entry if it is not connected to map entry immediately
-        visited = set()
 
         # for memoization purposes
+        visited = set()
+
         def visit_descendants(graph, node, visited, map_entries):
-            # if we have already been at this node
+            # check whether the node has already been processed once
             if node in visited:
                 return True
-            # not necessary to add if there aren't any other in connections
-            if len(graph.in_edges(node)) > 1:
-                visited.add(node)
+            # check whether the node is in our map entries.
+            if node in map_entries:
+                return False
+            # for every out edge, continue exploring whether
+            # we and up at another map entry that is in our set
             for oedge in graph.out_edges(node):
                 if not visit_descendants(graph, oedge.dst, visited,
                                          map_entries):
                     return False
+
+            # this node does not lead to any other map entries, add to visited
+            visited.add(node)
             return True
 
         for node in intermediate_nodes | out_nodes:
