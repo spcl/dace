@@ -549,36 +549,6 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def get_loop_nodes(guard_candidate, last_loop_edge, idom) -> Optional[List]:
-    """
-    Finds all states inside a loop based on its guard and exiting edge.
-
-    This traverses the immediate dominators of the last loop state until
-    either a dead end is reached (not a loop, return None), or the loop
-    guard is reached, in which case it is a loop and all states on the path
-    taken are returned.
-
-    :param guard_candidate: SDFGState which is suspected to be a loop guard.
-    :param last_loop_edge: Last edge in the loop, pointing back to the guard.
-    :param idom: Dictionary of immediate dominators for each state.
-    :return: A list of all nodes inside the loop, or None if no proper loop
-                was detected.
-    """
-    pivot = last_loop_edge.src
-    state_list = []
-    while True:
-        state_list.append(pivot)
-        dominator = idom[pivot]
-        if dominator is None or dominator == pivot:
-            # We reached a tail, this is not a loop.
-            return None
-        elif dominator == guard_candidate:
-            # We looped back to the loop guard candidate, this is a loop.
-            return state_list
-        else:
-            pivot = dominator
-
-
 def propagate_states(sdfg) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
