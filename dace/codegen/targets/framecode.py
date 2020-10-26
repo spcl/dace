@@ -1042,6 +1042,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Now that we have all the information about dependencies, generate
         # header and footer
         if is_top_level:
+            # Let each target append code to frame code state before generating
+            # header and footer
+            for target in self._dispatcher.used_targets:
+                target.on_target_used()
+
             header_stream = CodeIOStream()
             header_global_stream = CodeIOStream()
             footer_stream = CodeIOStream()

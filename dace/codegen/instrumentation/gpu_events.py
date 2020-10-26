@@ -40,7 +40,7 @@ class GPUEventProvider(InstrumentationProvider):
             id=id, backend=self.backend)
 
     def _record_event(self, id, stream):
-        return '%sEventRecord(__dace_ev_%s, dace::cuda::__streams[%d]);' % (
+        return '%sEventRecord(__dace_ev_%s, __state->gpu_context->streams[%d]);' % (
             self.backend, id, stream)
 
     def _report(self, timer_name: str, sdfg=None, state=None, node=None):

@@ -141,6 +141,10 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
+    def on_target_used(self) -> None:
+        # Right before finalizing code, write FPGA context to state structure
+        self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
+
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         """Generate a kernel that runs all connected components within a state
            as concurrent dataflow modules."""
@@ -436,7 +440,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         else:
                             self._bank_assignments[(dataname, sdfg)] = None
                         result.write(
-                            "auto {} = dace::fpga::_context->Get()."
+                            "auto {} = __state->fpga_context->"
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({}{});".format(dataname, nodedesc.dtype.ctype,
                                              memory_bank_arg,
@@ -1247,7 +1251,7 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = dace::fpga::_context->Get().CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = __state->fpga_context->CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 

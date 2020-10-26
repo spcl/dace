@@ -26,6 +26,14 @@ class TargetCodeGenerator(object):
         """
         return []
 
+    def on_target_used(self) -> None:
+        """
+        Called before generating frame code (headers / footers) on this target
+        if it was dispatched for any reason. Can be used to set up state struct
+        fields.
+        """
+        pass
+
     @property
     def has_initializer(self):
         """ Returns True if the target generates a `__dace_init_<TARGET>`
