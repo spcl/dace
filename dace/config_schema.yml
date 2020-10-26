@@ -586,6 +586,15 @@ required:
         title: Instrumentation
         description: Instrumentation preferences
         required:
+            report_each_invocation:
+                type: bool
+                title: Save report for each invocation
+                default: true
+                description: >
+                    Save an instrumentation report file for each invocation of
+                    the SDFG, rather than one report that spans from SDFG
+                    initialization to finalization.
+
             papi:
                 type: dict
                 title: PAPI

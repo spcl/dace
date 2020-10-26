@@ -16,6 +16,7 @@ from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
+from typing import List
 
 from dace.frontend.python import wrappers
 
@@ -32,6 +33,7 @@ class DaCeCodeGenerator(object):
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
+        self.statestruct: List[str] = []
 
     ##################################################################
     # Target registry
@@ -95,7 +97,6 @@ class DaCeCodeGenerator(object):
 
         #########################################################
         # Write state struct
-        self.statestruct = []
         structstr = '\n'.join(self.statestruct)
         global_stream.write(
             f'''
@@ -139,13 +140,15 @@ struct {sdfg.name}_t {{
                     "\n".join("#include \"" + h + "\"" for h in env.headers),
                     sdfg)
 
-        self.generate_fileheader(sdfg, global_stream, 'frame')
-
         # Instrumentation preamble
         if len(self._dispatcher.instrumentation) > 1:
-            global_stream.write(
-                'namespace dace { namespace perf { Report report; } }', sdfg)
-            callsite_stream.write('dace::perf::report.reset();', sdfg)
+            self.statestruct.append('dace::perf::Report report;')
+            # Reset report if written every invocation
+            if config.Config.get_bool('instrumentation',
+                                      'report_each_invocation'):
+                callsite_stream.write('__state->report.reset();', sdfg)
+
+        self.generate_fileheader(sdfg, global_stream, 'frame')
 
     def generate_footer(self, sdfg: SDFG, used_environments: Set[str],
                         global_stream: CodeIOStream,
@@ -170,9 +173,10 @@ struct {sdfg.name}_t {{
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
         # Instrumentation saving
-        if len(self._dispatcher.instrumentation) > 1:
+        if (config.Config.get_bool('instrumentation', 'report_each_invocation')
+                and len(self._dispatcher.instrumentation) > 1):
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' %
+                '__state->report.save("%s/perf");' %
                 sdfg.build_folder.replace('\\', '/'), sdfg)
 
         # Write closing brace of program
@@ -238,6 +242,14 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({params})
 DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 {{
 """, sdfg)
+
+        # Instrumentation saving
+        if (not config.Config.get_bool('instrumentation',
+                                       'report_each_invocation')
+                and len(self._dispatcher.instrumentation) > 1):
+            callsite_stream.write(
+                '__state->report.save("%s/perf");' %
+                sdfg.build_folder.replace('\\', '/'), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
@@ -490,8 +502,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 generate_transition = True
 
                 # Handle specialized control flow
-                if (dace.config.Config.get_bool('optimizer',
-                                                'detect_control_flow')):
+                if (config.Config.get_bool('optimizer', 'detect_control_flow')):
 
                     for control in control_flow[edge]:
 
@@ -774,7 +785,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # {edge: [dace.edges.ControlFlow]}
         control_flow = {e: [] for e in sdfg.edges()}
 
-        if dace.config.Config.get_bool('optimizer', 'detect_control_flow'):
+        if config.Config.get_bool('optimizer', 'detect_control_flow'):
 
             ####################################################################
             # Loop detection procedure
