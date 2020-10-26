@@ -159,6 +159,20 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
     return candidates
 
 
+class CastRemover(ast.NodeTransformer):
+    """
+    Removes dace casts from code.
+    """
+    def visit_Call(self, node: ast.Call) -> Any:
+        if (isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'dace'
+                and node.func.attr in dtypes.TYPECLASS_STRINGS):
+            return node.args[0]
+
+        return node
+
+
 class TaskletPromoter(ast.NodeTransformer):
     """
     Promotes scalars to symbols in Tasklets.
@@ -515,7 +529,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 # Convert tasklet to interstate edge
                 newcode: str = ''
                 if input.language is dtypes.Language.Python:
-                    newcode = astutils.unparse(input.code.code[0].value)
+                    newcode_ast = input.code.code[0].value
+                    newcode_ast = CastRemover().visit(newcode_ast)
+                    newcode = astutils.unparse(newcode_ast)
                 elif input.language is dtypes.Language.CPP:
                     newcode = re.findall(r'.*=\s*(.*);',
                                          input.code.as_string.strip())[0]
