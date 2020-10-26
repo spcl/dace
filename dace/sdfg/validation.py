@@ -1,11 +1,12 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
+from dace.dtypes import StorageType
 import os
 from typing import Dict, Union
 import warnings
 
-from dace.dtypes import typeclass, validate_name, AccessType
+from dace import dtypes
 
 ###########################################
 # Validation
@@ -29,7 +30,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
     """
     try:
         # SDFG-level checks
-        if not validate_name(sdfg.name):
+        if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
         if len(sdfg.source_nodes()) > 1 and sdfg.start_state is None:
@@ -39,11 +40,19 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             raise InvalidSDFGError("Found multiple states with the same name",
                                    sdfg, None)
 
-        # Validate array names
-        for name in sdfg._arrays.keys():
-            if name is not None and not validate_name(name):
+        # Validate data descriptors
+        for name, desc in sdfg._arrays.items():
+            # Validate array names
+            if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg,
                                        None)
+            # Allocation lifetime checks
+            if (desc.lifetime is dtypes.AllocationLifetime.Persistent
+                    and desc.storage is dtypes.StorageType.Register):
+                raise InvalidSDFGError(
+                    "Array %s cannot be both persistent and use Register as "
+                    "storage type. Please use a different storage location." %
+                    name, sdfg, None)
 
         # Check every state separately
         start_state = sdfg.start_state
@@ -77,8 +86,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
             # Validate inter-state edge names
             issyms = edge.data.new_symbols(symbols)
-            if any(not validate_name(s) for s in issyms):
-                invalid = next(s for s in issyms if not validate_name(s))
+            if any(not dtypes.validate_name(s) for s in issyms):
+                invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 eid = sdfg.edge_id(edge)
                 raise InvalidSDFGInterstateEdgeError(
                     "Invalid interstate symbol name %s" % invalid, sdfg, eid)
@@ -103,8 +112,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             if edge in visited_edges:
                 continue
             issyms = edge.data.assignments.keys()
-            if any(not validate_name(s) for s in issyms):
-                invalid = next(s for s in issyms if not validate_name(s))
+            if any(not dtypes.validate_name(s) for s in issyms):
+                invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 raise InvalidSDFGInterstateEdgeError(
                     "Invalid interstate symbol name %s" % invalid, sdfg, eid)
 
@@ -117,7 +126,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
-                   symbols: Dict[str, typeclass] = None):
+                   symbols: Dict[str, dtypes.typeclass] = None):
     """ Verifies the correctness of an SDFG state by applying multiple
         tests. Raises an InvalidSDFGError with the erroneous node on
         failure.
@@ -134,7 +143,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
 
-    if not validate_name(state._label):
+    if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
