@@ -4,12 +4,12 @@ import itertools
 import warnings
 
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
-from dace.codegen import cppunparse
+from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
-from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
-                                         DefinedType, TargetDispatcher)
+from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
+from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
@@ -916,8 +916,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     memlet_params.append(memlet_expr)
                 else:
                     if def_type != DefinedType.Pointer:
-                        from dace.codegen.codegen import CodegenError
-                        raise CodegenError(
+                        raise cgx.CodegenError(
                             "Cannot offset address of connector {} of type {}".
                             format(memlet_name, def_type))
                     memlet_params.append(memlet_expr + " + " + offset)

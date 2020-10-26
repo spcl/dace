@@ -12,11 +12,14 @@ from dace.frontend import operations
 from dace import registry, subsets, symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.sdfg import nodes
-from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel_gpu, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
+from dace.sdfg import (ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope,
+                       is_devicelevel_gpu, is_array_stream_view,
+                       has_dynamic_map_inputs, dynamic_map_inputs)
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute, DefinedType)
+                                         make_absolute)
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       cpp_array_expr, synchronize_streams,
                                       memlet_copy_to_absolute_strides,
@@ -212,6 +215,7 @@ int __dace_init_cuda({params}) {{
     // Initialize {backend} before we run the application
     float *dev_X;
     {backend}Malloc((void **) &dev_X, 1);
+    {backend}Free(dev_X);
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{

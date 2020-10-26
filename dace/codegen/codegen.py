@@ -15,11 +15,6 @@ from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
 
-
-class CodegenError(Exception):
-    pass
-
-
 def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
@@ -163,6 +158,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                        'h',
                        cpu.CPUCodeGen,
                        'CallHeader',
+                       target_type='../../include',
                        linkable=False)
     target_objects.append(dummy)
 
@@ -171,7 +167,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        generate_dummy(sdfg),
                        'cpp',
                        cpu.CPUCodeGen,
-                       'DummyMain',
+                       'SampleMain',
+                       target_type='../../sample',
                        linkable=False)
     target_objects.append(dummy)
 
