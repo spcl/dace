@@ -212,10 +212,6 @@ class SDFG(OrderedDiGraph):
     exit_code = DictProperty(
         str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
 
-    unique_name = Property(dtype=str,
-                           desc="Unique name of the SDFG",
-                           default="")
-
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
@@ -260,7 +256,6 @@ class SDFG(OrderedDiGraph):
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.orig_sdfg = None
         self.transformation_hist = []
-        self.unique_name = name
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -335,7 +330,8 @@ class SDFG(OrderedDiGraph):
         '''
         jsondict = self.to_json()  # No more nonstandard objects
         del jsondict['sdfg_list_id']  # Make non-unique in SDFG hierarchy
-        del jsondict['attributes']['name']  # Make non-unique in SDFG hierarchy v2
+        del jsondict['attributes'][
+            'name']  # Make non-unique in SDFG hierarchy v2
         string_representation = dace.serialize.dumps(jsondict)  # dict->str
         hsh = hash(string_representation)  # str->int
         return hsh
