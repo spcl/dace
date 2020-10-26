@@ -120,7 +120,7 @@ class NestStateSubgraph(unittest.TestCase):
 
         # Outer map scope
         sdfg, state = create_tiled_sdfg()
-        sdc = state.scope_dict(True)
+        sdc = state.scope_children()
         entry = next(n for n in sdc[None] if isinstance(n, MapEntry))
         nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
         sdfg.validate()

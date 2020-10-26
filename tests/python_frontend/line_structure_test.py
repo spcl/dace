@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -70,7 +71,7 @@ def blank_lines(A: dace.float32[N], B: dace.float32[N]):
 
     )
     tmp[:] = A[:]  # for i in 0 .. N-1; tmp[i] = A[i]
-                         
+
     B[:] = tmp[:]  # for i in 0 .. N-1; B[i] = tmp[i]
 
 # yapf: enable

@@ -1,13 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
-from dace.sdfg.state import SDFGState
 from typing import List, Set
 import networkx as nx
 
 from dace import dtypes, registry, sdfg, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.config import Config
 
@@ -31,8 +31,8 @@ class StateFusion(transformation.Transformation):
         access hazards are created.
     """
 
-    _first_state = sdfg.SDFGState()
-    _second_state = sdfg.SDFGState()
+    first_state = transformation.PatternNode(sdfg.SDFGState)
+    second_state = transformation.PatternNode(sdfg.SDFGState)
 
     @staticmethod
     def annotates_memlets():
@@ -41,8 +41,8 @@ class StateFusion(transformation.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(StateFusion._first_state,
-                                   StateFusion._second_state)
+            sdutil.node_path_graph(StateFusion.first_state,
+                                   StateFusion.second_state)
         ]
 
     @staticmethod
@@ -120,8 +120,8 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        first_state = graph.nodes()[candidate[StateFusion._first_state]]
-        second_state = graph.nodes()[candidate[StateFusion._second_state]]
+        first_state = graph.nodes()[candidate[StateFusion.first_state]]
+        second_state = graph.nodes()[candidate[StateFusion.second_state]]
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -145,6 +145,13 @@ class StateFusion(transformation.Transformation):
                 return False
             # Fail if symbol is used in the dataflow of that state
             if len(new_assignments & first_state.free_symbols) > 0:
+                return False
+            # Fail if assignments have free symbols that are updated in the
+            # first state
+            freesyms = out_edges[0].data.free_symbols
+            if freesyms and any(n.data in freesyms for n in first_state.nodes()
+                                if isinstance(n, nodes.AccessNode)
+                                and first_state.in_degree(n) > 0):
                 return False
 
         # There can be no state that have output edges pointing to both the
@@ -331,14 +338,14 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        first_state = graph.nodes()[candidate[StateFusion._first_state]]
-        second_state = graph.nodes()[candidate[StateFusion._second_state]]
+        first_state = graph.nodes()[candidate[StateFusion.first_state]]
+        second_state = graph.nodes()[candidate[StateFusion.second_state]]
 
         return " -> ".join(state.label for state in [first_state, second_state])
 
     def apply(self, sdfg):
-        first_state = sdfg.nodes()[self.subgraph[StateFusion._first_state]]
-        second_state = sdfg.nodes()[self.subgraph[StateFusion._second_state]]
+        first_state = sdfg.nodes()[self.subgraph[StateFusion.first_state]]
+        second_state = sdfg.nodes()[self.subgraph[StateFusion.second_state]]
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)

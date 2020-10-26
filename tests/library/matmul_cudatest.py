@@ -1,7 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.compiler import CompilerConfigurationError, CompilationError
+from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import itertools
 import numpy as np

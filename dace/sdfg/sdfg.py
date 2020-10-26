@@ -124,9 +124,8 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= set(
-                map(str,
-                    symbolic.pystr_to_symbolic(assign).free_symbols))
+            result |= symbolic.free_symbols_and_functions(
+                symbolic.pystr_to_symbolic(assign))
 
         return result - set(self.assignments.keys())
 
@@ -643,7 +642,7 @@ class SDFG(OrderedDiGraph):
             self._sdfg_list = sub_sdfg_list
 
     @property
-    def sdfg_list(self):
+    def sdfg_list(self) -> List['SDFG']:
         return self._sdfg_list
 
     def set_sourcecode(self, code: str, lang=None):
@@ -1479,7 +1478,7 @@ class SDFG(OrderedDiGraph):
 
         # Update constants
         for k, v in syms.items():
-            self.add_constant(k, v)
+            self.add_constant(str(k), v)
 
     def optimize(self, optimizer=None) -> 'SDFG':
         """ 

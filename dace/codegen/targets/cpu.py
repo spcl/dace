@@ -4,12 +4,12 @@ import itertools
 import warnings
 
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
-from dace.codegen import cppunparse
+from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
-from dace.codegen.targets.target import (TargetCodeGenerator, make_absolute,
-                                         DefinedType, TargetDispatcher)
+from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
+from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
@@ -372,7 +372,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             try:
-                src_parent = dfg.scope_dict()[src_node]
+                src_parent = dfg.entry_node(src_node)
             except KeyError:
                 src_parent = None
             dst_schedule = None if src_parent is None else src_parent.map.schedule
@@ -385,12 +385,12 @@ class CPUCodeGen(TargetCodeGenerator):
             dst_storage = dst_node.desc(sdfg).storage
 
         try:
-            dst_parent = dfg.scope_dict()[dst_node]
+            dst_parent = dfg.entry_node(dst_node)
         except KeyError:
             dst_parent = None
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
 
-        state_dfg = sdfg.nodes()[state_id]
+        state_dfg = sdfg.node(state_id)
 
         # Emit actual copy
         self._emit_copy(
@@ -914,8 +914,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     memlet_params.append(memlet_expr)
                 else:
                     if def_type != DefinedType.Pointer:
-                        from dace.codegen.codegen import CodegenError
-                        raise CodegenError(
+                        raise cgx.CodegenError(
                             "Cannot offset address of connector {} of type {}".
                             format(memlet_name, def_type))
                     memlet_params.append(memlet_expr + " + " + offset)
@@ -1561,7 +1560,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit internal transient array allocation
         to_allocate = local_transients(sdfg, dfg, node)
         allocated = set()
-        for child in dfg.scope_dict(node_to_children=True)[node]:
+        for child in dfg.scope_children()[node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
@@ -1586,7 +1585,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit internal transient array deallocation
         to_allocate = local_transients(sdfg, dfg, map_node)
         deallocated = set()
-        for child in dfg.scope_dict(node_to_children=True)[map_node]:
+        for child in dfg.scope_children()[map_node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in deallocated:
@@ -1737,7 +1736,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit internal transient array allocation
         to_allocate = local_transients(sdfg, dfg, node)
         allocated = set()
-        for child in dfg.scope_dict(node_to_children=True)[node]:
+        for child in dfg.scope_children()[node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
@@ -1785,7 +1784,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit internal transient array deallocation
         to_allocate = local_transients(sdfg, dfg, entry_node)
         deallocated = set()
-        for child in dfg.scope_dict(node_to_children=True)[entry_node]:
+        for child in dfg.scope_children()[entry_node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in deallocated:
