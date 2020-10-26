@@ -1,10 +1,10 @@
 import dace
 import numpy as np
 
-
 ##################
 # Lists
 global_axes = [0, 2, 1]
+
 
 @dace
 def global_list_program(A: dace.int32[3, 2, 4]):
@@ -16,6 +16,7 @@ def global_func_access_global_list_test():
     result = global_list_program(A=inp.copy())
     assert np.allclose(result, np.transpose(inp.copy(), axes=global_axes))
 
+
 def local_func_access_global_list_test():
     @dace
     def local_list_program(A: dace.int32[3, 2, 4]):
@@ -24,6 +25,7 @@ def local_func_access_global_list_test():
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
     result = local_list_program(A=inp.copy())
     assert np.allclose(result, np.transpose(inp.copy(), axes=global_axes))
+
 
 def local_list_test():
     local_axes = [1, 2, 0]
@@ -36,6 +38,7 @@ def local_list_test():
     result = local_list(A=inp.copy())
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
+
 def local_list_test_with_slice():
     local_axes = [1, 2, 0, 100]
 
@@ -46,6 +49,7 @@ def local_list_test_with_slice():
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
     result = local_list(A=inp.copy())
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
+
 
 if __name__ == "__main__":
     local_func_access_global_list_test()

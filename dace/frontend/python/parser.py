@@ -148,10 +148,10 @@ def _get_locals_and_globals(f):
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
         result.update({
-            k: v for k, v in zip(f.__code__.co_freevars,
-                                 [x.cell_contents for x in f.__closure__])
-            }
-        )
+            k: v
+            for k, v in zip(f.__code__.co_freevars,
+                            [x.cell_contents for x in f.__closure__])
+        })
 
     return result
 
