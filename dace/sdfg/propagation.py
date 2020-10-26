@@ -7,8 +7,6 @@ import itertools
 import functools
 import sympy
 from sympy import ceiling
-from sympy.sets.sets import Interval
-from sympy.sets.setexpr import SetExpr
 from sympy.concrete.summations import Sum
 import warnings
 import networkx as nx
@@ -587,7 +585,8 @@ def propagate_states(sdfg) -> None:
     :param sdfg: The SDFG to annotate.
     """
     from dace.sdfg.sdfg import InterstateEdge
-    from dace.transformation.interstate.loop_unroll import LoopUnroll
+    from dace.transformation.interstate.branch_annotation import AnnotateBranch
+    from dace.transformation.interstate.loop_annotation import AnnotateLoop
 
     # Clean up the state machine by separating combined condition and assignment
     # edges.
@@ -605,163 +604,194 @@ def propagate_states(sdfg) -> None:
                 InterstateEdge(assignments=e.data.assignments)
             )
             sdfg.remove_edge(e)
-    for v in sdfg.nodes():
-        v.ranges = {}
 
-    visited_states = set()
-    # Build a dictionary of immediate dominators for each state.
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-    # Keep track of state-diagram branches that still need to be traversed.
-    next_branch = []
-    # Stack of information about the loop(s) currently traversing.
-    loop_trace = []
-    # Edge over which the current state was reached.
-    iedge = None
-    # Current pivot state in the iteration.
-    state = None
-    # Proposed number of executions for the current state.
+    # Initialize states.
+    for v in sdfg.nodes():
+        v.visited = False
+        v.is_loop_guard = False
+        v.itvar = None
+        v.condition_edge = None
+        v.full_merge_state = None
+
+    # Annotate for-loops with ranges and find loop guards.
+    sdfg.apply_transformations_repeated(AnnotateLoop)
+
+    # Annotate branch constructs.
+    sdfg.apply_transformations_repeated(AnnotateBranch)
+
+    # Identify and annotate any un-annotated loops (e.g. while loops).
+    unannotated_cycle_states = []
+    for cycle in sdfg.find_cycles():
+        has_loop_guard = False
+        no_unannotated_states = True
+        for v in cycle:
+            if not v.ranges:
+                no_unannotated_states = False
+            if v.is_loop_guard:
+                has_loop_guard = True
+        if not (has_loop_guard and no_unannotated_states):
+            # This loop is no fully annotated for loop.
+            unannotated_cycle_states.extend(cycle)
+
+    # Keep track of branches still needing to be traversed.
+    remaining_branches = []
+    # Keep track of encountered nested loop variables.
+    itvar_stack = []
+    # Keep track of states that fully merge a previous conditional split. We do
+    # this so we can remove the dynamic executions flag for those states.
+    full_merge_states = set()
+
+    state = sdfg.start_state
     proposed_executions = 1
     proposed_dynamic = False
-
-    # Traverse the state machine and annotate states.
-    state = sdfg.start_state
     while state is not None:
-        in_degree = sdfg.in_degree(state)
-        in_edges = sdfg.in_edges(state)
         out_degree = sdfg.out_degree(state)
         out_edges = sdfg.out_edges(state)
 
-        if state in visited_states:
-            if len(loop_trace) > 0 and loop_trace[-1]['guard'] == state:
-                # We just finished traversing a loop and this is our loop guard,
-                # so we additively merge the executions.
-                state.executions = state.executions + proposed_executions
-                state.dynamic_executions = (
-                    state.dynamic_executions or proposed_dynamic
-                )
-                loop_trace.pop()
+        if state.visited:
+            if proposed_executions == 0 and proposed_dynamic:
+                state.executions = proposed_executions
+                state.dynamic_executions = proposed_dynamic
+            elif state.is_loop_guard:
+                # If we encounter a loop guard that's already been visited,
+                # we've finished traversing a loop and can remove that loop's
+                # iteration variable from the stack. We additively merge the
+                # number of executions.
+                if state.executions != 0 and not state.dynamic_executions:
+                    state.executions += proposed_executions
+                itvar_stack.pop()
             else:
-                # This must be after a conditional branch, so we give an upper
-                # bound on the number of executions by taking the maximum of all
-                # branches.
                 state.executions = sympy.Max(
                     state.executions,
                     proposed_executions
-                )
-                state.dynamic_executions = True
+                ).doit()
+                if state in full_merge_states:
+                    state.dynamic_executions = False
+                else:
+                    state.dynamic_executions = (
+                        state.dynamic_executions or proposed_dynamic
+                    )
+        elif proposed_dynamic and proposed_executions == 0:
+            # Dynamic unbounded.
+            state.executions = proposed_executions
+            state.dynamic_executions = proposed_dynamic
+            # This gets pushed through to all children unconditionally.
+            next_edge = out_edges.pop()
+            for oedge in out_edges:
+                remaining_branches.append({
+                    'state': oedge.dst,
+                    'proposed_executions': proposed_executions,
+                    'proposed_dynamic': proposed_dynamic,
+                })
+            state = next_edge.dst
+            continue
         else:
-            visited_states.add(state)
+            state.visited = True
+            if state in full_merge_states:
+                # If this state fully merges a conditional branch, this turns
+                # dynamic executions back off.
+                proposed_dynamic = False
             state.executions = proposed_executions
             state.dynamic_executions = proposed_dynamic
 
             if out_degree == 1:
-                proposed_executions = state.executions
-                proposed_dynamic = state.dynamic_executions
-                iedge = out_edges[0]
-                state = iedge.dst
+                # Continue with the only child branch.
+                state = out_edges[0].dst
                 continue
-            elif out_degree == 2:
-                if in_degree == 2:
-                    # This may be a loop, check if that's true.
-                    assignment_edge = iedge
-                    step_edge = (
-                        in_edges[0] if in_edges[1] == iedge else in_edges[1]
+            elif out_degree > 1:
+                if state.is_loop_guard:
+                    itvar = symbolic.symbol(state.itvar)
+                    loop_range = state.ranges[state.itvar]
+                    start = loop_range[0][0]
+                    stop = loop_range[0][1]
+                    stride = loop_range[0][2]
+
+                    # Calculate the number of loop executions.
+                    # This resolves ranges based on the order of iteration
+                    # variables pushed on to the stack if we're in a nested
+                    # loop.
+                    loop_executions = Sum(
+                        ceiling(1 / stride),
+                        (itvar, start, stop)
                     )
-                    loop_nodes = get_loop_nodes(state, step_edge, idom)
-                    if loop_nodes is not None:
-                        condition_edge = (
-                            out_edges[0]
-                            if out_edges[0].dst == loop_nodes[-1]
-                            else out_edges[1]
+                    for outer_itvar_string in reversed(itvar_stack):
+                        outer_range = state.ranges[
+                            outer_itvar_string
+                        ]
+                        outer_start = outer_range[0][0]
+                        outer_stop = outer_range[0][1]
+                        outer_stride = outer_range[0][2]
+                        outer_itvar = symbolic.symbol(outer_itvar_string)
+                        loop_executions = Sum(
+                            ceiling(loop_executions / outer_stride),
+                            (outer_itvar, outer_start, outer_stop)
                         )
-                        condition = symbolic.pystr_to_symbolic(
-                            condition_edge.data.condition.as_string
-                        )
-                        itvar = symbolic.symbol(
-                            list(assignment_edge.data.assignments)[0]
-                        )
-                        loop_range = LoopUnroll._loop_range(
-                            str(itvar),
-                            in_edges,
-                            condition
-                        )
-                        if loop_range is not None:
-                            start = loop_range[0]
-                            stop = loop_range[1]
-                            stride = loop_range[2]
+                    loop_executions = loop_executions.doit()
 
-                            # Calculate the number of loop executions using a
-                            # sum of sums if this loop is nested inside one or
-                            # more other loop(s).
-                            loop_executions = Sum(
-                                ceiling(1 / stride),
-                                (itvar, start, stop)
-                            )
-                            if len(loop_trace) > 0:
-                                for loop in reversed(loop_trace):
-                                    start = loop['range'][0]
-                                    stop = loop['range'][1]
-                                    stride = loop['range'][2]
-                                    new_loop_executions = Sum(
-                                        ceiling(loop_executions / stride),
-                                        (loop['itvar'], start, stop)
-                                    )
-                                    loop_executions = new_loop_executions
-                            loop_executions = ceiling(loop_executions.doit())
+                    itvar_stack.append(state.itvar)
 
-                            is_dynamic = False
-                            if isinstance(loop_executions, sympy.Basic):
-                                is_dynamic = not loop_executions.is_number
+                    loop_state = state.condition_edge.dst
+                    end_state = (
+                        out_edges[0].dst if out_edges[1].dst == loop_state
+                        else out_edges[1].dst
+                    )
 
-                            # Add the loop info to the trace.
-                            loop_trace.append({
-                                'guard': state,
-                                'itvar': itvar,
-                                'range': loop_range,
-                            })
-
-                            # Append the non-loop-side branch (loop end).
-                            end_edge = (
-                                out_edges[0]
-                                if out_edges[1] == condition_edge
-                                else out_edges[1]
-                            )
-                            next_branch.append({
-                                'state': end_edge.dst,
-                                'iedge': end_edge,
-                                'executions': state.executions,
-                                'dynamic': state.dynamic_executions,
-                            })
-
-                            # Traverse down the loop-side branch.
-                            proposed_executions = loop_executions
-                            proposed_dynamic = is_dynamic
-                            iedge = condition_edge
-                            state = condition_edge.dst
-                            continue
-
-            if out_degree > 0:
-                # This is a regular conditional split.
-                for oedge in out_edges:
-                    next_branch.append({
-                        'state': oedge.dst,
-                        'iedge': oedge,
-                        'executions': SetExpr(Interval(0, state.executions)),
-                        'dynamic': True,
+                    remaining_branches.append({
+                        'state': end_state,
+                        'proposed_executions': state.executions,
+                        'proposed_dynamic': proposed_dynamic,
                     })
 
-        if len(next_branch) > 0:
-            # There are states left to traverse, continue in the next
-            # DFS branch.
-            branch = next_branch.pop()
+                    # Traverse down the loop.
+                    state = loop_state
+                    proposed_executions = loop_executions
+                    continue
+
+                # Conditional split or unannotated (dynamic unbounded) loop.
+                unannotated_loop_edge = None
+                for oedge in out_edges:
+                    if oedge.dst in unannotated_cycle_states:
+                        # This is an unannotated loop going down this branch.
+                        unannotated_loop_edge = oedge
+
+                if unannotated_loop_edge is not None:
+                    # Traverse as an unbounded loop.
+                    out_edges.remove(unannotated_loop_edge)
+                    for oedge in out_edges:
+                        remaining_branches.append({
+                            'state': oedge.dst,
+                            'proposed_executions': state.executions,
+                            'proposed_dynamic': False,
+                        })
+                    state.is_loop_guard = True
+                    proposed_executions = 0
+                    proposed_dynamic = True
+                    state = unannotated_loop_edge.dst
+                    continue
+                else:
+                    # Traverse as a conditional split.
+                    proposed_executions = state.executions
+                    proposed_dynamic = True
+                    if (state.full_merge_state is not None and
+                        not state.dynamic_executions):
+                        full_merge_states.add(state.full_merge_state)
+                    for oedge in out_edges:
+                        remaining_branches.append({
+                            'state': oedge.dst,
+                            'proposed_executions': proposed_executions,
+                            'proposed_dynamic': proposed_dynamic,
+                        })
+
+        if len(remaining_branches) > 0:
+            # Traverse down next remaining branch.
+            branch = remaining_branches.pop()
             state = branch['state']
-            iedge = branch['iedge']
-            proposed_dynamic = branch['dynamic']
-            proposed_executions = branch['executions']
+            proposed_executions = branch['proposed_executions']
+            proposed_dynamic = branch['proposed_dynamic']
         else:
-            # Done traversing, no more branches left.
+            # No more remaining branch, done.
             state = None
-            iedge = None
+            break
 
 
 def propagate_memlets_sdfg(sdfg):

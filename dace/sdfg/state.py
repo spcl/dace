@@ -3,6 +3,7 @@
 
 import collections
 import copy
+from dace.subsets import Range
 from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
                   symbolic)
 from dace.sdfg import nodes as nd
@@ -594,11 +595,16 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
-                                  "executed (can be a range)")
+                                  "executed (0 stands for unbounded)")
     dynamic_executions = Property(dtype=bool,
                                   default=True,
                                   desc="The number of executions of this state "
                                   "is dynamic")
+
+    ranges = DictProperty(key_type=symbolic.symbol,
+                          value_type=Range,
+                          default={},
+                          desc='Variable ranges, typically within loops')
 
     location = DictProperty(
         key_type=str,
