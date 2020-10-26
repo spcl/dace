@@ -1225,6 +1225,11 @@ class FPGACodeGen(TargetCodeGenerator):
         seen = set(nested_transient_set)
         kernel_args_call_host = []
         kernel_args_opencl = []
+
+        # Include state in args
+        kernel_args_opencl.append(f'{self._global_sdfg.name}_t *__state')
+        kernel_args_call_host.append(f'__state')
+
         # Split into arrays and scalars
         arrays = sorted(
             [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
