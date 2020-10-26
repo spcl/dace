@@ -711,13 +711,18 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def _get_schedule(
         self, scope: Union[nodes.EntryNode, SDFGState, SDFG]
     ) -> dtypes.ScheduleType:
-        if isinstance(scope, nodes.EntryNode):
+        TOP_SCHEDULE = dtypes.ScheduleType.Sequential
+        if scope is None:
+            return TOP_SCHEDULE
+        elif isinstance(scope, nodes.EntryNode):
             return scope.schedule
         elif isinstance(scope, (SDFGState, SDFG)):
             sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
             if sdfg.parent_nsdfg_node is None:
-                return dtypes.ScheduleType.Sequential
-            return sdfg.parent_nsdfg_node.schedule
+                return TOP_SCHEDULE
+            return (sdfg.parent_nsdfg_node.schedule or TOP_SCHEDULE)
+        else:
+            raise TypeError
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """ 
@@ -794,6 +799,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
                         # Current scope (or state object if top-level)
                         scope = sdict[node] or state
+                        if curscope is None:
+                            curscope = scope
+                            continue
                         # States always win
                         if isinstance(scope, SDFGState):
                             curscope = scope
@@ -822,6 +830,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             curstate = alloc_state
             curscope = alloc_scope
             while not dtypes.can_allocate(desc.storage, curschedule):
+                if curscope is None:
+                    break
                 if isinstance(curscope, nodes.EntryNode):
                     # Go one scope up
                     curscope = curstate.entry_node(curscope)
@@ -841,6 +851,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 else:
                     raise TypeError
                 curschedule = self._get_schedule(curscope)
+
+            if curscope is None:
+                curscope = top_sdfg
+
             self.to_allocate[curscope].append((sdfg.sdfg_id, name))
 
     def generate_code(
