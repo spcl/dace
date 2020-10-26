@@ -20,21 +20,29 @@ class MPICodeGen(TargetCodeGenerator):
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
-        dispatcher = self._dispatcher
+        self._global_sdfg = sdfg
 
+        # Register dispatchers
+        self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
+
+    def on_target_used(self) -> None:
+        # Add communicator to library state
+        self._frame.statestruct.extend(['void *mpi_comm;'])
+
+    def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
+        sdfg = self._global_sdfg
         self._frame.generate_fileheader(sdfg, fileheader)
 
         params_comma = sdfg.signature()
         if params_comma:
             params_comma = ', ' + params_comma
 
-        self._codeobj = CodeObject(
+        codeobj = CodeObject(
             sdfg.name + '_mpi', """
 #include <dace/dace.h>
 #include <mpi.h>
 
-MPI_Comm __dace_mpi_comm;
 int __dace_comm_size = 1;
 int __dace_comm_rank = 0;
 
@@ -52,9 +60,9 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
             return 1;
     }}
 
-    MPI_Comm_dup(MPI_COMM_WORLD, &__dace_mpi_comm);
-    MPI_Comm_rank(__dace_mpi_comm, &__dace_comm_rank);
-    MPI_Comm_size(__dace_mpi_comm, &__dace_comm_size);
+    MPI_Comm_dup(MPI_COMM_WORLD, (MPI_Comm *)&__state->mpi_comm);
+    MPI_Comm_rank((MPI_Comm)__state->mpi_comm, &__dace_comm_rank);
+    MPI_Comm_size((MPI_Comm)__state->mpi_comm, &__dace_comm_size);
 
     printf(\"MPI was initialized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
@@ -62,21 +70,15 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
 }}
 
 void __dace_exit_mpi({sdfg.name}_t *__state) {{
-    MPI_Comm_free(&__dace_mpi_comm);
+    MPI_Comm_free((MPI_Comm *)&__state->mpi_comm);
     MPI_Finalize();
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
 }}
-""".format(params=params_comma,
-           sdfg=sdfg,
-           file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
-
-        # Register dispatchers
-        dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
-
-    def get_generated_codeobjects(self):
-        return [self._codeobj]
+""".format(params=params_comma, sdfg=sdfg, file_header=fileheader.getvalue()),
+            'cpp', MPICodeGen, 'MPI')
+        return [codeobj]
 
     @staticmethod
     def cmake_options():
