@@ -325,13 +325,26 @@ class SDFG(OrderedDiGraph):
 
     def hash_sdfg(self) -> int:
         '''
-        Returns an hash of the current SDFG, withou considering IDs and attributes name
-        :return:
+        Returns an hash of the current SDFG, without considering IDs and attributes name
+        :return: the hash
         '''
+        def keyword_remover(json_obj: Any, last_keyword=""):
+            # Makes non-unique in SDFG hierarchy v2
+            # Recursively removes 'name' from json representation, if it is under
+            # an 'attribute' json item, and 'sdfg_list_id'
+            if isinstance(json_obj, dict):
+                if 'sdfg_list_id' in json_obj:
+                    del json_obj['sdfg_list_id']
+                if last_keyword == 'attributes' and 'name' in json_obj:
+                    del json_obj['name']
+                for key, value in json_obj.items():
+                    keyword_remover(value, last_keyword=key)
+            elif isinstance(json_obj, (list, tuple)):
+                for value in json_obj:
+                    keyword_remover(value)
+
         jsondict = self.to_json()  # No more nonstandard objects
-        del jsondict['sdfg_list_id']  # Make non-unique in SDFG hierarchy
-        del jsondict['attributes'][
-            'name']  # Make non-unique in SDFG hierarchy v2
+        keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
         string_representation = dace.serialize.dumps(jsondict)  # dict->str
         hsh = hash(string_representation)  # str->int
         return hsh
