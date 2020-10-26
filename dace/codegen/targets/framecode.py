@@ -15,8 +15,9 @@ from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
+from dace.sdfg.scope import common_parent_scope
 from dace import dtypes, data, config
-from typing import List
+from typing import Any, DefaultDict, Dict, List, Tuple, Union
 
 from dace.frontend.python import wrappers
 
@@ -34,6 +35,9 @@ class DaCeCodeGenerator(object):
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
         self.statestruct: List[str] = []
+        self.to_allocate: DefaultDict[
+            Union[SDFG, SDFGState, nodes.EntryNode],
+            List[Tuple[int, str]]] = collections.defaultdict(list)
 
     ##################################################################
     # Target registry
@@ -704,6 +708,141 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         callsite_stream.write(
             "__state_exit_{}_{}:;".format(sdfg.sdfg_id, scope_label), sdfg)
 
+    def _get_schedule(
+        self, scope: Union[nodes.EntryNode, SDFGState, SDFG]
+    ) -> dtypes.ScheduleType:
+        if isinstance(scope, nodes.EntryNode):
+            return scope.schedule
+        elif isinstance(scope, (SDFGState, SDFG)):
+            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
+            if sdfg.parent_nsdfg_node is None:
+                return dtypes.ScheduleType.Sequential
+            return sdfg.parent_nsdfg_node.schedule
+
+    def determine_allocation_lifetime(self, top_sdfg: SDFG):
+        """ 
+        Determines where (at which scope/state/SDFG) each data descriptor
+        will be allocated/deallocated.
+        :param top_sdfg: The top-level SDFG to determine for.
+        """
+        for sdfg, name, desc in top_sdfg.arrays_recursive():
+            if not desc.transient:
+                continue
+            # Cases
+            if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+                # Persistent memory is allocated in initialization code and
+                # exists in the library state structure
+                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                self.statestruct.append(definition)
+                self.to_allocate[top_sdfg].append((sdfg.sdfg_id, name))
+                continue
+            elif desc.lifetime is dtypes.AllocationLifetime.Global:
+                # Global memory is allocated in the beginning of the program
+                # exists in the library state structure (to be passed along
+                # to the right SDFG)
+                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                self.statestruct.append(definition)
+                self.to_allocate[top_sdfg].append((sdfg.sdfg_id, name))
+                continue
+
+            # The rest of the cases change the starting scope we attempt to
+            # allocate from, since the descriptors may only be allocated higher
+            # in the hierarchy (e.g., in the case of GPU global memory inside
+            # a kernel).
+            alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
+            alloc_state: SDFGState = None
+            if desc.lifetime is dtypes.AllocationLifetime.SDFG:
+                # SDFG memory is allocated in the beginning of its SDFG
+                alloc_scope = sdfg
+            elif desc.lifetime is dtypes.AllocationLifetime.State:
+                # State memory is either allocated in the beginning of the
+                # containing state or the SDFG (if used in more than one state)
+                curstate: SDFGState = None
+                multistate = False
+                for state in sdfg.nodes():
+                    if any(n.data == name for n in state.nodes()
+                           if isinstance(n, nodes.AccessNode)):
+                        if curstate is not None:
+                            multistate = True
+                            break
+                        curstate = state
+                if multistate:
+                    alloc_scope = sdfg
+                else:
+                    alloc_scope = curstate
+                    alloc_state = curstate
+            elif desc.lifetime is dtypes.AllocationLifetime.Scope:
+                # Scope memory (default) is either allocated in the innermost
+                # scope (e.g., Map, Consume) it is used in (i.e., greatest
+                # common denominator), or in the SDFG if used in multiple states
+                curscope: Union[nodes.EntryNode, SDFGState] = None
+                curstate: SDFGState = None
+                multistate = False
+                for state in sdfg.nodes():
+                    sdict = state.scope_dict()
+                    for node in state.nodes():
+                        if not isinstance(node, nodes.AccessNode):
+                            continue
+                        if node.data != name:
+                            continue
+
+                        # If already found in another state, set scope to SDFG
+                        if curstate is not None:
+                            multistate = True
+                            break
+                        curstate = state
+
+                        # Current scope (or state object if top-level)
+                        scope = sdict[node] or state
+                        # States always win
+                        if isinstance(scope, SDFGState):
+                            curscope = scope
+                            continue
+                        # Lower/Higher/Disjoint scopes: find common denominator
+                        curscope = common_parent_scope(sdict, scope, curscope)
+
+                    if multistate:
+                        break
+
+                if multistate:
+                    alloc_scope = sdfg
+                else:
+                    alloc_scope = curscope
+                    alloc_state = curstate
+            else:
+                raise TypeError('Unrecognized allocation lifetime "%s"' %
+                                desc.lifetime)
+
+            if alloc_scope is None:  # No allocation necessary
+                continue
+
+            # If descriptor cannot be allocated in this scope, traverse up the
+            # scope tree until it is possible
+            curschedule = self._get_schedule(alloc_scope)
+            curstate = alloc_state
+            curscope = alloc_scope
+            while not dtypes.can_allocate(desc.storage, curschedule):
+                if isinstance(curscope, nodes.EntryNode):
+                    # Go one scope up
+                    curscope = curstate.entry_node(curscope)
+                    if curscope is None:
+                        curscope = curstate
+                elif isinstance(curscope, (SDFGState, SDFG)):
+                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else
+                                     curscope.parent)
+                    # Go one SDFG up
+                    if cursdfg.parent_nsdfg_node is None:
+                        curscope = None
+                        curstate = None
+                    else:
+                        curstate = cursdfg.parent
+                        curscope = curstate.entry_node(
+                            cursdfg.parent_nsdfg_node)
+                else:
+                    raise TypeError
+                curschedule = self._get_schedule(curscope)
+            self.to_allocate[curscope].append((sdfg.sdfg_id, name))
+
     def generate_code(
         self,
         sdfg: SDFG,
@@ -733,6 +872,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         set_default_schedule_and_storage_types(sdfg, schedule)
 
         is_top_level = sdfg.parent is None
+
+        # Analyze allocation lifetime of SDFG and all nested SDFGs
+        if is_top_level:
+            self.determine_allocation_lifetime(sdfg)
 
         # Generate code
         ###########################
