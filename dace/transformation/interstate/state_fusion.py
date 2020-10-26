@@ -1,13 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
-from dace.sdfg.state import SDFGState
 from typing import List, Set
 import networkx as nx
 
 from dace import dtypes, registry, sdfg, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.config import Config
 
@@ -145,6 +145,13 @@ class StateFusion(transformation.Transformation):
                 return False
             # Fail if symbol is used in the dataflow of that state
             if len(new_assignments & first_state.free_symbols) > 0:
+                return False
+            # Fail if assignments have free symbols that are updated in the
+            # first state
+            freesyms = out_edges[0].data.free_symbols
+            if freesyms and any(n.data in freesyms for n in first_state.nodes()
+                                if isinstance(n, nodes.AccessNode)
+                                and first_state.in_degree(n) > 0):
                 return False
 
         # There can be no state that have output edges pointing to both the

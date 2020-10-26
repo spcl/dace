@@ -17,11 +17,12 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
+from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import TargetCodeGenerator, DefinedType
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute, DefinedType)
+                                         make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
@@ -179,7 +180,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Make sure there are no global transients in the nested state
                 # that are thus not gonna be allocated
                 if data.storage == dace.dtypes.StorageType.FPGA_Global:
-                    raise dace.codegen.codegen.CodegenError(
+                    raise cgx.CodegenError(
                         "Cannot allocate global memory from device code.")
                 allocated.add(node.data)
                 # Allocate transients
@@ -367,22 +368,21 @@ class FPGACodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, dace.data.Stream):
 
             if not self._in_device_code:
-                raise dace.codegen.codegen.CodegenError(
+                raise cgx.CodegenError(
                     "Cannot allocate FIFO from CPU code: {}".format(node.data))
 
             if is_dynamically_sized:
-                raise dace.codegen.codegen.CodegenError(
+                raise cgx.CodegenError(
                     "Arrays of streams cannot have dynamic size on FPGA")
 
             if nodedesc.buffer_size < 1:
-                raise dace.codegen.codegen.CodegenError(
-                    "Streams cannot be unbounded on FPGA")
+                raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
 
             buffer_length_dynamically_sized = (dace.symbolic.issymbolic(
                 nodedesc.buffer_size, sdfg.constants))
 
             if buffer_length_dynamically_sized:
-                raise dace.codegen.codegen.CodegenError(
+                raise cgx.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
             # Language-specific implementation
@@ -450,7 +450,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
-                    raise dace.codegen.codegen.CodegenError(
+                    raise cgx.CodegenError(
                         "Tried to allocate local FPGA memory "
                         "outside device code: {}".format(dataname))
                 if is_dynamically_sized:
@@ -1122,8 +1122,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         function_stream, callsite_stream):
 
         if self._in_device_code:
-            from dace.codegen.codegen import CodegenError
-            raise CodegenError("Tried to generate kernel from device code")
+            raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
         self._cpu_codegen._packed_types = True
 

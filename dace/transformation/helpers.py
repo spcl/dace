@@ -2,14 +2,13 @@
 """ Transformation helper API. """
 import copy
 
-from numpy.core.numeric import full
 from dace.subsets import Range, Subset, union
 from typing import AnyStr, Dict, List, Optional, Tuple, Set
 
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
 
@@ -427,3 +426,20 @@ def read_and_write_set(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         if len(state.out_edges(n)) > 0:
             read_set.add(n.data)
     return read_set, write_set
+
+
+def split_interstate_edges(sdfg: SDFG) -> None:
+    """
+    Splits all inter-state edges into edges with conditions and edges with
+    assignments. This procedure helps in nested loop detection.
+    :param sdfg: The SDFG to split
+    :note: Operates in-place on the SDFG.
+    """
+    for e in sdfg.edges():
+        if e.data.assignments and not e.data.is_unconditional():
+            tmpstate = sdfg.add_state()
+            sdfg.add_edge(e.src, tmpstate,
+                          InterstateEdge(condition=e.data.condition))
+            sdfg.add_edge(tmpstate, e.dst,
+                          InterstateEdge(assignments=e.data.assignments))
+            sdfg.remove_edge(e)
