@@ -25,10 +25,6 @@ class MPICodeGen(TargetCodeGenerator):
         # Register dispatchers
         self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
 
-    def on_target_used(self) -> None:
-        # Add communicator to library state
-        self._frame.statestruct.extend(['void *mpi_comm;'])
-
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
         sdfg = self._global_sdfg
@@ -43,6 +39,7 @@ class MPICodeGen(TargetCodeGenerator):
 #include <dace/dace.h>
 #include <mpi.h>
 
+MPI_Comm __dace_mpi_comm;
 int __dace_comm_size = 1;
 int __dace_comm_rank = 0;
 
@@ -60,9 +57,9 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
             return 1;
     }}
 
-    MPI_Comm_dup(MPI_COMM_WORLD, reinterpret_cast<MPI_Comm *>(&__state->mpi_comm));
-    MPI_Comm_rank(static_cast<MPI_Comm>(__state->mpi_comm), &__dace_comm_rank);
-    MPI_Comm_size(static_cast<MPI_Comm>(__state->mpi_comm), &__dace_comm_size);
+    MPI_Comm_dup(MPI_COMM_WORLD, &__dace_mpi_comm);
+    MPI_Comm_rank(__dace_mpi_comm, &__dace_comm_rank);
+    MPI_Comm_size(__dace_mpi_comm, &__dace_comm_size);
 
     printf(\"MPI was initialized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
@@ -70,7 +67,7 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
 }}
 
 void __dace_exit_mpi({sdfg.name}_t *__state) {{
-    MPI_Comm_free(reinterpret_cast<MPI_Comm *>(&__state->mpi_comm));
+    MPI_Comm_free(&__dace_mpi_comm);
     MPI_Finalize();
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
