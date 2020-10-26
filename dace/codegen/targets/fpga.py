@@ -440,7 +440,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         else:
                             self._bank_assignments[(dataname, sdfg)] = None
                         result.write(
-                            "auto {} = __state->fpga_context->"
+                            "auto {} = __state->fpga_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
                             "({}{});".format(dataname, nodedesc.dtype.ctype,
                                              memory_bank_arg,
@@ -1251,7 +1251,7 @@ class FPGACodeGen(TargetCodeGenerator):
         host_code_stream.write(
             """\
 DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
-  hlslib::ocl::Program program = __state->fpga_context->CurrentlyLoadedProgram();"""
+  hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
             .format(host_function_name=host_function_name,
                     kernel_args_opencl=", ".join(kernel_args_opencl)))
 
