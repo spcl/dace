@@ -3,8 +3,10 @@
 
 import sympy as sp
 import networkx as nx
+import typing
+from typing import AnyStr, Optional, Tuple
 
-from dace import sdfg as sd
+from dace import sdfg as sd, symbolic
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
@@ -117,8 +119,8 @@ class DetectLoop(transformation.Transformation):
 
 
 def find_for_loop(
-        guard: sd.SDFGState,
-        entry: sd.SDFGState) -> Optional[Tuple[AnyStr, Tuple[sp.Expr, sp.Expr, sp.Expr]]]:
+    sdfg: sd.SDFG, guard: sd.SDFGState, entry: sd.SDFGState
+) -> Optional[Tuple[AnyStr, Tuple[sp.Expr, sp.Expr, sp.Expr]]]:
     """
     Finds loop range from state machine.
     :param guard: State from which the outgoing edges detect whether to exit
@@ -137,21 +139,21 @@ def find_for_loop(
     # Find starting expression and stride
     itersym = symbolic.symbol(itervar)
     if (itersym in symbolic.pystr_to_symbolic(
-            inedges[0].data.assignments[itervar]).free_symbols
+            guard_inedges[0].data.assignments[itervar]).free_symbols
             and itersym not in symbolic.pystr_to_symbolic(
-                inedges[1].data.assignments[itervar]).free_symbols):
-        stride = (
-            symbolic.pystr_to_symbolic(inedges[0].data.assignments[itervar]) -
-            itersym)
-        start = symbolic.pystr_to_symbolic(inedges[1].data.assignments[itervar])
+                guard_inedges[1].data.assignments[itervar]).free_symbols):
+        stride = (symbolic.pystr_to_symbolic(
+            guard_inedges[0].data.assignments[itervar]) - itersym)
+        start = symbolic.pystr_to_symbolic(
+            guard_inedges[1].data.assignments[itervar])
     elif (itersym in symbolic.pystr_to_symbolic(
-            inedges[1].data.assignments[itervar]).free_symbols
+            guard_inedges[1].data.assignments[itervar]).free_symbols
           and itersym not in symbolic.pystr_to_symbolic(
-              inedges[0].data.assignments[itervar]).free_symbols):
-        stride = (
-            symbolic.pystr_to_symbolic(inedges[1].data.assignments[itervar]) -
-            itersym)
-        start = symbolic.pystr_to_symbolic(inedges[0].data.assignments[itervar])
+              guard_inedges[0].data.assignments[itervar]).free_symbols):
+        stride = (symbolic.pystr_to_symbolic(
+            guard_inedges[1].data.assignments[itervar]) - itersym)
+        start = symbolic.pystr_to_symbolic(
+            guard_inedges[0].data.assignments[itervar])
     else:
         return None
 

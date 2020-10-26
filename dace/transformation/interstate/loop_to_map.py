@@ -6,20 +6,19 @@ import sympy as sp
 import networkx as nx
 from typing import List, Optional, Tuple
 
-from dace import dtypes, registry, sdfg as sd, symbolic
-from dace.properties import Property, make_properties
+from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
+from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, nodes
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
-import dace.transformation.interstate.loop_detection as loop_detection
+from dace.transformation.interstate.loop_detection import (DetectLoop,
+                                                           find_for_loop)
 import dace.transformation.helpers as helpers
 
 
-@registry.autoregister
-@make_properties
-class LoopToMap(loop_detection.DetectLoop):
+@registry.autoregister_params(strict=True)
+class LoopToMap(DetectLoop):
     """ Unrolls a state machine for-loop into multiple states """
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # Is this even a loop
@@ -40,7 +39,7 @@ class LoopToMap(loop_detection.DetectLoop):
             return False
 
         # If loop cannot be detected, fail
-        _, rng = loop_detection.find_for_loop(guard, begin)
+        _, rng = find_for_loop(graph, guard, begin)
         if not rng:
             return False
 
@@ -50,20 +49,61 @@ class LoopToMap(loop_detection.DetectLoop):
         if len(read_set & write_set) != 0:
             return False
 
+        # TODO: Detect that the iteration variable isn't used anywhere else,
+        #       or set it to the final value of the map iterator.
+
         return True
 
     def apply(self, sdfg):
         # Obtain loop information
         guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after_state: sd.SDFGState = sdfg.node(
-            self.subgraph[DetectLoop._exit_state])
+        body: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
+        after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, rng = LoopUnroll._loop_range(guard, begin)
+        itervar, rng = find_for_loop(sdfg, guard, body)
 
-        # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
+        source_nodes = body.source_nodes()
+        sink_nodes = body.sink_nodes()
 
-        # TODO: Nest the subgraph, then connect all data containers used
-        #       internally?
+        map = nodes.Map(body.label + "_map", [itervar], [rng])
+        entry = nodes.MapEntry(map)
+        exit = nodes.MapExit(map)
+        body.add_node(entry)
+        body.add_node(exit)
+
+        # Reroute all memlets through the entry and exit nodes
+        for n in source_nodes:
+            for e in body.out_edges(n):
+                body.remove_edge(e)
+                body.add_edge_pair(entry,
+                                   e.dst,
+                                   n,
+                                   e.data,
+                                   internal_connector=e.dst_conn)
+        for n in sink_nodes:
+            for e in body.in_edges(n):
+                body.remove_edge(e)
+                body.add_edge_pair(exit,
+                                   e.src,
+                                   n,
+                                   e.data,
+                                   internal_connector=e.src_conn)
+
+        # Get rid of the loop exit condition edge
+        sdfg.remove_edge(sdfg.edges_between(guard, after)[0])
+
+        # Remove the assignment on the edge to the guard
+        for e in sdfg.in_edges(guard):
+            if itervar in e.data.assignments:
+                del e.data.assignments[itervar]
+
+        # Remove the condition on the entry edge
+        condition_edge = sdfg.edges_between(guard, body)[0]
+        condition_edge.data.condition = CodeBlock("1")
+
+        # Get rid of backedge to guard
+        sdfg.remove_edge(sdfg.edges_between(body, guard)[0])
+
+        # Route body directly to after state
+        sdfg.add_edge(body, after, sd.InterstateEdge())

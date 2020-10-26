@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop,
-                                                           find_loop_range)
+                                                           find_for_loop)
 
 
 @registry.autoregister
@@ -36,7 +36,7 @@ class LoopUnroll(DetectLoop):
 
         guard = graph.node(candidate[DetectLoop._loop_guard])
         begin = graph.node(candidate[DetectLoop._loop_begin])
-        _, rng = find_for_loop(guard, begin)
+        _, rng = loop_detection.find_for_loop(graph, guard, begin)
 
         # If loop cannot be detected, fail
         if not rng:
@@ -56,7 +56,7 @@ class LoopUnroll(DetectLoop):
             self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, rng = find_for_loop(guard, begin)
+        itervar, rng = loop_detection.find_for_loop(sdfg, guard, begin)
 
         # Loop must be unrollable
         if self.count == 0 and any(

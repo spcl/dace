@@ -33,7 +33,7 @@ def nest_state_subgraph(sdfg: SDFG,
     """
     if state.parent != sdfg:
         raise KeyError('State does not belong to given SDFG')
-    if subgraph.graph != state:
+    if subgraph != state and subgraph.graph != state:
         raise KeyError('Subgraph does not belong to given state')
 
     # Find the top-level scope
@@ -411,7 +411,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
-def read_and_write_set(state: SDFGState) -> Tuple(Set[AnyStr], Set):
+def read_and_write_set(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
     """
     Determines which data containers are read and which are written in the
     given SDFG state.
