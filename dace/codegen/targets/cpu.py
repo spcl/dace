@@ -1398,18 +1398,22 @@ class CPUCodeGen(TargetCodeGenerator):
         nested_stream = CodeIOStream()
         nested_global_stream = CodeIOStream()
 
-        code_already_generated = False
+        unique_functions = Config.get('compiler', 'unique_functions')
 
-        # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
-        # use the saved name to call it, otherwise save the hash and the associated name
-        hash = node.sdfg.hash_sdfg()
-        if hash in self._generated_nested_sdfg:
-            code_already_generated = True
-            sdfg_label = self._generated_nested_sdfg[hash]
-        else:
-            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id,
-                                          state_id, dfg.node_id(node))
-            self._generated_nested_sdfg[hash] = sdfg_label
+        sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id, state_id,
+                                      dfg.node_id(node))
+
+        if unique_functions:
+            code_already_generated = False
+
+            # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
+            # use the saved name to call it, otherwise save the hash and the associated name
+            hash = node.sdfg.hash_sdfg()
+            if hash in self._generated_nested_sdfg:
+                code_already_generated = True
+                sdfg_label = self._generated_nested_sdfg[hash]
+            else:
+                self._generated_nested_sdfg[hash] = sdfg_label
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
@@ -1418,7 +1422,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_references = codegen.generate_nsdfg_arguments(
             sdfg, state_dfg, node)
 
-        if not code_already_generated:
+        if not unique_functions or not code_already_generated:
             nested_stream.write(
                 codegen.generate_nsdfg_header(sdfg, state_dfg, node,
                                               memlet_references, sdfg_label),
@@ -1427,7 +1431,7 @@ class CPUCodeGen(TargetCodeGenerator):
         #############################
         # Generate function contents
 
-        if not code_already_generated:
+        if not unique_functions or not code_already_generated:
             self._frame.generate_constants(node.sdfg, nested_stream)
 
             old_schedule = self._toplevel_schedule
@@ -1466,7 +1470,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ###############################################################
         # Write generated code in the proper places (nested SDFG writes
         # location info)
-        if not code_already_generated:
+        if not unique_functions or not code_already_generated:
             function_stream.write(global_code)
         function_stream.write(nested_global_stream.getvalue())
         function_stream.write(nested_stream.getvalue())
