@@ -857,9 +857,13 @@ def isconstant(var, allow_recursive=False):
         :param allow_recursive: whether to allow dicts or lists containing constants.
     """
     if allow_recursive:
-        return isinstance(var, (list, tuple)) and all(isconstant(v, allow_recursive=False) for v in var)
-    else:
-        return type(var) in _CONSTANT_TYPES
+        if isinstance(var, (list, tuple)):
+            return all(isconstant(v, allow_recursive=False) for v in var)
+        elif isinstance(var, dict):
+            return all(isconstant(k, allow_recursive=False) and isconstant(v, allow_recursive=False)
+                       for k, v in var.items())
+
+    return type(var) in _CONSTANT_TYPES
 
 
 bool = typeclass(numpy.bool)
