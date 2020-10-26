@@ -16,7 +16,7 @@ from dace import data, subsets, symbolic, dtypes, memlet as mmlt
 from dace.codegen import cppunparse
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          codeblock_to_cpp)
-from dace.codegen.targets.target import DefinedType
+from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
