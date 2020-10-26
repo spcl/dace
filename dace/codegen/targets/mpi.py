@@ -60,9 +60,9 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
             return 1;
     }}
 
-    MPI_Comm_dup(MPI_COMM_WORLD, (MPI_Comm *)&__state->mpi_comm);
-    MPI_Comm_rank((MPI_Comm)__state->mpi_comm, &__dace_comm_rank);
-    MPI_Comm_size((MPI_Comm)__state->mpi_comm, &__dace_comm_size);
+    MPI_Comm_dup(MPI_COMM_WORLD, reinterpret_cast<MPI_Comm *>(&__state->mpi_comm));
+    MPI_Comm_rank(static_cast<MPI_Comm>(__state->mpi_comm), &__dace_comm_rank);
+    MPI_Comm_size(static_cast<MPI_Comm>(__state->mpi_comm), &__dace_comm_size);
 
     printf(\"MPI was initialized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
@@ -70,7 +70,7 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
 }}
 
 void __dace_exit_mpi({sdfg.name}_t *__state) {{
-    MPI_Comm_free((MPI_Comm *)&__state->mpi_comm);
+    MPI_Comm_free(reinterpret_cast<MPI_Comm *>(&__state->mpi_comm));
     MPI_Finalize();
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
