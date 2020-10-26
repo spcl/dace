@@ -40,19 +40,25 @@ def test_tasklet_scalar():
                |----------------------------------------------------|
         */
 
+        typedef enum [1:0] {READY, BUSY, DONE} state_e;
+        state_e state;
+        
         always@(posedge clk_i) begin
             if (rst_i) begin // case: reset
                 b <= 0;
                 ready_o <= 1'b1;
-            end else if (valid_i) begin // case: load a 
+                state <= READY;
+            end else if (valid_i && state == READY) begin // case: load a 
                 b <= a;
                 ready_o <= 1'b0;
+                state <= BUSY;
             end else if (b < 100) // case: increment counter b
                 b <= b + 1;
             else
-                b <= b; 
+                b <= b;
+                state <= DONE;
         end    
-
+        
         assign valid_o = (b >= 100) ? 1'b1:1'b0; 
         ''',
         language=dace.Language.RTL)
@@ -128,20 +134,26 @@ def test_tasklet_parameter():
                |----------------------------------------------------|
         */
 
+        typedef enum [1:0] {READY, BUSY, DONE} state_e;
+        state_e state;
+    
         always@(posedge clk_i) begin
             if (rst_i) begin // case: reset
                 b <= 0;
                 ready_o <= 1'b1;
-            end else if (valid_i) begin // case: load a 
+                state <= READY;
+            end else if (valid_i && state == READY) begin // case: load a 
                 b <= a;
                 ready_o <= 1'b0;
+                state <= BUSY;
             end else if (b < MAX_VAL) // case: increment counter b
                 b <= b + 1;
             else
-                b <= b; 
+                b <= b;
+                state <= DONE;
         end    
-
-        assign valid_o = (b >= MAX_VAL) ? 1'b1:1'b0; 
+    
+        assign valid_o = (b >= MAX_VAL) ? 1'b1:1'b0;
         ''',
         language=dace.Language.RTL)
 
@@ -185,7 +197,7 @@ def test_tasklet_vector():
     N = dace.symbol('N')
 
     # add sdfg
-    sdfg = dace.SDFG('rtl_tasklet_demo')
+    sdfg = dace.SDFG('rtl_tasklet_vector')
 
     # define compile-time constant
     sdfg.specialize(dict(N=4))
@@ -219,20 +231,26 @@ def test_tasklet_vector():
                |----------------------------------------------------|
         */
 
+        typedef enum [1:0] {READY, BUSY, DONE} state_e;
+        state_e state;
+    
         always@(posedge clk_i) begin
             if (rst_i) begin // case: reset
                 b <= 0;
                 ready_o <= 1'b1;
-            end else if (valid_i) begin // case: load a 
+                state <= READY;
+            end else if (valid_i && state == READY) begin // case: load a 
                 b <= a[0];
                 ready_o <= 1'b0;
-            end else if (b < a[1]) // case: increment counter b
+                state <= BUSY;
+            end else if (b < 100) // case: increment counter b
                 b <= b + 1;
             else
-                b <= b; 
+                b <= b;
+                state <= DONE;
         end    
-
-        assign valid_o = (b >= a[1]) ? 1'b1:1'b0; 
+    
+        assign valid_o = (b >= 100) ? 1'b1:1'b0; 
         ''',
         language=dace.Language.RTL)
 
@@ -252,7 +270,7 @@ def test_tasklet_vector():
     """
     # init data structures
     a = np.random.randint(0, 100, dace.symbolic.evaluate(N, sdfg.constants)).astype(np.int32)
-    b = np.random.randint(0, 100, 1).astype(np.int32)
+    b = np.array([0]).astype(np.int32)
 
     # show initial values
     print("a={}, b={}".format(a, b))
@@ -264,7 +282,7 @@ def test_tasklet_vector():
     print("a={}, b={}".format(a, b))
 
     # check result
-    assert b == a[1]
+    assert b == 100
 
 
 def test_multi_tasklet():
@@ -292,20 +310,25 @@ def test_multi_tasklet():
         inputs={'a'},
         outputs={'b'},
         code='''
-
+        typedef enum [1:0] {READY, BUSY, DONE} state_e;
+        state_e state;
+    
         always@(posedge clk_i) begin
             if (rst_i) begin // case: reset
                 b <= 0;
                 ready_o <= 1'b1;
-            end else if (valid_i) begin // case: load a 
+                state <= READY;
+            end else if (valid_i && state == READY) begin // case: load a 
                 b <= a;
                 ready_o <= 1'b0;
+                state <= BUSY;
             end else if (b < 80) // case: increment counter b
                 b <= b + 1;
             else
-                b <= b; 
+                b <= b;
+                state <= DONE;
         end    
-
+    
         assign valid_o = (b >= 80) ? 1'b1:1'b0; 
         ''',
         language=dace.Language.RTL)
@@ -315,21 +338,26 @@ def test_multi_tasklet():
         inputs={'b'},
         outputs={'c'},
         code='''
-
+        typedef enum [1:0] {READY, BUSY, DONE} state_e;
+        state_e state;
+    
         always@(posedge clk_i) begin
             if (rst_i) begin // case: reset
                 c <= 0;
                 ready_o <= 1'b1;
-            end else if (valid_i) begin // case: load a 
+                state <= READY;
+            end else if (valid_i && state == READY) begin // case: load a 
                 c <= b;
                 ready_o <= 1'b0;
+                state <= BUSY;
             end else if (c < 100) // case: increment counter b
                 c <= c + 1;
             else
-                c <= c; 
+                c <= c;
+                state <= DONE;
         end    
-
-        assign valid_o = (c >= 100) ? 1'b1:1'b0; 
+    
+        assign valid_o = (c >= 100) ? 1'b1:1'b0;  
         ''',
         language=dace.Language.RTL)
 
