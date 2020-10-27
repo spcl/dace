@@ -173,7 +173,7 @@ def parse_dace_program(f,
     src_ast = GlobalResolver({
         k: v
         for k, v in global_vars.items()
-        if dtypes.isconstant(v) and not k in argtypes and k != '_'
+        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
