@@ -29,12 +29,24 @@ typedef cudaEvent_t gpuEvent_t;
 #endif
 
 namespace dace {
-    namespace cuda {
-        extern gpuStream_t __streams[];
-        extern gpuEvent_t __events[];
-        extern int num_streams;
-        extern int num_events;
-    }  // namespace cuda
+namespace cuda {
+struct Context {
+    int num_streams;
+    int num_events;
+    gpuStream_t *streams;
+    gpuEvent_t *events;
+    Context(int nstreams, int nevents) : num_streams(nstreams), 
+        num_events(nevents) {
+        streams = new gpuStream_t[nstreams];
+        events = new gpuEvent_t[nevents];
+    }
+    ~Context() {
+        delete[] streams;
+        delete[] events;
+    }
+};
+    
+}  // namespace cuda
 }  // namespace dace
 
 #endif  // __DACE_CUDACOMMON_CUH

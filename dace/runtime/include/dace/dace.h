@@ -39,4 +39,6 @@
 #include "intel_fpga/host.h"
 #endif
 
+#include "fpga_common.h"
+
 #endif  // __DACE_RUNTIME_H

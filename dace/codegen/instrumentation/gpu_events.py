@@ -7,7 +7,6 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
 class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
-
     def __init__(self):
         self.backend = config.Config.get('compiler', 'cuda', 'backend')
         super().__init__()
@@ -41,7 +40,7 @@ class GPUEventProvider(InstrumentationProvider):
             id=id, backend=self.backend)
 
     def _record_event(self, id, stream):
-        return '%sEventRecord(__dace_ev_%s, dace::cuda::__streams[%d]);' % (
+        return '%sEventRecord(__dace_ev_%s, __state->gpu_context->streams[%d]);' % (
             self.backend, id, stream)
 
     def _report(self, timer_name: str, sdfg=None, state=None, node=None):
@@ -50,7 +49,7 @@ class GPUEventProvider(InstrumentationProvider):
         return '''float __dace_ms_{id} = -1.0f;
 {backend}EventSynchronize(__dace_ev_e{id});
 {backend}EventElapsedTime(&__dace_ms_{id}, __dace_ev_b{id}, __dace_ev_e{id});
-dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
+__state->report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
             id=idstr, timer_name=timer_name, backend=self.backend)
 
     # Code generation hooks

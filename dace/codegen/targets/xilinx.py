@@ -110,21 +110,25 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
-        host_code.write("""
-dace::fpga::Context *dace::fpga::_context;
+        params_comma = self._global_sdfg.signature()
+        if params_comma:
+            params_comma = ', ' + params_comma
 
-DACE_EXPORTED int __dace_init_xilinx({signature}) {{
+        host_code.write("""
+DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
-    dace::fpga::_context = new dace::fpga::Context();
-    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
+    
+    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
-    delete dace::fpga::_context;
+DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
+    delete __state->fpga_context;
 }}
 
-{host_code}""".format(signature=self._global_sdfg.signature(),
+{host_code}""".format(signature=params_comma,
+                      sdfg=self._global_sdfg,
                       environment_variables=set_env_vars,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
@@ -564,8 +568,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 kernel_args_module += ["int " + p for p in scope.params]
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
-                        raise cgx.CodegenError(
-                            "Strided unroll not supported")
+                        raise cgx.CodegenError("Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".format(
@@ -645,7 +648,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 continue
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
+                                               node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -705,7 +708,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # Emit allocations
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream, entry_stream)
+                                               node.desc(sdfg), module_stream,
+                                               entry_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,

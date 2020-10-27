@@ -55,6 +55,18 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of on-GPU storage types
+GPU_STORAGES = [
+    StorageType.GPU_Shared,
+]
+
+# A subset of on-FPGA storage types
+FPGA_STORAGES = [
+    StorageType.FPGA_Local,
+    StorageType.FPGA_Registers,
+    StorageType.FPGA_ShiftRegister,
+]
+
 
 class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
@@ -416,8 +428,10 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
-    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol'
+                        or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol'
+                        or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either

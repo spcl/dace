@@ -3,6 +3,8 @@ import functools
 import itertools
 import warnings
 
+from sympy.functions.elementary.complexes import arg
+
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
@@ -153,10 +155,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, callsite_stream):
         name = node.data
-        nodedesc = node.desc(sdfg)
 
         if nodedesc.transient is False:
             return
@@ -199,6 +200,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     dfg,
                     state_id,
                     memlet_path[-1].dst,
+                    memlet_path[-1].dst.desc(sdfg),
                     function_stream,
                     callsite_stream,
                 )
@@ -331,9 +333,8 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("Unimplemented storage type " +
                                       str(nodedesc.storage))
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        nodedesc = node.desc(sdfg)
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
         arrsize = nodedesc.total_size
         if isinstance(nodedesc, data.Scalar):
             return
@@ -1188,7 +1189,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 self._dispatcher.dispatch_output_definition(
                     node, dst_node, edge, sdfg, state_dfg, state_id,
-                     function_stream, inner_stream)
+                    function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1,
@@ -1331,10 +1332,21 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
-                              sdfg_label):
+    def generate_nsdfg_header(self,
+                              sdfg,
+                              state,
+                              node,
+                              memlet_references,
+                              sdfg_label,
+                              state_struct=True):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
-        arguments = [
+        arguments = []
+
+        if state_struct:
+            toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
+            arguments.append(f'{toplevel_sdfg.name}_t *__state')
+
+        arguments += [
             f'{atype} {aname}' for atype, aname, _ in memlet_references
         ]
         arguments += [
@@ -1345,13 +1357,22 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
 
-    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
-                            sdfg_label):
-        args = ', '.join([argval for _, _, argval in memlet_references] + [
-            cpp.sym2cpp(symval)
-            for symname, symval in sorted(node.symbol_mapping.items())
-            if symname not in sdfg.constants
-        ])
+    def generate_nsdfg_call(self,
+                            sdfg,
+                            state,
+                            node,
+                            memlet_references,
+                            sdfg_label,
+                            state_struct=True):
+        prepend = []
+        if state_struct:
+            prepend = ['__state']
+        args = ', '.join(
+            prepend + [argval for _, _, argval in memlet_references] + [
+                cpp.sym2cpp(symval)
+                for symname, symval in sorted(node.symbol_mapping.items())
+                if symname not in sdfg.constants
+            ])
         return f'{sdfg_label}({args});'
 
     def generate_nsdfg_arguments(self, sdfg, state, node):
@@ -1558,16 +1579,8 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        to_allocate = local_transients(sdfg, dfg, node)
-        allocated = set()
-        for child in dfg.scope_children()[node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             result)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1583,16 +1596,8 @@ class CPUCodeGen(TargetCodeGenerator):
                              " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        to_allocate = local_transients(sdfg, dfg, map_node)
-        deallocated = set()
-        for child in dfg.scope_children()[map_node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in deallocated:
-                continue
-            deallocated.add(child.data)
-            self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
-                                                 None, result)
+        self._frame.deallocate_arrays_in_scope(sdfg, map_node, function_stream,
+                                               result)
 
         outer_stream = CodeIOStream()
 
@@ -1734,19 +1739,15 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        to_allocate = local_transients(sdfg, dfg, node)
-        allocated = set()
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             result)
+
+        # Generate register definitions for inter-tasklet memlets
+        scope_dict = dfg.scope_dict()
         for child in dfg.scope_children()[node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
 
-            # Generate register definitions for inter-tasklet memlets
-            scope_dict = dfg.scope_dict()
             for edge in dfg.edges():
                 # Only interested in edges within current scope
                 if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
@@ -1782,16 +1783,8 @@ class CPUCodeGen(TargetCodeGenerator):
                              " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        to_allocate = local_transients(sdfg, dfg, entry_node)
-        deallocated = set()
-        for child in dfg.scope_children()[entry_node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in deallocated:
-                continue
-            deallocated.add(child.data)
-            self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
-                                                 None, result)
+        self._frame.deallocate_arrays_in_scope(sdfg, entry_node,
+                                               function_stream, result)
 
         outer_stream = CodeIOStream()
 

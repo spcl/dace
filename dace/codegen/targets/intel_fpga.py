@@ -120,20 +120,23 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
-        host_code.write("""
-dace::fpga::Context *dace::fpga::_context;
+        params_comma = self._global_sdfg.signature()
+        if params_comma:
+            params_comma = ', ' + params_comma
 
-DACE_EXPORTED int __dace_init_intel_fpga({signature}) {{{emulation_flag}
-    dace::fpga::_context = new dace::fpga::Context();
-    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
+        host_code.write("""
+DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{emulation_flag}
+    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
-    delete dace::fpga::_context;
+DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
+    delete __state->fpga_context;
 }}
 
-{host_code}""".format(signature=self._global_sdfg.signature(),
+{host_code}""".format(signature=params_comma,
+                      sdfg=self._global_sdfg,
                       emulation_flag=emulation_flag,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
@@ -399,7 +402,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Emit allocations of inter-kernel memories
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream,
+                                               node.desc(sdfg), callsite_stream,
                                                kernel_body_stream)
 
         kernel_body_stream.write("\n")
@@ -598,7 +601,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 continue
             allocated.add(node.data)
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
+                                               node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
