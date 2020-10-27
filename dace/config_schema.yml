@@ -173,7 +173,7 @@ required:
                 default: true
                 title: Generate unique functions
                 description: >
-                    If set to true, if  multiple, equal Nested SDFGs exist,
+                    If set to true, if multiple nested SDFGs with equivalent contents exist,
                     the code is generated only once.
 
             #############################################
