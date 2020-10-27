@@ -64,14 +64,21 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime,
     return sdfg, (sdfg, state, me, nsdfg, nstate, ime)
 
 
+def _check_alloc(id, name, codegen, scope):
+    for sdfg_id, _, node in codegen.to_allocate[scope]:
+        if id == sdfg_id and name == node.data:
+            return True
+    return False
+
+
 def test_determine_alloc_scope():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Scope)
     codegen = framecode.DaCeCodeGenerator()
     codegen.determine_allocation_lifetime(sdfg)
 
     # tmp cannot be allocated within the inner scope because it is GPU_Global
-    assert (1, 'tmp') in codegen.to_allocate[scopes[-2]]
-    assert (1, 'tmp2') in codegen.to_allocate[scopes[-1]]
+    assert _check_alloc(1, 'tmp', codegen, scopes[-2])
+    assert _check_alloc(1, 'tmp2', codegen, scopes[-1])
 
 
 def test_determine_alloc_state():
@@ -83,8 +90,8 @@ def test_determine_alloc_state():
     # Ensure that unused transients are not allocated
     assert not any('__0_unused' in field for field in codegen.statestruct)
 
-    assert (1, 'tmp') in codegen.to_allocate[scopes[-2]]
-    assert (1, 'tmp2') in codegen.to_allocate[scopes[-2]]
+    assert _check_alloc(1, 'tmp', codegen, scopes[-2])
+    assert _check_alloc(1, 'tmp2', codegen, scopes[-2])
 
 
 def test_determine_alloc_sdfg():
@@ -92,8 +99,8 @@ def test_determine_alloc_sdfg():
     codegen = framecode.DaCeCodeGenerator()
     codegen.determine_allocation_lifetime(sdfg)
 
-    assert (1, 'tmp') in codegen.to_allocate[scopes[-3]]
-    assert (1, 'tmp2') in codegen.to_allocate[scopes[-3]]
+    assert _check_alloc(1, 'tmp', codegen, scopes[-3])
+    assert _check_alloc(1, 'tmp2', codegen, scopes[-3])
 
 
 def test_determine_alloc_global():
@@ -102,8 +109,10 @@ def test_determine_alloc_global():
     codegen.determine_allocation_lifetime(sdfg)
     assert any('__1_tmp' in field for field in codegen.statestruct)
     assert any('__1_tmp2' in field for field in codegen.statestruct)
-    assert (1, 'tmp') in codegen.to_allocate[sdfg]
-    assert (1, 'tmp2') in codegen.to_allocate[sdfg]
+    assert _check_alloc(1, 'tmp', codegen, sdfg)
+    assert _check_alloc(1, 'tmp2', codegen, sdfg)
+
+
 def test_alloc_persistent_register():
     """ Tries to allocate persistent register array. Should fail. """
     @dace.program

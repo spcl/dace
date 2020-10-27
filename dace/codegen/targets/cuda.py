@@ -494,7 +494,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
                          function_stream, callsite_stream):
-        nodedesc = node.desc(sdfg)
         dataname = node.data
 
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
@@ -503,7 +502,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             codestream = callsite_stream
 
         if isinstance(nodedesc, dace.data.Stream):
-            return self.deallocate_stream(sdfg, dfg, state_id, node,
+            return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc,
                                           function_stream, codestream)
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:

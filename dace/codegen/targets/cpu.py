@@ -200,6 +200,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     dfg,
                     state_id,
                     memlet_path[-1].dst,
+                    memlet_path[-1].dst.desc(sdfg),
                     function_stream,
                     callsite_stream,
                 )

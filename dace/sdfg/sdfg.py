@@ -1000,7 +1000,7 @@ class SDFG(OrderedDiGraph):
 
         return result
 
-    def shared_transients(self):
+    def shared_transients(self, check_toplevel=True):
         """ Returns a list of transient data that appears in more than one
             state. """
         seen = {}
@@ -1018,8 +1018,8 @@ class SDFG(OrderedDiGraph):
             for node in state.nodes():
                 if isinstance(node,
                               nd.AccessNode) and node.desc(self).transient:
-                    if node.desc(self).toplevel or (node.data in seen and
-                                                    seen[node.data] != state):
+                    if (check_toplevel and node.desc(self).toplevel) or (
+                            node.data in seen and seen[node.data] != state):
                         shared.append(node.data)
                     seen[node.data] = state
 

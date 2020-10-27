@@ -645,27 +645,42 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         will be allocated/deallocated.
         :param top_sdfg: The top-level SDFG to determine for.
         """
+        # Gather shared transients
+        shared_transients = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(
+                check_toplevel=False)
+
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
                 continue
+
+            # Possibly confusing control flow below finds the first state
+            # and node of the data descriptor, or continues the
+            # arrays_recursive() loop
+            first_state_instance: int = None
+            first_node_instance: nodes.AccessNode = None
+            for id, state in enumerate(sdfg.nodes()):
+                for node in state.data_nodes():
+                    if node.data == name:
+                        first_state_instance = id
+                        first_node_instance = node
+                        break
+                else:
+                    continue
+                break
+
             # Cases
             if desc.lifetime is dtypes.AllocationLifetime.Persistent:
                 # Persistent memory is allocated in initialization code and
                 # exists in the library state structure
+
+                # If unused, skip
+                if first_node_instance is None:
+                    continue
+
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
-                # Possibly confusing control flow below finds the first state
-                # and node of the data descriptor, or continues the
-                # arrays_recursive() loop
-                for state in sdfg.nodes():
-                    for node in state.data_nodes():
-                        if node.data == name:
-                            break
-                    else:
-                        continue
-                    break
-                else:
-                    continue
 
                 self.to_allocate[top_sdfg].append(
                     (sdfg.sdfg_id, sdfg.node_id(state), node))
@@ -674,20 +689,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # Global memory is allocated in the beginning of the program
                 # exists in the library state structure (to be passed along
                 # to the right SDFG)
+
+                # If unused, skip
+                if first_node_instance is None:
+                    continue
+
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
-                # Possibly confusing control flow below finds the first state
-                # and node of the data descriptor, or continues the
-                # arrays_recursive() loop
-                for state in sdfg.nodes():
-                    for node in state.data_nodes():
-                        if node.data == name:
-                            break
-                    else:
-                        continue
-                    break
-                else:
-                    continue
 
                 self.to_allocate[top_sdfg].append(
                     (sdfg.sdfg_id, sdfg.node_id(state), node))
@@ -700,9 +708,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
             access_node: nodes.AccessNode = None
-            if desc.lifetime is dtypes.AllocationLifetime.SDFG:
-                # SDFG memory is allocated in the beginning of its SDFG
+            if (name in shared_transients[sdfg.sdfg_id]
+                    or desc.lifetime is dtypes.AllocationLifetime.SDFG):
+                # SDFG memory and shared transients are allocated in the
+                # beginning of their SDFG
                 alloc_scope = sdfg
+                # If unused, skip
+                if first_node_instance is None:
+                    continue
             elif desc.lifetime is dtypes.AllocationLifetime.State:
                 # State memory is either allocated in the beginning of the
                 # containing state or the SDFG (if used in more than one state)
@@ -714,8 +727,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             multistate = True
                             break
                         curstate = state
-                        access_node = next(n for n in state.data_nodes()
-                                           if n.data == name)
                 if multistate:
                     alloc_scope = sdfg
                 else:
@@ -741,7 +752,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             multistate = True
                             break
                         curstate = state
-                        access_node = node
 
                         # Current scope (or state object if top-level)
                         scope = sdict[node] or state
@@ -801,13 +811,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if curscope is None:
                 curscope = top_sdfg
 
-            if alloc_state is not None:
-                state_id = sdfg.node_id(alloc_state)
-            else:
-                state_id = None
-
             self.to_allocate[curscope].append(
-                (sdfg.sdfg_id, state_id, access_node))
+                (sdfg.sdfg_id, first_state_instance, first_node_instance))
 
     def allocate_arrays_in_scope(self, sdfg: SDFG,
                                  scope: Union[nodes.EntryNode, SDFGState, SDFG],
@@ -821,9 +826,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             else:
                 state = None
             desc = node.desc(tsdfg)
-            self._dispatcher.dispatch_allocate(tsdfg, state,
-                                               state_id, node, desc,
-                                               function_stream, callsite_stream)
+            self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node,
+                                               desc, function_stream,
+                                               callsite_stream)
 
     def deallocate_arrays_in_scope(self, sdfg: SDFG,
                                    scope: Union[nodes.EntryNode, SDFGState,
@@ -838,9 +843,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             else:
                 state = None
             desc = node.desc(tsdfg)
-            self._dispatcher.dispatch_deallocate(tsdfg, state,
-                                                 state_id, node, desc,
-                                                 function_stream,
+            self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node,
+                                                 desc, function_stream,
                                                  callsite_stream)
 
     def generate_code(

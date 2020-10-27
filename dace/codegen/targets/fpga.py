@@ -155,7 +155,7 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
         # Allocate transients
-        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+        self._frame.allocate_arrays_in_scope(sdfg, state, function_stream,
                                              callsite_stream)
 
         # Generate kernel code
