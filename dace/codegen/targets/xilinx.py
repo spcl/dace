@@ -568,7 +568,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 kernel_args_module += ["int " + p for p in scope.params]
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
-                        raise cgx.CodegenError("Strided unroll not supported")
+                        raise cgx.CodegenError(
+                            "Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".format(
@@ -637,8 +638,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             module_body_stream.write("\n")
 
         # Allocate local transients
-        self._frame.allocate_arrays_in_scope(sdfg, dfg, module_stream,
-                                             module_body_stream)
+        data_to_allocate = (set(subgraph.top_level_transients()) -
+                            set(sdfg.shared_transients()) -
+                            set([p[1] for p in parameters]))
+        allocated = set()
+        for node in subgraph.nodes():
+            if not isinstance(node, dace.sdfg.nodes.AccessNode):
+                continue
+            if node.data not in data_to_allocate or node.data in allocated:
+                continue
+            allocated.add(node.data)
+            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                               module_stream,
+                                               module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
@@ -695,9 +707,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                              entry_stream)
 
         # Emit allocations
-        # for node in top_level_local_data:
-        #     self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-        #                                        module_stream, entry_stream)
+        for node in top_level_local_data:
+            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+                                               module_stream, entry_stream)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
