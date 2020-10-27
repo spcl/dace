@@ -127,7 +127,15 @@ def _reduce(sdfg: SDFG,
                                            {})
         input_memlet = Memlet.simple(inarr, input_subset)
         output_shape = None
-        if axis is None:
+
+        # check if we are reducing along all axes
+        if axis is not None and len(axis) == len(input_subset.size()):
+            reduce_all = all(
+                x == y for x, y in zip(axis, range(len(input_subset.size()))))
+        else:
+            reduce_all = False
+
+        if axis is None or reduce_all:
             output_shape = [1]
         else:
             output_subset = copy.deepcopy(input_subset)
@@ -430,7 +438,10 @@ def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
     sum = nest(_sum)(a, axis=axis)
 
-    if isinstance(axis, (tuple, list)):
+    if axis is None:
+        div_amount = reduce(lambda x, y: x * y,
+                            (d for d in sdfg.arrays[a].shape))
+    elif isinstance(axis, (tuple, list)):
         axis = normalize_axes(axis, len(sdfg.arrays[a].shape))
         # each entry needs to be divided by the size of the reduction
         div_amount = reduce(
