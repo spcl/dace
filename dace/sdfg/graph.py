@@ -207,7 +207,7 @@ class Graph(object):
         for node in node_list:
             self.add_node(node)
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> int:
         """Returns a numeric ID that corresponds to the node index in the
            internal graph representation (unique)."""
         for i, n in enumerate(self.nodes()):
@@ -215,7 +215,7 @@ class Graph(object):
                 return i
         raise NodeNotFoundError(node)
 
-    def edge_id(self, edge):
+    def edge_id(self, edge: Edge) -> int:
         """Returns a numeric ID that corresponds to the edge index in the
            internal graph representation (unique)."""
         for i, e in enumerate(self.edges()):
@@ -451,7 +451,7 @@ class SubgraphView(Graph):
     def add_nodes_from(self, node_list):
         raise PermissionError
 
-    def node_id(self, node):
+    def node_id(self, node: Any) -> int:
         if node not in self._subgraph_nodes:
             raise NodeNotFoundError
         return self._graph.node_id(node)

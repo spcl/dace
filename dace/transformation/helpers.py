@@ -2,14 +2,13 @@
 """ Transformation helper API. """
 import copy
 
-from numpy.core.numeric import full
 from dace.subsets import Range, Subset, union
 from typing import Dict, List, Optional, Tuple
 
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
 
@@ -39,7 +38,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # Find the top-level scope
     scope_tree = state.scope_tree()
     scope_dict = state.scope_dict()
-    scope_dict_children = state.scope_dict(True)
+    scope_dict_children = state.scope_children()
     top_scopenode = -1  # Initialized to -1 since "None" already means top-level
 
     for node in subgraph.nodes():
@@ -409,3 +408,20 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     new_exit.map = new_entry.map
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
+
+
+def split_interstate_edges(sdfg: SDFG) -> None:
+    """
+    Splits all inter-state edges into edges with conditions and edges with
+    assignments. This procedure helps in nested loop detection.
+    :param sdfg: The SDFG to split 
+    :note: Operates in-place on the SDFG.
+    """
+    for e in sdfg.edges():
+        if e.data.assignments and not e.data.is_unconditional():
+            tmpstate = sdfg.add_state()
+            sdfg.add_edge(e.src, tmpstate,
+                          InterstateEdge(condition=e.data.condition))
+            sdfg.add_edge(tmpstate, e.dst,
+                          InterstateEdge(assignments=e.data.assignments))
+            sdfg.remove_edge(e)

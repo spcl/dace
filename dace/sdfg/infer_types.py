@@ -168,7 +168,7 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
 def _set_default_schedule_types(sdfg: SDFG,
                                 toplevel_schedule: dtypes.ScheduleType):
     for state in sdfg.nodes():
-        reverse_scope_dict = state.scope_dict(node_to_children=True)
+        reverse_scope_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
         _set_default_schedule_in_scope(None, toplevel_schedule,
