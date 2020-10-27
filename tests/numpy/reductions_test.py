@@ -14,6 +14,14 @@ def test_sum(A: dace.float64[10, 5, 3]):
 def test_sum_1(A: dace.float64[10, 5, 3]):
     return np.sum(A, axis=1)
 
+@compare_numpy_output()
+def test_sum_negative_axis(A: dace.float64[10, 5, 3]):
+    return np.sum(A, axis=-1)
+
+@compare_numpy_output()
+def test_sum_multiple_axes(A: dace.float64[10, 5, 3]):
+    return np.sum(A, axis=(-1, 0))
+
 
 @compare_numpy_output()
 def test_min(A: dace.float64[10, 5, 3]):
@@ -132,31 +140,34 @@ def test_argmin_result_type():
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
-    test_sum()
-    test_sum_1()
-    test_min()
-    test_max()
-    test_min_1()
-    test_min_int32()
-    test_min_int64()
-    test_max_int32()
-    test_max_int64()
-    test_max_1()
-    test_argmax_1()
-    test_argmin_1()
-    test_argmin_1_int32()
-    test_argmin_1_int64()
-    test_argmax_1_int32()
-    test_argmax_1_int64()
-    test_return_both()
-    test_argmin_result_type()
+    #test_sum()
+    #test_sum_1()
+    #test_min()
+    #test_max()
+    #test_min_1()
+    #test_min_int32()
+    #test_min_int64()
+    #test_max_int32()
+    #test_max_int64()
+    #test_max_1()
+    #test_argmax_1()
+    #test_argmin_1()
+    #test_argmin_1_int32()
+    #test_argmin_1_int64()
+    #test_argmax_1_int32()
+    #test_argmax_1_int64()
+    #test_return_both()
+    #test_argmin_result_type()
 
-    # Test supported reduction with OpenMP library node implementation
-    from dace.libraries.standard import Reduce
-    Reduce.default_implementation = 'OpenMP'
-    test_sum()
-    test_sum_1()
-    test_max()
-    test_max_1()
-    test_min()
-    test_min_1()
+    ## Test supported reduction with OpenMP library node implementation
+    #from dace.libraries.standard import Reduce
+    #Reduce.default_implementation = 'OpenMP'
+    #test_sum()
+    #test_sum_1()
+    #test_max()
+    #test_max_1()
+    #test_min()
+    #test_min_1()
+
+    test_sum_negative_axis()
+    test_sum_multiple_axes()

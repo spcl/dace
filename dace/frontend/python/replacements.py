@@ -28,6 +28,17 @@ ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
+def normalize_axes(axes: List[int], max_dim: int) -> List[int]:
+    """ Normalize a list of axes by converting negative dimensions to positive.
+
+        :param dims: the list of dimensions, possibly containing negative ints.
+        :param max_dim: the total amount of dimensions.
+        :return: a list of dimensions containing only positive ints.
+    """
+
+    return [ax if ax >= 0 else max_dim + ax for ax in axes]
+
+
 ##############################################################################
 # Python function replacements ###############################################
 ##############################################################################
@@ -109,6 +120,8 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
+            axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
+
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                            ast.parse(in_array).body[0].value,
                                            {})
@@ -133,6 +146,7 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
+            axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
         # Compute memlets
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
