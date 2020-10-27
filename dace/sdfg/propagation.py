@@ -644,18 +644,20 @@ def propagate_states(sdfg) -> None:
                     )
         elif proposed_dynamic and proposed_executions == 0:
             # Dynamic unbounded.
+            state.visited = True
             state.executions = proposed_executions
             state.dynamic_executions = proposed_dynamic
             # This gets pushed through to all children unconditionally.
-            next_edge = out_edges.pop()
-            for oedge in out_edges:
-                remaining_branches.append({
-                    'state': oedge.dst,
-                    'proposed_executions': proposed_executions,
-                    'proposed_dynamic': proposed_dynamic,
-                })
-            state = next_edge.dst
-            continue
+            if len(out_edges) > 0:
+                next_edge = out_edges.pop()
+                for oedge in out_edges:
+                    remaining_branches.append({
+                        'state': oedge.dst,
+                        'proposed_executions': proposed_executions,
+                        'proposed_dynamic': proposed_dynamic,
+                    })
+                state = next_edge.dst
+                continue
         else:
             state.visited = True
             if state in full_merge_states:

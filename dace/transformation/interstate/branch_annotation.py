@@ -77,7 +77,8 @@ class AnnotateBranch(DetectBranch):
             while state is not None:
                 if state == guard:
                     # We've gone around in a loop, abort.
-                    return
+                    state = None
+                    break
                 elif state in visited_states or state == frontier_state:
                     received_shares += share
                 else:

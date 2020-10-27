@@ -1927,10 +1927,6 @@ class SDFG(OrderedDiGraph):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        # Propagate memlets in the graph
-        if sdfg.propagate:
-            propagate_memlets_sdfg(sdfg)
-
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
         # Generate code for the program by traversing the SDFG state by state
