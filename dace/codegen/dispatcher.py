@@ -5,10 +5,10 @@ flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
 import aenum
-from dace import config, dtypes, nodes, registry
-from dace.codegen import exceptions as cgx
+from dace import data as dt, config, dtypes, nodes, registry
+from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
-from dace.sdfg import utils as sdutil
+from dace.sdfg import utils as sdutil, SDFG, ScopeSubgraphView
 from typing import Tuple
 
 
@@ -375,30 +375,29 @@ class TargetDispatcher(object):
             sdfg, sub_dfg, state_id, function_stream, callsite_stream)
         self.defined_vars.exit_scope(entry_node)
 
-    def dispatch_allocate(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
+    def dispatch_allocate(self, sdfg: SDFG, dfg: ScopeSubgraphView,
+                          state_id: int, node: nodes.AccessNode,
+                          datadesc: dt.Data,
+                          function_stream: prettycode.CodeIOStream,
+                          callsite_stream: prettycode.CodeIOStream):
         """ Dispatches a code generator for data allocation. """
+        self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        nodedesc = node.desc(sdfg)
-        storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
+        self._array_dispatchers[datadesc.storage].allocate_array(
+            sdfg, dfg, state_id, node, datadesc, function_stream,
+            callsite_stream)
 
-        self._array_dispatchers[storage].allocate_array(sdfg, dfg, state_id,
-                                                        node, function_stream,
-                                                        callsite_stream)
-
-    def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
-                            callsite_stream):
+    def dispatch_deallocate(self, sdfg: SDFG, dfg: ScopeSubgraphView,
+                            state_id: int, node: nodes.AccessNode,
+                            datadesc: dt.Data,
+                            function_stream: prettycode.CodeIOStream,
+                            callsite_stream: prettycode.CodeIOStream):
         """ Dispatches a code generator for a data deallocation. """
+        self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        nodedesc = node.desc(sdfg)
-        storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
-                   dtypes.StorageType.Register)
-        self._used_targets.add(self._array_dispatchers[storage])
-
-        self._array_dispatchers[storage].deallocate_array(
-            sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._array_dispatchers[datadesc.storage].deallocate_array(
+            sdfg, dfg, state_id, node, datadesc, function_stream,
+            callsite_stream)
 
     # Dispatches copy code for a memlet
     def _get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, dfg,

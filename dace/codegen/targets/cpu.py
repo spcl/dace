@@ -155,10 +155,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, callsite_stream):
         name = node.data
-        nodedesc = node.desc(sdfg)
 
         if nodedesc.transient is False:
             return
@@ -333,9 +332,8 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("Unimplemented storage type " +
                                       str(nodedesc.storage))
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
-        nodedesc = node.desc(sdfg)
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
         arrsize = nodedesc.total_size
         if isinstance(nodedesc, data.Scalar):
             return
@@ -1580,16 +1578,8 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        to_allocate = local_transients(sdfg, dfg, node)
-        allocated = set()
-        for child in dfg.scope_children()[node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             result)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -1605,16 +1595,8 @@ class CPUCodeGen(TargetCodeGenerator):
                              " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        to_allocate = local_transients(sdfg, dfg, map_node)
-        deallocated = set()
-        for child in dfg.scope_children()[map_node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in deallocated:
-                continue
-            deallocated.add(child.data)
-            self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
-                                                 None, result)
+        self._frame.deallocate_arrays_in_scope(sdfg, map_node, function_stream,
+                                               result)
 
         outer_stream = CodeIOStream()
 
@@ -1756,19 +1738,15 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        to_allocate = local_transients(sdfg, dfg, node)
-        allocated = set()
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             result)
+
+        # Generate register definitions for inter-tasklet memlets
+        scope_dict = dfg.scope_dict()
         for child in dfg.scope_children()[node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
 
-            # Generate register definitions for inter-tasklet memlets
-            scope_dict = dfg.scope_dict()
             for edge in dfg.edges():
                 # Only interested in edges within current scope
                 if scope_dict[edge.src] != node or scope_dict[edge.dst] != node:
@@ -1804,16 +1782,8 @@ class CPUCodeGen(TargetCodeGenerator):
                              " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        to_allocate = local_transients(sdfg, dfg, entry_node)
-        deallocated = set()
-        for child in dfg.scope_children()[entry_node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in deallocated:
-                continue
-            deallocated.add(child.data)
-            self._dispatcher.dispatch_deallocate(sdfg, dfg, state_id, child,
-                                                 None, result)
+        self._frame.deallocate_arrays_in_scope(sdfg, entry_node,
+                                               function_stream, result)
 
         outer_stream = CodeIOStream()
 

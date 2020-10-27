@@ -37,7 +37,8 @@ class DaCeCodeGenerator(object):
         self.statestruct: List[str] = []
         self.to_allocate: DefaultDict[
             Union[SDFG, SDFGState, nodes.EntryNode],
-            List[Tuple[int, str]]] = collections.defaultdict(list)
+            List[Tuple[int, int,
+                       nodes.AccessNode]]] = collections.defaultdict(list)
 
     ##################################################################
     # Target registry
@@ -285,53 +286,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         sid = sdfg.node_id(state)
 
         # Emit internal transient array allocation
-        # Don't allocate transients shared with another state
-        data_to_allocate = (set(state.top_level_transients()) -
-                            set(sdfg.shared_transients()))
-        allocated = set()
-        for node in state.data_nodes():
-            if node.data not in data_to_allocate or node.data in allocated:
-                continue
-            allocated.add(node.data)
-            self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
-                                               global_stream, callsite_stream)
-
-        callsite_stream.write('\n')
-
-        # Emit internal transient array allocation for nested SDFGs
-        # TODO: Replace with global allocation management
-        gpu_persistent_subgraphs = [
-            state.scope_subgraph(node) for node in state.nodes()
-            if isinstance(node, dace.nodes.MapEntry)
-            and node.map.schedule == dace.ScheduleType.GPU_Persistent
-        ]
-        nested_allocated = set()
-        for sub_graph in gpu_persistent_subgraphs:
-            for nested_sdfg in [
-                    n.sdfg for n in sub_graph.nodes()
-                    if isinstance(n, nodes.NestedSDFG)
-            ]:
-                nested_shared_transients = set(nested_sdfg.shared_transients())
-                for nested_state in nested_sdfg.nodes():
-                    nested_sid = nested_sdfg.node_id(nested_state)
-                    nested_to_allocate = (
-                        set(nested_state.top_level_transients()) -
-                        nested_shared_transients)
-                    nodes_to_allocate = [
-                        n for n in nested_state.data_nodes()
-                        if n.data in nested_to_allocate
-                        and n.data not in nested_allocated
-                    ]
-                    for nested_node in nodes_to_allocate:
-                        nested_allocated.add(nested_node.data)
-                        self._dispatcher.dispatch_allocate(
-                            nested_sdfg,
-                            nested_state,
-                            nested_sid,
-                            nested_node,
-                            global_stream,
-                            callsite_stream,
-                        )
+        self.allocate_arrays_in_scope(sdfg, state, global_stream,
+                                      callsite_stream)
 
         callsite_stream.write('\n')
 
@@ -374,50 +330,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Write state footer
 
         if generate_state_footer:
-
-            # Emit internal transient array deallocation for nested SDFGs
-            # TODO: Replace with global allocation management
-            gpu_persistent_subgraphs = [
-                state.scope_subgraph(node) for node in state.nodes()
-                if isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == dace.ScheduleType.GPU_Persistent
-            ]
-            nested_deallocated = set()
-            for sub_graph in gpu_persistent_subgraphs:
-                for nested_sdfg in [
-                        n.sdfg for n in sub_graph.nodes()
-                        if isinstance(n, nodes.NestedSDFG)
-                ]:
-                    nested_shared_transients = \
-                        set(nested_sdfg.shared_transients())
-                    for nested_state in nested_sdfg:
-                        nested_sid = nested_sdfg.node_id(nested_state)
-                        nested_to_allocate = (
-                            set(nested_state.top_level_transients()) -
-                            nested_shared_transients)
-                        nodes_to_deallocate = [
-                            n for n in nested_state.data_nodes()
-                            if n.data in nested_to_allocate
-                            and n.data not in nested_deallocated
-                        ]
-                        for nested_node in nodes_to_deallocate:
-                            nested_deallocated.add(nested_node.data)
-                            self._dispatcher.dispatch_deallocate(
-                                nested_sdfg, nested_state, nested_sid,
-                                nested_node, global_stream, callsite_stream)
-
             # Emit internal transient array deallocation
-            deallocated = set()
-            for node in state.data_nodes():
-                if (node.data not in data_to_allocate
-                        or node.data in deallocated
-                        or (node.data in sdfg.arrays
-                            and sdfg.arrays[node.data].transient == False)):
-                    continue
-                deallocated.add(node.data)
-                self._dispatcher.dispatch_deallocate(sdfg, state, sid, node,
-                                                     global_stream,
-                                                     callsite_stream)
+            self.deallocate_arrays_in_scope(sdfg, state, global_stream,
+                                            callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._dispatcher.instrumentation.values():
@@ -739,7 +654,21 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # exists in the library state structure
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
-                self.to_allocate[top_sdfg].append((sdfg.sdfg_id, name))
+                # Possibly confusing control flow below finds the first state
+                # and node of the data descriptor, or continues the
+                # arrays_recursive() loop
+                for state in sdfg.nodes():
+                    for node in state.data_nodes():
+                        if node.data == name:
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    continue
+
+                self.to_allocate[top_sdfg].append(
+                    (sdfg.sdfg_id, sdfg.node_id(state), node))
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -747,7 +676,21 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # to the right SDFG)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
-                self.to_allocate[top_sdfg].append((sdfg.sdfg_id, name))
+                # Possibly confusing control flow below finds the first state
+                # and node of the data descriptor, or continues the
+                # arrays_recursive() loop
+                for state in sdfg.nodes():
+                    for node in state.data_nodes():
+                        if node.data == name:
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    continue
+
+                self.to_allocate[top_sdfg].append(
+                    (sdfg.sdfg_id, sdfg.node_id(state), node))
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -756,6 +699,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
+            access_node: nodes.AccessNode = None
             if desc.lifetime is dtypes.AllocationLifetime.SDFG:
                 # SDFG memory is allocated in the beginning of its SDFG
                 alloc_scope = sdfg
@@ -765,12 +709,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 curstate: SDFGState = None
                 multistate = False
                 for state in sdfg.nodes():
-                    if any(n.data == name for n in state.nodes()
-                           if isinstance(n, nodes.AccessNode)):
+                    if any(n.data == name for n in state.data_nodes()):
                         if curstate is not None:
                             multistate = True
                             break
                         curstate = state
+                        access_node = next(n for n in state.data_nodes()
+                                           if n.data == name)
                 if multistate:
                     alloc_scope = sdfg
                 else:
@@ -796,6 +741,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             multistate = True
                             break
                         curstate = state
+                        access_node = node
 
                         # Current scope (or state object if top-level)
                         scope = sdict[node] or state
@@ -855,7 +801,47 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if curscope is None:
                 curscope = top_sdfg
 
-            self.to_allocate[curscope].append((sdfg.sdfg_id, name))
+            if alloc_state is not None:
+                state_id = sdfg.node_id(alloc_state)
+            else:
+                state_id = None
+
+            self.to_allocate[curscope].append(
+                (sdfg.sdfg_id, state_id, access_node))
+
+    def allocate_arrays_in_scope(self, sdfg: SDFG,
+                                 scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                                 function_stream: CodeIOStream,
+                                 callsite_stream: CodeIOStream):
+        """ Dispatches allocation of all arrays in the given scope. """
+        for sdfg_id, state_id, node in self.to_allocate[scope]:
+            tsdfg = sdfg.sdfg_list[sdfg_id]
+            if state_id is not None:
+                state = tsdfg.node(state_id)
+            else:
+                state = None
+            desc = node.desc(tsdfg)
+            self._dispatcher.dispatch_allocate(tsdfg, state,
+                                               state_id, node, desc,
+                                               function_stream, callsite_stream)
+
+    def deallocate_arrays_in_scope(self, sdfg: SDFG,
+                                   scope: Union[nodes.EntryNode, SDFGState,
+                                                SDFG],
+                                   function_stream: CodeIOStream,
+                                   callsite_stream: CodeIOStream):
+        """ Dispatches deallocation of all arrays in the given scope. """
+        for sdfg_id, state_id, node in self.to_allocate[scope]:
+            tsdfg = sdfg.sdfg_list[sdfg_id]
+            if state_id is not None:
+                state = tsdfg.node(state_id)
+            else:
+                state = None
+            desc = node.desc(tsdfg)
+            self._dispatcher.dispatch_deallocate(tsdfg, state,
+                                                 state_id, node, desc,
+                                                 function_stream,
+                                                 callsite_stream)
 
     def generate_code(
         self,
@@ -900,16 +886,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
 
         # Allocate outer-level transients
-        shared_transients = sdfg.shared_transients()
-        allocated = set()
-        for state in sdfg.nodes():
-            for node in state.data_nodes():
-                if (node.data in shared_transients
-                        and node.data not in allocated):
-                    self._dispatcher.dispatch_allocate(sdfg, state, None, node,
-                                                       global_stream,
-                                                       callsite_stream)
-                    allocated.add(node.data)
+        self.allocate_arrays_in_scope(sdfg, sdfg, global_stream,
+                                      callsite_stream)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
@@ -928,9 +906,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             global_symbols.update(symbols)
 
         for isvarName, isvarType in interstate_symbols.items():
-            # Skip symbols that have been declared as outer-level transients
-            if isvarName in allocated:
-                continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
                 '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
@@ -1186,15 +1161,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     [s.label for s in (set(sdfg.nodes()) - states_generated)]))
 
         # Deallocate transients
-        shared_transients = sdfg.shared_transients()
-        deallocated = set()
-        for state in sdfg.nodes():
-            for node in state.data_nodes():
-                if (node.data in shared_transients
-                        and node.data not in deallocated):
-                    self._dispatcher.dispatch_deallocate(
-                        sdfg, state, None, node, global_stream, callsite_stream)
-                    deallocated.add(node.data)
+        self.deallocate_arrays_in_scope(sdfg, sdfg, global_stream,
+                                        callsite_stream)
 
         # Now that we have all the information about dependencies, generate
         # header and footer

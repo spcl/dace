@@ -94,14 +94,15 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, callsite_stream):
         """ Generates code for allocating an array, outputting to the given
             code streams.
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
             :param node: The data node to generate allocation for.
+            :param nodedesc: The data descriptor to allocate.
             :param function_stream: A `CodeIOStream` object that will be
                                     generated outside the calling code, for
                                     use when generating global functions.
@@ -111,14 +112,15 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
         """ Generates code for deallocating an array, outputting to the given
             code streams.
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
             :param node: The data node to generate deallocation for.
+            :param nodedesc: The data descriptor to deallocate.
             :param function_stream: A `CodeIOStream` object that will be
                                     generated outside the calling code, for
                                     use when generating global functions.

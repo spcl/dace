@@ -330,17 +330,16 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         return options
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, callsite_stream):
         try:
             self._dispatcher.defined_vars.get(node.data)
             return
         except KeyError:
             pass  # The variable was not defined, we can continue
 
-        nodedesc = node.desc(sdfg)
         if isinstance(nodedesc, dace.data.Stream):
-            return self.allocate_stream(sdfg, dfg, state_id, node,
+            return self.allocate_stream(sdfg, dfg, state_id, node, nodedesc,
                                         function_stream, callsite_stream)
 
         result_decl = StringIO()
@@ -414,9 +413,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             callsite_stream.write(result_decl.getvalue(), sdfg, state_id, node)
             callsite_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
-    def allocate_stream(self, sdfg, dfg, state_id, node, function_stream,
-                        callsite_stream):
-        nodedesc = node.desc(sdfg)
+    def allocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
+                        function_stream, callsite_stream):
         dataname = node.data
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
@@ -450,7 +448,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 # (important) Ensure GPU array is allocated before the stream
                 datanode = dfg.out_edges(node)[0].dst
                 self._dispatcher.dispatch_allocate(sdfg, dfg, state_id,
-                                                   datanode, function_stream,
+                                                   datanode, nodedesc,
+                                                   function_stream,
                                                    callsite_stream)
 
                 function_stream.write(
@@ -481,9 +480,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({size}, {name});'
                     .format(**fmtargs), sdfg, state_id, node)
 
-    def deallocate_stream(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
-        nodedesc = node.desc(sdfg)
+    def deallocate_stream(self, sdfg, dfg, state_id, node, nodedesc,
+                          function_stream, callsite_stream):
         dataname = node.data
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
@@ -494,8 +492,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 callsite_stream.write('dace::FreeGPUStream(%s);' % dataname,
                                       sdfg, state_id, node)
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
         nodedesc = node.desc(sdfg)
         dataname = node.data
 
@@ -984,48 +982,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
 
-            # Emit internal transient array deallocation for nested SDFGs
-            # TODO: Replace with global allocation management
-            gpu_persistent_subgraphs = [
-                state.scope_subgraph(node) for node in state.nodes()
-                if isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == dace.ScheduleType.GPU_Persistent
-            ]
-            nested_deallocated = set()
-            for sub_graph in gpu_persistent_subgraphs:
-                for nested_sdfg in [
-                        n.sdfg for n in sub_graph.nodes()
-                        if isinstance(n, nodes.NestedSDFG)
-                ]:
-                    for nested_state in nested_sdfg:
-                        nested_sid = nested_sdfg.node_id(nested_state)
-                        nested_to_allocate = (
-                            set(nested_state.top_level_transients()) -
-                            set(nested_sdfg.shared_transients()))
-                        nodes_to_deallocate = [
-                            n for n in nested_state.data_nodes()
-                            if n.data in nested_to_allocate
-                            and n.data not in nested_deallocated
-                        ]
-                        for nested_node in nodes_to_deallocate:
-                            nested_deallocated.add(nested_node.data)
-                            self._dispatcher.dispatch_deallocate(
-                                nested_sdfg, nested_state, nested_sid,
-                                nested_node, function_stream, callsite_stream)
-
-            callsite_stream.write('\n')
-
             # Emit internal transient array deallocation
-            sid = sdfg.node_id(state)
-            data_to_allocate = (set(state.top_level_transients()) -
-                                set(sdfg.shared_transients()))
-            deallocated = set()
-            for node in state.data_nodes():
-                if node.data not in data_to_allocate or node.data in deallocated:
-                    continue
-                deallocated.add(node.data)
-                self._frame._dispatcher.dispatch_deallocate(
-                    sdfg, state, sid, node, function_stream, callsite_stream)
+            self._frame.deallocate_arrays_in_scope(sdfg, state, function_stream, callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._frame._dispatcher.instrumentation.values():
@@ -1621,17 +1579,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._grid_dims = grid_dims
 
         # Emit internal array allocation (deallocation handled at MapExit)
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             kernel_stream)
+
         scope_entry = dfg_scope.source_nodes()[0]
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
-        allocated = set()
-        for child in dfg_scope.scope_children()[node]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
-                                               function_stream, kernel_stream)
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
@@ -1923,16 +1874,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                 callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         # Emit internal array allocation (deallocation handled at MapExit)
-        to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
-        allocated = set()
-        for child in dfg_scope.scope_children()[scope_entry]:
-            if not isinstance(child, nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg_scope, state_id, child,
-                                               function_stream, callsite_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, scope_entry, function_stream,
+                                             callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:

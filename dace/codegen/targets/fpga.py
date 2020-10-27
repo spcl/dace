@@ -154,43 +154,16 @@ class FPGACodeGen(TargetCodeGenerator):
         # Determine independent components
         subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
+        # Allocate transients
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             callsite_stream)
+
         # Generate kernel code
-        shared_transients = set(sdfg.shared_transients())
         if not self._in_device_code:
-            # Allocate global memory transients, unless they are shared with
-            # other states
-            all_transients = set(state.all_transients())
-            allocated = set(shared_transients)
-            for node in state.data_nodes():
-                data = node.desc(sdfg)
-                if node.data not in all_transients or node.data in allocated:
-                    continue
-                if data.storage != dace.dtypes.StorageType.FPGA_Global:
-                    continue
-                allocated.add(node.data)
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
-                                                   callsite_stream)
             # Generate kernel code
             self.generate_kernel(sdfg, state, state.label, subgraphs,
                                  function_stream, callsite_stream)
         else:  # self._in_device_code == True
-            to_allocate = dace.sdfg.local_transients(sdfg, state, None)
-            allocated = set()
-            for node in state.data_nodes():
-                data = node.desc(sdfg)
-                if node.data not in to_allocate or node.data in allocated:
-                    continue
-                # Make sure there are no global transients in the nested state
-                # that are thus not gonna be allocated
-                if data.storage == dace.dtypes.StorageType.FPGA_Global:
-                    raise cgx.CodegenError(
-                        "Cannot allocate global memory from device code.")
-                allocated.add(node.data)
-                # Allocate transients
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
-                                                   callsite_stream)
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
 
@@ -360,10 +333,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                            callsite_stream,
                                            skip_entry_node=True)
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                       function_stream, callsite_stream):
         result = StringIO()
-        nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
 
@@ -500,8 +472,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc,
+                         function_stream, callsite_stream):
         pass  # Handled by destructor
 
     def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
@@ -1072,17 +1044,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                     node)
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
-                                                 node)
-        allocated = set()
-        for child in dfg.scope_children()[node]:
-            if not isinstance(child, dace.sdfg.nodes.AccessNode):
-                continue
-            if child.data not in to_allocate or child.data in allocated:
-                continue
-            allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
+        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream,
+                                             result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
@@ -1268,9 +1231,9 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
 
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel
-        for arr_node in nested_global_transients:
-            self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
-                                               None, host_code_stream)
+        # for arr_node in nested_global_transients:
+        #     self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
+        #                                        None, host_code_stream)
 
     def _generate_Tasklet(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback

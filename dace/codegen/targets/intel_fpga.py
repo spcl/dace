@@ -400,10 +400,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         host_code_body_stream = CodeIOStream()
 
         # Emit allocations of inter-kernel memories
-        for node in top_level_local_data:
-            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               callsite_stream,
-                                               kernel_body_stream)
+        # for node in top_level_local_data:
+        #     self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
+        #                                        callsite_stream,
+        #                                        kernel_body_stream)
 
         kernel_body_stream.write("\n")
 
@@ -590,19 +590,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                     name, ", ".join(kernel_args_opencl)), sdfg, state_id)
 
         # Allocate local transients
-        data_to_allocate = (set(subgraph.top_level_transients()) -
-                            set(sdfg.shared_transients()) -
-                            set([p[1] for p in parameters]))
-        allocated = set()
-        for node in subgraph.nodes():
-            if not isinstance(node, dace.sdfg.nodes.AccessNode):
-                continue
-            if node.data not in data_to_allocate or node.data in allocated:
-                continue
-            allocated.add(node.data)
-            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               module_stream,
-                                               module_body_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, dfg, module_stream,
+                                             module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
