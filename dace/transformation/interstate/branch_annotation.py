@@ -29,11 +29,11 @@ class AnnotateBranch(DetectBranch):
 
         guard = graph.node(candidate[DetectBranch._branch_guard])
         # If this is already a loop guard, this isn't treated as a cond. branch.
-        if hasattr(guard, 'is_loop_guard') and guard.is_loop_guard:
+        if getattr(guard, 'is_loop_guard', False):
             return False
 
         # Also ensure that this hasn't been annotated yet.
-        if (hasattr(guard, '_branch_annotated') and guard._branch_annotated):
+        if getattr(guard, '_branch_annotated', False):
             return False
 
         return True
