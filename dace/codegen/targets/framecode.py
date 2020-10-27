@@ -847,6 +847,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             else:
                 state = None
             desc = node.desc(tsdfg)
+
+            # Skip FPGA memory management for now (handled in backends)
+            if desc.storage in dtypes.FPGA_STORAGES:
+                continue
+
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node,
                                                desc, function_stream,
                                                callsite_stream)
@@ -864,6 +869,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             else:
                 state = None
             desc = node.desc(tsdfg)
+
+            # Skip FPGA memory management for now (handled in backends)
+            if desc.storage in dtypes.FPGA_STORAGES:
+                continue
+
             self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node,
                                                  desc, function_stream,
                                                  callsite_stream)

@@ -169,7 +169,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     continue
                 allocated.add(node.data)
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
+                                                   data, function_stream,
                                                    callsite_stream)
             # Generate kernel code
             self.generate_kernel(sdfg, state, state.label, subgraphs,
@@ -189,7 +189,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 allocated.add(node.data)
                 # Allocate transients
                 self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
+                                                   data, function_stream,
                                                    callsite_stream)
             self.generate_nested_state(sdfg, state, state.label, subgraphs,
                                        function_stream, callsite_stream)
@@ -1080,8 +1080,8 @@ class FPGACodeGen(TargetCodeGenerator):
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child,
+                                               child.desc(sdfg), None, result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
@@ -1269,7 +1269,8 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         # allocated and passed to the kernel
         for arr_node in nested_global_transients:
             self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
-                                               None, host_code_stream)
+                                               arr_node.desc(sdfg), None,
+                                               host_code_stream)
 
     def _generate_Tasklet(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback
