@@ -1398,7 +1398,7 @@ class CPUCodeGen(TargetCodeGenerator):
         nested_stream = CodeIOStream()
         nested_global_stream = CodeIOStream()
 
-        unique_functions = Config.get('compiler', 'unique_functions')
+        unique_functions = Config.get_bool('compiler', 'unique_functions')
 
         sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id, state_id,
                                       dfg.node_id(node))
