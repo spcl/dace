@@ -133,7 +133,7 @@ def make_nested_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
 def make_nested_sdfg_cpu_single_state():
     '''
-    Builds an SDFG with two identic nested SDFGs
+    Builds an SDFG with two identical nested SDFGs
     '''
 
     n = dace.symbol("n")
