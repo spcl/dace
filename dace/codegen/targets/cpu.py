@@ -1166,7 +1166,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         node,
                         edge,
                         sdfg,
-                        state_dfg,
+                        dfg,
                         state_id,
                         function_stream,
                         inner_stream,
@@ -1191,7 +1191,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     continue
 
                 self._dispatcher.dispatch_output_definition(
-                    node, dst_node, edge, sdfg, state_dfg, state_id,
+                    node, dst_node, edge, sdfg, dfg, state_id,
                     function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
@@ -1291,7 +1291,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg,
             state_id,
             node,
-            state_dfg,
+            dfg,
             self._dispatcher,
             inner_stream,
             True,
@@ -1889,7 +1889,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg,
             state_id,
             node,
-            state_dfg,
+            dfg,
             self._dispatcher,
             callsite_stream,
             False,

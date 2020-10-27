@@ -685,7 +685,7 @@ __kernel void \\
                               node)
 
         # Process outgoing memlets with the internal SDFG
-        self.process_out_memlets(sdfg, state_id, node, state_dfg,
+        self.process_out_memlets(sdfg, state_id, node, dfg,
                                  self._dispatcher, callsite_stream, True,
                                  function_stream)
 
