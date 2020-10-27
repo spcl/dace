@@ -37,7 +37,7 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
         dst_subset = dcpy(edge.data.other_subset)
     elif dst_name == dataname:
         src_subset = dcpy(edge.data.other_subset)
-        dst_subset = dcpy(edge.subset)
+        dst_subset = dcpy(edge.data.subset)
     else:
         raise NotImplementedError
 
