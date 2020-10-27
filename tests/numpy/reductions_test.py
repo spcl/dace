@@ -14,14 +14,6 @@ def test_sum(A: dace.float64[10, 5, 3]):
 def test_sum_1(A: dace.float64[10, 5, 3]):
     return np.sum(A, axis=1)
 
-@compare_numpy_output()
-def test_sum_negative_axis(A: dace.float64[10, 5, 3]):
-    return np.sum(A, axis=-1)
-
-@compare_numpy_output()
-def test_sum_multiple_axes(A: dace.float64[10, 5, 3]):
-    return np.sum(A, axis=(-1, 0))
-
 
 @compare_numpy_output()
 def test_min(A: dace.float64[10, 5, 3]):
@@ -137,37 +129,83 @@ def test_argmin_result_type():
     assert res.dtype == np.int32
 
 
+@compare_numpy_output()
+def test_sum_negative_axis(A: dace.float64[10, 5, 3]):
+    return np.sum(A, axis=-1)
+
+
+@compare_numpy_output()
+def test_sum_multiple_axes(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=(-1, 0))
+
+
+@compare_numpy_output()
+def test_mean(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=2)
+
+
+@compare_numpy_output()
+def test_mean_negative(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=-2)
+
+
+@compare_numpy_output()
+def test_mean_multiple_axes(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=(-2, 0))
+
+
+def test_mean_reduce_symbolic_shape():
+    N = dace.symbol('N')
+
+    @dace.program
+    def prog(A: dace.float64[10, N, 3]):
+        return np.mean(A, axis=(-2, 0))
+
+    X = np.random.normal(scale=10, size=(10, 12, 3)).astype(np.float64)
+
+    dace_result = prog(A=X)
+    numpy_result = np.mean(X, axis=(-2, 0))
+
+    assert np.allclose(dace_result, numpy_result)
+
+
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
-    #test_sum()
-    #test_sum_1()
-    #test_min()
-    #test_max()
-    #test_min_1()
-    #test_min_int32()
-    #test_min_int64()
-    #test_max_int32()
-    #test_max_int64()
-    #test_max_1()
-    #test_argmax_1()
-    #test_argmin_1()
-    #test_argmin_1_int32()
-    #test_argmin_1_int64()
-    #test_argmax_1_int32()
-    #test_argmax_1_int64()
-    #test_return_both()
-    #test_argmin_result_type()
+    test_sum()
+    test_sum_1()
+    test_min()
+    test_max()
+    test_min_1()
+    test_min_int32()
+    test_min_int64()
+    test_max_int32()
+    test_max_int64()
+    test_max_1()
+    test_argmax_1()
+    test_argmin_1()
+    test_argmin_1_int32()
+    test_argmin_1_int64()
+    test_argmax_1_int32()
+    test_argmax_1_int64()
+    test_return_both()
+    test_argmin_result_type()
 
-    ## Test supported reduction with OpenMP library node implementation
-    #from dace.libraries.standard import Reduce
-    #Reduce.default_implementation = 'OpenMP'
-    #test_sum()
-    #test_sum_1()
-    #test_max()
-    #test_max_1()
-    #test_min()
-    #test_min_1()
+    # Test supported reduction with OpenMP library node implementation
+    from dace.libraries.standard import Reduce
+    Reduce.default_implementation = 'OpenMP'
+    test_sum()
+    test_sum_1()
+    test_max()
+    test_max_1()
+    test_min()
+    test_min_1()
 
     test_sum_negative_axis()
     test_sum_multiple_axes()
+
+    test_mean()
+    test_mean_negative()
+    test_mean_multiple_axes()
+
+    test_mean_reduce_symbolic_shape()
