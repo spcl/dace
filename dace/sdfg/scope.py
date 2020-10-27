@@ -202,16 +202,14 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    from dace.sdfg import nodes as nd
-    from dace.sdfg.sdfg import SDFGState
-
     while sdfg is not None:
-        sdict = state.scope_dict()
-        scope = sdict[node]
-        while scope is not None:
-            if scope.schedule in schedules:
-                return True
-            scope = sdict[scope]
+        if state is not None and node is not None:
+            sdict = state.scope_dict()
+            scope = sdict[node]
+            while scope is not None:
+                if scope.schedule in schedules:
+                    return True
+                scope = sdict[scope]
         # Traverse up nested SDFGs
         if sdfg.parent is not None:
             parent = sdfg.parent_sdfg

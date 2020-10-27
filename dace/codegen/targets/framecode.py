@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg.nodes import EntryNode
 from typing import Optional, Set, Tuple
 
 import collections
@@ -15,7 +16,7 @@ from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
-from dace.sdfg.scope import common_parent_scope
+from dace.sdfg import scope as sdscope
 from dace import dtypes, data, config
 from typing import Any, DefaultDict, Dict, List, Tuple, Union
 
@@ -639,6 +640,26 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         else:
             raise TypeError
 
+    def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data,
+                      scope: Union[nodes.EntryNode, SDFGState, SDFG]) -> bool:
+        schedule = self._get_schedule(scope)
+        if not dtypes.can_allocate(desc.storage, schedule):
+            return False
+
+        # Check for device-level memory recursively
+        node = scope if isinstance(scope, nodes.EntryNode) else None
+        cstate = scope if isinstance(scope, SDFGState) else state
+        if isinstance(scope, SDFG):
+            cstate = None
+        csdfg = scope if isinstance(scope, SDFG) else sdfg
+
+        if sdscope.is_devicelevel_fpga(csdfg, cstate, node):
+            return schedule is not dtypes.ScheduleType.FPGA_Device
+        elif sdscope.is_devicelevel_gpu(csdfg, cstate, node):
+            return schedule not in dtypes.GPU_SCHEDULES
+
+        return True
+
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """ 
         Determines where (at which scope/state/SDFG) each data descriptor
@@ -763,7 +784,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             curscope = scope
                             continue
                         # Lower/Higher/Disjoint scopes: find common denominator
-                        curscope = common_parent_scope(sdict, scope, curscope)
+                        curscope = sdscope.common_parent_scope(
+                            sdict, scope, curscope)
 
                     if multistate:
                         break
@@ -782,10 +804,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             # If descriptor cannot be allocated in this scope, traverse up the
             # scope tree until it is possible
-            curschedule = self._get_schedule(alloc_scope)
+            cursdfg = sdfg
             curstate = alloc_state
             curscope = alloc_scope
-            while not dtypes.can_allocate(desc.storage, curschedule):
+            while not self._can_allocate(cursdfg, curstate, desc, curscope):
                 if curscope is None:
                     break
                 if isinstance(curscope, nodes.EntryNode):
@@ -806,7 +828,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                             cursdfg.parent_nsdfg_node)
                 else:
                     raise TypeError
-                curschedule = self._get_schedule(curscope)
 
             if curscope is None:
                 curscope = top_sdfg
