@@ -3,6 +3,7 @@
     from internal memory accesses and scope ranges). """
 
 import copy
+from dace.sdfg.nodes import AccessNode
 import itertools
 import functools
 import sympy
@@ -767,7 +768,7 @@ def propagate_states(sdfg) -> None:
             break
 
 
-def propagate_memlets_sdfg(sdfg):
+def propagate_memlets_sdfg(sdfg, connectors=None):
     """ Propagates memlets throughout an entire given SDFG. 
         :note: This is an in-place operation on the SDFG.
     """
@@ -776,9 +777,59 @@ def propagate_memlets_sdfg(sdfg):
 
     propagate_states(sdfg)
 
+    if connectors is not None:
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, AccessNode):
+                    # Find the volume and propagate it out.
+                    if (node.label.startswith('IN_') and
+                        node.label in connectors['in']):
+                        connector = connectors['in'][node.label]
+                        out_edges = state.out_edges(node)
+                        for oedge in out_edges:
+                            if connector['dynamic'] and connector['volume'] == 0:
+                                continue
+                            elif ((oedge.data.dynamic and
+                                   oedge.data.volume == 0) or
+                                  (state.dynamic_executions and
+                                   state.executions == 0)):
+                                connector['dynamic'] = True
+                                connector['volume'] = 0
+                            else:
+                                connector['volume'] += (
+                                    oedge.data.volume * state.executions
+                                )
+                                connector['dynamic'] = (
+                                    connector['dynamic'] or
+                                    oedge.data.dynamic or
+                                    state.dynamic_executions
+                                )
+                    elif (node.label.startswith('OUT_') and
+                          node.label in connectors['out']):
+                        connector = connectors['out'][node.label]
+                        in_edges = state.in_edges(node)
+                        for iedge in in_edges:
+                            if connector['dynamic'] and connector['volume'] == 0:
+                                continue
+                            elif ((iedge.data.dynamic and
+                                   iedge.data.volume == 0) or
+                                  (state.dynamic_executions and
+                                   state.executions == 0)):
+                                connector['dynamic'] = True
+                                connector['volume'] = 0
+                            else:
+                                connector['volume'] += (
+                                    iedge.data.volume * state.executions
+                                )
+                                connector['dynamic'] = (
+                                    connector['dynamic'] or
+                                    iedge.data.dynamic or
+                                    state.dynamic_executions
+                                )
+
 
 def propagate_memlets_state(sdfg, state):
-    """ Propagates memlets throughout one SDFG state. 
+    """ Propagates memlets throughout one SDFG state.
         :param sdfg: The SDFG in which the state is situated.
         :param state: The state to propagate in.
         :note: This is an in-place operation on the SDFG state.
@@ -809,7 +860,34 @@ def propagate_memlets_state(sdfg, state):
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
-            propagate_memlets_sdfg(node.sdfg)
+            # Build a map of connectors to associated memlet volume.
+            connectors = {
+                'in': {},
+                'out': {},
+            }
+            for connector in node.in_connectors:
+                connectors['in'][connector] = {
+                    'volume': 0,
+                    'dynamic': False,
+                }
+            for connector in node.out_connectors:
+                connectors['out'][connector] = {
+                    'volume': 0,
+                    'dynamic': False,
+                }
+
+            propagate_memlets_sdfg(node.sdfg, connectors)
+
+            for iedge in state.in_edges(node):
+                if iedge.dst_conn in connectors['in']:
+                    connector = connectors['in'][iedge.dst_conn]
+                    iedge.data.dynamic = connector['dynamic']
+                    iedge.data.volume = connector['volume']
+            for oedge in state.out_edges(node):
+                if oedge.src_conn in connectors['out']:
+                    connector = connectors['out'][oedge.src_conn]
+                    oedge.data.dynamic = connector['dynamic']
+                    oedge.data.volume = connector['volume']
 
     # Process scopes from the leaves upwards
     propagate_memlets_scope(sdfg, state, state.scope_leaves())
