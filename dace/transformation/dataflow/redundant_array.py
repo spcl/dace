@@ -2,12 +2,11 @@
 """ Contains classes that implement a redundant array removal transformation.
 """
 
-import dace
+import copy
 import functools
 import typing
 
-from copy import deepcopy as dcpy
-from dace import registry, subsets
+from dace import data, registry, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
@@ -18,28 +17,22 @@ from dace.config import Config
 # Helper methods #############################################################
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
-                      arrays: typing.Dict[str, dace.data.Data],
+                      arrays: typing.Dict[str, data.Data],
                       src_name: str = None,
                       dst_name: str = None) -> typing.Tuple[subsets.Subset]:
     """ Extracts and validates src and dst subsets from the edge. """
-
-    dataname = edge.data.data
 
     # Find src and dst names
     if not src_name and isinstance(edge.src, nodes.AccessNode):
         src_name = edge.src.data
     if not dst_name and isinstance(edge.dst, nodes.AccessNode):
         dst_name = edge.dst.data
+    if not src_name and not dst_name:
+        raise NotImplementedError
 
     # Find the src and dst subsets (deep-copy to allow manipulation)
-    if src_name == dataname:
-        src_subset = dcpy(edge.data.subset)
-        dst_subset = dcpy(edge.data.other_subset)
-    elif dst_name == dataname:
-        src_subset = dcpy(edge.data.other_subset)
-        dst_subset = dcpy(edge.data.subset)
-    else:
-        raise NotImplementedError
+    src_subset = copy.deepcopy(edge.data.src_subset)
+    dst_subset = copy.deepcopy(edge.data.dst_subset)
 
     # Infer missing subsets
     if not src_subset and src_name:
@@ -47,7 +40,7 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
         dst_subset_size = dst_subset.size_exact()
         # If the number of dimensions doesn't match, try squeezing
         if len(dst_subset_size) > len(src_desc.shape):
-            tmp = dcpy(dst_subset)
+            tmp = copy.deepcopy(dst_subset)
             tmp.squeeze()
             dst_subset_size = tmp.size_exact()
         # If the number of dimensions still doesn't match, fail to apply
@@ -63,7 +56,7 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
         src_subset_size = src_subset.size_exact()
         # If the number of dimensions doesn't match, try squeezing
         if len(src_subset_size) > len(dst_desc.shape):
-            tmp = dcpy(src_subset)
+            tmp = copy.deepcopy(src_subset)
             tmp.squeeze()
             src_subset_size = tmp.size_exact()
         # If the number of dimensions still doesn't match, fail to apply
@@ -254,7 +247,7 @@ class RedundantSecondArray(pm.Transformation):
             # (should not be needed for valid SDGs)
             path = graph.memlet_tree(e2)
             for e3 in path:
-                if not e2 is e3:
+                if e3 is not e2:
                     try:
                         _validate_subsets(e3, sdfg.arrays,
                                           src_name=out_array.data)
@@ -297,7 +290,7 @@ class RedundantSecondArray(pm.Transformation):
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
                 if isinstance(a_subset, subsets.Indices):
-                    tmp = dcpy(a_subset)
+                    tmp = copy.deepcopy(a_subset)
                     tmp.offset(b3_subset, negative=False)
                     e3.data.subset = tmp
                 else:
