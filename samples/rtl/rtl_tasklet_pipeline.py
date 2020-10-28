@@ -12,7 +12,7 @@ import numpy as np
 N = dace.symbol('N')
 
 # add sdfg
-sdfg = dace.SDFG('rtl_tasklet_demo')
+sdfg = dace.SDFG('rtl_tasklet_pipeline')
 
 # add state
 state = sdfg.add_state()

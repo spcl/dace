@@ -12,7 +12,7 @@ import numpy as np
 WIDTH = dace.symbol('WIDTH')
 
 # add sdfg
-sdfg = dace.SDFG('rtl_tasklet_demo')
+sdfg = dace.SDFG('rtl_tasklet_vector')
 
 # define compile-time constant
 sdfg.specialize(dict(WIDTH=4))

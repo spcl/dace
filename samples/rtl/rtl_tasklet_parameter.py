@@ -9,7 +9,7 @@ import dace
 import numpy as np
 
 # add sdfg
-sdfg = dace.SDFG('rtl_tasklet_demo')
+sdfg = dace.SDFG('rtl_tasklet_parameter')
 
 # add state
 state = sdfg.add_state()
