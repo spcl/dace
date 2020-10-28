@@ -24,7 +24,7 @@ def test_map2for_overlap():
         expected[:, :, k + 1] = expected[:, :, k] + expected[:, :, k - 1]
 
     sdfg = map2for.to_sdfg()
-    sdfg.apply_transformations([MapExpansion, MapToForLoop])
+    assert sdfg.apply_transformations([MapExpansion, MapToForLoop]) == 2
     sdfg(A=A)
     assert np.allclose(A, expected)
 

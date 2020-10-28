@@ -60,9 +60,9 @@ class MapFission(transformation.Transformation):
         """
         graph = (subgraph
                  if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
-        sdict = subgraph.scope_dict(node_to_children=True)
+        schildren = subgraph.scope_children()
         ns = [(n, graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else
-              (n, n) for n in sdict[None]
+              (n, n) for n in schildren[None]
               if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
         return ns
@@ -72,8 +72,8 @@ class MapFission(transformation.Transformation):
         """ Returns a set of array names that are local to the fission
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
-        sdict = subgraph.scope_dict(node_to_children=True)
-        subset = gr.SubgraphView(parent, sdict[None])
+        schildren = subgraph.scope_children()
+        subset = gr.SubgraphView(parent, schildren[None])
         if nested:
             return set(node.data for node in subset.nodes()
                        if isinstance(node, nodes.AccessNode)

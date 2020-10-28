@@ -415,7 +415,8 @@ def make_properties(cls):
         # Assert that there are no fields in the object not captured by
         # properties, unless they are prefixed with "_"
         for name, prop in obj.__dict__.items():
-            if name not in properties and not name.startswith("_"):
+            if (name not in properties and not name.startswith("_")
+                    and name not in dir(type(obj))):
                 raise PropertyError(
                     "{} : Variable {} is neither a Property nor "
                     "an internal variable (prefixed with \"_\")".format(
@@ -958,7 +959,7 @@ class CodeBlock(object):
         return set()
 
     @property
-    def as_string(self):
+    def as_string(self) -> str:
         if isinstance(self.code, str) or self.code is None:
             return self.code
         return unparse(self.code)

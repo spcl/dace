@@ -3,7 +3,7 @@ import numpy as np
 import dace
 import warnings
 from matrix_product_transpose_test import *
-from dace.codegen.compiler import CompilerConfigurationError, CompilationError
+from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 
 # This tests that we can generate library nodes from the numpy frontend, and
 # choose the global BLAS backend using the DaCe environment variable.
