@@ -285,8 +285,8 @@ def _handle_connectors(state: sd.SDFGState, node: nodes.Tasklet,
 
 
 def _cpp_indirection_promoter(
-    code: str, in_connectors: Set[str], out_connectors: Set[str], sdfg: sd.SDFG,
-    defined_syms: Set[str]
+    code: str, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet],
+    sdfg: sd.SDFG, defined_syms: Set[str]
 ) -> Tuple[str, Dict[str, Tuple[str, subsets.Range]], Dict[str, Tuple[
         str, subsets.Range]], Set[str]]:
     """
@@ -304,7 +304,7 @@ def _cpp_indirection_promoter(
     for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*)\[(.*?)\]', code):
         node_name = m.group(1)
         subexpr = m.group(2)
-        if node_name in (in_connectors | out_connectors):
+        if node_name in (set(in_edges.keys()) | set(out_edges.keys())):
             try:
                 # NOTE: This is not necessarily a Python string. If fails,
                 #       we skip this indirection.
@@ -313,14 +313,29 @@ def _cpp_indirection_promoter(
                 do_not_remove.add(node_name)
                 continue
 
-            # subexpr is always a one-dimensional index
             latest[node_name] += 1
             new_name = f'{node_name}_{latest[node_name]}'
-            subset = subsets.Range([(subexpr, subexpr, 1)])
+
+            # subexpr is always a one-dimensional index
+            # Find non-scalar dimension to replace in memlet
+            if node_name in in_edges:
+                orig_subset = in_edges[node_name].subset
+            else:
+                orig_subset = out_edges[node_name].subset
+
+            first_nonscalar_dim = next(i
+                                       for i, s in enumerate(orig_subset.size())
+                                       if s != 1)
+
+            # Make subset out of range and new sub-expression
+            subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] +
+                                   [(subexpr, subexpr, 1)] +
+                                   orig_subset.ndrange()[first_nonscalar_dim +
+                                                         1:])
 
             # Check if range can be collapsed
             if _range_is_promotable(subset, defined_syms):
-                if node_name in in_connectors:
+                if node_name in in_edges:
                     in_mapping[new_name] = (node_name, subset)
                 else:
                     out_mapping[new_name] = (node_name, subset)
@@ -367,8 +382,11 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
                 elif node.code.language is dtypes.Language.CPP:
                     (node.code.code, in_mapping, out_mapping,
                      do_not_remove) = _cpp_indirection_promoter(
-                         node.code.as_string, set(node.in_connectors.keys()),
-                         set(node.out_connectors.keys()), sdfg, defined_syms)
+                         node.code.as_string,
+                         {e.dst_conn: e.data
+                          for e in state.in_edges(node)},
+                         {e.src_conn: e.data
+                          for e in state.out_edges(node)}, sdfg, defined_syms)
 
                 # Nothing more to do
                 if len(in_mapping) + len(out_mapping) == 0:
