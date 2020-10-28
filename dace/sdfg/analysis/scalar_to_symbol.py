@@ -571,11 +571,6 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
             # Clean up all nodes after assignment was transferred
             new_state.remove_nodes_from(new_state.nodes())
 
-        scalar_nodes = [
-            n for n in state.nodes()
-            if isinstance(n, nodes.AccessNode) and n.data in to_promote
-        ]
-
     # Step 3: Scalar reads
     remove_scalar_reads(sdfg, {k: k for k in to_promote})
 
