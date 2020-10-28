@@ -3007,8 +3007,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         for arg in node.keywords]
                 required_args = list(sdfg.arglist().keys())
                 # Add keyword arguments to variables
-                for (k, v) in args:
-                    self.variables[k] = v
+                # TODO: Why where those added to calling program?
+                # for (k, v) in args:
+                #     self.variables[k] = v
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
