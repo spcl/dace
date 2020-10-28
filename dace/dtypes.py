@@ -416,8 +416,10 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
-    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol'
+                        or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol'
+                        or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -915,6 +917,19 @@ TYPECLASS_STRINGS = [
     "float64",
     "complex64",
     "complex128",
+]
+
+INTEGER_TYPES = [
+    bool,
+    bool_,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint8,
+    uint16,
+    uint32,
+    uint64,
 ]
 
 #######################################################

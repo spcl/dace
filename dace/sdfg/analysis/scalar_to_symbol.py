@@ -25,6 +25,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
           and may have zero or more **array** inputs and not be in a scope.
         * Scalar must not be accessed with a write-conflict resolution.
         * Scalar must not be written to more than once in a state.
+        * If scalar is not integral (i.e., int type), it must also appear in
+          an inter-state condition to be promotable.
 
     These conditions must apply on all occurences of the scalar in order for
     it to be promotable.
@@ -152,6 +154,14 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
             else:  # If input is not an acceptable node type, skip
                 candidates.remove(candidate)
         candidates_seen |= candidates_in_state
+
+    # Filter out non-integral symbols that do not appear in inter-state edges
+    interstate_symbols = set()
+    for edge in sdfg.edges():
+        interstate_symbols |= edge.data.free_symbols
+    for candidate in (candidates - interstate_symbols):
+        if sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
+            candidates.remove(candidate)
 
     # Only keep candidates that were found in SDFG
     candidates &= candidates_seen
@@ -540,8 +550,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
                     memlet_str: str = e.data.data
-                    if (e.data.subset is not None and not isinstance(
-                            sdfg.arrays[memlet_str], dt.Scalar)):
+                    if (e.data.subset is not None and
+                            not isinstance(sdfg.arrays[memlet_str], dt.Scalar)):
                         memlet_str += '[%s]' % e.data.subset
                     newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn),
                                      memlet_str, newcode)
