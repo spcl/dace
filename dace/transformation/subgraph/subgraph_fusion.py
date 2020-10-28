@@ -392,8 +392,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         nested SDFGs to its access nodes. Needed in a post-processing
         step during fusion.
         '''
-        nsdfg.data(nested_data_name).strides = dcpy(sdfg.data(name).strides)
-        nsdfg.data(nested_data_name).total_size = dcpy(
+        nsdfg.data(nname).strides = dcpy(sdfg.data(name).strides)
+        nsdfg.data(nname).total_size = dcpy(
             sdfg.data(name).total_size)
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
