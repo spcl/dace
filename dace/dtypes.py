@@ -825,6 +825,7 @@ class callback(typeclass):
 
 # Helper function to determine whether a global variable is a constant
 _CONSTANT_TYPES = [
+    type(None),
     int,
     float,
     complex,
