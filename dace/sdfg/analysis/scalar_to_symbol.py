@@ -333,9 +333,11 @@ def _cpp_indirection_promoter(
             else:
                 orig_subset = out_edges[node_name].subset
 
-            first_nonscalar_dim = next(i
-                                       for i, s in enumerate(orig_subset.size())
-                                       if s != 1)
+            try:
+                first_nonscalar_dim = next(
+                    i for i, s in enumerate(orig_subset.size()) if s != 1)
+            except StopIteration:
+                first_nonscalar_dim = 0
 
             # Make subset out of range and new sub-expression
             subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] +
