@@ -77,6 +77,8 @@ run_all() {
     fi
 
     run_sample fpga/multiple_kernels multiple_kernels 0
+    run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
+
 }
 
 # Check if xocc is vailable
