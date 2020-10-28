@@ -169,6 +169,20 @@ def test_mean_reduce_symbolic_shape():
     assert np.allclose(dace_result, numpy_result)
 
 
+@compare_numpy_output()
+def test_reduce_all_axes(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=(0, -2, 2))
+
+
+# test accessing a global variable
+my_none = None
+
+
+@compare_numpy_output()
+def test_reduce_global_None(A: dace.float64[10, 5, 3]):
+    return np.mean(A, axis=my_none)
+
+
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
