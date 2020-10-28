@@ -17,11 +17,12 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
+from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import TargetCodeGenerator, DefinedType
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute, DefinedType)
+                                         make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.symbolic import evaluate
@@ -179,7 +180,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Make sure there are no global transients in the nested state
                 # that are thus not gonna be allocated
                 if data.storage == dace.dtypes.StorageType.FPGA_Global:
-                    raise dace.codegen.codegen.CodegenError(
+                    raise cgx.CodegenError(
                         "Cannot allocate global memory from device code.")
                 allocated.add(node.data)
                 # Allocate transients
@@ -367,22 +368,21 @@ class FPGACodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, dace.data.Stream):
 
             if not self._in_device_code:
-                raise dace.codegen.codegen.CodegenError(
+                raise cgx.CodegenError(
                     "Cannot allocate FIFO from CPU code: {}".format(node.data))
 
             if is_dynamically_sized:
-                raise dace.codegen.codegen.CodegenError(
+                raise cgx.CodegenError(
                     "Arrays of streams cannot have dynamic size on FPGA")
 
             if nodedesc.buffer_size < 1:
-                raise dace.codegen.codegen.CodegenError(
-                    "Streams cannot be unbounded on FPGA")
+                raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
 
             buffer_length_dynamically_sized = (dace.symbolic.issymbolic(
                 nodedesc.buffer_size, sdfg.constants))
 
             if buffer_length_dynamically_sized:
-                raise dace.codegen.codegen.CodegenError(
+                raise cgx.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
             # Language-specific implementation
@@ -450,7 +450,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
-                    raise dace.codegen.codegen.CodegenError(
+                    raise cgx.CodegenError(
                         "Tried to allocate local FPGA memory "
                         "outside device code: {}".format(dataname))
                 if is_dynamically_sized:
@@ -829,7 +829,7 @@ class FPGACodeGen(TargetCodeGenerator):
             return (desc.as_arg(with_types=True, name=name))
 
     def get_next_scope_entries(self, sdfg, dfg, scope_entry):
-        parent_scope_entry = dfg.scope_dict()[scope_entry]
+        parent_scope_entry = dfg.entry_node(scope_entry)
         parent_scope = dfg.scope_subgraph(parent_scope_entry)
 
         # Get all scopes from the same level
@@ -872,7 +872,7 @@ class FPGACodeGen(TargetCodeGenerator):
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dace.dtypes.StorageType.Register
             try:
-                src_parent = dfg.scope_dict()[src_node]
+                src_parent = dfg.entry_node(src_node)
             except KeyError:
                 src_parent = None
             dst_schedule = (None
@@ -886,7 +886,7 @@ class FPGACodeGen(TargetCodeGenerator):
             dst_storage = dst_node.desc(sdfg).storage
 
         try:
-            dst_parent = dfg.scope_dict()[dst_node]
+            dst_parent = dfg.entry_node(dst_node)
         except KeyError:
             dst_parent = None
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
@@ -922,7 +922,7 @@ class FPGACodeGen(TargetCodeGenerator):
             elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
                 for state in x.sdfg:
                     if not self._is_innermost(state.nodes(),
-                                              state.scope_dict(True), x.sdfg):
+                                              state.scope_children(), x.sdfg):
                         return False
         return True
 
@@ -955,9 +955,9 @@ class FPGACodeGen(TargetCodeGenerator):
             callsite_stream.write('{', sdfg, state_id, node)
 
             # Pipeline innermost loops
-            scope_dict = dfg.scope_dict(True)
-            scope = scope_dict[node]
-            is_innermost = self._is_innermost(scope, scope_dict, sdfg)
+            scope_children = dfg.scope_children()
+            scope = scope_children[node]
+            is_innermost = self._is_innermost(scope, scope_children, sdfg)
 
             # Generate custom iterators if this is a pipelined (and thus
             # flattened) loop
@@ -1071,7 +1071,7 @@ class FPGACodeGen(TargetCodeGenerator):
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
                                                  node)
         allocated = set()
-        for child in dfg.scope_dict(node_to_children=True)[node]:
+        for child in dfg.scope_children()[node]:
             if not isinstance(child, dace.sdfg.nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
@@ -1122,8 +1122,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         function_stream, callsite_stream):
 
         if self._in_device_code:
-            from dace.codegen.codegen import CodegenError
-            raise CodegenError("Tried to generate kernel from device code")
+            raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
         self._cpu_codegen._packed_types = True
 
