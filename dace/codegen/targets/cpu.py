@@ -10,7 +10,7 @@ from dace.codegen.targets import cpp
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.cpp import *
 from dace.codegen.targets import rtl
-from dace.codegen.targets.target import TargetCodeGenerator, make_absolute, DefinedType, TargetDispatcher
+from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
 from dace.sdfg import nodes
