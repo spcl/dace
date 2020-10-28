@@ -7,10 +7,11 @@ import dace
 import functools
 import re
 from dace.codegen import control_flow as cflow
+from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.cpp import unparse_interstate_edge
-from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
+from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
@@ -27,7 +28,7 @@ class DaCeCodeGenerator(object):
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
     def __init__(self, *args, **kwargs):
-        self._dispatcher = TargetDispatcher()
+        self._dispatcher = disp.TargetDispatcher()
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
@@ -734,6 +735,11 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         interstate_symbols = {}
         for e in sdfg.edges():
             symbols = e.data.new_symbols(global_symbols)
+            # Inferred symbols only take precedence if not None
+            symbols = {
+                k: v if v is not None else global_symbols[k]
+                for k, v in symbols.items()
+            }
             interstate_symbols.update(symbols)
             global_symbols.update(symbols)
 
@@ -855,6 +861,13 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 # cycle, by checking that there's no reachable node *not*
                 # included in any cycle between the first and last node.
                 if any([len(set(c) - internal_nodes) > 1 for c in cycles]):
+                    continue
+
+                # Filter out loops with conditions and assignments that would
+                # generate code within the loop
+                if (entry_edge.data.assignments or exit_edge.data.assignments
+                        or not back_edge.data.is_unconditional()
+                        or not previous_edge.data.is_unconditional()):
                     continue
 
                 # This is a loop! Generate the necessary annotation objects.

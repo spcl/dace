@@ -825,6 +825,7 @@ class callback(typeclass):
 
 # Helper function to determine whether a global variable is a constant
 _CONSTANT_TYPES = [
+    type(None),
     int,
     float,
     complex,
@@ -850,9 +851,16 @@ _CONSTANT_TYPES = [
 ]
 
 
-def isconstant(var):
+def isconstant(var, allow_recursive=False):
     """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code). """
+        directly generated in code).
+
+        :param allow_recursive: whether to allow dicts or lists containing constants.
+    """
+    if allow_recursive:
+        if isinstance(var, (list, tuple)):
+            return all(isconstant(v, allow_recursive=False) for v in var)
+
     return type(var) in _CONSTANT_TYPES
 
 
@@ -959,7 +967,7 @@ def ismodule_and_allowed(var):
 def isallowed(var):
     """ Returns True if a given object is allowed in a DaCe program. """
     from dace.symbolic import symbol
-    return isconstant(var) or ismodule(var) or isinstance(
+    return isconstant(var, allow_recursive=True) or ismodule(var) or isinstance(
         var, symbol) or isinstance(var, typeclass)
 
 

@@ -116,6 +116,9 @@ run_all() {
     ## Multiple kernels
     run_sample fpga/multiple_kernels multiple_kernels "\n"
 
+    #Unique nested sdfg
+    run_sample fpga/unique_nested_sdfg_fpga two_vecAdd "\n"
+
     # Nested SDFG with symbol mapping
     run_sample fpga/symbol_mapping symbol_mapping "\n"
 }

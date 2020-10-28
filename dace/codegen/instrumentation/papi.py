@@ -412,7 +412,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                     and not dace.sdfg.is_parallel(dfg)):
                 return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
-        elif (node.map._can_be_supersection_start
+        elif (getattr(node.map, '_can_be_supersection_start', False)
               and not dace.sdfg.is_parallel(dfg)):
             return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 

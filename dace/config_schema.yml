@@ -167,6 +167,15 @@ required:
                     If set to false, the program will optimistically assume
                     that the bitstream is present in the build directory, and
                     will crash if this is not the case.
+
+            unique_functions:
+                type: bool
+                default: true
+                title: Generate unique functions
+                description: >
+                    If set to true, if multiple nested SDFGs with equivalent contents exist,
+                    the code is generated only once.
+
             #############################################
             # CPU compiler
             cpu:
