@@ -493,6 +493,10 @@ class ExpandTransformation(Transformation):
                 nsdfg.parent_sdfg = sdfg
                 nsdfg.update_sdfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
+            elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
+                if expansion.schedule is ScheduleType.Default:
+                    expansion.schedule = node.schedule
+
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
         expansion.environments = copy.copy(
