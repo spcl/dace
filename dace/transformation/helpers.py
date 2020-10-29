@@ -3,7 +3,7 @@
 import copy
 
 from dace.subsets import Range, Subset, union
-from typing import Dict, List, Optional, Tuple
+from typing import AnyStr, Dict, List, Optional, Set, Tuple
 
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
@@ -410,11 +410,35 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
+def read_and_write_set(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+    """
+    Determines which data containers are read and which are written in the
+    given SDFG state. Containers that are written with write conflict
+    resolution are also included in the read set.
+    :param state: An SDFG state.
+    :return: A tuple of strings denoting (container read, containers written).
+    """
+    data_nodes = state.data_nodes()
+    read_set = set()
+    write_set = set()
+    for n in data_nodes:
+        in_edges = state.in_edges(n)
+        if len(in_edges) > 0:
+            write_set.add(n.data)
+        for e in in_edges:
+            if e.data.wcr is not None:
+                read_set.add(n.data)
+                break
+        if len(state.out_edges(n)) > 0:
+            read_set.add(n.data)
+    return read_set, write_set
+
+
 def split_interstate_edges(sdfg: SDFG) -> None:
     """
     Splits all inter-state edges into edges with conditions and edges with
     assignments. This procedure helps in nested loop detection.
-    :param sdfg: The SDFG to split 
+    :param sdfg: The SDFG to split
     :note: Operates in-place on the SDFG.
     """
     for e in sdfg.edges():
