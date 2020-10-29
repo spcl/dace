@@ -9,15 +9,16 @@ from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation.interstate.loop_detection import DetectLoop
+from dace.transformation.interstate.loop_detection import (DetectLoop,
+                                                           find_for_loop)
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 
 
 @registry.autoregister
 @make_properties
 class LoopPeeling(LoopUnroll):
-    """ 
-    Splits the first `count` iterations of a state machine for-loop into 
+    """
+    Splits the first `count` iterations of a state machine for-loop into
     multiple, separate states.
     """
 
@@ -44,7 +45,7 @@ class LoopPeeling(LoopUnroll):
         condition = condition_edge.data.condition_sympy()
 
         # If loop cannot be detected, fail
-        rng = LoopUnroll._loop_range(itervar, guard_inedges, condition)
+        rng = find_for_loop(itervar, guard_inedges, condition)
         if not rng:
             return False
 
