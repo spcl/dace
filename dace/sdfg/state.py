@@ -796,12 +796,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
         for n in nodes:
-            nret = serialize.loads(serialize.dumps(n), context=rec_ci)
+            nret = serialize.from_json(n, context=rec_ci)
             ret.add_node(nret)
 
         # Connect using the edges
         for e in edges:
-            eret = serialize.loads(serialize.dumps(e), context=rec_ci)
+            eret = serialize.from_json(e, context=rec_ci)
 
             ret.add_edge(eret.src, eret.src_conn, eret.dst, eret.dst_conn,
                          eret.data)

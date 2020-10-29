@@ -56,8 +56,8 @@ class FPGATransformState(transformation.Transformation):
                 return False
 
             # Streams have strict conditions due to code generator limitations
-            if (isinstance(node, nodes.AccessNode)
-                    and isinstance(sdfg.arrays[node.data], data.Stream)):
+            if (isinstance(node, nodes.AccessNode) and isinstance(
+                    graph.parent.arrays[node.data], data.Stream)):
                 nodedesc = graph.parent.arrays[node.data]
                 sdict = graph.scope_dict()
                 if nodedesc.storage in [
