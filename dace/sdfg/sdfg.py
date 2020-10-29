@@ -318,7 +318,7 @@ class SDFG(OrderedDiGraph):
             ret.add_node(state)
 
         for e in edges:
-            e = dace.serialize.loads(dace.serialize.dumps(e))
+            e = dace.serialize.from_json(e)
             ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
 
         return ret

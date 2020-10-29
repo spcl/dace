@@ -239,7 +239,6 @@ class DaceProgram:
         self._name = f.__name__
         self.argnames = _get_argnames(f)
 
-        # NOTE: Important to call this outside list/dict comprehensions
         global_vars = _get_locals_and_globals(f)
 
         self.global_vars = {
@@ -346,7 +345,7 @@ class DaceProgram:
         # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
         other_sdfgs = {
             k: v
-            for k, v in dace_func.__globals__.items()
+            for k, v in _get_locals_and_globals(dace_func).items()
             if isinstance(v, (SDFG, DaceProgram))
         }
 
