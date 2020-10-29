@@ -28,6 +28,17 @@ ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
+def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
+    """ Normalize a list of axes by converting negative dimensions to positive.
+
+        :param dims: the list of dimensions, possibly containing negative ints.
+        :param max_dim: the total amount of dimensions.
+        :return: a list of dimensions containing only positive ints.
+    """
+
+    return [ax if ax >= 0 else max_dim + ax for ax in axes]
+
+
 ##############################################################################
 # Python function replacements ###############################################
 ##############################################################################
@@ -109,12 +120,22 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
+            axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
+
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                            ast.parse(in_array).body[0].value,
                                            {})
         input_memlet = Memlet.simple(inarr, input_subset)
         output_shape = None
-        if axis is None:
+
+        # check if we are reducing along all axes
+        if axis is not None and len(axis) == len(input_subset.size()):
+            reduce_all = all(
+                x == y for x, y in zip(axis, range(len(input_subset.size()))))
+        else:
+            reduce_all = False
+
+        if axis is None or reduce_all:
             output_shape = [1]
         else:
             output_subset = copy.deepcopy(input_subset)
@@ -133,6 +154,7 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
+            axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
         # Compute memlets
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
@@ -407,6 +429,29 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 @oprepo.replaces('numpy.sum')
 def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('numpy.mean')
+def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+
+    nest = NestedCall(sdfg, state)
+
+    sum = nest(_sum)(a, axis=axis)
+
+    if axis is None:
+        div_amount = reduce(lambda x, y: x * y,
+                            (d for d in sdfg.arrays[a].shape))
+    elif isinstance(axis, (tuple, list)):
+        axis = normalize_axes(axis, len(sdfg.arrays[a].shape))
+        # each entry needs to be divided by the size of the reduction
+        div_amount = reduce(
+            lambda x, y: x * y,
+            (d for i, d in enumerate(sdfg.arrays[a].shape) if i in axis))
+    else:
+        div_amount = sdfg.arrays[a].shape[axis]
+
+    return nest, nest(_elementwise)("lambda x: x / ({})".format(div_amount),
+                                    sum)
 
 
 @oprepo.replaces('numpy.max')
