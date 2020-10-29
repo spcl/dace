@@ -146,7 +146,7 @@ class AffineSMemlet(SeparableMemletPattern):
             subexprs = None
             step = None
             if isinstance(dexpr, sympy.Basic):  # Affine index
-                subexprs = [dexpr]
+                subexprs = [dexpr, dexpr]
 
             elif isinstance(dexpr, tuple) and len(dexpr) == 3:  # Affine range
                 subexprs = [dexpr[0], dexpr[1]]
@@ -201,9 +201,10 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
+            result_begin = subexprs[0].subs(self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
-                if bre + 1 == node_rs and step == 1:
+                if node_rb == result_begin and bre + 1 == node_rs and step == 1:
                     pass
                 else:
                     # Map ranges where the last index is not known
@@ -678,7 +679,7 @@ def propagate_memlet(dfg_state,
         entry_node = scope_node
         neighboring_edges = dfg_state.out_edges(scope_node)
     elif isinstance(scope_node, nodes.ExitNode):
-        entry_node = dfg_state.scope_dict()[scope_node]
+        entry_node = dfg_state.entry_node(scope_node)
         neighboring_edges = dfg_state.in_edges(scope_node)
     else:
         raise TypeError('Trying to propagate through a non-scope node')

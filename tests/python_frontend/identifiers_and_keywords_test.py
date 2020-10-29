@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -236,7 +237,7 @@ def test_keyword_lambda():
         keyword_lambda(A, B)
     except Exception as e:
         print(e)
-        return False
+        return True
     assert np.allclose(A, B)
 
 
@@ -248,7 +249,7 @@ if __name__ == "__main__":
     test_keyword_assert()
     test_keyword_ifelse()
     test_keyword_for()
-    # test_keyword_while()
-    # test_keyword_return()
+    test_keyword_while()
+    test_keyword_return()
     test_keyword_notor()
     test_keyword_lambda()

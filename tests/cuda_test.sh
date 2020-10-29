@@ -200,6 +200,8 @@ runall() {
     #runtestargs transformations/sfusion_sequential1_cudatest.py
     runtestargs transformations/subgraph_fusion/sequential2_cudatest.py
 
+    runtestargs half_cudatest.py
+    runtestargs halfvec_cudatest.py
     runopt samples/customization/tensor_cores.py $1
 }
 

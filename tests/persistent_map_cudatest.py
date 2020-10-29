@@ -35,10 +35,12 @@ def test_persistent_dynamic_map():
     sdfg.apply_gpu_transformations()
 
     for state in sdfg:
-        for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
-            if state.scope_dict()[scope] is None:
+        for scope in state.nodes():
+            if not isinstance(scope, nodes.EntryNode):
+                continue
+            if state.entry_node(scope) is None:
                 scope.map.schedule = ScheduleType.GPU_Persistent
-            elif state.scope_dict()[state.scope_dict()[scope]] is None:
+            elif state.entry_node(state.entry_node(scope)) is None:
                 scope.map.schedule = ScheduleType.GPU_Device
             else:
                 scope.map.schedule = ScheduleType.GPU_ThreadBlock_Dynamic
@@ -54,8 +56,10 @@ def test_persistent_default():
     sdfg.apply_gpu_transformations()
 
     for state in sdfg:
-        for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
-            if state.scope_dict()[scope] is None:
+        for scope in state.nodes():
+            if not isinstance(scope, nodes.EntryNode):
+                continue
+            if state.entry_node(scope) is None:
                 scope.map.schedule = ScheduleType.GPU_Persistent
             else:
                 scope.map.schedule = ScheduleType.Default

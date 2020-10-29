@@ -28,6 +28,17 @@ ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 
+def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
+    """ Normalize a list of axes by converting negative dimensions to positive.
+
+        :param dims: the list of dimensions, possibly containing negative ints.
+        :param max_dim: the total amount of dimensions.
+        :return: a list of dimensions containing only positive ints.
+    """
+
+    return [ax if ax >= 0 else max_dim + ax for ax in axes]
+
+
 ##############################################################################
 # Python function replacements ###############################################
 ##############################################################################
@@ -41,6 +52,8 @@ def _define_local_ex(sdfg: SDFG,
                      dtype: dace.typeclass,
                      storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local array in a DaCe program. """
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
     return name
 
@@ -107,12 +120,22 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
+            axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
+
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
                                            ast.parse(in_array).body[0].value,
                                            {})
         input_memlet = Memlet.simple(inarr, input_subset)
         output_shape = None
-        if axis is None:
+
+        # check if we are reducing along all axes
+        if axis is not None and len(axis) == len(input_subset.size()):
+            reduce_all = all(
+                x == y for x, y in zip(axis, range(len(input_subset.size()))))
+        else:
+            reduce_all = False
+
+        if axis is None or reduce_all:
             output_shape = [1]
         else:
             output_subset = copy.deepcopy(input_subset)
@@ -131,6 +154,7 @@ def _reduce(sdfg: SDFG,
             axis = (axis, )
         if axis is not None:
             axis = tuple(pystr_to_symbolic(a) for a in axis)
+            axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
         # Compute memlets
         input_subset = parse_memlet_subset(sdfg.arrays[inarr],
@@ -358,22 +382,46 @@ def _imag(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
-def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
+def _transpose(sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
-    arr1 = sdfg.arrays[inpname]
-    restype = arr1.dtype
-    outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]),
-                                            restype, arr1.storage)
+    if axes is None:
+        arr1 = sdfg.arrays[inpname]
+        restype = arr1.dtype
+        outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]),
+                                                restype, arr1.storage)
 
-    acc1 = state.add_read(inpname)
-    acc2 = state.add_write(outname)
-    import dace.libraries.blas  # Avoid import loop
-    tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
-    state.add_node(tasklet)
-    state.add_edge(acc1, None, tasklet, '_inp',
-                   dace.Memlet.from_array(inpname, arr1))
-    state.add_edge(tasklet, '_out', acc2, None,
-                   dace.Memlet.from_array(outname, arr2))
+        acc1 = state.add_read(inpname)
+        acc2 = state.add_write(outname)
+        import dace.libraries.blas  # Avoid import loop
+        tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
+        state.add_node(tasklet)
+        state.add_edge(acc1, None, tasklet, '_inp',
+                       dace.Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out', acc2, None,
+                       dace.Memlet.from_array(outname, arr2))
+    else:
+        arr1 = sdfg.arrays[inpname]
+        if len(axes) != len(arr1.shape) or sorted(axes) != list(
+                range(len(arr1.shape))):
+            raise ValueError("axes don't match array")
+
+        new_shape = [arr1.shape[i] for i in axes]
+        outname, arr2 = sdfg.add_temp_transient(new_shape, arr1.dtype,
+                                                arr1.storage)
+
+        state.add_mapped_tasklet(
+            "_transpose_", {
+                "_i{}".format(i): "0:{}".format(s)
+                for i, s in enumerate(arr1.shape)
+            },
+            dict(_in=Memlet.simple(
+                inpname, ", ".join("_i{}".format(i)
+                                   for i, _ in enumerate(arr1.shape)))),
+            "_out = _in",
+            dict(_out=Memlet.simple(
+                outname, ", ".join("_i{}".format(axes[i])
+                                   for i, _ in enumerate(arr1.shape)))),
+            external_edges=True)
 
     return outname
 
@@ -381,6 +429,29 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str):
 @oprepo.replaces('numpy.sum')
 def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('numpy.mean')
+def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+
+    nest = NestedCall(sdfg, state)
+
+    sum = nest(_sum)(a, axis=axis)
+
+    if axis is None:
+        div_amount = reduce(lambda x, y: x * y,
+                            (d for d in sdfg.arrays[a].shape))
+    elif isinstance(axis, (tuple, list)):
+        axis = normalize_axes(axis, len(sdfg.arrays[a].shape))
+        # each entry needs to be divided by the size of the reduction
+        div_amount = reduce(
+            lambda x, y: x * y,
+            (d for i, d in enumerate(sdfg.arrays[a].shape) if i in axis))
+    else:
+        div_amount = sdfg.arrays[a].shape[axis]
+
+    return nest, nest(_elementwise)("lambda x: x / ({})".format(div_amount),
+                                    sum)
 
 
 @oprepo.replaces('numpy.max')
@@ -577,14 +648,14 @@ def _broadcast_together(arr1_shape, arr2_shape):
 
             all_idx_dict[get_idx(i)] = dim1
 
-        elif dim1 == 1:
+        elif dim1 == 1 and dim2 is not None:
             a1_idx.append("0")
             # dim2 != 1 must hold here
             a2_idx.append(get_idx(i))
 
             all_idx_dict[get_idx(i)] = dim2
 
-        elif dim2 == 1:
+        elif dim2 == 1 and dim1 is not None:
             # dim1 != 1 must hold here
             a1_idx.append(get_idx(i))
             a2_idx.append("0")
@@ -648,7 +719,7 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         return _unop(sdfg, state, op1, opcode, op)
-    
+
     @oprepo.replaces_operator('Scalar', op)
     def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
@@ -668,7 +739,7 @@ def _makeunop(op, opcode):
         state.add_edge(tasklet, '__out', node2, None,
                         dace.Memlet.from_array(op2, scalar2))
         return op2
-    
+
     @oprepo.replaces_operator('NumConstant', op)
     def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
@@ -687,8 +758,8 @@ def _makeunop(op, opcode):
             op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
-        return eval(expr, vars) 
-    
+        return eval(expr, vars)
+
     @oprepo.replaces_operator('symbol', op)
     def _op(visitor: 'ProgramVisitor',
             sdfg: SDFG,
@@ -697,7 +768,7 @@ def _makeunop(op, opcode):
             op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
-        return eval(expr, vars)  
+        return eval(expr, vars)
 
 
 # @oprepo.replaces_operator('int', 'USub', None)
@@ -777,7 +848,7 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
         type1 = 1  # signed integer, bool
     else:
         type1 = 0  # unsigned integer
-    
+
     if dtype2 in complex_types:
         type2 = 3  # complex
     elif dtype2 in float_types:
@@ -830,7 +901,7 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
                     left_cast = dtype2
                 elif type2 < 3:
                     right_cast = dtype1
-    
+
     elif _is_op_bitwise(operator):
         # Only integers may be arguments of bitwise and shifting operations
         if max(type1, type2) > 1:
@@ -838,10 +909,10 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
                             "'{}' and '{}'".format(operator, dtype1, dtype2))
         max_bytes = max(dtype1.bytes, dtype2.bytes)
         result_type = eval('dace.int{}'.format(4 * max_bytes))
-    
+
     elif _is_op_boolean(operator):
         result_type = dace.int8
-                
+
     return result_type, left_cast, right_cast
 
 
@@ -868,7 +939,7 @@ def _array_array_binop(visitor: 'ProgramVisitor',
         tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
     if right_cast is not None:
         tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
-    
+
     left_shape = left_arr.shape
     right_shape = right_arr.shape
 
@@ -883,7 +954,7 @@ def _array_array_binop(visitor: 'ProgramVisitor',
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    left_arr.storage)
-    
+
     if list(out_shape) == [1]:
         tasklet = state.add_tasklet(
             '_%s_' % operator,
@@ -914,7 +985,7 @@ def _array_array_binop(visitor: 'ProgramVisitor',
             {'__out': Memlet.simple(out_operand, out_idx)},
             external_edges=True
         )
-    
+
     return out_operand
 
 
@@ -960,7 +1031,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    storage)
-    
+
     if list(out_shape) == [1]:
         if left_arr:
             inp_conn = {'__in1'}
@@ -998,7 +1069,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
             {'__out': Memlet.simple(out_operand, out_idx)},
             external_edges=True
         )
-    
+
     return out_operand
 
 
@@ -1044,7 +1115,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    storage)
-    
+
     if list(out_shape) == [1]:
         if left_arr:
             inp_conn = {'__in1'}
@@ -1082,7 +1153,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
             {'__out': Memlet.simple(out_operand, out_idx)},
             external_edges=True
         )
-    
+
     return out_operand
 
 
@@ -1113,7 +1184,7 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor',
     out_operand = sdfg.temp_data_name()
     _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
                                   storage=left_scal.storage)
-    
+
     tasklet = state.add_tasklet(
         '_%s_' % operator,
         {'__in1', '__in2'},
@@ -1130,7 +1201,7 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor',
                    dace.Memlet.from_array(right_operand, right_scal))
     state.add_edge(tasklet, '__out', n3, None,
                    dace.Memlet.from_array(out_operand, out_scal))
-    
+
     return out_operand
 
 
@@ -1166,11 +1237,11 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
                                             o=tasklet_args[1])
-    
+
     out_operand = sdfg.temp_data_name()
     _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
                                   storage=storage)
-    
+
     if left_scal:
         inp_conn = {'__in1'}
         n1 = state.add_read(left_operand)
@@ -1193,7 +1264,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
                        dace.Memlet.from_array(right_operand, right_scal))
     state.add_edge(tasklet, '__out', n3, None,
                    dace.Memlet.from_array(out_operand, out_scal))
-    
+
     return out_operand
 
 
@@ -1229,11 +1300,11 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
                                             o=tasklet_args[1])
-    
+
     out_operand = sdfg.temp_data_name()
     _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
                                   storage=storage)
-    
+
     if left_scal:
         inp_conn = {'__in1'}
         n1 = state.add_read(left_operand)
@@ -1256,7 +1327,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
                        dace.Memlet.from_array(right_operand, right_scal))
     state.add_edge(tasklet, '__out', n3, None,
                    dace.Memlet.from_array(out_operand, out_scal))
-    
+
     return out_operand
 
 
@@ -1309,17 +1380,17 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Array', op, otherclass='NumConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Array', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Array', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -1334,17 +1405,17 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _scalar_scalar_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Scalar', op, otherclass='NumConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Scalar', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Scalar', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -1354,72 +1425,72 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('NumConstant', op, otherclass='NumConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('NumConstant', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='NumConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('BoolConstant', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('symbol', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('symbol', op, otherclass='NumConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('symbol', op, otherclass='BoolConstant')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('symbol', op, otherclass='symbol')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
