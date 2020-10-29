@@ -34,7 +34,8 @@ def make_sdfg():
     state_inner = sdfg_inner.add_state("inner")
 
     entry, exit = state_inner.add_map("map", {"i": "0:N"})
-    tasklet = state_inner.add_tasklet("tasklet", {"read_tasklet"}, {"write_tasklet"},
+    tasklet = state_inner.add_tasklet("tasklet", {"read_tasklet"},
+                                      {"write_tasklet"},
                                       "write_tasklet = read_tasklet + 1")
 
     for s in ["unused", "used"]:
@@ -49,11 +50,10 @@ def make_sdfg():
         read_middle = state_middle.add_read(f"read_{s}_middle")
         read_inner = state_inner.add_read(f"read_{s}_inner")
 
-        state_outer.add_memlet_path(
-            read_outer,
-            nsdfg_middle,
-            dst_conn=f"read_{s}_middle",
-            memlet=dace.Memlet(f"read_{s}[0:N]"))
+        state_outer.add_memlet_path(read_outer,
+                                    nsdfg_middle,
+                                    dst_conn=f"read_{s}_middle",
+                                    memlet=dace.Memlet(f"read_{s}[0:N]"))
         state_middle.add_memlet_path(
             read_middle,
             nsdfg_inner,
@@ -70,32 +70,30 @@ def make_sdfg():
         write_middle = state_middle.add_write(f"write_{s}_middle")
         write_inner = state_inner.add_write(f"write_{s}_inner")
 
-        state_outer.add_memlet_path(
-            nsdfg_middle,
-            write_outer,
-            src_conn=f"write_{s}_middle",
-            memlet=dace.Memlet(f"write_{s}[0:N]"))
+        state_outer.add_memlet_path(nsdfg_middle,
+                                    write_outer,
+                                    src_conn=f"write_{s}_middle",
+                                    memlet=dace.Memlet(f"write_{s}[0:N]"))
         state_middle.add_memlet_path(
             nsdfg_inner,
             write_middle,
             src_conn=f"write_{s}_inner",
             memlet=dace.Memlet(f"write_{s}_middle[0:N]"))
 
-    state_inner.add_memlet_path(
-        read_inner,
-        entry,
-        tasklet,
-        dst_conn=f"read_tasklet",
-        memlet=dace.Memlet(f"read_{s}_inner[i]"))
+    state_inner.add_memlet_path(read_inner,
+                                entry,
+                                tasklet,
+                                dst_conn=f"read_tasklet",
+                                memlet=dace.Memlet(f"read_{s}_inner[i]"))
 
-    state_inner.add_memlet_path(
-        tasklet,
-        exit,
-        write_inner,
-        src_conn=f"write_tasklet",
-        memlet=dace.Memlet(f"write_{s}_inner[i]"))
+    state_inner.add_memlet_path(tasklet,
+                                exit,
+                                write_inner,
+                                src_conn=f"write_tasklet",
+                                memlet=dace.Memlet(f"write_{s}_inner[i]"))
 
     return sdfg_outer
+
 
 if __name__ == "__main__":
 
