@@ -38,15 +38,9 @@ class LoopPeeling(LoopUnroll):
         guard = graph.node(candidate[DetectLoop._loop_guard])
         begin = graph.node(candidate[DetectLoop._loop_begin])
 
-        # Obtain iteration variable, range, and stride
-        guard_inedges = graph.in_edges(guard)
-        condition_edge = graph.edges_between(guard, begin)[0]
-        itervar = list(guard_inedges[0].data.assignments.keys())[0]
-        condition = condition_edge.data.condition_sympy()
-
         # If loop cannot be detected, fail
-        rng = find_for_loop(itervar, guard_inedges, condition)
-        if not rng:
+        found = find_for_loop(sdfg, guard, begin)
+        if not found:
             return False
 
         return True
@@ -95,9 +89,8 @@ class LoopPeeling(LoopUnroll):
         guard_inedges = sdfg.in_edges(guard)
         condition_edge = sdfg.edges_between(guard, begin)[0]
         not_condition_edge = sdfg.edges_between(guard, after_state)[0]
-        itervar = list(guard_inedges[0].data.assignments.keys())[0]
         condition = condition_edge.data.condition_sympy()
-        rng = self._loop_range(itervar, guard_inedges, condition)
+        itervar, rng = find_for_loop(sdfg, guard, begin)
 
         # Find the state prior to the loop
         if rng[0] == symbolic.pystr_to_symbolic(
