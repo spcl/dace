@@ -413,7 +413,8 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
 def read_and_write_set(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
     """
     Determines which data containers are read and which are written in the
-    given SDFG state.
+    given SDFG state. Containers that are written with write conflict
+    resolution are also included in the read set.
     :param state: An SDFG state.
     :return: A tuple of strings denoting (container read, containers written).
     """
@@ -421,8 +422,13 @@ def read_and_write_set(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
     read_set = set()
     write_set = set()
     for n in data_nodes:
-        if len(state.in_edges(n)) > 0:
+        in_edges = state.in_edges(n)
+        if len(in_edges) > 0:
             write_set.add(n.data)
+        for e in in_edges:
+            if e.data.wcr is not None:
+                read_set.add(n.data)
+                break
         if len(state.out_edges(n)) > 0:
             read_set.add(n.data)
     return read_set, write_set
