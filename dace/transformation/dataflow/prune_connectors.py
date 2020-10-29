@@ -6,17 +6,20 @@ from dace import registry, SDFG, SDFGState
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 
+
 def connectors_to_prune(nsdfg):
 
-        read_set = set()
-        write_set = set()
+    read_set = set()
+    write_set = set()
 
-        for state in nsdfg.sdfg.states():
-            rs, ws = helpers.read_and_write_set(state)
-            read_set |= rs
-            write_set |= ws
+    for state in nsdfg.sdfg.states():
+        rs, ws = helpers.read_and_write_set(state)
+        read_set |= rs
+        write_set |= ws
 
-        return (nsdfg.in_connectors.keys() - read_set, nsdfg.out_connectors.keys() - write_set)
+    return (nsdfg.in_connectors.keys() - read_set,
+            nsdfg.out_connectors.keys() - write_set)
+
 
 @registry.autoregister_params(singlestate=True, strict=True)
 class PruneConnectors(pm.Transformation):
