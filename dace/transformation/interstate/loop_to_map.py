@@ -16,9 +16,14 @@ from dace.transformation.interstate.loop_detection import (DetectLoop,
 import dace.transformation.helpers as helpers
 
 
-@registry.autoregister_params(strict=True)
+@registry.autoregister
 class LoopToMap(DetectLoop):
-    """ Unrolls a state machine for-loop into multiple states """
+    """Convert a control flow loop into a dataflow map. Currently only supports
+       the simple case where there is no overlap between inputs and outputs in
+       the body of the loop, and where the loop body only consists of a single
+       state.
+    """
+
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # Is this even a loop

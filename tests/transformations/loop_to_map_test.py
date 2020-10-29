@@ -34,9 +34,8 @@ def make_sdfg(with_wcr, map_in_guard):
         guard_write = guard.add_write("C")
         guard.add_mapped_tasklet("write_self", {"i": "0:N"},
                                  {"c_in": dace.Memlet("C[i]")},
-                                 "c_out = c_in", {
-                                     "c_out": dace.Memlet("C[i]")
-                                 },
+                                 "c_out = c_in",
+                                 {"c_out": dace.Memlet("C[i]")},
                                  external_edges=True,
                                  input_nodes={"C": guard_read},
                                  output_nodes={"C": guard_write})
