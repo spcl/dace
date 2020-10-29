@@ -735,9 +735,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         interstate_symbols = {}
         for e in sdfg.edges():
             symbols = e.data.new_symbols(global_symbols)
-            # Inferred symbols only take precedence if not None
+            # Inferred symbols only take precedence if global symbol not defined
             symbols = {
-                k: v if v is not None else global_symbols[k]
+                k: v if k not in global_symbols else global_symbols[k]
                 for k, v in symbols.items()
             }
             interstate_symbols.update(symbols)

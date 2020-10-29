@@ -67,7 +67,7 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
             if a != b:
                 raise NotImplementedError
         dst_subset = subsets.Range.from_array(dst_desc)
-    
+
     return src_subset, dst_subset
 
 ##############################################################################
@@ -120,6 +120,9 @@ class RedundantArray(pm.Transformation):
                 n for n in state.nodes()
                 if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc
             ])
+        for isedge in sdfg.edges():
+            if in_array.data in isedge.data.free_symbols:
+                occurrences.append(isedge)
 
         if len(occurrences) > 1:
             return False
@@ -219,10 +222,13 @@ class RedundantSecondArray(pm.Transformation):
                 n for n in state.nodes()
                 if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == out_desc
             ])
+        for isedge in sdfg.edges():
+            if out_array.data in isedge.data.free_symbols:
+                occurrences.append(isedge)
 
         if len(occurrences) > 1:
             return False
-        
+
         # Check whether the data copied from the first datanode cover
         # the subsets of all the output edges of the second datanode.
         # We assume the following pattern: A -- e1 --> B -- e2 --> others
