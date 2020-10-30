@@ -390,6 +390,22 @@ class Memlet(object):
             self.dst_subset == other.dst_subset, self.wcr == other.wcr
         ])
 
+    def substitute_symbol(self, repl_dict):
+        """ Substitute a given set of symbols with a different set of symbols.
+            :param repl_dict: A dict of string symbol names to symbols with
+                              which to replace them.
+        """
+        repl = {}
+        for symbol in repl_dict:
+            repl[symbolic.symbol(symbol)] = repl_dict[symbol]
+
+        if self.volume is not None and symbolic.issymbolic(self.volume):
+            self.volume = self.volume.subs(repl)
+        if self.subset is not None:
+            self.subset.replace(repl)
+        if self.other_subset is not None:
+            self.other_subset.replace(repl)
+
     def num_elements(self):
         """ Returns the number of elements in the Memlet subset. """
         if self.subset:

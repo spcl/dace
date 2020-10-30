@@ -932,6 +932,14 @@ def propagate_memlets_state(sdfg, state):
             # Propagate memlets inside the nested SDFG.
             propagate_memlets_sdfg(node.sdfg, border_memlets)
 
+            # Make sure any potential NSDFG symbol mapping is correctly reversed
+            # when propagating out.
+            for direction in border_memlets:
+                for connector in border_memlets[direction]:
+                    border_memlet = border_memlets[direction][connector]
+                    if border_memlet is not None:
+                        border_memlet.substitute_symbol(node.symbol_mapping)
+
             # Propagate the inside 'border' memlets outside the SDFG by
             # offsetting, and unsqueezing if necessary.
             for iedge in state.in_edges(node):
@@ -939,13 +947,34 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['in'][iedge.dst_conn]
                     if internal_memlet is None:
                         continue
-                    iedge._data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+
+                    # If there's a destination subset present, remove it. This
+                    # is not relevant for an in going edge.
+                    if internal_memlet.other_subset is not None:
+                        internal_memlet.other_subset = None
+
+                    iedge._data = unsqueeze_memlet(
+                        internal_memlet,
+                        iedge.data,
+                        True
+                    )
             for oedge in state.out_edges(node):
                 if oedge.src_conn in border_memlets['out']:
                     internal_memlet = border_memlets['out'][oedge.src_conn]
                     if internal_memlet is None:
                         continue
-                    oedge._data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+
+                    # If a destination subset is present, move it to the source,
+                    # since this is the one we care about for an outgoing edge.
+                    if internal_memlet.other_subset is not None:
+                        internal_memlet.subset = internal_memlet.other_subset
+                        internal_memlet.other_subset = None
+
+                    oedge._data = unsqueeze_memlet(
+                        internal_memlet,
+                        oedge.data,
+                        True
+                    )
 
     # Process scopes from the leaves upwards
     propagate_memlets_scope(sdfg, state, state.scope_leaves())
