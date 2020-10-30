@@ -88,7 +88,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._dispatcher.register_state_dispatcher(
             self,
-            predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and all([
+            predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and state.location["is_FPGA_kernel"] and all([
                 n.desc(sdfg).storage in [
                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType
                     .FPGA_Local, dace.dtypes.StorageType.FPGA_Registers, dace.
@@ -152,6 +152,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # Generate kernel code
         shared_transients = set(sdfg.shared_transients())
+
         if not self._in_device_code:
             # Allocate global memory transients, unless they are shared with
             # other states
