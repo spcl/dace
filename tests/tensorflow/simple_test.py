@@ -1,15 +1,12 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-
-try:
-    import tensorflow as tf
-except ImportError:
-    print("WARNING: Tensorflow not found, skipping test")
-    exit(0)
-
+import pytest
 import numpy as np
-from dace.frontend.tensorflow import TFSession
 
-if __name__ == '__main__':
+
+@pytest.mark.tensorflow
+def test_simple():
+    import tensorflow as tf
+    from dace.frontend.tensorflow import TFSession
     print('DaCe Tensorflow frontend test')
 
     A = np.random.rand(16, 16).astype(np.float32)
@@ -25,4 +22,12 @@ if __name__ == '__main__':
     diff = np.linalg.norm(C - (A @ B)) / (16 * 16)
     print("Difference:", diff)
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    try:
+        import tensorflow
+        test_simple()
+    except ImportError:
+        pass

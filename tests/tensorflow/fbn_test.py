@@ -1,16 +1,14 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-try:
-    import tensorflow as tf
-except ImportError:
-    print("WARNING: Tensorflow not found, skipping test")
-    exit(0)
-
-from tensorflow.python.ops import gen_nn_ops
+import pytest
 import numpy as np
-import dace
-from dace.frontend.tensorflow import TFSession
 
-if __name__ == '__main__':
+
+@pytest.mark.tensorflow
+def test_fused_batch_norm():
+    import tensorflow as tf
+    from tensorflow.python.ops import gen_nn_ops
+    from dace.frontend.tensorflow import TFSession
+
     num_channels = 3
     size = [8, 224, 224, num_channels]
 
@@ -136,3 +134,11 @@ if __name__ == '__main__':
             tf.linalg.norm(outputs_tf[2] -
                            np.sum(test_outputgrad, axis=(0, 1, 2))).eval(
                                session=sess_tf))
+
+
+if __name__ == '__main__':
+    try:
+        import tensorflow
+        test_fused_batch_norm()
+    except ImportError:
+        pass
