@@ -2,6 +2,7 @@
 """ Tests that generate various instrumentation reports with timers and
     performance counters. """
 
+import pytest
 import numpy as np
 import sys
 
@@ -63,7 +64,7 @@ def test_papi():
     # Run a lighter load for the sake of performance
     onetest(dace.InstrumentationType.PAPI_Counters, 4)
 
-
+@pytest.mark.gpu
 def test_gpu_events():
     onetest(dace.InstrumentationType.GPU_Events)
 
