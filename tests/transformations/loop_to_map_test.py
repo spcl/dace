@@ -1,12 +1,14 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2020-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import dace
 import numpy as np
 from dace.transformation.interstate import LoopToMap
 
-def make_sdfg(with_wcr, map_in_guard):
 
-    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}")
+def make_sdfg(with_wcr, map_in_guard, reverse_loop):
+
+    sdfg = dace.SDFG(
+        f"loop_to_map_test_{with_wcr}_{map_in_guard}_{reverse_loop}")
 
     init = sdfg.add_state("init")
     guard = sdfg.add_state("guard")
@@ -15,10 +17,19 @@ def make_sdfg(with_wcr, map_in_guard):
 
     N = dace.symbol("N", dace.uint64)
 
-    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={"i": "0"}))
-    sdfg.add_edge(guard, body, dace.InterstateEdge(condition="i < N"))
-    sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i >= N"))
-    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
+    if not reverse_loop:
+        sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={"i": "0"}))
+        sdfg.add_edge(guard, body, dace.InterstateEdge(condition="i < N"))
+        sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i >= N"))
+        sdfg.add_edge(body, guard,
+                      dace.InterstateEdge(assignments={"i": "i + 1"}))
+    else:
+        sdfg.add_edge(init, guard,
+                      dace.InterstateEdge(assignments={"i": "N - 1"}))
+        sdfg.add_edge(guard, body, dace.InterstateEdge(condition="i >= 0"))
+        sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i < 0"))
+        sdfg.add_edge(body, guard,
+                      dace.InterstateEdge(assignments={"i": "i - 1"}))
 
     sdfg.add_array("A", [N], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
@@ -35,8 +46,7 @@ def make_sdfg(with_wcr, map_in_guard):
         guard_write = guard.add_write("C")
         guard.add_mapped_tasklet("write_self", {"i": "0:N"},
                                  {"c_in": dace.Memlet("C[i]")},
-                                 "c_out = c_in",
-                                 {"c_out": dace.Memlet("C[i]")},
+                                 "c_out = c_in", {"c_out": dace.Memlet("C[i]")},
                                  external_edges=True,
                                  input_nodes={"C": guard_read},
                                  output_nodes={"C": guard_write})
@@ -46,21 +56,21 @@ def make_sdfg(with_wcr, map_in_guard):
                                 "d = sqrt(a**2 + b**2)")
 
     body.add_memlet_path(a, tasklet0, dst_conn="a", memlet=dace.Memlet("A[i]"))
-    body.add_memlet_path(
-        tasklet0,
-        c,
-        src_conn="c",
-        memlet=dace.Memlet(
-            "C[i]", wcr="lambda a, b: a + b" if with_wcr else None))
+    body.add_memlet_path(tasklet0,
+                         c,
+                         src_conn="c",
+                         memlet=dace.Memlet(
+                             "C[i]",
+                             wcr="lambda a, b: a + b" if with_wcr else None))
 
     body.add_memlet_path(a, tasklet1, dst_conn="a", memlet=dace.Memlet("A[i]"))
     body.add_memlet_path(b, tasklet1, dst_conn="b", memlet=dace.Memlet("B[i]"))
-    body.add_memlet_path(
-        tasklet1,
-        d,
-        src_conn="d",
-        memlet=dace.Memlet(
-            "D[i]", wcr="lambda a, b: a + b" if with_wcr else None))
+    body.add_memlet_path(tasklet1,
+                         d,
+                         src_conn="d",
+                         memlet=dace.Memlet(
+                             "D[i]",
+                             wcr="lambda a, b: a + b" if with_wcr else None))
 
     return sdfg
 
@@ -91,13 +101,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Case 0: no wcr, no dataflow in guard. Transformation should apply
-    if apply_and_verify(make_sdfg(False, False)) != 1:
+    if apply_and_verify(make_sdfg(False, False, False)) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
-    # Case 1: wcr is present. Transformation should not apply
-    if apply_and_verify(make_sdfg(True, False)) != 0:
+    # # Case 1: loop order reversed. Transformation should not apply
+    # if apply_and_verify(make_sdfg(False, False, True)) != 0:
+    #     raise RuntimeError("LoopToMap should not have been applied.")
+
+    # Case 2: wcr is present. Transformation should not apply
+    if apply_and_verify(make_sdfg(True, False, False)) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")
 
-    # Case 2: there is dataflow on the guard state
-    if apply_and_verify(make_sdfg(False, True)) != 0:
+    # Case 3: there is dataflow on the guard state
+    if apply_and_verify(make_sdfg(False, True, False)) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")

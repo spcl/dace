@@ -48,6 +48,9 @@ class LoopToMap(DetectLoop):
         if not found:
             return False
 
+        if found[1][2] < 0:
+            return False  # Negative increment not supported
+
         # Currently only detect the trivial case where the set of containers
         # that are read are completely disjoint from those that are written
         read_set, write_set = helpers.read_and_write_set(begin)
