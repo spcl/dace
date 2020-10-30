@@ -1,6 +1,8 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import warnings
 import itertools
+import sys
 import dace
 import random
 import numpy as np
@@ -109,7 +111,10 @@ def run_test(implementation,
     assert diff <= 1e-5
 
 
-def test_library_gemm():
+@pytest.mark.parametrize(('implementation', ),
+                         [('pure', ), ('MKL', ),
+                          pytest.param('cuBLAS', mark=pytest.mark.gpu)])
+def test_library_gemm(implementation):
     param_grid_trans = dict(
         transA=[True, False],
         transB=[True, False],
@@ -143,18 +148,20 @@ def test_library_gemm():
             params = dict(zip(keys, v))
             yield params
 
-    for implementation in Gemm.implementations:
-        print("Testing implementation {}...".format(implementation))
-        try:
-            for param_grid in param_grids:
-                for params in params_generator(param_grid):
-                    print("Testing params:", params)
-                    run_test(implementation, **params)
-        except (CompilerConfigurationError, CompilationError):
-            warnings.warn(
-                "Configuration/compilation failed, library missing or "
-                "misconfigured, skipping test for {}.".format(implementation))
+    print("Testing implementation {}...".format(implementation))
+    try:
+        for param_grid in param_grids:
+            for params in params_generator(param_grid):
+                print("Testing params:", params)
+                run_test(implementation, **params)
+    except (CompilerConfigurationError, CompilationError):
+        warnings.warn(
+            "Configuration/compilation failed, library missing or "
+            "misconfigured, skipping test for {}.".format(implementation))
 
 
 if __name__ == "__main__":
-    test_library_gemm()
+    test_library_gemm('pure')
+    test_library_gemm('MKL')
+    if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
+        test_library_gemm('cuBLAS')
