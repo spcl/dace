@@ -153,6 +153,7 @@ _CTYPES = {
     complex: "dace::complex64",
     bool: "bool",
     numpy.bool: "bool",
+    numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
     numpy.int32: "int",
@@ -175,6 +176,7 @@ _OCL_TYPES = {
     float: "float",
     bool: "bool",
     numpy.bool: "bool",
+    numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
     numpy.int32: "int",
@@ -214,6 +216,7 @@ _FFI_CTYPES = {
     complex: ctypes.c_uint64,
     bool: ctypes.c_bool,
     numpy.bool: ctypes.c_bool,
+    numpy.bool_: ctypes.c_bool,
     numpy.int8: ctypes.c_int8,
     numpy.int16: ctypes.c_int16,
     numpy.int32: ctypes.c_int32,
@@ -237,6 +240,7 @@ _BYTES = {
     complex: 8,
     bool: 1,
     numpy.bool: 1,
+    numpy.bool_: 1,
     numpy.int8: 1,
     numpy.int16: 2,
     numpy.int32: 4,
@@ -417,8 +421,10 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
-    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol'
+                        or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol'
+                        or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -916,6 +922,19 @@ TYPECLASS_STRINGS = [
     "float64",
     "complex64",
     "complex128",
+]
+
+INTEGER_TYPES = [
+    bool,
+    bool_,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint8,
+    uint16,
+    uint32,
+    uint64,
 ]
 
 #######################################################
