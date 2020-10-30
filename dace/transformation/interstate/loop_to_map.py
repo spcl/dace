@@ -2,6 +2,7 @@
 """ Loop to map transformation """
 
 import copy
+import itertools
 import sympy as sp
 import networkx as nx
 from typing import List, Optional, Tuple
@@ -48,8 +49,15 @@ class LoopToMap(DetectLoop):
         if not found:
             return False
 
-        if found[1][2] < 0:
+        _, (start, end, step) = found
+
+        if step < 0:
             return False  # Negative increment not supported
+
+        for s in itertools.chain(start.free_symbols, end.free_symbols,
+                                 step.free_symbols):
+            if s in sdfg.arrays:
+                return False  # Reads from a data container
 
         # Currently only detect the trivial case where the set of containers
         # that are read are completely disjoint from those that are written
