@@ -49,7 +49,7 @@ class LoopToMap(DetectLoop):
         if not found:
             return False
 
-        _, (start, end, step) = found
+        itervar, (start, end, step) = found
 
         if step < 0:
             return False  # Negative increment not supported
@@ -65,8 +65,27 @@ class LoopToMap(DetectLoop):
         if len(read_set & write_set) != 0:
             return False
 
-        # TODO: Detect that the iteration variable isn't used anywhere else,
-        #       or set it to the final value of the map iterator.
+        # Check that the iteration variable is not used on other edges
+        loop_edges = set(itertools.chain(graph.out_edges(guard), graph.out_edges(begin)))
+        if any(itervar in e.data.free_symbols for e in sdfg.edges()
+               if e not in loop_edges):
+            print("{} was in {}".format(itervar, e))
+            return False
+
+        # Check that the iteration variable is not used in any reachable
+        # dataflow states
+        states = set()
+        stack = [guard]
+        while len(stack) > 0:
+            s = stack.pop()
+            states.add(s)
+            for e in graph.out_edges(s):
+                if e.dst not in states:
+                    stack.append(e.dst)
+        states.remove(begin)
+        for s in states:
+            if itervar in s.free_symbols:
+                return False
 
         return True
 
