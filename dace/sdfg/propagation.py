@@ -933,10 +933,14 @@ def propagate_memlets_state(sdfg, state):
             for iedge in state.in_edges(node):
                 if iedge.dst_conn in border_memlets['in']:
                     internal_memlet = border_memlets['in'][iedge.dst_conn]
+                    if internal_memlet is None:
+                        continue
                     iedge._data = unsqueeze_memlet(internal_memlet, iedge.data)
             for oedge in state.out_edges(node):
                 if oedge.src_conn in border_memlets['out']:
                     internal_memlet = border_memlets['out'][oedge.src_conn]
+                    if internal_memlet is None:
+                        continue
                     oedge._data = unsqueeze_memlet(internal_memlet, oedge.data)
 
     # Process scopes from the leaves upwards
