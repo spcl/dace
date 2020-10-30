@@ -107,8 +107,6 @@ def make_sdfg():
     isolated_read = state_outer.add_read("read_unused_outer")
     isolated_write = state_outer.add_write("write_unused_outer")
     isolated_sdfg = dace.SDFG("isolated_sdfg")
-    isolated_sdfg.global_code["frame"] = dace.properties.CodeBlock(
-        "#include <iostream>", language=dace.Language.CPP)
     isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg,
                                                  sdfg_outer,
                                                  {"read_unused_isolated"},
@@ -127,10 +125,12 @@ def make_sdfg():
                                 src_conn="write_unused_isolated",
                                 memlet=dace.Memlet("write_unused[0:N, 0:N]"))
     isolated_state = isolated_sdfg.add_state("isolated")
-    isolated_state.add_tasklet(
-        "isolated", {}, {},
-        "std::cout << \"I have crazy side effects!\\n\";",
-        language=dace.Language.CPP)
+		# Cannot figure out a good way to test that this is actually executed the
+    # right number of times: capturing stdout does not work because the SDFG
+		# is run in a subprocess
+    isolated_state.add_tasklet("isolated", {}, {},
+                               "// I could have crazy side effects!",
+                               language=dace.Language.CPP)
 
     return sdfg_outer
 
