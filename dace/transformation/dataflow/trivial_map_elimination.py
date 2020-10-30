@@ -4,13 +4,13 @@
 from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class TrivialMapElimination(pattern_matching.Transformation):
+class TrivialMapElimination(transformation.Transformation):
     """ Implements the Trivial-Map Elimination pattern.
 
         Trivial-Map Elimination takes a map with a range
