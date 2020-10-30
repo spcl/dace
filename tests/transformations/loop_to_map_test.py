@@ -103,7 +103,7 @@ def apply_and_verify(sdfg):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--N", default=64, type=int)
+    parser.add_argument("--N", default=4, type=int)
     args = parser.parse_args()
 
     # Case 0: no wcr, no dataflow in guard. Transformation should apply
