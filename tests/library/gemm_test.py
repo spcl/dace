@@ -113,7 +113,7 @@ def run_test(implementation,
 
 @pytest.mark.parametrize(('implementation', ),
                          [('pure', ), ('MKL', ),
-                          pytest.param('cuBLAS', mark=pytest.mark.gpu)])
+                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
         transA=[True, False],
