@@ -1,3 +1,7 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import argparse
+import numpy as np
+
 import dace
 from dace.transformation.dataflow import PruneConnectors
 
@@ -48,7 +52,6 @@ def make_sdfg():
 
         read_outer = state_outer.add_read(f"read_{s}")
         read_middle = state_middle.add_read(f"read_{s}_middle")
-        read_inner = state_inner.add_read(f"read_{s}_inner")
 
         state_outer.add_memlet_path(read_outer,
                                     nsdfg_middle,
@@ -68,7 +71,6 @@ def make_sdfg():
 
         write_outer = state_outer.add_write(f"write_{s}")
         write_middle = state_middle.add_write(f"write_{s}_middle")
-        write_inner = state_inner.add_write(f"write_{s}_inner")
 
         state_outer.add_memlet_path(nsdfg_middle,
                                     write_outer,
@@ -79,6 +81,9 @@ def make_sdfg():
             write_middle,
             src_conn=f"write_{s}_inner",
             memlet=dace.Memlet(f"write_{s}_middle[0:N]"))
+
+    read_inner = state_inner.add_read(f"read_used_inner")
+    write_inner = state_inner.add_write(f"write_used_inner")
 
     state_inner.add_memlet_path(read_inner,
                                 entry,
@@ -97,6 +102,23 @@ def make_sdfg():
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--N", default=64)
+    args = parser.parse_args()
+
     sdfg = make_sdfg()
 
-    sdfg.apply_transformations_repeated(PruneConnectors)
+    if sdfg.apply_transformations_repeated(PruneConnectors) != 2:
+        raise RuntimeError("PruneConnectors was not applied.")
+
+    arr_in = np.zeros(args.N, dtype=np.uint16)
+    arr_out = np.empty(args.N, dtype=np.uint16)
+
+    sdfg(read_used=arr_in,
+         read_unused=arr_in,
+         write_used=arr_out,
+         write_unused=arr_out,
+         N=args.N)
+
+    if not all(arr_out == arr_in + 1):
+        raise ValueError("Validation failed.")
