@@ -10,12 +10,11 @@ import sympy
 from sympy import ceiling
 from sympy.concrete.summations import Sum
 import warnings
-import networkx as nx
 
 from dace import registry, subsets, symbolic, dtypes, data
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from typing import List, Set, Optional
+from typing import List, Set
 
 
 @registry.make_registry
@@ -768,8 +767,11 @@ def propagate_states(sdfg) -> None:
             break
 
 
-def propagate_memlets_sdfg(sdfg, connectors=None):
+def propagate_memlets_sdfg(sdfg, border_memlets=None):
     """ Propagates memlets throughout an entire given SDFG. 
+        :param border_memlets: A map between connectors to and from this SDFG
+                               (if it's a nested SDFG), to their connected
+                               'border' memlets.
         :note: This is an in-place operation on the SDFG.
     """
     for state in sdfg.nodes():
@@ -777,55 +779,104 @@ def propagate_memlets_sdfg(sdfg, connectors=None):
 
     propagate_states(sdfg)
 
-    if connectors is not None:
+    if border_memlets is not None:
+        # For each state, go through all access nodes corresponding to any in-
+        # or out-connectors to and from this SDFG. Given those access nodes,
+        # collect the corresponding memlets and use them to calculate the
+        # memlet volume and subset corresponding to the outside memlet attached
+        # to that connector. This is passed out via `border_memlets` and
+        # propagated along from there.
         for state in sdfg.nodes():
             for node in state.nodes():
                 if isinstance(node, AccessNode):
-                    # Find the volume and propagate it out.
-                    if (node.label.startswith('IN_') and
-                        node.label in connectors['in']):
-                        connector = connectors['in'][node.label]
-                        out_edges = state.out_edges(node)
-                        for oedge in out_edges:
-                            if connector['dynamic'] and connector['volume'] == 0:
-                                continue
-                            elif ((oedge.data.dynamic and
-                                   oedge.data.volume == 0) or
-                                  (state.dynamic_executions and
-                                   state.executions == 0)):
-                                connector['dynamic'] = True
-                                connector['volume'] = 0
-                            else:
-                                connector['volume'] += (
-                                    oedge.data.volume * state.executions
-                                )
-                                connector['dynamic'] = (
-                                    connector['dynamic'] or
-                                    oedge.data.dynamic or
-                                    state.dynamic_executions
-                                )
-                    elif (node.label.startswith('OUT_') and
-                          node.label in connectors['out']):
-                        connector = connectors['out'][node.label]
-                        in_edges = state.in_edges(node)
-                        for iedge in in_edges:
-                            if connector['dynamic'] and connector['volume'] == 0:
-                                continue
-                            elif ((iedge.data.dynamic and
-                                   iedge.data.volume == 0) or
-                                  (state.dynamic_executions and
-                                   state.executions == 0)):
-                                connector['dynamic'] = True
-                                connector['volume'] = 0
-                            else:
-                                connector['volume'] += (
-                                    iedge.data.volume * state.executions
-                                )
-                                connector['dynamic'] = (
-                                    connector['dynamic'] or
-                                    iedge.data.dynamic or
-                                    state.dynamic_executions
-                                )
+                    for direction in border_memlets:
+                        if (node.label in border_memlets[direction]):
+                            memlet = border_memlets[direction][node.label]
+
+                            # Collect the edges to/from this access node,
+                            # depending on the direction the connector leads in.
+                            edges = []
+                            if direction == 'in':
+                                edges = state.out_edges(node)
+                            elif direction == 'out':
+                                edges = state.in_edges(node)
+
+                            # Collect all memlets belonging to this access node,
+                            # and accumulate the total volume between them.
+                            memlets = []
+                            for edge in edges:
+                                inside_memlet = edge.data
+                                memlets.append(inside_memlet)
+
+                                if memlet is None:
+                                    # Use the first encountered memlet as a
+                                    # 'border' memlet and accumulate the sum
+                                    # on it.
+                                    memlet = copy.deepcopy(inside_memlet)
+                                    memlet.dynamic = False
+                                    memlet.volume = 0
+                                    memlet.subset = None
+                                    border_memlets[direction][
+                                        node.label
+                                    ] = memlet
+
+                                if memlet.dynamic and memlet.volume == 0:
+                                    # Dynamic unbounded - this won't change.
+                                    continue
+                                elif ((inside_memlet.dynamic and
+                                       inside_memlet.volume == 0) or
+                                      (state.dynamic_executions and
+                                       state.executions == 0)):
+                                    # At least one dynamic unbounded memlet lets
+                                    # the sum be dynamic unbounded.
+                                    memlet.dynamic = True
+                                    memlet.volume = 0
+                                else:
+                                    memlet.volume += (
+                                        inside_memlet.volume * state.executions
+                                    )
+                                    memlet.dynamic = (
+                                        memlet.dynamic or
+                                        inside_memlet.dynamic or
+                                        state.dynamic_executions
+                                    )
+
+                            # Given all of this access nodes' memlets, propagate
+                            # the subset according to the state's variable
+                            # ranges.
+                            if len(memlets) > 0:
+                                params = []
+                                ranges = []
+                                for symbol in state.ranges:
+                                    params.append(symbol)
+                                    ranges.append(state.ranges[symbol][0])
+
+                                if len(params) == 0 or len(ranges) == 0:
+                                    params = ['dummy']
+                                    ranges = [(0, 0, 1)]
+
+                                subset = propagate_subset(
+                                    memlets,
+                                    sdfg.arrays[node.label],
+                                    params,
+                                    subsets.Range(ranges)
+                                ).subset
+
+                                # If the border memlet already has a set range,
+                                # compute the union of the ranges to merge the
+                                # subsets.
+                                if memlet.subset is not None:
+                                    if memlet.subset.dims() != subset.dims():
+                                        raise ValueError('Cannot merge subset '
+                                                            'ranges of unequal '
+                                                            'dimension!')
+                                    else:
+                                        memlet.subset = subsets.union(
+                                            memlet.subset,
+                                            subset
+                                        )
+                                else:
+                                    memlet.subset = subset
 
 
 def propagate_memlets_state(sdfg, state):
@@ -857,37 +908,36 @@ def propagate_memlets_state(sdfg, state):
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
 
+    from dace.transformation.helpers import unsqueeze_memlet
+
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
-            # Build a map of connectors to associated memlet volume.
-            connectors = {
+            # Build a map of connectors to associated 'border' memlets inside
+            # the nested SDFG. This map will be populated with memlets once they
+            # get propagated in the SDFG.
+            border_memlets = {
                 'in': {},
                 'out': {},
             }
             for connector in node.in_connectors:
-                connectors['in'][connector] = {
-                    'volume': 0,
-                    'dynamic': False,
-                }
+                border_memlets['in'][connector] = None
             for connector in node.out_connectors:
-                connectors['out'][connector] = {
-                    'volume': 0,
-                    'dynamic': False,
-                }
+                border_memlets['out'][connector] = None
 
-            propagate_memlets_sdfg(node.sdfg, connectors)
+            # Propagate memlets inside the nested SDFG.
+            propagate_memlets_sdfg(node.sdfg, border_memlets)
 
+            # Propagate the inside 'border' memlets outside the SDFG by
+            # offsetting, and unsqueezing if necessary.
             for iedge in state.in_edges(node):
-                if iedge.dst_conn in connectors['in']:
-                    connector = connectors['in'][iedge.dst_conn]
-                    iedge.data.dynamic = connector['dynamic']
-                    iedge.data.volume = connector['volume']
+                if iedge.dst_conn in border_memlets['in']:
+                    internal_memlet = border_memlets['in'][iedge.dst_conn]
+                    iedge._data = unsqueeze_memlet(internal_memlet, iedge.data)
             for oedge in state.out_edges(node):
-                if oedge.src_conn in connectors['out']:
-                    connector = connectors['out'][oedge.src_conn]
-                    oedge.data.dynamic = connector['dynamic']
-                    oedge.data.volume = connector['volume']
+                if oedge.src_conn in border_memlets['out']:
+                    internal_memlet = border_memlets['out'][oedge.src_conn]
+                    oedge._data = unsqueeze_memlet(internal_memlet, oedge.data)
 
     # Process scopes from the leaves upwards
     propagate_memlets_scope(sdfg, state, state.scope_leaves())

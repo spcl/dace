@@ -54,6 +54,12 @@ class AnnotateLoop(DetectLoop):
             before_state: sd.SDFGState = guard_inedges[1].src
             last_state: sd.SDFGState = guard_inedges[0].src
 
+        # Make sure the range is flipped in a direction such that the stride
+        # is positive.
+        start, stop, stride = rng
+        if (stride < 0) == True:
+            rng = (stop, start, -stride)
+
         # Get loop states
         loop_states = list(sdutil.dfs_conditional(
             sdfg,
