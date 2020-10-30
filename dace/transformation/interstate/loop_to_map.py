@@ -44,8 +44,8 @@ class LoopToMap(DetectLoop):
             return False
 
         # If loop cannot be detected, fail
-        _, rng = find_for_loop(graph, guard, begin)
-        if not rng:
+        found = find_for_loop(graph, guard, begin)
+        if not found:
             return False
 
         # Currently only detect the trivial case where the set of containers

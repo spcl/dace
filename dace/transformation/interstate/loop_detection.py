@@ -120,7 +120,8 @@ class DetectLoop(transformation.Transformation):
 
 def find_for_loop(
     sdfg: sd.SDFG, guard: sd.SDFGState, entry: sd.SDFGState
-) -> Optional[Tuple[AnyStr, Tuple[sp.Expr, sp.Expr, sp.Expr]]]:
+) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType,
+                                  symbolic.SymbolicType]]]:
     """
     Finds loop range from state machine.
     :param guard: State from which the outgoing edges detect whether to exit
@@ -158,7 +159,7 @@ def find_for_loop(
         return None
 
     # Find condition by matching expressions
-    end: Optional[sp.Expr] = None
+    end: Optional[symbolic.SymbolicType] = None
     a = sp.Wild('a')
     match = condition.match(itersym < a)
     if match:

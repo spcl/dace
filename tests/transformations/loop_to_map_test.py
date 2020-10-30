@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import dace
 import numpy as np
@@ -70,8 +71,6 @@ def apply_and_verify(sdfg):
     b = 3 * np.ones((args.N, ), dtype=np.float64)
     c = np.zeros((args.N, ), dtype=np.float64)
     d = np.zeros((args.N, ), dtype=np.float64)
-
-    sdfg.save("derp.sdfg")
 
     num_transformations = sdfg.apply_transformations(LoopToMap)
 
