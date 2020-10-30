@@ -1,7 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
 
-from dace import registry, SDFG, SDFGState
+from dace import memlet, registry, SDFG, SDFGState
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 
@@ -82,14 +82,28 @@ class PruneConnectors(pm.Transformation):
                     if state.degree(e.src) == 0:
                         state.remove_node(e.src)
                 elif isinstance(e.src, nodes.EntryNode):
-                    e.memlet = dace.Memlet()
-                    if e.dst == nsdfg:
-                        e.dst_conn = None
-                        del nsdfg.in_connectors[conn]
+                    if state.out_degree(e.src) <= 1:
+                        # If removing this edge would orphan the entry node,
+                        # replace it with an empty edge
+                        state.remove_edge(e)
+                        e.src.remove_out_connector(e.src_conn)
+                        if e.dst == nsdfg:
+                            dst_conn = None
+                        else:
+                            # Maintain the original destination connector
+                            dst_conn = e.dst_conn
+                        state.add_nedge(e.src, e.dst, memlet.Memlet())
+                    else:
+                        # Otherwise just burninate
+                        state.remove_edge_and_connectors(e)
                 else:
                     raise TypeError("Unexpected node on path: {}".format(
                         type(e.src)))
-            if conn not in all_data_used:
+            if conn in nsdfg.in_connectors:
+                # Actually remove the connector if it hasn't already been
+                del nsdfg.in_connectors[conn]
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
+                # If the data is now unused, we can also purge it from the SDFG
                 del nsdfg.sdfg.arrays[conn]
 
         for conn in prune_out:
@@ -105,12 +119,26 @@ class PruneConnectors(pm.Transformation):
                     if state.degree(e.dst) == 0:
                         state.remove_node(e.dst)
                 elif isinstance(e.dst, nodes.ExitNode):
-                    e.memlet = dace.Memlet()
-                    if e.src == nsdfg:
-                        e.src_conn = None
-                        del nsdfg.out_connectors[conn]
+                    if state.out_degree(e.dst) <= 1:
+                        # If removing this edge would orphan the exit node,
+                        # replace it with an empty edge
+                        state.remove_edge(e)
+                        e.dst.remove_in_connector(e.dst_conn)
+                        if e.src == nsdfg:
+                            src_conn = None
+                        else:
+                            # Maintain the original source connector
+                            src_conn = e.src_conn
+                        state.add_nedge(e.src, e.dst, memlet.Memlet())
+                    else:
+                        # Otherwise just burninate
+                        state.remove_edge_and_connectors(e)
                 else:
                     raise TypeError("Unexpected node on path: {}".format(
-                        type(e.dst)))
-            if conn not in all_data_used:
+                        type(e.src)))
+            if conn in nsdfg.out_connectors:
+                # Actually remove the connector if it hasn't already been
+                del nsdfg.out_connectors[conn]
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
+                # If the data is now unused, we can also purge it from the SDFG
                 del nsdfg.sdfg.arrays[conn]

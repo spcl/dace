@@ -7,8 +7,8 @@ from dace.transformation.dataflow import PruneConnectors
 
 
 def make_sdfg():
-    """ Creates three SDFG nested within each other, where four input arrays and
-        four output arrays are fed throughout the hierarchy. Two inputs and two
+    """ Creates three SDFG nested within each other, where two input arrays and
+        two output arrays are fed throughout the hierarchy. One input and one
         output are not used for anything in the innermost SDFG, and can thus be
         removed in all nestings.
     """
@@ -28,6 +28,8 @@ def make_sdfg():
         name="middle")
     state_middle = sdfg_middle.add_state("middle")
 
+    entry_middle, exit_middle = state_middle.add_map("map_middle", {"i": "0:N"})
+
     sdfg_inner = dace.SDFG("inner")
     sdfg_inner.add_symbol("N", dace.int32)
     nsdfg_inner = state_middle.add_nested_sdfg(
@@ -37,7 +39,7 @@ def make_sdfg():
         name="inner")
     state_inner = sdfg_inner.add_state("inner")
 
-    entry, exit = state_inner.add_map("map", {"i": "0:N"})
+    entry_inner, exit_inner = state_inner.add_map("map_inner", {"j": "0:N"})
     tasklet = state_inner.add_tasklet("tasklet", {"read_tasklet"},
                                       {"write_tasklet"},
                                       "write_tasklet = read_tasklet + 1")
@@ -46,8 +48,8 @@ def make_sdfg():
 
         # Read
 
-        sdfg_outer.add_array(f"read_{s}", [n], dace.uint16)
-        sdfg_middle.add_array(f"read_{s}_middle", [n], dace.uint16)
+        sdfg_outer.add_array(f"read_{s}", [n, n], dace.uint16)
+        sdfg_middle.add_array(f"read_{s}_middle", [n, n], dace.uint16)
         sdfg_inner.add_array(f"read_{s}_inner", [n], dace.uint16)
 
         read_outer = state_outer.add_read(f"read_{s}")
@@ -56,17 +58,18 @@ def make_sdfg():
         state_outer.add_memlet_path(read_outer,
                                     nsdfg_middle,
                                     dst_conn=f"read_{s}_middle",
-                                    memlet=dace.Memlet(f"read_{s}[0:N]"))
+                                    memlet=dace.Memlet(f"read_{s}[0:N, 0:N]"))
         state_middle.add_memlet_path(
             read_middle,
+            entry_middle,
             nsdfg_inner,
             dst_conn=f"read_{s}_inner",
-            memlet=dace.Memlet(f"read_{s}_middle[0:N]"))
+            memlet=dace.Memlet(f"read_{s}_middle[i, 0:N]"))
 
         # Write
 
-        sdfg_outer.add_array(f"write_{s}", [n], dace.uint16)
-        sdfg_middle.add_array(f"write_{s}_middle", [n], dace.uint16)
+        sdfg_outer.add_array(f"write_{s}", [n, n], dace.uint16)
+        sdfg_middle.add_array(f"write_{s}_middle", [n, n], dace.uint16)
         sdfg_inner.add_array(f"write_{s}_inner", [n], dace.uint16)
 
         write_outer = state_outer.add_write(f"write_{s}")
@@ -75,27 +78,59 @@ def make_sdfg():
         state_outer.add_memlet_path(nsdfg_middle,
                                     write_outer,
                                     src_conn=f"write_{s}_middle",
-                                    memlet=dace.Memlet(f"write_{s}[0:N]"))
+                                    memlet=dace.Memlet(f"write_{s}[0:N, 0:N]"))
         state_middle.add_memlet_path(
             nsdfg_inner,
+            exit_middle,
             write_middle,
             src_conn=f"write_{s}_inner",
-            memlet=dace.Memlet(f"write_{s}_middle[0:N]"))
+            memlet=dace.Memlet(f"write_{s}_middle[i, 0:N]"))
 
     read_inner = state_inner.add_read(f"read_used_inner")
     write_inner = state_inner.add_write(f"write_used_inner")
 
     state_inner.add_memlet_path(read_inner,
-                                entry,
+                                entry_inner,
                                 tasklet,
                                 dst_conn=f"read_tasklet",
-                                memlet=dace.Memlet(f"read_{s}_inner[i]"))
+                                memlet=dace.Memlet(f"read_{s}_inner[j]"))
 
     state_inner.add_memlet_path(tasklet,
-                                exit,
+                                exit_inner,
                                 write_inner,
                                 src_conn=f"write_tasklet",
-                                memlet=dace.Memlet(f"write_{s}_inner[i]"))
+                                memlet=dace.Memlet(f"write_{s}_inner[j]"))
+
+    # Create mapped nested SDFG where the map entry and exit would be orphaned
+    # by pruning the read and write, and must have nedges added to them
+
+    isolated_read = state_outer.add_read("read_unused_outer")
+    isolated_write = state_outer.add_write("write_unused_outer")
+    isolated_sdfg = dace.SDFG("isolated_sdfg")
+    isolated_sdfg.global_code["frame"] = dace.properties.CodeBlock(
+        "#include <iostream>", language=dace.Language.CPP)
+    isolated_nsdfg = state_outer.add_nested_sdfg(isolated_sdfg,
+                                                 sdfg_outer,
+                                                 {"read_unused_isolated"},
+                                                 {"write_unused_isolated"},
+                                                 name="isolated")
+    isolated_entry, isolated_exit = state_outer.add_map("isolated",
+                                                        {"i": "0:4"})
+    state_outer.add_memlet_path(isolated_read,
+                                isolated_entry,
+                                isolated_nsdfg,
+                                dst_conn="read_unused_isolated",
+                                memlet=dace.Memlet("read_unused[0:N, 0:N]"))
+    state_outer.add_memlet_path(isolated_nsdfg,
+                                isolated_exit,
+                                isolated_write,
+                                src_conn="write_unused_isolated",
+                                memlet=dace.Memlet("write_unused[0:N, 0:N]"))
+    isolated_state = isolated_sdfg.add_state("isolated")
+    isolated_state.add_tasklet(
+        "isolated", {}, {},
+        "std::cout << \"I have crazy side effects!\\n\";",
+        language=dace.Language.CPP)
 
     return sdfg_outer
 
@@ -106,19 +141,21 @@ if __name__ == "__main__":
     parser.add_argument("--N", default=64)
     args = parser.parse_args()
 
+    n = np.int32(args.N)
+
     sdfg = make_sdfg()
 
-    if sdfg.apply_transformations_repeated(PruneConnectors) != 2:
+    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
         raise RuntimeError("PruneConnectors was not applied.")
 
-    arr_in = np.zeros(args.N, dtype=np.uint16)
-    arr_out = np.empty(args.N, dtype=np.uint16)
+    arr_in = np.zeros((n, n), dtype=np.uint16)
+    arr_out = np.empty((n, n), dtype=np.uint16)
 
     sdfg(read_used=arr_in,
          read_unused=arr_in,
          write_used=arr_out,
          write_unused=arr_out,
-         N=args.N)
+         N=n)
 
-    if not all(arr_out == arr_in + 1):
+    if not all(arr_out.ravel() == arr_in.ravel() + 1):
         raise ValueError("Validation failed.")
