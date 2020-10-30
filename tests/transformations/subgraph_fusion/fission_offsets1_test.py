@@ -130,6 +130,7 @@ def test_offsets_array():
     A_cpy = A.copy()
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
+    del csdfg
     print(np.linalg.norm(A_cpy))
     print(np.linalg.norm(expected))
     assert (np.allclose(A_cpy, expected))

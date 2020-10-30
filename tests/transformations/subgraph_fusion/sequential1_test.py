@@ -40,6 +40,7 @@ def test_sequential():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N)
+    del csdfg
 
     fusion(sdfg, state)
     csdfg = sdfg.compile()

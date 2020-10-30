@@ -88,6 +88,7 @@ def test_p1():
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
           N=N, M=M, O=O, P=P, R=R,Q=Q)
+    del csdfg
 
     subgraph = SubgraphView(state, [node for node in state.nodes()])
     expansion = MultiExpansion(subgraph)

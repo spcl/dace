@@ -40,6 +40,7 @@ if __name__ == "__main__":
 
     csdfg = sdfg.compile()
     csdfg(A=A, C=C1, N=N)
+    del csdfg
     fusion(sdfg, state)
     csdfg = sdfg.compile()
     csdfg(A=A, C=C2, N=N)

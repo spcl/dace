@@ -30,6 +30,7 @@ def test_blockallreduce():
 
     csdfg = sdfg.compile()
     result1 = csdfg(A=A, M=M, N=N)
+    del csdfg
 
     sdfg_id = 0
     state_id = 0
@@ -40,6 +41,7 @@ def test_blockallreduce():
     transform.apply(sdfg)
     csdfg = sdfg.compile()
     result2 = csdfg(A=A, M=M, N=N)
+    del csdfg
 
     print(np.linalg.norm(result1))
     print(np.linalg.norm(result2))

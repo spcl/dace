@@ -43,7 +43,7 @@ def test_program(A: dace.float64[M, N], B: dace.float64[M, N],
         out1 = in1
 
 
-def test_quantitatively(sdfg, graph):
+def _test_quantitatively(sdfg, graph):
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
     B1 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
     C1 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
@@ -51,9 +51,11 @@ def test_quantitatively(sdfg, graph):
     C2 = np.zeros(shape=[M.get(), N.get()], dtype=np.float64)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B1, C=C1, N=N, M=M)
+    del csdfg
     fusion(sdfg, graph)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B2, C=C2, N=N, M=M)
+    del csdfg
     assert np.allclose(B1, B2)
     assert np.allclose(C1, C2)
 
@@ -62,7 +64,7 @@ def test_out_transient():
     sdfg = test_program.to_sdfg()
     sdfg.apply_transformations_repeated(StateFusion)
     graph = sdfg.nodes()[0]
-    test_quantitatively(sdfg, graph)
+    _test_quantitatively(sdfg, graph)
 
 
 if __name__ == "__main__":
