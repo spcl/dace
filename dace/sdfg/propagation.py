@@ -3,6 +3,7 @@
     from internal memory accesses and scope ranges). """
 
 import copy
+from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace.sdfg.nodes import AccessNode
 import itertools
 import functools
@@ -159,6 +160,9 @@ class AffineSMemlet(SeparableMemletPattern):
                 return False
 
             for i, subexpr in enumerate(subexprs):
+                if not issymbolic(subexpr):
+                    subexpr = pystr_to_symbolic(subexpr)
+
                 # Try to match an affine expression with a parameter
                 param = None
                 pind = -1
@@ -935,13 +939,13 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['in'][iedge.dst_conn]
                     if internal_memlet is None:
                         continue
-                    iedge._data = unsqueeze_memlet(internal_memlet, iedge.data)
+                    iedge._data = unsqueeze_memlet(internal_memlet, iedge.data, True)
             for oedge in state.out_edges(node):
                 if oedge.src_conn in border_memlets['out']:
                     internal_memlet = border_memlets['out'][oedge.src_conn]
                     if internal_memlet is None:
                         continue
-                    oedge._data = unsqueeze_memlet(internal_memlet, oedge.data)
+                    oedge._data = unsqueeze_memlet(internal_memlet, oedge.data, True)
 
     # Process scopes from the leaves upwards
     propagate_memlets_scope(sdfg, state, state.scope_leaves())

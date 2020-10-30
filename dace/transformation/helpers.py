@@ -320,7 +320,8 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     return newstate
 
 
-def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
+def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet,
+                     preserve_minima=False):
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
@@ -356,6 +357,12 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
                              (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
+
+    if preserve_minima:
+        original_minima = external_memlet.subset.min_element()
+        for i in set(range(len(original_minima))):
+            rb, re, rs = result.subset.ranges[i]
+            result.subset.ranges[i] = (original_minima[i], re, rs)
 
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
