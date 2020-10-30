@@ -1,5 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop unroll transformation """
+""" Loop to map transformation """
 
 import copy
 import sympy as sp
