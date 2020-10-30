@@ -82,21 +82,28 @@ class LoopToMap(DetectLoop):
 
         # Reroute all memlets through the entry and exit nodes
         for n in source_nodes:
-            for e in body.out_edges(n):
-                body.remove_edge(e)
-                body.add_edge_pair(entry,
-                                   e.dst,
-                                   n,
-                                   e.data,
-                                   internal_connector=e.dst_conn)
+            if isinstance(n, nodes.AccessNode):
+                for e in body.out_edges(n):
+                    body.remove_edge(e)
+                    body.add_edge_pair(entry,
+                                       e.dst,
+                                       n,
+                                       e.data,
+                                       internal_connector=e.dst_conn)
+            else:
+                body.add_nedge(entry, n, memlet.Memlet())
         for n in sink_nodes:
-            for e in body.in_edges(n):
-                body.remove_edge(e)
-                body.add_edge_pair(exit,
-                                   e.src,
-                                   n,
-                                   e.data,
-                                   internal_connector=e.src_conn)
+            if isinstance(n, nodes.AccessNode):
+                for e in body.in_edges(n):
+                    body.remove_edge(e)
+                    body.add_edge_pair(exit,
+                                       e.src,
+                                       n,
+                                       e.data,
+                                       internal_connector=e.src_conn)
+            else:
+                body.add_nedge(n, exit, memlet.Memlet())
+
 
         # Get rid of the loop exit condition edge
         sdfg.remove_edge(sdfg.edges_between(guard, after)[0])

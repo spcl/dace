@@ -9,6 +9,7 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop):
 
     sdfg = dace.SDFG(
         f"loop_to_map_test_{with_wcr}_{map_in_guard}_{reverse_loop}")
+    sdfg.set_global_code("#include <iostream>")
 
     init = sdfg.add_state("init")
     guard = sdfg.add_state("guard")
@@ -54,6 +55,11 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop):
     tasklet0 = body.add_tasklet("tasklet0", {"a"}, {"c"}, "c = 1/a")
     tasklet1 = body.add_tasklet("tasklet1", {"a", "b"}, {"d"},
                                 "d = sqrt(a**2 + b**2)")
+
+    tasklet2 = body.add_tasklet(
+        "tasklet2", {}, {},
+        "std::cout << \"I could have crazy side effects!\\n\";",
+        language=dace.Language.CPP)
 
     body.add_memlet_path(a, tasklet0, dst_conn="a", memlet=dace.Memlet("A[i]"))
     body.add_memlet_path(tasklet0,
