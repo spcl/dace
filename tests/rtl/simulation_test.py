@@ -243,14 +243,15 @@ def test_tasklet_vector():
                 b <= a[0];
                 ready_o <= 1'b0;
                 state <= BUSY;
-            end else if (b < 100) // case: increment counter b
+            end else if (b < a[0] + a[1] && state == BUSY) begin // case: increment counter b
                 b <= b + 1;
-            else
+            end else if (state == BUSY) begin
                 b <= b;
                 state <= DONE;
+            end
         end    
     
-        assign valid_o = (b >= 100) ? 1'b1:1'b0; 
+        assign valid_o = (b >= a[0] + a[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
         ''',
         language=dace.Language.RTL)
 
@@ -282,7 +283,7 @@ def test_tasklet_vector():
     print("a={}, b={}".format(a, b))
 
     # check result
-    assert b == 100
+    assert b == a[0] + a[1]
 
 
 def test_multi_tasklet():
