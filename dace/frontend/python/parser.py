@@ -138,16 +138,20 @@ def parse_from_function(function, *compilation_args, strict=None):
     return sdfg
 
 
-def _get_locals_and_globals():
-    """ Retrieves a list of local and global variables four steps up in the
-        stack. This is used to retrieve variables around and defined before
-        @dace.programs for adding symbols. """
-    frame = inspect.currentframe()
-    outer_frame = frame.f_back.f_back.f_back.f_back
+def _get_locals_and_globals(f):
+    """ Retrieves a list of local and global variables for the function ``f``.
+        This is used to retrieve variables around and defined before  @dace.programs for adding symbols and constants.
+    """
     result = {}
     # Update globals, then locals
-    result.update(outer_frame.f_globals)
-    result.update(outer_frame.f_locals)
+    result.update(f.__globals__)
+    # grab the free variables (i.e. locals)
+    if f.__closure__ is not None:
+        result.update({
+            k: v
+            for k, v in zip(f.__code__.co_freevars,
+                            [x.cell_contents for x in f.__closure__])
+        })
 
     return result
 
@@ -235,8 +239,7 @@ class DaceProgram:
         self._name = f.__name__
         self.argnames = _get_argnames(f)
 
-        # NOTE: Important to call this outside list/dict comprehensions
-        global_vars = _get_locals_and_globals()
+        global_vars = _get_locals_and_globals(f)
 
         self.global_vars = {
             k: v
@@ -342,7 +345,7 @@ class DaceProgram:
         # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
         other_sdfgs = {
             k: v
-            for k, v in dace_func.__globals__.items()
+            for k, v in _get_locals_and_globals(dace_func).items()
             if isinstance(v, (SDFG, DaceProgram))
         }
 

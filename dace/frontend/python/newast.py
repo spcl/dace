@@ -173,7 +173,7 @@ def parse_dace_program(f,
     src_ast = GlobalResolver({
         k: v
         for k, v in global_vars.items()
-        if dtypes.isconstant(v) and not k in argtypes and k != '_'
+        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -3006,9 +3006,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
                 required_args = list(sdfg.arglist().keys())
-                # Add keyword arguments to variables
-                for (k, v) in args:
-                    self.variables[k] = v
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]

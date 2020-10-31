@@ -7,6 +7,7 @@ from dace.transformation.interstate import loop_detection as ld
 from dace import registry
 from dace.transformation import helpers as xfh
 
+import collections
 import numpy as np
 
 
@@ -179,18 +180,21 @@ def test_promote_array_assignment():
     @dace.program
     def testprog(A: dace.float64[20, 20]):
         j = A[1, 1]
-        A[:] += j
+        if j >= 0.0:
+            A[:] += j
 
     sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
-    # There should be two states:
-    # [empty] --j=A[1, 1]--> [A->MapEntry->Tasklet->MapExit->A]
-    assert sdfg.number_of_nodes() == 2
-    assert sdfg.source_nodes()[0].number_of_nodes() == 0
-    assert sdfg.sink_nodes()[0].number_of_nodes() == 5
+    # There should be 4 states:
+    # [empty] --j=A[1, 1]--> [A->MapEntry->Tasklet->MapExit->A] --> [empty]
+    #                   \--------------------------------------------/
+    assert sdfg.number_of_nodes() == 4
+    ctr = collections.Counter(s.number_of_nodes() for s in sdfg)
+    assert ctr[0] == 3
+    assert ctr[5] == 1
 
     # Program should produce correct result
     A = np.random.rand(20, 20)
@@ -203,7 +207,7 @@ def test_promote_array_assignment_tasklet():
     """ Simple promotion with array assignment. """
     @dace.program
     def testprog(A: dace.float64[20, 20]):
-        j = dace.define_local_scalar(dace.float64)
+        j = dace.define_local_scalar(dace.int64)
         with dace.tasklet:
             inp << A[1, 1]
             out >> j
@@ -223,7 +227,7 @@ def test_promote_array_assignment_tasklet():
 
     # Program should produce correct result
     A = np.random.rand(20, 20)
-    expected = A + A[1, 1]
+    expected = A + int(A[1, 1])
     sdfg(A=A)
     assert np.allclose(A, expected)
 

@@ -327,10 +327,10 @@ class InlineSDFG(transformation.Transformation):
             k: v.data.data
             for k, v in itertools.chain(inputs.items(), outputs.items())
         })
-        for node in subgraph.nodes():
+        for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
                 node.data = repldict[node.data]
-        for edge in subgraph.edges():
+        for edge in nstate.edges():
             if edge.data.data in repldict:
                 edge.data.data = repldict[edge.data.data]
 
