@@ -57,6 +57,12 @@ class RTLCodeGen(TargetCodeGenerator):
                       callsite_stream: CodeIOStream):
         # check instance type
         if isinstance(node, dace.nodes.Tasklet):
+            """ 
+            handle Tasklet: 
+                (1) generate in->tasklet
+                (2) generate tasklet->out 
+                (3) generate tasklet 
+            """
             # generate code to handle data input to the tasklet
             for edge in dfg.in_edges(node):
                 # find input array
@@ -64,7 +70,6 @@ class RTLCodeGen(TargetCodeGenerator):
                 # dispatch code gen (copy_memory)
                 self.dispatcher.dispatch_copy(src_node, node, edge, sdfg, dfg, state_id, function_stream,
                                               callsite_stream)
-
             # generate code to handle data output from the tasklet
             for edge in dfg.out_edges(node):
                 # find output array
@@ -72,7 +77,6 @@ class RTLCodeGen(TargetCodeGenerator):
                 # dispatch code gen (define_out_memlet)
                 self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, dfg, state_id, function_stream,
                                                            callsite_stream)
-
             # generate tasklet code
             self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
         else:
@@ -92,7 +96,7 @@ class RTLCodeGen(TargetCodeGenerator):
         """
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
         """
-        if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.Tasklet):
+        if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.Tasklet):  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn], dace.pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                                                      edge.src.data)
@@ -104,6 +108,8 @@ class RTLCodeGen(TargetCodeGenerator):
             else:  # scalar accessor
                 line: str = "{}* {} = &{}[0];".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                                                       edge.src.data)
+        else:
+            raise RuntimeError("Not handling copy_memory case of type {} -> {}.".format(type(edge.src), type(edge.dst)))
         # write accessor to file
         callsite_stream.write(line)
 
@@ -131,11 +137,14 @@ class RTLCodeGen(TargetCodeGenerator):
             else:  # scalar accessor
                 line: str = "{}* {} = &{}[0];".format(src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                                                       edge.dst.data)
+        else:
+            raise RuntimeError("Not handling define_out_memlet case of type {} -> {}.".format(type(edge.src), type(edge.dst)))
+        # write accessor to file
         callsite_stream.write(line)
 
     def get_generated_codeobjects(self):
         """
-            Return list of code objects.
+            Return list of code objects (that are later generating code files).
         """
         return self.code_objects
 
