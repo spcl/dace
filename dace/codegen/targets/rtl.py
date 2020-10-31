@@ -1,32 +1,151 @@
+import os
+import itertools
+
+from typing import List
+
 import dace
-from dace import registry, symbolic
+from dace import registry, symbolic, nodes, StorageType
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
-import dace.codegen.prettycode
+from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.framecode import DaCeCodeGenerator
+from dace.codegen.dispatcher import TargetDispatcher
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.state import StateSubgraphView
+from dace.sdfg import find_input_arraynode, find_output_arraynode
 
-import os
-import shutil
 
-
-# class RTLCodeGen(CPUCodeGen):
 @registry.autoregister_params(name='rtl')
 class RTLCodeGen(TargetCodeGenerator):
-    """ RTL (SystemVerilog) Code Generator """
+    """ RTL Code Generator (SystemVerilog) """
 
     title = 'RTL'
     target_name = 'rtl'
-    language = 'rtl'
+    language = dace.Language.RTL
 
-    def __init__(self, frame_codegen, sdfg, *args, **kwargs):
-        self._frame = frame_codegen
-        self._dispatcher = frame_codegen.dispatcher
-        # register dispatchers
-        self.codegen = self._dispatcher.get_generic_node_dispatcher()
-        self.sdfg = sdfg
+    def __init__(self,
+                 frame_codegen: DaCeCodeGenerator,
+                 sdfg: dace.SDFG):
+        # store reference to sdfg
+        self.sdfg: dace.SDFG = sdfg
+        # store reference to frame code generator
+        self.frame: DaCeCodeGenerator = frame_codegen
+        # get dispatcher to register callbacks for allocation/nodes/.. code generators
+        self.dispatcher: TargetDispatcher = frame_codegen.dispatcher
+        # register node dispatcher -> generate_node(), predicate: process tasklets only
+        self.dispatcher.register_node_dispatcher(self,
+                                                 lambda sdfg, node: isinstance(node, nodes.Tasklet))
+        # register all cpu type copies
+        cpu_storage_types = [StorageType.CPU_Pinned, StorageType.CPU_Heap, StorageType.CPU_ThreadLocal,
+                             StorageType.Register, StorageType.Default]
+        for src_storage, dst_storage in itertools.product(cpu_storage_types, cpu_storage_types):
+            self.dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
+        # local variables
+        self.file_list: List = list()
+
+    def generate_node(self,
+                      sdfg: dace.SDFG,
+                      dfg: StateSubgraphView,
+                      state_id: int,
+                      node: nodes.Node,
+                      function_stream: CodeIOStream,
+                      callsite_stream: CodeIOStream):
+        # check instance type
+        if isinstance(node, dace.nodes.Tasklet):
+            # generate code to handle data input to the tasklet
+            for edge in dfg.in_edges(node):
+                # find input array
+                src_node = find_input_arraynode(dfg, edge)
+                # dispatch code gen (copy_memory)
+                self.dispatcher.dispatch_copy(src_node, node, edge, sdfg, dfg, state_id, function_stream,
+                                              callsite_stream)
+
+            # generate code to handle data output from the tasklet
+            for edge in dfg.out_edges(node):
+                # find output array
+                dst_node = find_output_arraynode(dfg, edge)
+                # dispatch code gen (define_out_memlet)
+                self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, dfg, state_id, function_stream,
+                                                           callsite_stream)
+
+            # generate tasklet code
+            self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        else:
+            raise RuntimeError(
+                "Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(
+                    type(node)))
+
+    def copy_memory(self,
+                    sdfg: dace.SDFG,
+                    dfg: StateSubgraphView,
+                    state_id: int,
+                    src_node: nodes.Node,
+                    dst_node: nodes.Node,
+                    edge: MultiConnectorEdge,
+                    function_stream: CodeIOStream,
+                    callsite_stream: CodeIOStream):
+        """
+            Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
+        """
+        if isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.Tasklet):
+            if isinstance(dst_node.in_connectors[edge.dst_conn], dace.pointer):  # pointer accessor
+                line: str = "{} {} = &{}[0];".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src.data)
+            elif isinstance(dst_node.in_connectors[edge.dst_conn], dace.vector):  # vector accessor
+                line: str = "{} {} = *({} *)(&{}[0]);".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, dst_node.in_connectors[edge.dst_conn].ctype, edge.src.data)
+            else:  # scalar accessor
+                line: str = "{}* {} = &{}[0];".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src.data)
+        # write accessor to file
+        callsite_stream.write(line)
+
+    def define_out_memlet(self,
+                          sdfg: dace.SDFG,
+                          dfg: StateSubgraphView,
+                          state_id: int,
+                          src_node: nodes.Node,
+                          dst_node: nodes.Node,
+                          edge: MultiConnectorEdge,
+                          function_stream: CodeIOStream,
+                          callsite_stream: CodeIOStream):
+        """
+            Generate output copy code (handled within the rtl tasklet code).
+        """
+        if isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.AccessNode):
+            if isinstance(src_node.out_connectors[edge.src_conn], dace.pointer):  # pointer accessor
+                line: str = "{} {} = &{}[0];".format(src_node.out_connectors[edge.src_conn].ctype, edge.src_conn, edge.dst.data)
+            elif isinstance(src_node.out_connectors[edge.src_conn], dace.vector):  # vector accessor
+                line: str = "{} {} = *({} *)(&{}[0]);".format(src_node.out_connectors[edge.src_conn].ctype,
+                                                              edge.src_conn,
+                                                              src_node.out_connectors[edge.src_conn].ctype,
+                                                              edge.dst.data)
+            else:  # scalar accessor
+                line: str = "{}* {} = &{}[0];".format(src_node.out_connectors[edge.src_conn].ctype, edge.src_conn, edge.dst.data)
+        callsite_stream.write(line)
+
+    def get_generated_codeobjects(self):
+        """
+            Return list of generated files.
+        """
+        return self.file_list
+
+    @property
+    def has_initializer(self):
+        """
+            Disable initializer method generation.
+        """
+        return False
+
+    @property
+    def has_finalizer(self):
+        """
+            Disable exit/finalizer method generation.
+        """
+        return False
 
     @staticmethod
     def cmake_options():
-        """ Prepare CMake options. """
+        """
+            Process variables to be exposed to the CMakeList.txt script.
+        """
         # get flags from config
         verbose = Config.get_bool("compiler", "rtl", "verbose")
         verilator_flags = Config.get("compiler", "rtl", "verilator_flags")
@@ -39,6 +158,171 @@ class RTLCodeGen(TargetCodeGenerator):
         ]
         return options
 
+    def generate_rtl_parameters(self, constants):
+        pass
+
+    def unparse_tasklet(self,
+                        sdfg: dace.SDFG,
+                        dfg: StateSubgraphView,
+                        state_id: int,
+                        node: nodes.Node,
+                        function_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream):
+
+        # extract data
+        state = sdfg.nodes()[state_id]
+        tasklet = node
+
+        # construct paths
+        unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+        base_path = os.path.join(sdfg.build_folder, "src", "rtl")
+        absolut_path = os.path.abspath(base_path)
+
+        # construct parameters module header
+        if len(sdfg.constants) == 0:
+            parameter_string = ""
+        else:
+            parameter_string =         """\
+        #(
+        {}
+        )""".format(" " + "\n".join(
+            ["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in enumerate(sdfg.constants)]))
+
+        # construct input / output module header
+        MAX_PADDING = 17
+        inputs = list()
+        for inp in tasklet.in_connectors:
+            # add vector index
+            idx_str = ""
+            # catch symbolic (compile time variables)
+            if symbolic.issymbolic(tasklet.in_connectors[inp].veclen, sdfg.constants):
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
+                    tasklet.in_connectors[inp].veclen))
+            if symbolic.issymbolic(tasklet.in_connectors[inp].bytes, sdfg.constants):
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
+                    tasklet.in_connectors[inp].bytes))
+            # extract parameters
+            vec_len = int(symbolic.evaluate(tasklet.in_connectors[inp].veclen, sdfg.constants))
+            total_size = int(symbolic.evaluate(tasklet.in_connectors[inp].bytes, sdfg.constants))
+            # generate vector representation
+            if vec_len > 1:
+                idx_str = "[{}:0]".format(vec_len - 1)
+            # add element index
+            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
+            # generate padded string and add to list
+            inputs.append(", input{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING - len(idx_str)),
+                                                                    idx_str=idx_str,
+                                                                    name=inp))
+        MAX_PADDING = 12
+        outputs = list()
+        for inp in tasklet.out_connectors:
+            # add vector index
+            idx_str = ""
+            # catch symbolic (compile time variables)
+            if symbolic.issymbolic(tasklet.out_connectors[inp].veclen, sdfg.constants):
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
+                    tasklet.in_connectors[inp].veclen))
+            if symbolic.issymbolic(tasklet.out_connectors[inp].bytes, sdfg.constants):
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
+                    tasklet.in_connectors[inp].bytes))
+            # extract parameters
+            vec_len = int(symbolic.evaluate(tasklet.out_connectors[inp].veclen, sdfg.constants))
+            total_size = int(symbolic.evaluate(tasklet.out_connectors[inp].bytes, sdfg.constants))
+            # generate vector representation
+            if vec_len > 1:
+                idx_str = "[{}:0]".format(vec_len - 1)
+            # add element index
+            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
+            # generate padded string and add to list
+            outputs.append(
+                ", output reg{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING - len(idx_str)),
+                                                               idx_str=idx_str,
+                                                               name=inp))
+        # generate cpp input reading/output writing code
+        """
+        input:
+        for vectors:
+            for (int i = 0; i < WIDTH; i++){{ 
+                model->a[i] = a[i];
+            }}
+        for scalars:
+            model->a = a;
+
+        output:
+        for vectors:
+            for(int i = 0; i < WIDTH; i++){{
+                b[i] = (int)model->b[i];
+            }}
+        for scalars:
+            b = (int)model->b;
+        """
+
+        input_read_string = "\n".join(
+            ["model->{name} = {name}[in_ptr++];".format(name=var_name)
+             if isinstance(tasklet.in_connectors[var_name], dace.dtypes.pointer) else
+             """\
+             for(int i = 0; i < {veclen}; i++){{
+               model->{name}[i] = {name}[i];
+             }}\
+             """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
+             if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else
+             "model->{name} = {name}[in_ptr++];".format(name=var_name) #model->{name} = {name}; in_ptr++;
+             for var_name in tasklet.in_connectors])
+
+        output_read_string = "\n".join(["{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
+                                        if isinstance(tasklet.out_connectors[var_name], dace.dtypes.pointer) else
+                                        """\
+                                        for(int i = 0; i < {veclen}; i++){{
+                                          {name}[i] = (int)model->{name}[i];
+                                        }}\
+                                        """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
+                                        if isinstance(tasklet.out_connectors[var_name], dace.dtypes.vector) else
+                                        "{name}[out_ptr++] = (int)model->{name};".format(name=var_name) #{name} = (int)model->{name}; out_ptr++;
+                                        for var_name in tasklet.out_connectors])
+
+        init_vector_string = "\n".join(["""\
+                                       for(int i = 0; i < {veclen}; i++){{
+                                         model->{name}[i] = 0;
+                                       }}\
+                                       """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
+                                        if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else ""
+                                        for var_name in tasklet.in_connectors])
+
+        # write verilog to file
+        os.makedirs(absolut_path, exist_ok=True)
+        with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
+            file.writelines(
+                RTLCodeGen.rtl_header.format(name=unique_name, parameters=parameter_string,
+                                             inputs="\n".join(inputs),
+                                             outputs="\n".join(outputs)))
+            file.writelines(tasklet.code.code)
+            file.writelines(RTLCodeGen.rtl_footer)
+
+        # compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
+        num_elements_string = "int num_elements = {};".format(1)
+
+        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
+                                                                           debug="// enable/disable debug log\n" +
+                                                                                 "bool DEBUG = false;" if "DEBUG" not in sdfg.constants else ""))
+        # dace.config.Config.get()
+        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name,
+                                                                       inputs=input_read_string,
+                                                                       outputs=output_read_string,
+                                                                       num_elements=num_elements_string,
+                                                                       vector_init=init_vector_string,
+                                                                       internal_state_str=" ".join(
+                                                                           ["{}=0x%x".format(var_name) for var_name
+                                                                            in
+                                                                            {**tasklet.in_connectors,
+                                                                             **tasklet.out_connectors}]),
+                                                                       internal_state_var=", ".join(
+                                                                           ["model->{}".format(var_name) for
+                                                                            var_name in
+                                                                            {**tasklet.in_connectors,
+                                                                             **tasklet.out_connectors}])),
+                              sdfg=sdfg,
+                              state_id=state_id,
+                              node_id=node)
 
     # define cpp code templates
     header_template = """
@@ -188,155 +472,3 @@ module {name}
     rtl_footer = """
 endmodule
 """
-
-    @staticmethod
-    def unparse_rtl_tasklet(sdfg, state_id, dfg, node, function_stream,
-                            callsite_stream: dace.codegen.prettycode.CodeIOStream,
-                            locals, ldepth, toplevel_schedule, codegen):
-
-        # extract data
-        state = sdfg.nodes()[state_id]
-        tasklet = node
-
-        # construct paths
-        unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
-        base_path = os.path.join(sdfg.build_folder, "src", "rtl")
-        absolut_path = os.path.abspath(base_path)
-
-        # construct parameters module header
-        if len(sdfg.constants) == 0:
-            parameter_string = ""
-        else:
-            parameter_string = """\
-#(
-{}
-)""".format(" " + "\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in
-                       enumerate(sdfg.constants)]))
-
-        # construct input / output module header
-        MAX_PADDING = 17
-        inputs = list()
-        for inp in tasklet.in_connectors:
-            # add vector index
-            idx_str = ""
-            # catch symbolic (compile time variables)
-            if symbolic.issymbolic(tasklet.in_connectors[inp].veclen, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
-            if symbolic.issymbolic(tasklet.in_connectors[inp].bytes, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
-            # extract parameters
-            vec_len = int(symbolic.evaluate(tasklet.in_connectors[inp].veclen, sdfg.constants))
-            total_size = int(symbolic.evaluate(tasklet.in_connectors[inp].bytes, sdfg.constants))
-            # generate vector representation
-            if vec_len > 1:
-                idx_str = "[{}:0]".format(vec_len - 1)
-            # add element index
-            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
-            # generate padded string and add to list
-            inputs.append(", input{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING-len(idx_str)),
-                                                                    idx_str=idx_str,
-                                                                    name=inp))
-        MAX_PADDING = 12
-        outputs = list()
-        for inp in tasklet.out_connectors:
-            # add vector index
-            idx_str = ""
-            # catch symbolic (compile time variables)
-            if symbolic.issymbolic(tasklet.out_connectors[inp].veclen, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].veclen))
-            if symbolic.issymbolic(tasklet.out_connectors[inp].bytes, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(tasklet.in_connectors[inp].bytes))
-            # extract parameters
-            vec_len = int(symbolic.evaluate(tasklet.out_connectors[inp].veclen, sdfg.constants))
-            total_size = int(symbolic.evaluate(tasklet.out_connectors[inp].bytes, sdfg.constants))
-            # generate vector representation
-            if vec_len > 1:
-                idx_str = "[{}:0]".format(vec_len - 1)
-            # add element index
-            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
-            # generate padded string and add to list
-            outputs.append(", output reg{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING-len(idx_str)),
-                                                                          idx_str=idx_str,
-                                                                          name=inp))
-        # generate cpp input reading/output writing code
-        """
-        input:
-        for vectors:
-            for (int i = 0; i < 4; i++){{ 
-                model->a[i] = a[i];
-            }}
-        for scalars:
-            model->a = a;
-            
-        output:
-        for vectors:
-            for(int i = 0; i < 4; i++){{
-                b[i] = (int)model->b[i];
-            }}
-        for scalars:
-            b = (int)model->b;
-        """
-
-        input_read_string = "\n".join(["model->{name} = {name}[in_ptr++];".format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-                                       if isinstance(tasklet.in_connectors[var_name], dace.dtypes.pointer) else
-                                       """\
-                                       for(int i = 0; i < {veclen}; i++){{
-                                         model->{name}[i] = {name}[i];
-                                       }}\
-                                       """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-                                       if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector)  else
-                                      "model->{name} = {name}; in_ptr++;".format(name=var_name)
-                                      for var_name in tasklet.in_connectors])
-
-        output_read_string = "\n".join(["{name}[out_ptr++] = (int)model->{name};".format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
-                                        if isinstance(tasklet.out_connectors[var_name], dace.dtypes.pointer) else
-                                        """\
-                                        for(int i = 0; i < {veclen}; i++){{
-                                          {name}[i] = (int)model->{name}[i];
-                                        }}\
-                                        """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
-                                        if isinstance(tasklet.out_connectors[var_name], dace.dtypes.vector) else
-                                        "{name} = (int)model->{name}; out_ptr++;".format(name=var_name)
-                                        for var_name in tasklet.out_connectors])
-
-        init_vector_string = "\n".join(["""\
-                                       for(int i = 0; i < {veclen}; i++){{
-                                         model->{name}[i] = 0;
-                                       }}\
-                                       """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-                                        if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else ""
-                                        for var_name in tasklet.in_connectors])
-
-        # write verilog to file
-        os.makedirs(absolut_path, exist_ok=True)
-        with open(os.path.join(absolut_path, "{}.sv".format(unique_name)), "w") as file:
-            file.writelines(
-                RTLCodeGen.rtl_header.format(name=unique_name, parameters=parameter_string, inputs="\n".join(inputs),
-                                             outputs="\n".join(outputs)))
-            file.writelines(tasklet.code.code)
-            file.writelines(RTLCodeGen.rtl_footer)
-
-        # compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        num_elements_string = "int num_elements = {};".format(1)
-
-        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template.format(name=unique_name,
-                                                                           debug="// enable/disable debug log\n" +
-                                                                                 "bool DEBUG = false;" if "DEBUG" not in sdfg.constants else ""))
-        #dace.config.Config.get()
-        callsite_stream.write(contents=RTLCodeGen.main_template.format(name=unique_name,
-                                                                       inputs=input_read_string,
-                                                                       outputs=output_read_string,
-                                                                       num_elements=num_elements_string,
-                                                                       vector_init=init_vector_string,
-                                                                       internal_state_str=" ".join(
-                                                                           ["{}=0x%x".format(var_name) for var_name in
-                                                                            {**tasklet.in_connectors,
-                                                                             **tasklet.out_connectors}]),
-                                                                       internal_state_var=", ".join(
-                                                                           ["model->{}".format(var_name) for var_name in
-                                                                            {**tasklet.in_connectors,
-                                                                             **tasklet.out_connectors}])),
-                              sdfg=sdfg,
-                              state_id=state_id,
-                              node_id=node)
-
