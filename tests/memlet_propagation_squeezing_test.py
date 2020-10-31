@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.sdfg import propagation
 import numpy as np
 
 
@@ -47,22 +48,23 @@ def make_sdfg(squeeze, name):
                               src_conn='a1',
                               memlet=dace.Memlet('A[0:N+1, j]'))
         # This is expected to propagate to A[2:N, j - 1].
-        state.add_memlet_path(
-            nsdfg_node,
-            mx,
-            w,
-            src_conn='a2',
-            memlet=dace.Memlet('A[2:N+1, j-1]'))
+        state.add_memlet_path(nsdfg_node,
+                              mx,
+                              w,
+                              src_conn='a2',
+                              memlet=dace.Memlet('A[2:N+1, j-1]'))
     else:
         # This memlet is expected to propagate to A[0:N, j - 1:j + 1].
-        state.add_memlet_path(
-            nsdfg_node,
-            mx,
-            w,
-            src_conn='a',
-            memlet=dace.Memlet('A[0:N+1, j-1:j+1]'))
+        state.add_memlet_path(nsdfg_node,
+                              mx,
+                              w,
+                              src_conn='a',
+                              memlet=dace.Memlet('A[0:N+1, j-1:j+1]'))
+
+    propagation.propagate_memlets_sdfg(sdfg)
 
     return sdfg
+
 
 def test_memlets_no_squeeze():
     sdfg = make_sdfg(False, 'nonsqueezed')
@@ -82,7 +84,7 @@ def test_memlets_no_squeeze():
     j = dace.symbolic.symbol('j')
     main_state = sdfg.nodes()[0]
     out_memlet = main_state.edges()[1].data
-    assert out_memlet.volume == 2*N - 4
+    assert out_memlet.volume == 2 * N - 4
     assert out_memlet.dynamic == False
     assert out_memlet.subset[0] == (0, N - 1, 1)
     assert out_memlet.subset[1] == (j - 1, j, 1)
