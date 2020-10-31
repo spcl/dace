@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# encoding: utf-8
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+
 import os
 import itertools
 

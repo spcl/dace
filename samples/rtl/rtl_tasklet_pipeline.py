@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# encoding: utf-8
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 """
     Pipelined, axi-handshake compliant example that increments b from a up to 100.
