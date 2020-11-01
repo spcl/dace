@@ -7,7 +7,7 @@ import itertools
 from typing import List, Tuple, Dict
 
 import dace
-from dace import registry, symbolic, nodes, StorageType
+from dace import registry, symbolic, nodes, StorageType, Language
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.prettycode import CodeIOStream
@@ -38,12 +38,13 @@ class RTLCodeGen(TargetCodeGenerator):
         self.dispatcher: TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
         self.dispatcher.register_node_dispatcher(self,
-                                                 lambda sdfg, node: isinstance(node, nodes.Tasklet))
+                                                 lambda sdfg, node: isinstance(node, nodes.Tasklet) and node.language == Language.RTL)
         # register all cpu type copies
         cpu_storage_types = [StorageType.CPU_Pinned, StorageType.CPU_Heap, StorageType.CPU_ThreadLocal,
                              StorageType.Register, StorageType.Default]
         for src_storage, dst_storage in itertools.product(cpu_storage_types, cpu_storage_types):
-            self.dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
+            self.dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self,
+                                                     lambda sdfg, dfg, src_node, dest_node: (isinstance(src_node, nodes.Tasklet) and src_node.language == Language.RTL) or (isinstance(dest_node, nodes.Tasklet) and dest_node.language == Language.RTL))
         # local variables
         self.code_objects: List[CodeObject] = list()
 
@@ -79,9 +80,7 @@ class RTLCodeGen(TargetCodeGenerator):
             # generate tasklet code
             self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
         else:
-            raise RuntimeError(
-                "Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(
-                    type(node)))
+            raise RuntimeError("Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(type(node)))
 
     def copy_memory(self,
                     sdfg: dace.SDFG,
@@ -343,8 +342,7 @@ for(int i = 0; i < {veclen}; i++){{
                                             code=RTLCodeGen.rtl_header().format(name=unique_name,
                                                                                 parameters=parameter_string,
                                                                                 inputs="\n".join(inputs),
-                                                                                outputs="\n".join(
-                                                                                    outputs))
+                                                                                outputs="\n".join(outputs))
                                                  + tasklet.code.code
                                                  + RTLCodeGen.rtl_footer(),
                                             language="sv",
