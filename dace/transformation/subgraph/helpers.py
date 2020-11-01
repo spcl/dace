@@ -12,10 +12,9 @@ from typing import List, Union, Dict, Tuple
 
 import dace.libraries.standard as stdlib
 
-
-
 # ****************
 # Helper functions
+
 
 def common_map_base_ranges(maps: List[nodes.Map]) -> List[subsets.Range]:
     """ Finds a maximal set of ranges that can be found
@@ -36,11 +35,11 @@ def common_map_base_ranges(maps: List[nodes.Map]) -> List[subsets.Range]:
 
         map_base = map_base_new
 
-
     return map_base
 
 
-def find_reassignment(maps: List[nodes.Map], map_base_ranges) -> Dict[nodes.Map, List]:
+def find_reassignment(maps: List[nodes.Map],
+                      map_base_ranges) -> Dict[nodes.Map, List]:
     """ Provided a list of maps and their common base ranges
         (found via common_map_base_ranges()),
         for each map greedily assign each loop to an index so that
@@ -77,11 +76,13 @@ def find_reassignment(maps: List[nodes.Map], map_base_ranges) -> Dict[nodes.Map,
 
     return result
 
+
 ########################################################################
 
-def toplevel_scope_subgraph(graph, subgraph, scope_dict = None):
+
+def toplevel_scope_subgraph(graph, subgraph, scope_dict=None):
     """
-    returns the toplevel scope of a subgraph
+    Returns the toplevel scope of a subgraph
     """
     if not scope_dict:
         scope_dict = graph.scope_dict()
@@ -97,12 +98,12 @@ def toplevel_scope_subgraph(graph, subgraph, scope_dict = None):
         if current_scope is None:
             return scope
 
-
     raise RuntimeError("Subgraph is not sound")
 
-def toplevel_scope_maps(graph, maps, scope_dict = None):
+
+def toplevel_scope_maps(graph, maps, scope_dict=None):
     """
-    returns the toplevel scope of a set of given maps
+    Returns the toplevel scope of a set of given maps
     """
     if not scope_dict:
         scope_dict = graph.scope_dict()
@@ -116,16 +117,17 @@ def toplevel_scope_maps(graph, maps, scope_dict = None):
         if current_scope is None:
             return scope
 
-    raise RuntimeError("Map structure is not sound (underlying subgraph must be connected)")
+    raise RuntimeError(
+        "Map structure is not sound (underlying subgraph must be connected)")
 
 
-def get_highest_scope_maps(sdfg, graph, subgraph = None):
+def get_highest_scope_maps(sdfg, graph, subgraph=None):
     """
-    returns the Map Entries of the highest scope maps
+    Returns the Map Entries of the highest scope maps
     that reside inside a given subgraph.
     If subgraph = None, the whole graph is taken
     """
-    subgraph = graph if not subgraph else subgraph
+    subgraph = graph if subgraph is None else subgraph
     scope_dict = graph.scope_dict()
 
     def is_lowest_scope(node):
@@ -136,7 +138,9 @@ def get_highest_scope_maps(sdfg, graph, subgraph = None):
 
         return True
 
-    maps = [node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
-                                              and is_lowest_scope(node)]
+    maps = [
+        node for node in subgraph.nodes()
+        if isinstance(node, nodes.MapEntry) and is_lowest_scope(node)
+    ]
 
     return maps

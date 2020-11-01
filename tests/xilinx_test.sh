@@ -55,6 +55,7 @@ run_sample() {
 }
 
 run_all() {
+  
     # Args:
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test 0
@@ -75,6 +76,9 @@ run_all() {
       run_sample ../samples/fpga/filter_fpga filter_fpga 1 8192 0.5
       run_sample ../samples/fpga/jacobi_fpga_stream jacobi_fpga_stream_Hx128xT 1 128 128 8
     fi
+
+    run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
+
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
