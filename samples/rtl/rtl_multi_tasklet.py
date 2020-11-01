@@ -29,56 +29,56 @@ tasklet0 = state.add_tasklet(
     name='rtl_tasklet0',
     inputs={'a'},
     outputs={'b'},
-    code='''
-    typedef enum [1:0] {READY, BUSY, DONE} state_e;
-    state_e state;
+    code="""\
+typedef enum [1:0] {READY, BUSY, DONE} state_e;
+state_e state;
 
-    always@(posedge clk_i) begin
-        if (rst_i) begin // case: reset
-            b <= 0;
-            ready_o <= 1'b1;
-            state <= READY;
-        end else if (valid_i && state == READY) begin // case: load a 
-            b <= a;
-            ready_o <= 1'b0;
-            state <= BUSY;
-        end else if (b < 80) // case: increment counter b
-            b <= b + 1;
-        else
-            b <= b;
-            state <= DONE;
-    end    
+always@(posedge clk_i) begin
+    if (rst_i) begin // case: reset
+        b <= 0;
+        ready_o <= 1'b1;
+        state <= READY;
+    end else if (valid_i && state == READY) begin // case: load a 
+        b <= a;
+        ready_o <= 1'b0;
+        state <= BUSY;
+    end else if (b < 80) // case: increment counter b
+        b <= b + 1;
+    else
+        b <= b;
+        state <= DONE;
+end    
 
-    assign valid_o = (b >= 80) ? 1'b1:1'b0;
-    ''',
+assign valid_o = (b >= 80) ? 1'b1:1'b0;
+""",
     language=dace.Language.RTL)
 
 tasklet1 = state.add_tasklet(
     name='rtl_tasklet1',
     inputs={'b'},
     outputs={'c'},
-    code='''
-    typedef enum [1:0] {READY, BUSY, DONE} state_e;
-    state_e state;
+    code="""\
+typedef enum [1:0] {READY, BUSY, DONE} state_e;
+state_e state;
 
-    always@(posedge clk_i) begin
-        if (rst_i) begin // case: reset
-            c <= 0;
-            ready_o <= 1'b1;
-            state <= READY;
-        end else if (valid_i && state == READY) begin // case: load a 
-            c <= b;
-            ready_o <= 1'b0;
-            state <= BUSY;
-        end else if (c < 100) // case: increment counter b
-            c <= c + 1;
-        else
-            c <= c;
-            state <= DONE;
-    end    
+always@(posedge clk_i) begin
+    if (rst_i) begin // case: reset
+        c <= 0;
+        ready_o <= 1'b1;
+        state <= READY;
+    end else if (valid_i && state == READY) begin // case: load a 
+        c <= b;
+        ready_o <= 1'b0;
+        state <= BUSY;
+    end else if (c < 100) // case: increment counter b
+        c <= c + 1;
+    else
+        c <= c;
+        state <= DONE;
+end    
 
-    assign valid_o = (c >= 100) ? 1'b1:1'b0;   
-    ''',
+assign valid_o = (c >= 100) ? 1'b1:1'b0;   
+""",
     language=dace.Language.RTL)
 
 # add input/output array
