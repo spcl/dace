@@ -1938,7 +1938,8 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
                 outputs=out_connectors, code=code)
 
 
-def _create_subgraph(sdfg: SDFG,
+def _create_subgraph(visitor: 'ProgramVisitor',
+                     sdfg: SDFG,
                      state: SDFGState,
                      inputs: List[UfuncInput],
                      outputs: List[UfuncOutput],
@@ -1946,7 +1947,9 @@ def _create_subgraph(sdfg: SDFG,
                      input_indices: List[str],
                      output_indices: str,
                      output_shape: Shape,
-                     tasklet_params: Dict[str, Any]):
+                     tasklet_params: Dict[str, Any],
+                     has_where: bool = False,
+                     where: Union[str, bool] = None):
     """ Creates the subgraph that implements a NumPy ufunc call.
 
         :param sdfg: SDFG object
@@ -1958,11 +1961,34 @@ def _create_subgraph(sdfg: SDFG,
         :param output_indices: Output indices for inner-most memlets
         :param output_shape: Shape of the output
         :param tasklet_params: Dictionary with the tasklet parameters
+        :param has_where: True if the 'where' keyword is set
+        :param where: Keyword 'where' value
     """
 
     # Create subgraph
     if list(output_shape) == [1]:
         # No map needed
+        if has_where:
+            if isinstance(where, bool):
+                if where is True:
+                    pass
+                elif where is False:
+                    return
+            elif isinstance(where, str) and where in sdfg.arrays.keys():
+                cond_state = state
+                where_data = sdfg.arrays[where]
+                if not isinstance(where_data, data.Scalar):
+                    name = sdfg.temp_data_name()
+                    sdfg.add_scalar(name, where_data.dtype, transient=True)
+                    r = cond_state.add_read(where)
+                    w = cond_state.add_write(name)
+                    cond_state.add_nedge(r, w, dace.Memlet.simple(r, '0'))
+                true_state = sdfg.add_state(label=cond_state.label + '_true')
+                state = true_state
+                visitor.last_state = state
+                cond = name
+                cond_else = 'not ({})'.format(cond)
+                sdfg.add_edge(cond_state, true_state, dace.InterstateEdge(cond))
         tasklet = state.add_tasklet(**tasklet_params)
         inp_conn_idx = 0
         for arg in inputs:
@@ -1978,8 +2004,121 @@ def _create_subgraph(sdfg: SDFG,
                 state.add_edge(tasklet, tasklet_params['outputs'][i],
                                out_node, None,
                                dace.Memlet.from_array(arg, sdfg.arrays[arg]))
+        if has_where and isinstance(where, str) and where in sdfg.arrays.keys():
+            visitor._add_state(label=cond_state.label + '_true')
+            sdfg.add_edge(cond_state, visitor.last_state,
+                          dace.InterstateEdge(cond_else))
     else:
         # Map needed
+        if has_where:
+            if isinstance(where, bool):
+                if where is True:
+                    pass
+                elif where is False:
+                    return
+            elif isinstance(where, str) and where in sdfg.arrays.keys():
+                nested_sdfg = dace.SDFG(state.label + "_where")
+                nested_sdfg_inputs = dict()
+                nested_sdfg_outputs = dict()
+                nested_sdfg._temp_transients = sdfg._temp_transients
+
+                idx = 0
+                for arg in inputs + [where]:
+                    if not (isinstance(arg, str) and arg in sdfg.arrays.keys()):
+                        continue
+                    arg_data = sdfg.arrays[arg]
+                    conn_name = nested_sdfg.temp_data_name()
+                    nested_sdfg_inputs[arg] = (conn_name, input_indices[idx])
+                    idx += 1
+                    if isinstance(arg_data, data.Scalar):
+                        nested_sdfg.add_scalar(conn_name, arg_data.dtype)
+                    elif isinstance(arg_data, data.Array):
+                        nested_sdfg.add_array(conn_name, [1], arg_data.dtype)
+                    else:
+                        raise NotImplementedError
+                
+                for arg in outputs:
+                    arg_data = sdfg.arrays[arg]
+                    conn_name = nested_sdfg.temp_data_name()
+                    nested_sdfg_outputs[arg] = (conn_name, output_indices)
+                    if isinstance(arg_data, data.Scalar):
+                        nested_sdfg.add_scalar(conn_name, arg_data.dtype)
+                    elif isinstance(arg_data, data.Array):
+                        nested_sdfg.add_array(conn_name, [1], arg_data.dtype)
+                    else:
+                        raise NotImplementedError
+                
+                cond_state = nested_sdfg.add_state(
+                    label=state.label + "_where_cond", is_start_state = True)
+                where_data = sdfg.arrays[where]
+                if isinstance(where_data, data.Scalar):
+                    name = nested_sdfg_inputs[where]
+                elif isinstance(where_data, data.Array):
+                    name = nested_sdfg.temp_data_name()
+                    nested_sdfg.add_scalar(name, where_data.dtype,
+                                           transient=True)
+                    r = cond_state.add_read(nested_sdfg_inputs[where][0])
+                    w = cond_state.add_write(name)
+                    cond_state.add_nedge(r, w, dace.Memlet.simple(r, '0'))
+
+                sdfg._temp_transients = nested_sdfg._temp_transients
+
+                true_state = nested_sdfg.add_state(
+                    label=cond_state.label + '_where_true')
+                cond = name
+                cond_else = 'not ({})'.format(cond)
+                nested_sdfg.add_edge(cond_state, true_state,
+                                     dace.InterstateEdge(cond))
+
+                tasklet = true_state.add_tasklet(**tasklet_params)
+                idx = 0
+                for arg in inputs:
+                    if isinstance(arg, str) and arg in sdfg.arrays.keys():
+                        inp_name, _ = nested_sdfg_inputs[arg]
+                        inp_data = nested_sdfg.arrays[inp_name]
+                        inp_node = true_state.add_read(inp_name)
+                        true_state.add_edge(
+                            inp_node, None, tasklet,
+                            tasklet_params['inputs'][idx],
+                            dace.Memlet.from_array(inp_name, inp_data))
+                        idx += 1
+                for i, arg in enumerate(outputs):
+                    if isinstance(arg, str) and arg in sdfg.arrays.keys():
+                        out_name, _ = nested_sdfg_outputs[arg]
+                        out_data = nested_sdfg.arrays[out_name]
+                        out_node = true_state.add_write(out_name)
+                        true_state.add_edge(
+                            tasklet, tasklet_params['outputs'][i],
+                            out_node, None,
+                            dace.Memlet.from_array(out_name, out_data))
+
+                false_state = nested_sdfg.add_state(
+                    label=state.label + '_where_false')
+                nested_sdfg.add_edge(cond_state, false_state,
+                                     dace.InterstateEdge(cond_else))
+                nested_sdfg.add_edge(true_state, false_state,
+                                     dace.InterstateEdge())
+
+
+                codenode = state.add_nested_sdfg(
+                    nested_sdfg, sdfg,
+                    set([n for n, _ in nested_sdfg_inputs.values()]),
+                    set([n for n, _ in nested_sdfg_outputs.values()]))
+                me, mx = state.add_map(state.label + '_map', map_indices)
+                for arg in inputs + [where]:
+                    n = state.add_read(arg)
+                    conn, idx = nested_sdfg_inputs[arg]
+                    state.add_memlet_path(n, me, codenode,
+                                          memlet=dace.Memlet.simple(n, idx),
+                                          dst_conn=conn)
+                for arg in outputs:
+                    n = state.add_write(arg)
+                    conn, idx = nested_sdfg_outputs[arg]
+                    state.add_memlet_path(codenode, mx, n,
+                                          memlet=dace.Memlet.simple(n, idx),
+                                          src_conn=conn)
+                return
+
         input_memlets = dict()
         inp_conn_idx = 0
         for arg, idx in zip(inputs, input_indices):
@@ -2022,11 +2161,37 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
                                       num_inputs, num_outputs, num_args,
                                       args, kwargs)
+
+    # Validate 'where' keyword
+    has_where = False
+    where = None
+    if 'where' in kwargs.keys():
+        where = kwargs['where']
+        if isinstance(where, str) and where in sdfg.arrays.keys():
+            has_where = True
+            inputs.append(where)
+        elif isinstance(where, bool):
+            has_where = True
+            inputs.append(where)
+        elif isinstance(where, (list, tuple)):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Values for the 'where' keyword that are a list or tuple of "
+                " boolean constants are unsupported. Please, pass these values "
+                "through a DaCe boolean array."
+            )
+        else:
+            # NumPy defaults to "where=True" for invalid values for the keyword
+            pass
     
     # Validate data shapes and apply NumPy broadcasting rules
     (out_shape, map_indices,
      out_indices, inp_indices) = _validate_shapes(visitor, ast_node, sdfg,
                                                   ufunc_name, inputs, outputs)
+    
+    # Remove 'where' from inputs
+    if has_where:
+        inputs = inputs[:-1]
     
     # Placeholder for applying NumPy casting rules
     input_dtypes = []
@@ -2050,7 +2215,8 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
 
     # Create subgraph
-    _create_subgraph(sdfg, state, inputs, outputs, map_indices,
-                     inp_indices, out_indices, out_shape, tasklet_params)
+    _create_subgraph(visitor, sdfg, state, inputs, outputs, map_indices,
+                     inp_indices, out_indices, out_shape, tasklet_params,
+                     has_where=has_where, where=where)
 
     return outputs

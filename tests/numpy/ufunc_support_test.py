@@ -115,6 +115,111 @@ def test_ufunc_add_out3():
     assert(np.array_equal(A + B, C))
 
 
+@dace.program
+def ufunc_add_where(A: dace.int32[10], B: dace.int32[10], W: dace.bool[10]):
+    return np.add(A, B, where=W)
+
+
+def test_ufunc_add_where():
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    W = np.random.randint(2, size=(10,), dtype=np.bool_)
+    C = ufunc_add_where(A, B, W)
+    assert(np.array_equal(np.add(A, B, where=W)[W], C[W]))
+    assert(not np.array_equal((A + B)[np.logical_not(W)], C[np.logical_not(W)]))
+
+
+@dace.program
+def ufunc_add_where_true(A: dace.int32[10], B: dace.int32[10]):
+    return np.add(A, B, where=True)
+
+
+def test_ufunc_add_where_true():
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    C = ufunc_add_where_true(A, B)
+    assert(np.array_equal(np.add(A, B, where=True), C))
+
+
+@dace.program
+def ufunc_add_where_false(A: dace.int32[10], B: dace.int32[10]):
+    return np.add(A, B, where=False)
+
+
+def test_ufunc_add_where_false():
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    C = ufunc_add_where_false(A, B)
+    assert(not np.array_equal(A + B, C))
+
+
+@dace.program
+def ufunc_add_where_false(A: dace.int32[10], B: dace.int32[10]):
+    return np.add(A, B, where=False)
+
+
+def test_ufunc_add_where_false():
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    C = ufunc_add_where_false(A, B)
+    assert(not np.array_equal(A + B, C))
+
+
+@dace.program
+def ufunc_add_where_list(A: dace.int32[2], B: dace.int32[2]):
+    return np.add(A, B, where=[True, False])
+
+
+def test_ufunc_add_where_list():
+    A = np.random.randint(1, 10, size=(2,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(2,), dtype=np.int32)
+    try:
+        C = ufunc_add_where_list(A, B)
+    except:
+        assert(True)
+        return
+    assert(False)
+
+
+@dace.program
+def ufunc_add_where1(A: dace.int32[1], B: dace.int32[1], W: dace.bool[1]):
+    return np.add(A, B, where=W)
+
+
+def test_ufunc_add_where1():
+    A = np.random.randint(1, 10, size=(1,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(1,), dtype=np.int32)
+    W = np.random.randint(2, size=(1,), dtype=np.bool_)
+    C = ufunc_add_where1(A, B, W)
+    if W[0]:
+        assert(np.array_equal(A + B, C))
+    else:
+        assert(not np.array_equal(A + B, C))
+
+
+@dace.program
+def ufunc_add_where1_true(A: dace.int32[1], B: dace.int32[1]):
+    return np.add(A, B, where=True)
+
+
+def test_ufunc_add_where1_true():
+    A = np.random.randint(1, 10, size=(1,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(1,), dtype=np.int32)
+    C = ufunc_add_where1_true(A, B)
+    assert(np.array_equal(A + B, C))
+
+
+@dace.program
+def ufunc_add_where1_false(A: dace.int32[1]):
+    return np.add(A, B, where=False)
+
+
+def test_ufunc_add_where1_false():
+    A = np.random.randint(1, 10, size=(1,), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(1,), dtype=np.int32)
+    C = ufunc_add_where_false(A, B)
+    assert(not np.array_equal(A + B, C))
+
 
 if __name__ == "__main__":
     test_broadcast_success()
@@ -126,3 +231,10 @@ if __name__ == "__main__":
     test_ufunc_add_out()
     test_ufunc_add_out2()
     test_ufunc_add_out3()
+    test_ufunc_add_where()
+    test_ufunc_add_where_true()
+    test_ufunc_add_where_false()
+    test_ufunc_add_where_list()
+    test_ufunc_add_where1()
+    test_ufunc_add_where1_true()
+    test_ufunc_add_where1_false()
