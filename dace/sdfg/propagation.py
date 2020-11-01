@@ -816,6 +816,8 @@ def propagate_memlets_sdfg(sdfg, border_memlets=None):
                                     memlet.dynamic = False
                                     memlet.volume = 0
                                     memlet.subset = None
+                                    memlet.other_subset = None
+                                    memlet._is_data_src = True
                                     border_memlets[direction][
                                         node.label
                                     ] = memlet
@@ -855,11 +857,21 @@ def propagate_memlets_sdfg(sdfg, border_memlets=None):
                                     params = ['dummy']
                                     ranges = [(0, 0, 1)]
 
+                                # Propagate the subset based on the direction
+                                # this memlet is pointing. If we're accessing
+                                # from an incoming connector, propagate the
+                                # source subset, if we're going to an outgoing
+                                # connector, propagate the destination subset.
+                                use_dst = False
+                                if direction == 'out':
+                                    use_dst = True
                                 subset = propagate_subset(
                                     memlets,
                                     sdfg.arrays[node.label],
                                     params,
-                                    subsets.Range(ranges)
+                                    subsets.Range(ranges),
+                                    defined_variables=None,
+                                    use_dst=use_dst
                                 ).subset
 
                                 # If the border memlet already has a set range,
@@ -943,12 +955,6 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['in'][iedge.dst_conn]
                     if internal_memlet is None:
                         continue
-
-                    # If there's a destination subset present, remove it. This
-                    # is not relevant for an in going edge.
-                    if internal_memlet.other_subset is not None:
-                        internal_memlet.other_subset = None
-
                     iedge._data = unsqueeze_memlet(
                         internal_memlet,
                         iedge.data,
@@ -959,13 +965,6 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['out'][oedge.src_conn]
                     if internal_memlet is None:
                         continue
-
-                    # If a destination subset is present, move it to the source,
-                    # since this is the one we care about for an outgoing edge.
-                    if internal_memlet.other_subset is not None:
-                        internal_memlet.subset = internal_memlet.other_subset
-                        internal_memlet.other_subset = None
-
                     oedge._data = unsqueeze_memlet(
                         internal_memlet,
                         oedge.data,
@@ -1101,7 +1100,7 @@ def propagate_memlet(dfg_state,
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
         return propagate_subset(aggdata, arr, mapnode.params, mapnode.range,
-                                defined_vars)
+                                defined_vars, use_dst=False)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1122,7 +1121,8 @@ def propagate_subset(
         arr: data.Data,
         params: List[str],
         rng: subsets.Subset,
-        defined_variables: Set[symbolic.SymbolicType] = None) -> Memlet:
+        defined_variables: Set[symbolic.SymbolicType] = None,
+        use_dst: bool = False) -> Memlet:
     """ Tries to propagate a list of memlets through a range (computes the 
         image of the memlet function applied on an integer set of, e.g., a 
         map range) and returns a new memlet object.
@@ -1156,17 +1156,26 @@ def propagate_subset(
     new_subset = None
     for md in memlets:
         tmp_subset = None
+
+        subset = None
+        if use_dst and md.dst_subset is not None:
+            subset = md.dst_subset
+        elif not use_dst and md.src_subset is not None:
+            subset = md.src_subset
+        else:
+            subset = md.subset
+
         for pclass in MemletPattern.extensions():
             pattern = pclass()
-            if pattern.can_be_applied([md.subset], variable_context, rng, [md]):
-                tmp_subset = pattern.propagate(arr, [md.subset], rng)
+            if pattern.can_be_applied([subset], variable_context, rng, [md]):
+                tmp_subset = pattern.propagate(arr, [subset], rng)
                 break
         else:
             # No patterns found. Emit a warning and propagate the entire
             # array
             warnings.warn('Cannot find appropriate memlet pattern to '
                           'propagate %s through %s' %
-                          (str(md.subset), str(rng)))
+                          (str(subset), str(rng)))
             tmp_subset = subsets.Range.from_array(arr)
 
         # Union edges as necessary
