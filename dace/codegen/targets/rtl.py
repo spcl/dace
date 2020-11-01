@@ -38,13 +38,18 @@ class RTLCodeGen(TargetCodeGenerator):
         self.dispatcher: TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
         self.dispatcher.register_node_dispatcher(self,
-                                                 lambda sdfg, node: isinstance(node, nodes.Tasklet) and node.language == Language.RTL)
+                                                 lambda sdfg, node: isinstance(node,
+                                                                               nodes.Tasklet) and node.language == Language.RTL)
         # register all cpu type copies
         cpu_storage_types = [StorageType.CPU_Pinned, StorageType.CPU_Heap, StorageType.CPU_ThreadLocal,
                              StorageType.Register, StorageType.Default]
         for src_storage, dst_storage in itertools.product(cpu_storage_types, cpu_storage_types):
             self.dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self,
-                                                     lambda sdfg, dfg, src_node, dest_node: (isinstance(src_node, nodes.Tasklet) and src_node.language == Language.RTL) or (isinstance(dest_node, nodes.Tasklet) and dest_node.language == Language.RTL))
+                                                     lambda sdfg, dfg, src_node, dest_node: (isinstance(src_node,
+                                                                                                        nodes.Tasklet) and src_node.language == Language.RTL) or (
+                                                                                                        isinstance(
+                                                                                                            dest_node,
+                                                                                                            nodes.Tasklet) and dest_node.language == Language.RTL))
         # local variables
         self.code_objects: List[CodeObject] = list()
 
@@ -80,7 +85,9 @@ class RTLCodeGen(TargetCodeGenerator):
             # generate tasklet code
             self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
         else:
-            raise RuntimeError("Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(type(node)))
+            raise RuntimeError(
+                "Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(
+                    type(node)))
 
     def copy_memory(self,
                     sdfg: dace.SDFG,
@@ -183,10 +190,11 @@ class RTLCodeGen(TargetCodeGenerator):
         if len(constants) == 0:
             return str()
         else:
-            return "#(\n{}\n)".format(" " + "\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, constants[key]) for i, key in enumerate(constants)]))
+            return "#(\n{}\n)".format(" " + "\n".join(
+                ["{} parameter {} = {}".format("," if i > 0 else "", key, constants[key]) for i, key in
+                 enumerate(constants)]))
 
     def check_issymbolic(self, iterator: iter, sdfg):
-
         for item in iterator:
             # catch symbolic (compile time variables)
             if symbolic.issymbolic(item, sdfg.constants):
@@ -199,12 +207,7 @@ class RTLCodeGen(TargetCodeGenerator):
             # add vector index
             idx_str = ""
             # catch symbolic (compile time variables)
-            if symbolic.issymbolic(tasklet.in_connectors[inp].veclen, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
-                    tasklet.in_connectors[inp].veclen))
-            if symbolic.issymbolic(tasklet.in_connectors[inp].bytes, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
-                    tasklet.in_connectors[inp].bytes))
+            self.check_issymbolic([tasklet.in_connectors[inp].veclen, tasklet.in_connectors[inp].bytes], sdfg)
             # extract parameters
             vec_len = int(symbolic.evaluate(tasklet.in_connectors[inp].veclen, sdfg.constants))
             total_size = int(symbolic.evaluate(tasklet.in_connectors[inp].bytes, sdfg.constants))
@@ -222,12 +225,7 @@ class RTLCodeGen(TargetCodeGenerator):
             # add vector index
             idx_str = ""
             # catch symbolic (compile time variables)
-            if symbolic.issymbolic(tasklet.out_connectors[inp].veclen, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
-                    tasklet.in_connectors[inp].veclen))
-            if symbolic.issymbolic(tasklet.out_connectors[inp].bytes, sdfg.constants):
-                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(
-                    tasklet.in_connectors[inp].bytes))
+            self.check_issymbolic([tasklet.out_connectors[inp].veclen, tasklet.out_connectors[inp].bytes], sdfg)
             # extract parameters
             vec_len = int(symbolic.evaluate(tasklet.out_connectors[inp].veclen, sdfg.constants))
             total_size = int(symbolic.evaluate(tasklet.out_connectors[inp].bytes, sdfg.constants))
@@ -263,7 +261,6 @@ class RTLCodeGen(TargetCodeGenerator):
         for scalars:
             b[0] = (int)model->b;
         """
-
         input_read_string = "\n".join(
             ["model->{name} = {name}[in_ptr++];".format(name=var_name)
              if isinstance(tasklet.in_connectors[var_name], dace.dtypes.pointer) else
@@ -273,7 +270,7 @@ class RTLCodeGen(TargetCodeGenerator):
  }}\
  """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
              if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else
-             "model->{name} = {name}[in_ptr++];".format(name=var_name)  # model->{name} = {name}; in_ptr++;
+             "model->{name} = {name}[in_ptr++];".format(name=var_name)
              for var_name in tasklet.in_connectors])
 
         output_read_string = "\n".join(["{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
@@ -285,7 +282,6 @@ for(int i = 0; i < {veclen}; i++){{
 """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
                                         if isinstance(tasklet.out_connectors[var_name], dace.dtypes.vector) else
                                         "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
-                                        # {name} = (int)model->{name}; out_ptr++;
                                         for var_name in tasklet.out_connectors])
         # return generated strings
         return input_read_string, output_read_string
@@ -306,16 +302,9 @@ for(int i = 0; i < {veclen}; i++){{
 
     def generate_cpp_internal_state(self, tasklet):
         internal_state_str = " ".join(
-            ["{}=0x%x".format(var_name) for
-             var_name
-             in
-             {**tasklet.in_connectors,
-              **tasklet.out_connectors}])
+            ["{}=0x%x".format(var_name) for var_name in {**tasklet.in_connectors, **tasklet.out_connectors}])
         internal_state_var = ", ".join(
-            ["model->{}".format(var_name) for
-             var_name in
-             {**tasklet.in_connectors,
-              **tasklet.out_connectors}])
+            ["model->{}".format(var_name) for var_name in {**tasklet.in_connectors, **tasklet.out_connectors}])
         return internal_state_str, internal_state_var
 
     def unparse_tasklet(self,
@@ -467,7 +456,7 @@ while (out_ptr < num_elements) {{
         VL_PRINTF("{internal_state_str}", {internal_state_var});
         std::cout << std::endl;
     }}
-    
+
     // check if valid_i and ready_o have been asserted at the rising clock edge
     if (read_input_hs){{
         // remove valid_i flag
@@ -483,8 +472,8 @@ while (out_ptr < num_elements) {{
         model->ready_i = 0;
         write_output_hs = false;
     }}
-    
-    
+
+
     // negative clock edge
     model->clk_i = !model->clk_i;
     model->eval();
@@ -496,7 +485,7 @@ if(DEBUG){{
     VL_PRINTF("{internal_state_str}", {internal_state_var});
     std::cout << std::endl;
 }}
-                               
+
 // final model cleanup
 model->final();
 
