@@ -960,6 +960,11 @@ def propagate_memlets_state(sdfg, state):
                         iedge.data,
                         True
                     )
+                    if symbolic.issymbolic(iedge.data.volume):
+                        if any(s not in sdfg.symbols
+                               for s in iedge.data.volume.free_symbols):
+                            iedge.data.volume = 0
+                            iedge.data.dynamic = True
             for oedge in state.out_edges(node):
                 if oedge.src_conn in border_memlets['out']:
                     internal_memlet = border_memlets['out'][oedge.src_conn]
@@ -970,6 +975,11 @@ def propagate_memlets_state(sdfg, state):
                         oedge.data,
                         True
                     )
+                    if symbolic.issymbolic(oedge.data.volume):
+                        if any(s not in sdfg.symbols
+                               for s in oedge.data.volume.free_symbols):
+                            oedge.data.volume = 0
+                            oedge.data.dynamic = True
 
     # Process scopes from the leaves upwards
     propagate_memlets_scope(sdfg, state, state.scope_leaves())
