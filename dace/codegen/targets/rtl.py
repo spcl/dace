@@ -2,10 +2,9 @@
 # encoding: utf-8
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
-import os
 import itertools
 
-from typing import List
+from typing import List, Tuple, Dict
 
 import dace
 from dace import registry, symbolic, nodes, StorageType
@@ -181,36 +180,21 @@ class RTLCodeGen(TargetCodeGenerator):
         return options
 
     def generate_rtl_parameters(self, constants):
-        pass
-
-    def unparse_tasklet(self,
-                        sdfg: dace.SDFG,
-                        dfg: StateSubgraphView,
-                        state_id: int,
-                        node: nodes.Node,
-                        function_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
-
-        # extract data
-        state = sdfg.nodes()[state_id]
-        tasklet = node
-
-        # construct paths
-        unique_name = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
-        base_path = os.path.join(sdfg.build_folder, "src", "rtl")
-        absolut_path = os.path.abspath(base_path)
-
         # construct parameters module header
-        if len(sdfg.constants) == 0:
-            parameter_string = ""
+        if len(constants) == 0:
+            return str()
         else:
-            parameter_string = """\
-#(
-{}
-)""".format(" " + "\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, sdfg.constants[key]) for i, key in enumerate(sdfg.constants)]))
+            return "#(\n{}\n)".format(" " + "\n".join(["{} parameter {} = {}".format("," if i > 0 else "", key, constants[key]) for i, key in enumerate(constants)]))
 
+    def check_issymbolic(self, iterator: iter, sdfg):
+
+        for item in iterator:
+            # catch symbolic (compile time variables)
+            if symbolic.issymbolic(item, sdfg.constants):
+                raise RuntimeError("Please use sdfg.specialize to specialize the symbol in expression: {}".format(item))
+
+    def generate_rtl_inputs_outputs(self, sdfg, tasklet):
         # construct input / output module header
-        MAX_PADDING = 17
         inputs = list()
         for inp in tasklet.in_connectors:
             # add vector index
@@ -231,10 +215,9 @@ class RTLCodeGen(TargetCodeGenerator):
             # add element index
             idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
             # generate padded string and add to list
-            inputs.append(", input{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING - len(idx_str)),
+            inputs.append(", input{padding}{idx_str} {name}".format(padding=" " * (17 - len(idx_str)),
                                                                     idx_str=idx_str,
                                                                     name=inp))
-        MAX_PADDING = 12
         outputs = list()
         for inp in tasklet.out_connectors:
             # add vector index
@@ -256,9 +239,47 @@ class RTLCodeGen(TargetCodeGenerator):
             idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
             # generate padded string and add to list
             outputs.append(
-                ", output reg{padding}{idx_str} {name}".format(padding=" " * (MAX_PADDING - len(idx_str)),
+                ", output reg{padding}{idx_str} {name}".format(padding=" " * (12 - len(idx_str)),
                                                                idx_str=idx_str,
                                                                name=inp))
+        return inputs, outputs
+
+    def unparse_tasklet(self,
+                        sdfg: dace.SDFG,
+                        dfg: StateSubgraphView,
+                        state_id: int,
+                        node: nodes.Node,
+                        function_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream):
+
+        # extract data
+        state = sdfg.nodes()[state_id]
+        tasklet = node
+
+        # construct variables paths
+        unique_name: str = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+
+        # generate system verilog module parts
+        parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
+        inputs, outputs = self.generate_rtl_inputs_outputs(sdfg, tasklet)
+
+        # create rtl code object (that is later written to file)
+        self.code_objects.append(CodeObject(name="{}".format(unique_name),
+                                            code=RTLCodeGen.rtl_header().format(name=unique_name,
+                                                                                parameters=parameter_string,
+                                                                                inputs="\n".join(inputs),
+                                                                                outputs="\n".join(
+                                                                                    outputs)) + tasklet.code.code + RTLCodeGen.rtl_footer(),
+                                            language="sv",
+                                            target=RTLCodeGen,
+                                            title="rtl",
+                                            target_type="",
+                                            additional_compiler_kwargs="",
+                                            linkable=True,
+                                            environments=None))
+
+
+
         # generate cpp input reading/output writing code
         """
         input:
@@ -267,7 +288,7 @@ class RTLCodeGen(TargetCodeGenerator):
                 model->a[i] = a[i];
             }}
         for scalars:
-            model->a = a;
+            model->a = a[0];
 
         output:
         for vectors:
@@ -275,7 +296,7 @@ class RTLCodeGen(TargetCodeGenerator):
                 b[i] = (int)model->b[i];
             }}
         for scalars:
-            b = (int)model->b;
+            b[0] = (int)model->b;
         """
 
         input_read_string = "\n".join(
@@ -302,6 +323,7 @@ for(int i = 0; i < {veclen}; i++){{
                                         # {name} = (int)model->{name}; out_ptr++;
                                         for var_name in tasklet.out_connectors])
 
+
         init_vector_string = "\n".join(["""\
 for(int i = 0; i < {veclen}; i++){{
  model->{name}[i] = 0;
@@ -310,22 +332,7 @@ for(int i = 0; i < {veclen}; i++){{
                                         if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else ""
                                         for var_name in tasklet.in_connectors])
 
-        # create rtl code object (that is later written to file)
-        self.code_objects.append(CodeObject(name="{}".format(unique_name),
-                                            code=RTLCodeGen.rtl_header().format(name=unique_name,
-                                                                                parameters=parameter_string,
-                                                                                inputs="\n".join(inputs),
-                                                                                outputs="\n".join(
-                                                                                    outputs)) + tasklet.code.code + RTLCodeGen.rtl_footer(),
-                                            language="sv",
-                                            target=RTLCodeGen,
-                                            title="rtl",
-                                            target_type="",
-                                            additional_compiler_kwargs="",
-                                            linkable=True,
-                                            environments=None))
-
-        # compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
+        # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
         num_elements_string = "int num_elements = {};".format(1)
 
         sdfg.append_global_code(cpp_code=RTLCodeGen.header_template().format(name=unique_name,
