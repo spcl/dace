@@ -6,13 +6,14 @@ import copy
 import itertools
 from functools import reduce
 from numbers import Number, Integral
-from typing import Any, Dict, Union, Callable, Tuple, List
+from typing import Any, Callable, Dict, List, Sequence, Set, Tuple, Union
 
 import dace
+from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import inverse_dict_lookup
+import dace.frontend.python.memlet_parser as mem_parser
 from dace.frontend.python.memlet_parser import parse_memlet_subset
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
@@ -24,9 +25,7 @@ import numpy as np
 import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
-ShapeTuple = Tuple[Size]
-ShapeList = List[Size]
-Shape = Union[ShapeTuple, ShapeList]
+Shape = Sequence[Size]
 
 def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
     """ Normalize a list of axes by converting negative dimensions to positive.
@@ -1582,3 +1581,476 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
     state.add_edge(tasklet, '_c', acc3, None, dace.Memlet.from_array(op3, arr3))
 
     return op3
+
+
+# NumPy ufunc support #########################################################
+
+UfuncInput = Union[str, Number]
+UfuncOutput = Union[str, None]
+
+ufuncs = dict(
+    add = dict(name="_numpy_add_", inputs=["__in1", "__in2"],
+               outputs=["__out"], code="__out = __in1 + __in2")
+)
+
+
+def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor',
+                                  ast_node: ast.Call,
+                                  ufunc_name: str,
+                                  num_inputs: int,
+                                  num_outputs: int,
+                                  num_args: int):
+    """ Validates the number of positional arguments in a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param ufunc_name: Name of the ufunc
+        :param num_inputs: Number of ufunc inputs
+        :param num_outputs: Number of ufunc outputs
+        :param num_args: Number of positional argumnents in the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+    """
+
+    if num_args > num_inputs + num_outputs:
+        raise mem_parser.DaceSyntaxError(
+            visitor,
+            ast_node,
+            "Invalid number of arguments in call to numpy.{f} "
+            "(expected a maximum of {i} input(s) and {o} output(s), "
+            "but a total of {a} arguments were given).".format(
+                f=ufunc_name, i=num_inputs, o=num_outputs, a=num_args
+            )
+        )
+
+
+def _validate_ufunc_inputs(visitor: 'ProgramVisitor',
+                           ast_node: ast.Call,
+                           sdfg: SDFG,
+                           ufunc_name: str,
+                           num_inputs: int,
+                           num_args: int,
+                           args: Sequence[UfuncInput]) -> List[UfuncInput]:
+    """ Validates the number of type of inputs in a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param ufunc_name: Name of the ufunc
+        :param num_inputs: Number of ufunc inputs
+        :param args: Positional arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: List of input datanames and constants
+    """
+
+    # Validate number of inputs
+    if num_args > num_inputs:
+        # Assume that the first "num_inputs" arguments are inputs
+        inputs = args[:num_inputs]
+    elif num_args < num_inputs:
+        raise mem_parser.DaceSyntaxError(
+            visitor,
+            ast_node,
+            "Invalid number of arguments in call to numpy.{f} "
+            "(expected {e} inputs, but {a} were given).".format(
+                f=ufunc_name, e=num_inputs, a=num_args
+            )
+        )
+    else:
+        inputs = args
+    if isinstance(inputs, (list, tuple)):
+        inputs = list(inputs)
+    else:
+        inputs = [inputs]
+    
+    # Validate type of inputs
+    for arg in inputs:
+        if isinstance(arg, str) and arg in sdfg.arrays.keys():
+            pass
+        elif isinstance(arg, (Number, sp.Basic)):
+            pass
+        else:
+            raise mem_parser.DaceSyntaxError(
+            visitor,
+            ast_node,
+            "Input arguments in call to numpy.{f} must be of dace.data.Data "
+            "type or numerical/boolean constants (invalid argument {a})".format(
+                f=ufunc_name, a=arg
+            )
+        )
+    
+    return inputs
+
+
+def _validate_ufunc_outputs(visitor: 'ProgramVisitor',
+                            ast_node: ast.Call,
+                            sdfg: SDFG,
+                            ufunc_name: str,
+                            num_inputs: int,
+                            num_outputs: int,
+                            num_args: int,
+                            args: Sequence[UfuncInput],
+                            kwargs: Dict[str, Any]) -> List[UfuncOutput]:
+    """ Validates the number of type of outputs in a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param ufunc_name: Name of the ufunc
+        :param num_inputs: Number of ufunc inputs
+        :param num_outputs: Number of ufunc outputs
+        :param args: Positional arguments of the ufunc call
+        :param kwargs: Keyword arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: List of output datanames and None
+    """
+
+     # Validate number of outputs
+    num_pos_outputs = num_args - num_inputs
+    if num_pos_outputs == 0 and "out" not in kwargs.keys():
+        outputs = [None] * num_outputs
+    elif num_pos_outputs > 0 and "out" in kwargs.keys():
+        raise mem_parser.DaceSyntaxError(
+            visitor,
+            ast_node,
+            "You cannot specify 'out' in call to numpy.{f} as both a positional"
+            " and keyword argument (positional {p}, keyword {w}).".format(
+                f=ufunc_name, p=args[num_outputs, :], k=kwargs['out']
+            )
+        )
+    elif num_pos_outputs > 0:
+        outputs = list(args[num_inputs:])
+        # TODO: Support the following undocumented NumPy behavior?
+        # NumPy allows to specify less than `expected_num_outputs` as
+        # positional arguments. For example, `np.divmod` has 2 outputs, the 
+        # quotient and the remainder. `np.divmod(A, B, C)` works, but 
+        # `np.divmod(A, B, out=C)` or `np.divmod(A, B, out=(C))` doesn't.
+        # In the case of output as a positional argument, C will be set to
+        # the quotient of the floor division, while a new array will be
+        # generated for the remainder.
+    else:
+        outputs = kwargs["out"]
+    if isinstance(outputs, (list, tuple)):
+        outputs = list(outputs)
+    else:
+        outputs = [outputs]
+    if len(outputs) != num_outputs:
+        raise mem_parser.DaceSyntaxError(
+            visitor,
+            ast_node,
+           "Invalid number of arguments in call to numpy.{f} "
+            "(expected {e} outputs, but {a} were given).".format(
+                f=ufunc_name, e=num_outputs, a=len(outputs)
+            )
+        )
+    
+    # Validate outputs
+    for arg in outputs:
+        if arg is None:
+            pass
+        elif isinstance(arg, str) and arg in sdfg.arrays.keys():
+            pass
+        else:
+            raise mem_parser.DaceSyntaxError(
+                visitor,
+                ast_node,
+                "Return arguments in call to numpy.{f} must be of "
+                "dace.data.Data type.".format(f=ufunc_name)
+            )
+    
+    return outputs
+
+
+def _validate_shapes(
+    visitor: 'ProgramVisitor',
+    ast_node: ast.Call,
+    sdfg: SDFG,
+    ufunc_name: str,
+    inputs: List[UfuncInput],
+    outputs: List[UfuncOutput]
+) -> Tuple[Shape, Tuple[Tuple[str, str], ...], str, List[str]]:
+    """ Validates the data shapes of inputs and outputs to a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param ufunc_name: Name of the ufunc
+        :param inputs: Inputs of the ufunc call
+        :param outputs: Outputs of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: Tuple with the output shape, the map, output and input indices
+    """
+
+    shapes = []
+    for arg in inputs + outputs:
+        if isinstance(arg, str):
+            array = sdfg.arrays[arg]
+            shapes.append(array.shape)
+        else:
+            shapes.append([])
+    try:
+        result = _broadcast(shapes)
+    except SyntaxError as e:
+        raise mem_parser.DaceSyntaxError(
+            visitor,
+            ast_node,
+            "Shape validation in numpy.{f} call failed. The following error "
+            "occured : {m}".format(f=ufunc_name, m=str(e))
+        )
+    return result
+
+
+def _broadcast(
+    shapes: Sequence[Shape]
+) -> Tuple[Shape, Tuple[Tuple[str, str], ...], str, List[str]]:
+    """ Applies the NumPy ufunc brodacsting rules in a sequence of data shapes
+        (see https://numpy.org/doc/stable/reference/ufuncs.html#broadcasting).
+
+        :param shapes: Sequence (list, tuple) of data shapes
+
+        :raises SyntaxError: When broadcasting fails
+
+        :returns: Tuple with the output shape, the map, output and input indices
+    """
+
+    map_lengths = dict()
+    output_indices = []
+    input_indices = [[] for _ in shapes]
+
+    ndims = [len(shape) for shape in shapes]
+    max_i = max(ndims)
+
+    def get_idx(i):
+        return "__i" + str(max_i - i - 1)
+    def to_string(idx):
+        return ", ".join(reversed(idx))
+
+    reversed_shapes = [reversed(shape) for shape in shapes]
+    for i, dims in enumerate(itertools.zip_longest(*reversed_shapes)):
+        output_indices.append(get_idx(i))
+
+        not_none_dims = [d for d in dims if d is not None]
+        max_dim = max(not_none_dims)
+
+        map_lengths[get_idx(i)] = max_dim
+        for j, d in enumerate(dims):
+            if d is None:
+                pass
+            elif d == 1:
+                input_indices[j].append('0')
+            elif d == max_dim:
+                input_indices[j].append(get_idx(i))
+            else:
+                raise SyntaxError(
+                    "Operands could not be broadcast together with shapes {}.".
+                    format(','.join(str(shapes)))
+                )
+
+    out_shape = tuple(reversed([map_lengths[idx] for idx in output_indices]))
+    map_indices = [(k, "0:" + str(map_lengths[k]))
+                    for k in reversed(output_indices)]
+    output_indices = to_string(output_indices)
+    input_indices = [to_string(idx) for idx in input_indices]
+
+    return out_shape, map_indices, output_indices, input_indices
+
+
+def _create_output(sdfg: SDFG,
+                   inputs: List[UfuncInput],
+                   outputs: List[UfuncOutput],
+                   output_shape: Shape,
+                   output_dtype: dtypes.typeclass,
+                   storage: dtypes.StorageType = None) -> List[UfuncOutput]:
+    """ Creates output data for storing the result of a NumPy ufunc call.
+
+        :param sdfg: SDFG object
+        :param inputs: Inputs of the ufunc call
+        :param outputs: Outputs of the ufunc call
+        :param output_shape: Shape of the output data
+        :param output_dtype: Datatype of the output data
+        :param storage: Storage type of the output data
+
+        :returns: New outputs of the ufunc call
+    """
+
+    # Set storage typpe
+    storage = storage or dtypes.StorageType.Default
+
+    # Check if the result is scalar
+    is_output_scalar = True
+    for arg in inputs:
+        if isinstance(arg, str) and arg in sdfg.arrays.keys():
+            datadesc = sdfg.arrays[arg]
+            # TODO: What about streams?
+            if not isinstance(datadesc, data.Scalar):
+                is_output_scalar = False
+                break
+
+    # Create output data (if needed)
+    for i, arg in enumerate(outputs):
+        if arg is None:
+            if (len(output_shape) == 1 and output_shape[0] == 1
+                    and is_output_scalar):
+                output_name = sdfg.temp_data_name()
+                sdfg.add_scalar(output_name, output_dtype,
+                                transient=True, storage=storage)
+                outputs[i] = output_name
+            else:
+                outputs[i], _ = sdfg.add_temp_transient(output_shape,
+                                                        output_dtype)
+
+    return outputs
+
+
+def _set_tasklet_params(ufunc_impl: Dict[str, Any],
+                        inputs: List[UfuncInput]) -> Dict[str, Any]:
+    """ Sets the tasklet parameters for a NumPy ufunc call.
+
+        :param ufunc_impl: Information on how the ufunc must be implemented
+        :param inputs: Inputs of the ufunc call
+
+        :returns: Dictionary with the (1) tasklet name, (2) input connectors,
+                  (3) output connectors, and (4) tasklet code
+    """
+
+    # (Deep) copy default tasklet parameters from the ufunc_impl dictionary
+    name = ufunc_impl['name']
+    inp_connectors = copy.deepcopy(ufunc_impl['inputs'])
+    out_connectors = copy.deepcopy(ufunc_impl['outputs'])
+    code = ufunc_impl['code']
+
+    # Remove input connectors related to constants
+    # and fix constants/symbols in the tasklet code
+    for i, arg in reversed(list(enumerate(inputs))):
+        if isinstance(arg, (Number, sp.Symbol)):
+            inp_conn = inp_connectors[i]
+            code = code.replace(inp_conn, str(arg))
+            inp_connectors.pop(i)
+    
+
+    return dict(name=name, inputs=inp_connectors,
+                outputs=out_connectors, code=code)
+
+
+def _create_subgraph(sdfg: SDFG,
+                     state: SDFGState,
+                     inputs: List[UfuncInput],
+                     outputs: List[UfuncOutput],
+                     map_indices: Tuple[str, str],
+                     input_indices: List[str],
+                     output_indices: str,
+                     output_shape: Shape,
+                     tasklet_params: Dict[str, Any]):
+    """ Creates the subgraph that implements a NumPy ufunc call.
+
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param inputs: Inputs of the ufunc call
+        :param outputs: Outputs of the ufunc call
+        :param map_indices: Map (if needed) indices
+        :param input_indices: Input indices for inner-most memlets
+        :param output_indices: Output indices for inner-most memlets
+        :param output_shape: Shape of the output
+        :param tasklet_params: Dictionary with the tasklet parameters
+    """
+
+    # Create subgraph
+    if list(output_shape) == [1]:
+        # No map needed
+        tasklet = state.add_tasklet(**tasklet_params)
+        inp_conn_idx = 0
+        for arg in inputs:
+            if isinstance(arg, str) and arg in sdfg.arrays.keys():
+                inp_node = state.add_read(arg)
+                state.add_edge(inp_node, None, tasklet,
+                               tasklet_params['inputs'][inp_conn_idx],
+                               dace.Memlet.from_array(arg, sdfg.arrays[arg]))
+                inp_conn_idx += 1
+        for i, arg in enumerate(outputs):
+            if isinstance(arg, str) and arg in sdfg.arrays.keys():
+                out_node = state.add_write(arg)
+                state.add_edge(tasklet, tasklet_params['outputs'][i],
+                               out_node, None,
+                               dace.Memlet.from_array(arg, sdfg.arrays[arg]))
+    else:
+        # Map needed
+        input_memlets = dict()
+        inp_conn_idx = 0
+        for arg, idx in zip(inputs, input_indices):
+            if isinstance(arg, str) and arg in sdfg.arrays.keys():
+                conn = tasklet_params['inputs'][inp_conn_idx]
+                input_memlets[conn] = Memlet.simple(arg, idx)
+                inp_conn_idx += 1
+        output_memlets = {
+            out_conn: Memlet.simple(arg, output_indices)
+            for arg, out_conn in zip(outputs, tasklet_params['outputs'])
+        }
+        state.add_mapped_tasklet(
+            tasklet_params['name'],
+            map_indices,
+            input_memlets,
+            tasklet_params['code'],
+            output_memlets,
+            external_edges=True
+        )
+
+
+def implement_ufunc(visitor: 'ProgramVisitor',
+                    ast_node: ast.Call,
+                    sdfg: SDFG,
+                    state: SDFGState,
+                    ufunc_name: str,
+                    ufunc_impl: Dict[str, Any],
+                    args: Sequence[UfuncInput],
+                    kwargs: Dict[str, Any]):
+    """ Implements a NumPy ufunc. """
+
+    # Validate number of arguments, inputs, and outputs
+    num_inputs = len(ufunc_impl['inputs'])
+    num_outputs = len(ufunc_impl['outputs'])
+    num_args = len(args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
+                                  num_inputs, num_outputs, num_args)
+    inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
+                                    num_inputs, num_args, args)
+    outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
+                                      num_inputs, num_outputs, num_args,
+                                      args, kwargs)
+    
+    # Validate data shapes and apply NumPy broadcasting rules
+    (out_shape, map_indices,
+     out_indices, inp_indices) = _validate_shapes(visitor, ast_node, sdfg,
+                                                  ufunc_name, inputs, outputs)
+    
+    # Placeholder for applying NumPy casting rules
+    input_dtypes = []
+    for arg in inputs:
+        if isinstance(arg, str):
+            datadesc = sdfg.arrays[arg]
+            input_dtypes.append(datadesc.dtype)
+        elif isinstance(arg, Number):
+            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+        elif isinstance(arg, sp.Basic):
+            input_dtypes.append(_sym_type(arg))
+    input_types = [d.type for d in input_dtypes]
+    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # result_type = dtypes.result_type_of(*input_dtypes)
+
+    # Create output data (if needed)
+    # TODO: Fix storage
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
+
+    # Set tasklet parameters
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+
+    # Create subgraph
+    _create_subgraph(sdfg, state, inputs, outputs, map_indices,
+                     inp_indices, out_indices, out_shape, tasklet_params)
+
+    return outputs
