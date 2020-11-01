@@ -244,47 +244,13 @@ class RTLCodeGen(TargetCodeGenerator):
                                                                name=inp))
         return inputs, outputs
 
-    def unparse_tasklet(self,
-                        sdfg: dace.SDFG,
-                        dfg: StateSubgraphView,
-                        state_id: int,
-                        node: nodes.Node,
-                        function_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
-
-        # extract data
-        state = sdfg.nodes()[state_id]
-        tasklet = node
-
-        # construct variables paths
-        unique_name: str = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
-
-        # generate system verilog module parts
-        parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
-        inputs, outputs = self.generate_rtl_inputs_outputs(sdfg, tasklet)
-
-        # create rtl code object (that is later written to file)
-        self.code_objects.append(CodeObject(name="{}".format(unique_name),
-                                            code=RTLCodeGen.rtl_header().format(name=unique_name,
-                                                                                parameters=parameter_string,
-                                                                                inputs="\n".join(inputs),
-                                                                                outputs="\n".join(
-                                                                                    outputs)) + tasklet.code.code + RTLCodeGen.rtl_footer(),
-                                            language="sv",
-                                            target=RTLCodeGen,
-                                            title="rtl",
-                                            target_type="",
-                                            additional_compiler_kwargs="",
-                                            linkable=True,
-                                            environments=None))
-
-
+    def generate_cpp_inputs_outputs(self, tasklet):
 
         # generate cpp input reading/output writing code
         """
         input:
         for vectors:
-            for (int i = 0; i < WIDTH; i++){{ 
+            for (int i = 0; i < WIDTH; i++){{
                 model->a[i] = a[i];
             }}
         for scalars:
@@ -322,39 +288,90 @@ for(int i = 0; i < {veclen}; i++){{
                                         "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
                                         # {name} = (int)model->{name}; out_ptr++;
                                         for var_name in tasklet.out_connectors])
+        # return generated strings
+        return input_read_string, output_read_string
 
-
+    def generate_cpp_vector_init(self, tasklet):
         init_vector_string = "\n".join(["""\
-for(int i = 0; i < {veclen}; i++){{
- model->{name}[i] = 0;
-}}\
-""".format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
+        for(int i = 0; i < {veclen}; i++){{
+         model->{name}[i] = 0;
+        }}\
+        """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
                                         if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector) else ""
                                         for var_name in tasklet.in_connectors])
+        return init_vector_string
 
+    def generate_cpp_num_elements(self):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        num_elements_string = "int num_elements = {};".format(1)
+        return "int num_elements = {};".format(1)
 
-        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template().format(name=unique_name,
-                                                                             debug="// enable/disable debug log\n" +
-                                                                                   "bool DEBUG = false;" if "DEBUG" not in sdfg.constants else ""))
-        # dace.config.Config.get()
+    def generate_cpp_internal_state(self, tasklet):
+        internal_state_str = " ".join(
+            ["{}=0x%x".format(var_name) for
+             var_name
+             in
+             {**tasklet.in_connectors,
+              **tasklet.out_connectors}])
+        internal_state_var = ", ".join(
+            ["model->{}".format(var_name) for
+             var_name in
+             {**tasklet.in_connectors,
+              **tasklet.out_connectors}])
+        return internal_state_str, internal_state_var
+
+    def unparse_tasklet(self,
+                        sdfg: dace.SDFG,
+                        dfg: StateSubgraphView,
+                        state_id: int,
+                        node: nodes.Node,
+                        function_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream):
+
+        # extract data
+        state = sdfg.nodes()[state_id]
+        tasklet = node
+
+        # construct variables paths
+        unique_name: str = "top_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+
+        # generate system verilog module components
+        parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
+        inputs, outputs = self.generate_rtl_inputs_outputs(sdfg, tasklet)
+
+        # create rtl code object (that is later written to file)
+        self.code_objects.append(CodeObject(name="{}".format(unique_name),
+                                            code=RTLCodeGen.rtl_header().format(name=unique_name,
+                                                                                parameters=parameter_string,
+                                                                                inputs="\n".join(inputs),
+                                                                                outputs="\n".join(
+                                                                                    outputs))
+                                                 + tasklet.code.code
+                                                 + RTLCodeGen.rtl_footer(),
+                                            language="sv",
+                                            target=RTLCodeGen,
+                                            title="rtl",
+                                            target_type="",
+                                            additional_compiler_kwargs="",
+                                            linkable=True,
+                                            environments=None))
+
+        # generate verilator simulation cpp code components
+        inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
+        vector_init = self.generate_cpp_vector_init(tasklet)
+        num_elements = self.generate_cpp_num_elements()
+        internal_state_str, internal_state_var = self.generate_cpp_internal_state(tasklet)
+
+        # add header code do stream
+        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template().format(name=unique_name))
+
+        # add main cpp code to stream
         callsite_stream.write(contents=RTLCodeGen.main_template().format(name=unique_name,
-                                                                         inputs=input_read_string,
-                                                                         outputs=output_read_string,
-                                                                         num_elements=num_elements_string,
-                                                                         vector_init=init_vector_string,
-                                                                         internal_state_str=" ".join(
-                                                                             ["{}=0x%x".format(var_name) for
-                                                                              var_name
-                                                                              in
-                                                                              {**tasklet.in_connectors,
-                                                                               **tasklet.out_connectors}]),
-                                                                         internal_state_var=", ".join(
-                                                                             ["model->{}".format(var_name) for
-                                                                              var_name in
-                                                                              {**tasklet.in_connectors,
-                                                                               **tasklet.out_connectors}])),
+                                                                         inputs=inputs,
+                                                                         outputs=outputs,
+                                                                         num_elements=num_elements,
+                                                                         vector_init=vector_init,
+                                                                         internal_state_str=internal_state_str,
+                                                                         internal_state_var=internal_state_var),
                               sdfg=sdfg,
                               state_id=state_id,
                               node_id=node)
@@ -373,8 +390,6 @@ for(int i = 0; i < {veclen}; i++){{
 
 // include model header, generated from verilating the sv design
 #include "V{name}.h"
-                           
-{debug}
 """
 
     @staticmethod
