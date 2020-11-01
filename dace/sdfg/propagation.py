@@ -583,10 +583,6 @@ def propagate_states(sdfg) -> None:
     # Initialize states.
     for v in sdfg.nodes():
         v.visited = False
-        v.is_loop_guard = False
-        v.itvar = None
-        v.condition_edge = None
-        v.full_merge_state = None
 
     # Annotate for-loops with ranges and find loop guards.
     sdfg.apply_transformations_repeated(AnnotateLoop)
@@ -602,7 +598,7 @@ def propagate_states(sdfg) -> None:
         for v in cycle:
             if not v.ranges:
                 no_unannotated_states = False
-            if v.is_loop_guard:
+            if getattr(v, 'is_loop_guard', False):
                 has_loop_guard = True
         if not (has_loop_guard and no_unannotated_states):
             # This loop is no fully annotated for loop.
@@ -627,7 +623,7 @@ def propagate_states(sdfg) -> None:
             if proposed_executions == 0 and proposed_dynamic:
                 state.executions = proposed_executions
                 state.dynamic_executions = proposed_dynamic
-            elif state.is_loop_guard:
+            elif getattr(state, 'is_loop_guard', False):
                 # If we encounter a loop guard that's already been visited,
                 # we've finished traversing a loop and can remove that loop's
                 # iteration variable from the stack. We additively merge the
@@ -676,7 +672,7 @@ def propagate_states(sdfg) -> None:
                 state = out_edges[0].dst
                 continue
             elif out_degree > 1:
-                if state.is_loop_guard:
+                if getattr(state, 'is_loop_guard', False):
                     itvar = symbolic.symbol(state.itvar)
                     loop_range = state.ranges[state.itvar]
                     start = loop_range[0][0]
@@ -749,7 +745,7 @@ def propagate_states(sdfg) -> None:
                     # Traverse as a conditional split.
                     proposed_executions = state.executions
                     proposed_dynamic = True
-                    if (state.full_merge_state is not None and
+                    if (getattr(state, 'full_merge_state', None) is not None and
                         not state.dynamic_executions):
                         full_merge_states.add(state.full_merge_state)
                     for oedge in out_edges:
