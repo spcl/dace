@@ -45,9 +45,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
         ref_result = reference_result(a, b_ref, alpha)
 
         program = None
-        if target == "cpu":
-            program = cpu_graph(config[2], implementation, testCase=config[3])
-        elif target == "fpga":
+        if target == "fpga":
             program = fpga_graph(config[1], config[2], implementation, testCase=config[3])
         else:
             program = pure_graph(config[1], config[2], testCase=config[3])
@@ -150,69 +148,6 @@ def test_pure():
 
 
 # ---------- ----------
-# CPU library graph program
-# ---------- ----------
-def cpu_graph(precision, implementation, testCase="0"):
-    
-    n = dace.symbol("n")
-    a = dace.symbol("a")
-
-    prec = "single" if precision == dace.float32 else "double"
-    test_sdfg = dace.SDFG("axpy_test_" + prec + "_" + implementation + "_" + testCase)
-    test_state = test_sdfg.add_state("test_state")
-
-    test_sdfg.add_symbol(a.name, precision)
-
-    test_sdfg.add_array('x1', shape=[n], dtype=precision)
-    test_sdfg.add_array('y1', shape=[n], dtype=precision)
-
-    x_in = test_state.add_read('x1')
-    y_in = test_state.add_read('y1')
-    z_out = test_state.add_write('y1')
-
-    saxpy_node = blas.axpy.Axpy("axpy", precision)
-    saxpy_node.implementation = implementation
-
-    test_state.add_memlet_path(
-        x_in, saxpy_node,
-        dst_conn='_x',
-        memlet=Memlet.simple(x_in, "0:n")
-    )
-    test_state.add_memlet_path(
-        y_in, saxpy_node,
-        dst_conn='_y',
-        memlet=Memlet.simple(y_in, "0:n")
-    )
-
-    test_state.add_memlet_path(
-        saxpy_node, z_out,
-        src_conn='_res',
-        memlet=Memlet.simple(z_out, "0:n")
-    )
-
-
-    test_sdfg.expand_library_nodes()
-
-    return test_sdfg.compile()
-
-
-def test_cpu(implementation):
-    
-    print("Run BLAS test: AXPY", implementation + "...")
-
-    configs = [
-        (1.0, 1, dace.float32, "0"),
-        (0.0, 1, dace.float32, "1"),
-        (random.random(), 1, dace.float32, "2"),
-        (1.0, 1, dace.float64, "3")
-    ]
-
-    run_test(configs, "cpu", implementation, overwrite_y=True)
-
-    print(" --> passed")
-
-
-# ---------- ----------
 # FPGA graph program
 # ---------- ----------
 def fpga_graph(vecWidth, precision, vendor, testCase="0"):
@@ -304,10 +239,8 @@ if __name__ == "__main__":
     cmdParser.add_argument("--target", dest="target", default="pure")
 
     args = cmdParser.parse_args()
-    
-    if args.target == "MKL" or args.target == "OpenBLAS":
-        test_cpu(args.target)
-    elif args.target == "intel_fpga" or args.target == "xilinx":
+
+    if args.target == "intel_fpga" or args.target == "xilinx":
         test_fpga(args.target)
     else:
         test_pure()

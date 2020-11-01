@@ -1,15 +1,6 @@
 #!/bin/bash
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
-
-# Import MKL for BLAS testing
-export MKLROOT=/opt/intel/mkl
-export LD_LIBRARY_PATH=/opt/intel/compilers_and_libraries/linux/mkl/lib:$LD_LIBRARY_PATH
-export LIBRARY_PATH=/opt/intel/compilers_and_libraries/linux/mkl/lib:$LIBRARY_PATH
-export CMAKE_PREFIX_PATH=/opt/intel/compilers_and_libraries/linux/mkl:$CMAKE_PREFIX_PATH
-export CPATH=/opt/intel/compilers_and_libraries/linux/mkl/include:$CPATH
-
-
 set -a
 
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
@@ -209,17 +200,7 @@ runall() {
     #runtestargs transformations/sfusion_sequential1_cudatest.py
     runtestargs transformations/subgraph_fusion/sequential2_cudatest.py
 
-    runtestargs half_cudatest.py
-    runtestargs halfvec_cudatest.py
     runopt samples/customization/tensor_cores.py $1
-    
-    ## BLAS library nodes
-    # MKL
-    runtestargs blas/nodes/axpy_test.py '--target MKL'
-
-    # OpenBLAS
-    runtestargs blas/nodes/axpy_test.py '--target OpenBLAS'
-    
 }
 
 
