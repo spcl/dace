@@ -13,7 +13,7 @@ def trivial_map_range_sdfg():
 
     # Nodes
     read = state.add_read('A')
-    map_entry, map_exit = state.add_map('map', dict(i='0:1',j='0:5', k='j:j+1'))
+    map_entry, map_exit = state.add_map('map', dict(i='0:1',j='0:5'))
     tasklet = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a')
     write = state.add_write('B')
 
