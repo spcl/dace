@@ -216,16 +216,33 @@ class StateGraphView(object):
         # Return node that corresponds to current edge
         return traverse(tree_root)
 
+    def in_edges_by_connector(self, node: nd.Node,
+                              connector: AnyStr) -> MultiConnectorEdge:
+        """ Returns a generator over edges entering the given connector of the
+            given node.
+            :param node: Destination node of edges.
+            :param connector: Destination connector of edges.
+        """
+        return (e for e in self.in_edges(node) if e.dst_conn == connector)
+
+    def out_edges_by_connector(self, node: nd.Node,
+                               connector: AnyStr) -> MultiConnectorEdge:
+        """ Returns a generator over edges exiting the given connector of the
+            given node.
+            :param node: Source node of edges.
+            :param connector: Source connector of edges.
+        """
+        return (e for e in self.out_edges(node) if e.src_conn == connector)
+
     def edges_by_connector(self, node: nd.Node,
                            connector: AnyStr) -> MultiConnectorEdge:
-        """ Returns a generator to the edges going to or from the the given
+        """ Returns a generator over edges entering or exiting the given
             connector of the given node.
             :param node: Source/destination node of edges.
             :param connector: Source/destination connector of edges.
         """
-        return itertools.chain(
-            (e for e in self.in_edges(node) if e.dst_conn == connector),
-            (e for e in self.out_edges(node) if e.src_conn == connector))
+        return itertools.chain(self.in_edges_by_connector(node, connector),
+                               self.out_edges_by_connector(node, connector))
 
     ###################################################################
     # Scope-related methods
