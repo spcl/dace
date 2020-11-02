@@ -4,6 +4,7 @@ import dace
 import ast
 import copy
 import itertools
+import warnings
 from functools import reduce
 from numbers import Number, Integral
 from typing import Any, Callable, Dict, List, Sequence, Set, Tuple, Union
@@ -1590,7 +1591,8 @@ UfuncOutput = Union[str, None]
 
 ufuncs = dict(
     add = dict(name="_numpy_add_", inputs=["__in1", "__in2"],
-               outputs=["__out"], code="__out = __in1 + __in2")
+               outputs=["__out"], code="__out = __in1 + __in2",
+               reduce="lambda a, b: a + b", initial=np.add.identity)
 )
 
 
@@ -1909,7 +1911,8 @@ def _create_output(sdfg: SDFG,
                    outputs: List[UfuncOutput],
                    output_shape: Shape,
                    output_dtype: dtypes.typeclass,
-                   storage: dtypes.StorageType = None) -> List[UfuncOutput]:
+                   storage: dtypes.StorageType = None,
+                   force_scalar: bool = False,) -> List[UfuncOutput]:
     """ Creates output data for storing the result of a NumPy ufunc call.
 
         :param sdfg: SDFG object
@@ -1918,6 +1921,8 @@ def _create_output(sdfg: SDFG,
         :param output_shape: Shape of the output data
         :param output_dtype: Datatype of the output data
         :param storage: Storage type of the output data
+        :param force_scalar: If True and output shape is (1,) then output
+        becomes a dace.data.Scalar, regardless of the data-type of the inputs
 
         :returns: New outputs of the ufunc call
     """
@@ -1939,7 +1944,7 @@ def _create_output(sdfg: SDFG,
     for i, arg in enumerate(outputs):
         if arg is None:
             if (len(output_shape) == 1 and output_shape[0] == 1
-                    and is_output_scalar):
+                    and (is_output_scalar or force_scalar)):
                 output_name = sdfg.temp_data_name()
                 sdfg.add_scalar(output_name, output_dtype,
                                 transient=True, storage=storage)
@@ -2190,8 +2195,22 @@ def implement_ufunc(visitor: 'ProgramVisitor',
                     ufunc_name: str,
                     ufunc_impl: Dict[str, Any],
                     args: Sequence[UfuncInput],
-                    kwargs: Dict[str, Any]):
-    """ Implements a NumPy ufunc. """
+                    kwargs: Dict[str, Any]) -> List[UfuncOutput]:
+    """ Implements a NumPy ufunc.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param ufunc_name: Name of the ufunc
+        :param ufunc_impl: Information on how the ufunc must be implemented
+        :param args: Positional arguments of the ufunc call
+        :param kwargs: Keyword arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: List of output datanames
+    """
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = len(ufunc_impl['inputs'])
@@ -2211,7 +2230,7 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     
     # Validate data shapes and apply NumPy broadcasting rules
     inp_shapes = copy.deepcopy(inputs)
-    if where:
+    if has_where:
         inp_shapes += [where]
     (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
          visitor, ast_node, sdfg, ufunc_name, inp_shapes, outputs)
@@ -2241,5 +2260,83 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     _create_subgraph(visitor, sdfg, state, inputs, outputs, map_indices,
                      inp_indices, out_indices, out_shape, tasklet_params,
                      has_where=has_where, where=where)
+
+    return outputs
+
+
+def implement_ufunc_reduce(visitor: 'ProgramVisitor',
+                           ast_node: ast.Call,
+                           sdfg: SDFG,
+                           state: SDFGState,
+                           ufunc_name: str,
+                           ufunc_impl: Dict[str, Any],
+                           args: Sequence[UfuncInput],
+                           kwargs: Dict[str, Any]) -> List[UfuncOutput]:
+    """ Implements the 'reduce' method of a NumPy ufunc.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param ufunc_name: Name of the ufunc
+        :param ufunc_impl: Information on how the ufunc must be implemented
+        :param args: Positional arguments of the ufunc call
+        :param kwargs: Keyword arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: List of output datanames
+    """
+
+    # Validate number of arguments, inputs, and outputs
+    num_inputs = 1
+    num_outputs = 1
+    num_args = len(args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
+                                  num_inputs, num_outputs, num_args)
+    inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
+                                    num_inputs, num_args, args)
+    outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
+                                      num_inputs, num_outputs, num_args,
+                                      args, kwargs)
+
+    # Validate 'where' keyword
+    if 'where' in kwargs.keys():
+        warnings.warn("Keyword argument 'where' in 'reduce' method of NumPy "
+                      "ufunc calls is unsupported. It will be ignored.")
+    has_where = False
+    where = None
+    
+    # Validate data shapes and apply NumPy broadcasting rules
+    # In the case of reduce this may only validate the broadcasting of the
+    # single input with the "where value". Unsupported for now.
+    # inp_shapes = copy.deepcopy(inputs)
+    # if has_where:
+    #     inp_shapes += [where]
+    # _validate_shapes(visitor, ast_node, sdfg, ufunc_name, inp_shapes, [None])
+    out_shape = [1]
+    
+    # Placeholder for applying NumPy casting rules
+    input_dtypes = []
+    for arg in inputs:
+        if isinstance(arg, str):
+            datadesc = sdfg.arrays[arg]
+            input_dtypes.append(datadesc.dtype)
+        elif isinstance(arg, Number):
+            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+        elif isinstance(arg, sp.Basic):
+            input_dtypes.append(_sym_type(arg))
+    input_types = [d.type for d in input_dtypes]
+    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # result_type = dtypes.result_type_of(*input_dtypes)
+
+    # Create output data (if needed)
+    # TODO: Fix storage
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type,
+                             force_scalar=True)
+
+    # Create subgraph
+    _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], outputs[0],
+            axis=None, identity=ufunc_impl['initial'])
 
     return outputs

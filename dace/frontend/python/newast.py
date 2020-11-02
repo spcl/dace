@@ -2988,7 +2988,11 @@ class ProgramVisitor(ExtNodeVisitor):
         modname = until(funcname, '.')
         if ('.' in funcname and len(modname) > 0 and modname in self.globals
                 and dtypes.ismodule(self.globals[modname])):
-            func = getattr(self.globals[modname], funcname[len(modname) + 1:])
+            try:
+                func = getattr(self.globals[modname],
+                               funcname[len(modname) + 1:])
+            except AttributeError:
+                func = None
 
             # Not an SDFG, ignore (might be a recognized function, see below)
             if not isinstance(func, (SDFG, DaceProgram)):
@@ -3269,16 +3273,19 @@ class ProgramVisitor(ExtNodeVisitor):
             func = getattr(self.globals[modname], npfuncname)
             if isinstance(func, numpy.ufunc):
                 print("NumPy ufunc {}".format(npfuncname))
+                if npfuncname not in replacements.ufuncs.keys():
+                    raise NotImplementedError
+                found_ufunc = True
+                ufunc_name = npfuncname
+                ufunc_impl = replacements.ufuncs[ufunc_name]
                 if len(funcname) > len(modname) + len(npfuncname) + 1:
                     name = funcname[len(modname) + len(npfuncname) + 2:]
                     print("NumPy ufunc {}, method {}".format(npfuncname, name))
-                    raise NotImplementedError
-                if npfuncname not in replacements.ufuncs.keys():
-                    raise NotImplementedError
+                    if name == "reduce":
+                        func = replacements.implement_ufunc_reduce
+                    else:
+                        raise NotImplementedError
                 else:
-                    found_ufunc = True
-                    ufunc_name = npfuncname
-                    ufunc_impl = replacements.ufuncs[ufunc_name]
                     func = replacements.implement_ufunc
 
         # Otherwise, try to find a default implementation for the SDFG

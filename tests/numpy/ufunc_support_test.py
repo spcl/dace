@@ -210,7 +210,7 @@ def test_ufunc_add_where1_true():
 
 
 @dace.program
-def ufunc_add_where1_false(A: dace.int32[1]):
+def ufunc_add_where1_false(A: dace.int32[1], B: dace.int32[1]):
     return np.add(A, B, where=False)
 
 
@@ -219,6 +219,17 @@ def test_ufunc_add_where1_false():
     B = np.random.randint(1, 10, size=(1,), dtype=np.int32)
     C = ufunc_add_where_false(A, B)
     assert(not np.array_equal(A + B, C))
+
+
+@dace.program
+def ufunc_add_reduce_simple(A: dace.int32[10]):
+    return np.add.reduce(A)
+
+
+def test_ufunc_add_reduce_simple():
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    s = ufunc_add_reduce_simple(A)[0]
+    assert(np.array_equal(np.add.reduce(A), s))
 
 
 if __name__ == "__main__":
@@ -238,3 +249,4 @@ if __name__ == "__main__":
     test_ufunc_add_where1()
     test_ufunc_add_where1_true()
     test_ufunc_add_where1_false()
+    test_ufunc_add_reduce_simple()
