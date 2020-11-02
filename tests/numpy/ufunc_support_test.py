@@ -232,6 +232,17 @@ def test_ufunc_add_reduce_simple():
     assert(np.array_equal(np.add.reduce(A), s))
 
 
+@dace.program
+def ufunc_add_reduce_axis(A: dace.int32[2, 2, 2, 2, 2]):
+    return np.add.reduce(A, axis=(0, 2, 4))
+
+
+def test_ufunc_add_reduce_axis():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    s = ufunc_add_reduce_axis(A)
+    assert(np.array_equal(np.add.reduce(A, axis=(0, 2, 4)), s))
+
+
 if __name__ == "__main__":
     test_broadcast_success()
     test_broadcast_fail()
@@ -250,3 +261,4 @@ if __name__ == "__main__":
     test_ufunc_add_where1_true()
     test_ufunc_add_where1_false()
     test_ufunc_add_reduce_simple()
+    test_ufunc_add_reduce_axis()

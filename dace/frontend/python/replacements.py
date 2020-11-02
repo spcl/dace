@@ -2299,22 +2299,75 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
     outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
                                       num_inputs, num_outputs, num_args,
                                       args, kwargs)
+    
+    # Validate 'axis' keyword
+    axis = None
+    out_shape = [1]
+    if 'axis' in kwargs.keys():
+        axis = kwargs['axis']
+        if axis is not None and not isinstance(axis, (tuple, list)):
+            axis = (axis, )
+    if axis is not None:
+        if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
+            inp_shape = sdfg.arrays[inputs[0]].shape
+        else:
+            inp_shape = [1]
+        axis = tuple(pystr_to_symbolic(a) for a in axis)
+        axis = tuple(normalize_axes(axis, len(inp_shape)))
+        if len(axis) > len(inp_shape):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Axis {a} is out of bounds for data of dimension {d}".format(
+                    a=axis, d=inp_shape
+                )
+            )
+        for a in axis:
+            if a >= len(inp_shape):
+                raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Axis {a} is out of bounds for data of dimension {d}".format(
+                    a=a, d=inp_shape
+                )
+            )
+        expected_out_shape = [d for i, d in enumerate(inp_shape)
+                              if i not in axis]
+        expected_out_shape = expected_out_shape or [1]
+    else:
+        expected_out_shape = [1]
 
     # Validate 'where' keyword
+    # Throw a warning that it is currently unsupported.
     if 'where' in kwargs.keys():
         warnings.warn("Keyword argument 'where' in 'reduce' method of NumPy "
                       "ufunc calls is unsupported. It will be ignored.")
-    has_where = False
-    where = None
     
     # Validate data shapes and apply NumPy broadcasting rules
-    # In the case of reduce this may only validate the broadcasting of the
-    # single input with the "where value". Unsupported for now.
-    # inp_shapes = copy.deepcopy(inputs)
-    # if has_where:
-    #     inp_shapes += [where]
-    # _validate_shapes(visitor, ast_node, sdfg, ufunc_name, inp_shapes, [None])
-    out_shape = [1]
+    # In the case of reduce we may only validate the broadcasting of the
+    # single input with the 'where' value. Since 'where' is currently
+    # unsupported, only validate output shape.
+    if isinstance(outputs[0], str) and outputs[0] in sdfg.arrays.keys():
+        out_shape = sdfg.arrays[outputs[0]].shape
+        if len(out_shape) < len(expected_out_shape):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Output parameter for reduction operation {f} does not have "
+                "enough dimensions (output shape {o}, expected shape {e})."
+                .format(f=ufunc_name, o=out_shape, e=expected_out_shape))
+        if len(out_shape) > len(expected_out_shape):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Output parameter for reduction operation {f} has too many "
+                "dimensions (output shape {o}, expected shape {e})."
+                .format(f=ufunc_name, o=out_shape, e=expected_out_shape))
+        if (list(out_shape) != list(expected_out_shape)):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Output parameter for reduction operation {f} has non-reduction"
+                " dimension not equal to the input one (output shape {o}, "
+                "expected shape {e}).".format(
+                    f=ufunc_name, o=out_shape, e=expected_out_shape))
+    else:
+        out_shape = expected_out_shape
     
     # Placeholder for applying NumPy casting rules
     input_dtypes = []
@@ -2337,6 +2390,6 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
 
     # Create subgraph
     _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], outputs[0],
-            axis=None, identity=ufunc_impl['initial'])
+            axis=axis, identity=ufunc_impl['initial'])
 
     return outputs
