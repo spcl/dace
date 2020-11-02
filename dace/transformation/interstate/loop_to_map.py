@@ -58,7 +58,7 @@ class LoopToMap(DetectLoop):
 
         # Currently only detect the trivial case where the set of containers
         # that are read are completely disjoint from those that are written
-        read_set, write_set = helpers.read_and_write_set(begin)
+        read_set, write_set = helpers.read_and_write_sets(begin)
         if len(read_set & write_set) != 0:
             return False
 

@@ -30,6 +30,7 @@ from .redundant_array_copying import (RedundantArrayCopying,
                                       RedundantArrayCopying2,
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays
+from .prune_connectors import PruneConnectors
 
 # Device-related
 from .copy_to_device import CopyToDevice
