@@ -65,9 +65,6 @@ def make_copy_to_host_state(sdfg):
     return state
 
 
-def make_compute_sdfg():
-
-    sdfg = dace.SDFG("gemm_compute")
 
 
 def make_fpga_state(sdfg):
