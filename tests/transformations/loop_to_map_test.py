@@ -98,6 +98,9 @@ of << i << "\\n";""",
 
 def apply_and_verify(sdfg, n):
 
+    if n is None:
+        n = dace.int32(16)
+
     a = 4 * np.ones((n, ), dtype=np.float64)
     b = 3 * np.ones((n, ), dtype=np.float64)
     c = np.zeros((n, ), dtype=np.float64)
@@ -105,6 +108,11 @@ def apply_and_verify(sdfg, n):
     e = np.empty((1, ), dtype=np.uint16)
 
     num_transformations = sdfg.apply_transformations(LoopToMap)
+
+    try:
+        os.remove("loop_to_map_test.txt")
+    except FileNotFoundError:
+        pass
 
     sdfg(A=a, B=b, C=c, D=d, E=e, N=n)
 
@@ -126,6 +134,30 @@ def apply_and_verify(sdfg, n):
     return num_transformations
 
 
+def test_loop_to_map(n=None):
+    # Case 0: no wcr, no dataflow in guard. Transformation should apply
+    if apply_and_verify(make_sdfg(False, False, False, False), n) != 1:
+        raise RuntimeError("LoopToMap was not applied.")
+
+
+def test_loop_to_map_negative_step(n=None):
+    # Case 1: loop order reversed. Transformation should still apply
+    if apply_and_verify(make_sdfg(False, False, True, False), n) != 1:
+        raise RuntimeError("LoopToMap was not applied.")
+
+
+def test_loop_to_map_dataflow_on_guard(n=None):
+    # Case 3: there is dataflow on the guard state
+    if apply_and_verify(make_sdfg(False, False, False, False), n) != 1:
+        raise RuntimeError("LoopToMap was not applied.")
+
+
+def test_loop_to_map_variable_used(n=None):
+    # Case 4: the loop variable is used in a later state: should not apply
+    if apply_and_verify(make_sdfg(False, False, False, True), n) != 0:
+        raise RuntimeError("LoopToMap should not have been applied.")
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -134,27 +166,7 @@ if __name__ == "__main__":
 
     n = np.int32(args.N)
 
-    try:
-        os.remove("loop_to_map_test.txt")
-    except FileNotFoundError:
-        pass
-
-    # Case 0: no wcr, no dataflow in guard. Transformation should apply
-    if apply_and_verify(make_sdfg(False, False, False, False), n) != 1:
-        raise RuntimeError("LoopToMap was not applied.")
-
-    # Case 1: loop order reversed. Transformation should still apply
-    if apply_and_verify(make_sdfg(False, False, True, False), n) != 1:
-        raise RuntimeError("LoopToMap was not applied.")
-
-    # Case 2: wcr is present. Transformation should not apply
-    if apply_and_verify(make_sdfg(True, False, False, False), n) != 0:
-        raise RuntimeError("LoopToMap should not have been applied.")
-
-    # Case 3: there is dataflow on the guard state
-    if apply_and_verify(make_sdfg(False, True, False, False), n) != 0:
-        raise RuntimeError("LoopToMap should not have been applied.")
-
-    # Case 4: the loop variable is used in a later state: should not apply
-    if apply_and_verify(make_sdfg(False, False, False, True), n) != 0:
-        raise RuntimeError("LoopToMap should not have been applied.")
+    test_loop_to_map(n)
+    test_loop_to_map_negative_step(n)
+    test_loop_to_map_dataflow_on_guard(n)
+    test_loop_to_map_variable_used(n)
