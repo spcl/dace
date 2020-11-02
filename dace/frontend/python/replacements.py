@@ -1765,6 +1765,49 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor',
     return outputs
 
 
+def _validate_where_kword(
+    visitor: 'ProgramVisitor',
+    ast_node: ast.Call,
+    sdfg: SDFG,
+    ufunc_name: str,
+    kwargs: Dict[str, Any]
+) -> Tuple[bool, Union[str, bool]]:
+    """ Validates the 'where' keyword argument passed to a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param ufunc_name: Name of the ufunc
+        :param inputs: Inputs of the ufunc call
+
+        :raises DaceSyntaxError: When validation fails
+
+        :returns: Tuple of a boolean value indicating whether the 'where'
+        keyword is defined, and the validated 'where' value
+    """
+
+    has_where = False
+    where = None
+    if 'where' in kwargs.keys():
+        where = kwargs['where']
+        if isinstance(where, str) and where in sdfg.arrays.keys():
+            has_where = True
+        elif isinstance(where, bool):
+            has_where = True
+        elif isinstance(where, (list, tuple)):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Values for the 'where' keyword that are a sequence of boolean "
+                " constants are unsupported. Please, pass these values to the "
+                " {n} call through a DaCe boolean array.".format(n=ufunc_name)
+            )
+        else:
+            # NumPy defaults to "where=True" for invalid values for the keyword
+            pass
+    
+    return has_where, where
+
+
 def _validate_shapes(
     visitor: 'ProgramVisitor',
     ast_node: ast.Call,
@@ -2163,35 +2206,15 @@ def implement_ufunc(visitor: 'ProgramVisitor',
                                       args, kwargs)
 
     # Validate 'where' keyword
-    has_where = False
-    where = None
-    if 'where' in kwargs.keys():
-        where = kwargs['where']
-        if isinstance(where, str) and where in sdfg.arrays.keys():
-            has_where = True
-            inputs.append(where)
-        elif isinstance(where, bool):
-            has_where = True
-            inputs.append(where)
-        elif isinstance(where, (list, tuple)):
-            raise mem_parser.DaceSyntaxError(
-                visitor, ast_node,
-                "Values for the 'where' keyword that are a list or tuple of "
-                " boolean constants are unsupported. Please, pass these values "
-                "through a DaCe boolean array."
-            )
-        else:
-            # NumPy defaults to "where=True" for invalid values for the keyword
-            pass
+    has_where, where = _validate_where_kword(visitor, ast_node, sdfg,
+                                             ufunc_name, kwargs)
     
     # Validate data shapes and apply NumPy broadcasting rules
-    (out_shape, map_indices,
-     out_indices, inp_indices) = _validate_shapes(visitor, ast_node, sdfg,
-                                                  ufunc_name, inputs, outputs)
-    
-    # Remove 'where' from inputs
-    if has_where:
-        inputs = inputs[:-1]
+    inp_shapes = copy.deepcopy(inputs)
+    if where:
+        inp_shapes += [where]
+    (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
+         visitor, ast_node, sdfg, ufunc_name, inp_shapes, outputs)
     
     # Placeholder for applying NumPy casting rules
     input_dtypes = []
