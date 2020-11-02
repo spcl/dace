@@ -3,7 +3,7 @@
 import copy
 
 from dace.subsets import Range, Subset, union
-from typing import AnyStr, Dict, List, Optional, Tuple, Set
+from typing import AnyStr, Dict, List, Optional, Set, Tuple
 
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
@@ -410,7 +410,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
-def read_and_write_set(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+def read_and_write_sets(state: SDFGState) -> Tuple[Set[AnyStr], Set[AnyStr]]:
     """
     Determines which data containers are read and which are written in the
     given SDFG state. Containers that are written with write conflict
