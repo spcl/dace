@@ -1,8 +1,8 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop annotation transformation """
 
-from dace.transformation.interstate.loop_detection import DetectLoop
-from dace.transformation.interstate.loop_unroll import LoopUnroll
+from dace.transformation.interstate.loop_detection import (DetectLoop,
+                                                           find_for_loop)
 from dace import sdfg as sd, symbolic
 from dace.registry import autoregister
 from dace.sdfg import graph as gr, utils as sdutil
@@ -38,14 +38,11 @@ class AnnotateLoop(DetectLoop):
         begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
         after_state: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
-        # Obtain iteration variable, range, and stride
-        guard_inedges = sdfg.in_edges(guard)
-        condition_edge = sdfg.edges_between(guard, begin)[0]
-        itervar = list(guard_inedges[0].data.assignments.keys())[0]
-        condition = condition_edge.data.condition_sympy()
-        rng = LoopUnroll._loop_range(itervar, guard_inedges, condition)
+        # Obtain iteration variable, range, and stride.
+        itervar, rng = find_for_loop(sdfg, guard, begin)
 
         # Find the state prior to the loop
+        guard_inedges = sdfg.in_edges(guard)
         if rng[0] == symbolic.pystr_to_symbolic(
                 guard_inedges[0].data.assignments[itervar]):
             before_state: sd.SDFGState = guard_inedges[0].src
@@ -72,6 +69,6 @@ class AnnotateLoop(DetectLoop):
         for v in loop_subgraph.nodes():
             v.ranges[itervar] = Range([rng])
         guard.ranges[itervar] = Range([rng])
-        guard.condition_edge = condition_edge
+        guard.condition_edge = sdfg.edges_between(guard, begin)[0]
         guard.is_loop_guard = True
         guard.itvar = itervar
