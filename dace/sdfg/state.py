@@ -14,7 +14,8 @@ from dace.properties import (Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import Any, AnyStr, Dict, Optional, List, Set, Tuple, Union
+from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
+                    Union)
 import warnings
 
 
@@ -216,8 +217,9 @@ class StateGraphView(object):
         # Return node that corresponds to current edge
         return traverse(tree_root)
 
-    def in_edges_by_connector(self, node: nd.Node,
-                              connector: AnyStr) -> MultiConnectorEdge:
+    def in_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
         """ Returns a generator over edges entering the given connector of the
             given node.
             :param node: Destination node of edges.
@@ -225,8 +227,9 @@ class StateGraphView(object):
         """
         return (e for e in self.in_edges(node) if e.dst_conn == connector)
 
-    def out_edges_by_connector(self, node: nd.Node,
-                               connector: AnyStr) -> MultiConnectorEdge:
+    def out_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
         """ Returns a generator over edges exiting the given connector of the
             given node.
             :param node: Source node of edges.
@@ -235,7 +238,7 @@ class StateGraphView(object):
         return (e for e in self.out_edges(node) if e.src_conn == connector)
 
     def edges_by_connector(self, node: nd.Node,
-                           connector: AnyStr) -> MultiConnectorEdge:
+                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
         """ Returns a generator over edges entering or exiting the given
             connector of the given node.
             :param node: Source/destination node of edges.
@@ -1604,36 +1607,34 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
             self.remove_edge(edge)
 
+            edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
+
             # Check if there are any other edges exiting the source node that
             # use the same connector
-            other_outgoing = False
             for e in self.out_edges(edge.src):
-                other_outgoing = True
                 if e.src_conn is not None and e.src_conn == edge.src_conn:
-                    other_outgoing_same = True
+                    other_outgoing = True
                     break
             else:
-                other_outgoing_same = False
+                other_outgoing = False
                 edge.src.remove_out_connector(edge.src_conn)
 
             # Check if there are any other edges entering the destination node
             # that use the same connector
-            other_incoming = False
             for e in self.in_edges(edge.dst):
-                other_incoming = True
                 if e.dst_conn is not None and e.dst_conn == edge.dst_conn:
-                    other_incoming_same = True
+                    other_incoming = True
                     break
             else:
-                other_incoming_same = False
+                other_incoming = False
                 edge.dst.remove_in_connector(edge.dst_conn)
 
             if isinstance(edge.src, nd.EntryNode):
                 # If removing this edge orphans the entry node, replace the
                 # edge with an empty edge
-                if not other_outgoing:
+                if not edges_remain:
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
-                if other_outgoing_same:
+                if other_outgoing:
                     # If other inner memlets use the outer memlet, we have to
                     # stop the deletion here
                     break
@@ -1641,9 +1642,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             if isinstance(edge.dst, nd.ExitNode):
                 # If removing this edge orphans the exit node, replace the
                 # edge with an empty edge
-                if not other_incoming:
+                if not edges_remain:
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
-                if other_incoming_same:
+                if other_incoming:
                     # If other inner memlets use the outer memlet, we have to
                     # stop the deletion here
                     break
