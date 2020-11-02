@@ -32,7 +32,7 @@ def nest_state_subgraph(sdfg: SDFG,
     """
     if state.parent != sdfg:
         raise KeyError('State does not belong to given SDFG')
-    if subgraph != state and subgraph.graph != state:
+    if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
 
     # Find the top-level scope

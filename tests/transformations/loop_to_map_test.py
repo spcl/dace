@@ -2,19 +2,21 @@
 import argparse
 import dace
 import numpy as np
+import os
 from dace.transformation.interstate import LoopToMap
 
 
-def make_sdfg(with_wcr, map_in_guard, reverse_loop):
+def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable):
 
-    sdfg = dace.SDFG(
-        f"loop_to_map_test_{with_wcr}_{map_in_guard}_{reverse_loop}")
-    sdfg.set_global_code("#include <iostream>")
+    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
+                     f"{reverse_loop}_{use_variable}")
+    sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
     guard = sdfg.add_state("guard")
     body = sdfg.add_state("body")
     after = sdfg.add_state("after")
+    post = sdfg.add_state("post")
 
     N = dace.symbol("N", dace.int32)
 
@@ -31,11 +33,13 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop):
         sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i < 0"))
         sdfg.add_edge(body, guard,
                       dace.InterstateEdge(assignments={"i": "i - 1"}))
+    sdfg.add_edge(after, post, dace.InterstateEdge())
 
     sdfg.add_array("A", [N], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
     sdfg.add_array("C", [N], dace.float64)
     sdfg.add_array("D", [N], dace.float64)
+    sdfg.add_array("E", [1], dace.uint16)
 
     a = body.add_read("A")
     b = body.add_read("B")
@@ -56,10 +60,13 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop):
     tasklet1 = body.add_tasklet("tasklet1", {"a", "b"}, {"d"},
                                 "d = sqrt(a**2 + b**2)")
 
-    tasklet2 = body.add_tasklet(
-        "tasklet2", {}, {},
-        "std::cout << \"I could have crazy side effects!\\n\";",
-        language=dace.Language.CPP)
+    tasklet2 = body.add_tasklet("tasklet2", {}, {},
+                                """\
+static std::mutex mutex;
+std::unique_lock<std::mutex> lock(mutex);
+std::ofstream of("loop_to_map_test.txt", std::ofstream::app);
+of << i << "\\n";""",
+                                language=dace.Language.CPP)
 
     body.add_memlet_path(a, tasklet0, dst_conn="a", memlet=dace.Memlet("A[i]"))
     body.add_memlet_path(tasklet0,
@@ -78,6 +85,14 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop):
                              "D[i]",
                              wcr="lambda a, b: a + b" if with_wcr else None))
 
+    e = post.add_write("E")
+    post_tasklet = post.add_tasklet("post", {}, {"e"},
+                                    "e = i" if use_variable else "e = N")
+    post.add_memlet_path(post_tasklet,
+                         e,
+                         src_conn="e",
+                         memlet=dace.Memlet("E[0]"))
+
     return sdfg
 
 
@@ -87,15 +102,26 @@ def apply_and_verify(sdfg, n):
     b = 3 * np.ones((n, ), dtype=np.float64)
     c = np.zeros((n, ), dtype=np.float64)
     d = np.zeros((n, ), dtype=np.float64)
+    e = np.empty((1, ), dtype=np.uint16)
 
     num_transformations = sdfg.apply_transformations(LoopToMap)
 
-    sdfg(A=a, B=b, C=c, D=d, N=n)
+    sdfg(A=a, B=b, C=c, D=d, E=e, N=n)
 
     if not all(c[:] == 0.25) or not all(d[:] == 5):
-        print(c)
-        print(d)
         raise ValueError("Validation failed.")
+
+    if e[0] != n:
+        raise ValueError("Validation failed.")
+
+    numbers_written = []
+    with open("loop_to_map_test.txt", "r") as f:
+        for line in f:
+            numbers_written.append(int(line.strip()))
+    if not all(sorted(numbers_written) == np.arange(n)):
+        raise ValueError("Validation failed.")
+
+    os.remove("loop_to_map_test.txt")
 
     return num_transformations
 
@@ -103,23 +129,32 @@ def apply_and_verify(sdfg, n):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--N", default=4, type=int)
+    parser.add_argument("--N", default=16, type=int)
     args = parser.parse_args()
 
     n = np.int32(args.N)
 
+    try:
+        os.remove("loop_to_map_test.txt")
+    except FileNotFoundError:
+        pass
+
     # Case 0: no wcr, no dataflow in guard. Transformation should apply
-    if apply_and_verify(make_sdfg(False, False, False), n) != 1:
+    if apply_and_verify(make_sdfg(False, False, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
-    # Case 1: loop order reversed. Transformation should not apply
-    if apply_and_verify(make_sdfg(False, False, True), n) != 0:
-        raise RuntimeError("LoopToMap should not have been applied.")
+    # Case 1: loop order reversed. Transformation should still apply
+    if apply_and_verify(make_sdfg(False, False, True, False), n) != 1:
+        raise RuntimeError("LoopToMap was not applied.")
 
     # Case 2: wcr is present. Transformation should not apply
-    if apply_and_verify(make_sdfg(True, False, False), n) != 0:
+    if apply_and_verify(make_sdfg(True, False, False, False), n) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")
 
     # Case 3: there is dataflow on the guard state
-    if apply_and_verify(make_sdfg(False, True, False), n) != 0:
+    if apply_and_verify(make_sdfg(False, True, False, False), n) != 0:
+        raise RuntimeError("LoopToMap should not have been applied.")
+
+    # Case 4: the loop variable is used in a later state: should not apply
+    if apply_and_verify(make_sdfg(False, False, False, True), n) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")

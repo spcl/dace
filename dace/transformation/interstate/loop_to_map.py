@@ -51,9 +51,6 @@ class LoopToMap(DetectLoop):
 
         itervar, (start, end, step) = found
 
-        if step < 0:
-            return False  # Negative increment not supported
-
         for s in itertools.chain(start.free_symbols, end.free_symbols,
                                  step.free_symbols):
             if s in sdfg.arrays:
@@ -69,7 +66,6 @@ class LoopToMap(DetectLoop):
         loop_edges = set(itertools.chain(graph.out_edges(guard), graph.out_edges(begin)))
         if any(itervar in e.data.free_symbols for e in sdfg.edges()
                if e not in loop_edges):
-            print("{} was in {}".format(itervar, e))
             return False
 
         # Check that the iteration variable is not used in any reachable
@@ -96,12 +92,17 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, rng = find_for_loop(sdfg, guard, body)
+        itervar, (start, end, step) = find_for_loop(sdfg, guard, body)
+
+        if step < 0:
+            # If step is negative, we have to flip start and end to produce a
+            # correct map with a positive increment
+            start, end, step = end, start, -step
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
 
-        map = nodes.Map(body.label + "_map", [itervar], [rng])
+        map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
         entry = nodes.MapEntry(map)
         exit = nodes.MapExit(map)
         body.add_node(entry)
