@@ -165,81 +165,6 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
                                                  node.n, node.a)
 
 
-@dace.library.expansion
-class ExpandAxpyMKL(ExpandTransformation):
-
-    environments = [environments.intel_mkl.IntelMKL]
-
-    @staticmethod
-    def make_sdfg(dtype, n, a):
-
-        # ---------- ----------
-        # SETUP GRAPH
-        # ---------- ----------
-        axpy_sdfg = dace.SDFG('axpy_graph')
-        axpy_state = axpy_sdfg.add_state()
-        # init_state = axpy_sdfg.add_state()
-
-        axpy_sdfg.add_symbol(a.name, dtype)
-
-        # ---------- ----------
-        # MEMORY LOCATIONS
-        # ---------- ----------
-        axpy_sdfg.add_array('_x', shape=[n], dtype=dtype)
-        axpy_sdfg.add_array('_y', shape=[n], dtype=dtype)
-        axpy_sdfg.add_array('_res', shape=[n], dtype=dtype)
-
-        # ---------- ----------
-        # COMPUTE
-        # ---------- ----------
-        x_in = axpy_state.add_read('_x')
-        y_out = axpy_state.add_write('_res')
-
-        if dtype == dace.float32:
-            func = "saxpy"
-        elif dtype == dace.float64:
-            func = "daxpy"
-        else:
-            raise ValueError("Unsupported type for BLAS axpy product: " +
-                             str(dtype))
-
-        code = "cblas_{0}({1}, {2}, x, 1, y, 1);".format(func, n, a)
-
-        task = axpy_state.add_tasklet('axpy_blas_task', ['x'], ['y'],
-                                      code,
-                                      language=dace.dtypes.Language.CPP)
-
-        axpy_state.add_memlet_path(x_in,
-                                   task,
-                                   dst_conn='x',
-                                   memlet=Memlet.simple(x_in.data,
-                                                        "0:{}".format(n)))
-
-        axpy_state.add_memlet_path(task,
-                                   y_out,
-                                   src_conn='y',
-                                   memlet=Memlet.simple(y_out.data,
-                                                        "0:{}".format(n)))
-
-        return axpy_sdfg
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-
-        return ExpandAxpyMKL.make_sdfg(node.dtype, node.n, node.a)
-
-
-@dace.library.expansion
-class ExpandAxpyOpenBLAS(ExpandTransformation):
-
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(node, state, sdfg):
-        return ExpandAxpyMKL.expansion(node, state, sdfg)
-
-
 
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
@@ -247,9 +172,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
-        "fpga_stream": ExpandAxpyFPGAStreaming,
-        "MKL": ExpandAxpyMKL,
-        "OpenBLAS": ExpandAxpyOpenBLAS
+        "fpga_stream": ExpandAxpyFPGAStreaming
     }
     default_implementation = 'pure'
 
