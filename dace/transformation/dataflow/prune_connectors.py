@@ -75,36 +75,10 @@ class PruneConnectors(pm.Transformation):
                     break
             else:
                 raise RuntimeError("Connector not found.")
-            path = state.memlet_path(e)
-            for e in path:
-                if isinstance(e.src, nodes.AccessNode):
-                    state.remove_edge_and_connectors(e)
-                    if state.degree(e.src) == 0:
-                        state.remove_node(e.src)
-                elif isinstance(e.src, nodes.EntryNode):
-                    if state.out_degree(e.src) <= 1:
-                        # If removing this edge would orphan the entry node,
-                        # replace it with an empty edge
-                        state.remove_edge(e)
-                        e.src.remove_out_connector(e.src_conn)
-                        if e.dst == nsdfg:
-                            dst_conn = None
-                        else:
-                            # Maintain the original destination connector
-                            dst_conn = e.dst_conn
-                        state.add_nedge(e.src, e.dst, memlet.Memlet())
-                    else:
-                        # Otherwise just burninate
-                        state.remove_edge_and_connectors(e)
-                else:
-                    raise TypeError("Unexpected node on path: {}".format(
-                        type(e.src)))
-            if conn in nsdfg.in_connectors:
-                # Actually remove the connector if it hasn't already been
-                del nsdfg.in_connectors[conn]
+            state.remove_memlet_path(e, remove_orphans=True)
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can also purge it from the SDFG
-                del nsdfg.sdfg.arrays[conn]
+                nsdfg.sdfg.remove_data(conn)
 
         for conn in prune_out:
             for e in state.out_edges(nsdfg):
@@ -112,33 +86,7 @@ class PruneConnectors(pm.Transformation):
                     break
             else:
                 raise RuntimeError("Connector not found.")
-            path = state.memlet_path(e)
-            for e in path:
-                if isinstance(e.dst, nodes.AccessNode):
-                    state.remove_edge_and_connectors(e)
-                    if state.degree(e.dst) == 0:
-                        state.remove_node(e.dst)
-                elif isinstance(e.dst, nodes.ExitNode):
-                    if state.out_degree(e.dst) <= 1:
-                        # If removing this edge would orphan the exit node,
-                        # replace it with an empty edge
-                        state.remove_edge(e)
-                        e.dst.remove_in_connector(e.dst_conn)
-                        if e.src == nsdfg:
-                            src_conn = None
-                        else:
-                            # Maintain the original source connector
-                            src_conn = e.src_conn
-                        state.add_nedge(e.src, e.dst, memlet.Memlet())
-                    else:
-                        # Otherwise just burninate
-                        state.remove_edge_and_connectors(e)
-                else:
-                    raise TypeError("Unexpected node on path: {}".format(
-                        type(e.src)))
-            if conn in nsdfg.out_connectors:
-                # Actually remove the connector if it hasn't already been
-                del nsdfg.out_connectors[conn]
+            state.remove_memlet_path(e, remove_orphans=True)
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can also purge it from the SDFG
-                del nsdfg.sdfg.arrays[conn]
+                nsdfg.sdfg.remove_data(conn)

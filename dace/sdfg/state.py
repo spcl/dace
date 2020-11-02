@@ -312,9 +312,9 @@ class StateGraphView(object):
         return result
 
     def scope_children(
-        self,
-        return_ids: bool = False,
-        validate: bool = True
+            self,
+            return_ids: bool = False,
+            validate: bool = True
     ) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
         """ Returns a dictionary that maps each SDFG entry node to its children,
             not including the children of children entry nodes. The key `None`
@@ -1032,12 +1032,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return params, map_range
 
     def add_map(
-            self,
-            name,
-            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
-            schedule=dtypes.ScheduleType.Default,
-            unroll=False,
-            debuginfo=None,
+        self,
+        name,
+        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+        schedule=dtypes.ScheduleType.Default,
+        unroll=False,
+        debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
@@ -1261,12 +1261,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-            self,
-            wcr,
-            axes,
-            identity=None,
-            schedule=dtypes.ScheduleType.Default,
-            debuginfo=None,
+        self,
+        wcr,
+        axes,
+        identity=None,
+        schedule=dtypes.ScheduleType.Default,
+        debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
@@ -1548,42 +1548,123 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         for edge in edges:
             edge.data.try_initialize(self.parent, self, edge)
 
-    # DEPRECATED FUNCTIONS
-    ######################################
-    def add_array(self,
-                  name,
-                  shape,
-                  dtype,
-                  storage=dtypes.StorageType.Default,
-                  transient=False,
-                  strides=None,
-                  offset=None,
-                  lifetime=dtypes.AllocationLifetime.Scope,
-                  debuginfo=None,
-                  total_size=None,
-                  find_new_name=False,
-                  alignment=0):
-        """ @attention: This function is deprecated. """
-        warnings.warn(
-            'The "SDFGState.add_array" API is deprecated, please '
-            'use "SDFG.add_array" and "SDFGState.add_access"',
-            DeprecationWarning)
-        # Workaround to allow this legacy API
-        if name in self.parent._arrays:
-            del self.parent._arrays[name]
-        self.parent.add_array(name,
-                              shape,
-                              dtype,
-                              storage,
-                              transient,
-                              strides,
-                              offset,
-                              lifetime,
-                              debuginfo,
-                              find_new_name=find_new_name,
-                              total_size=total_size,
-                              alignment=alignment)
-        return self.add_access(name, debuginfo)
+    def remove_memlet_path(self,
+                           edge: MultiConnectorEdge,
+                           remove_orphans: bool = True) -> None:
+        """ Removes all memlets and associated connectors along a path formed
+            by a given edge. Undefined behavior if the path is ambiguous.
+            Orphaned entry and exit nodes will be connected with empty edges to
+            maintain connectivity of the graph.
+
+            :param edge: An edge that is part of the path that should be
+                         removed, which will be passed to `memlet_path` to
+                         determine the edges to be removed.
+            :param remove_orphans: Remove orphaned data nodes from the graph if
+                                   they become orphans from removing this memlet
+                                   path.
+        """
+
+        path = self.memlet_path(edge)
+
+        is_read = isinstance(path[0], nd.AccessNode)
+        if is_read:
+            # Traverse from connector to access node, so we can check if it's
+            # safe to delete edges going out of a scope
+            path = reversed(path)
+
+        for edge in path:
+
+            self.remove_edge(edge)
+
+            # Check if there are any other edges exiting the source node that
+            # use the same connector
+            other_outgoing = False
+            for e in self.out_edges(edge.src):
+                other_outgoing = True
+                if e.src_conn is not None and e.src_conn == edge.src_conn:
+                    other_outgoing_same = True
+                    break
+            else:
+                other_outgoing_same = False
+                edge.src.remove_out_connector(edge.src_conn)
+
+            # Check if there are any other edges entering the destination node
+            # that use the same connector
+            other_incoming = False
+            for e in self.in_edges(edge.dst):
+                other_incoming = True
+                if e.dst_conn is not None and e.dst_conn == edge.dst_conn:
+                    other_incoming_same = True
+                    break
+            else:
+                other_incoming_same = False
+                edge.dst.remove_in_connector(edge.dst_conn)
+
+            if isinstance(edge.src, nd.EntryNode):
+                # If removing this edge orphans the entry node, replace the
+                # edge with an empty edge
+                if not other_outgoing:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_outgoing_same:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            if isinstance(edge.dst, nd.ExitNode):
+                # If removing this edge orphans the exit node, replace the
+                # edge with an empty edge
+                if not other_incoming:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_incoming_same:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            # Prune access nodes
+            if remove_orphans:
+                if (isinstance(edge.src, nd.AccessNode)
+                        and self.degree(edge.src) == 0):
+                    self.remove_node(edge.src)
+                if (isinstance(edge.dst, nd.AccessNode)
+                        and self.degree(edge.dst) == 0):
+                    self.remove_node(edge.dst)
+
+        # DEPRECATED FUNCTIONS
+        ######################################
+        def add_array(self,
+                      name,
+                      shape,
+                      dtype,
+                      storage=dtypes.StorageType.Default,
+                      transient=False,
+                      strides=None,
+                      offset=None,
+                      lifetime=dtypes.AllocationLifetime.Scope,
+                      debuginfo=None,
+                      total_size=None,
+                      find_new_name=False,
+                      alignment=0):
+            """ @attention: This function is deprecated. """
+            warnings.warn(
+                'The "SDFGState.add_array" API is deprecated, please '
+                'use "SDFG.add_array" and "SDFGState.add_access"',
+                DeprecationWarning)
+            # Workaround to allow this legacy API
+            if name in self.parent._arrays:
+                del self.parent._arrays[name]
+            self.parent.add_array(name,
+                                  shape,
+                                  dtype,
+                                  storage,
+                                  transient,
+                                  strides,
+                                  offset,
+                                  lifetime,
+                                  debuginfo,
+                                  find_new_name=find_new_name,
+                                  total_size=total_size,
+                                  alignment=alignment)
+            return self.add_access(name, debuginfo)
 
     def add_stream(
         self,
