@@ -267,7 +267,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     if desc.storage == dace.StorageType.FPGA_Global:
         # This is a device buffer.
         # Can not be accessed with offset different than zero
-        if offset != 0:
+        if int(offset) != 0:
             raise TypeError("Can not offset device buffers from host code ({}, offset {})".format(datadef, offset))
 
         # Device buffers are passed by reference
