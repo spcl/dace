@@ -1657,42 +1657,42 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                         and self.degree(edge.dst) == 0):
                     self.remove_node(edge.dst)
 
-        # DEPRECATED FUNCTIONS
-        ######################################
-        def add_array(self,
-                      name,
-                      shape,
-                      dtype,
-                      storage=dtypes.StorageType.Default,
-                      transient=False,
-                      strides=None,
-                      offset=None,
-                      lifetime=dtypes.AllocationLifetime.Scope,
-                      debuginfo=None,
-                      total_size=None,
-                      find_new_name=False,
-                      alignment=0):
-            """ @attention: This function is deprecated. """
-            warnings.warn(
-                'The "SDFGState.add_array" API is deprecated, please '
-                'use "SDFG.add_array" and "SDFGState.add_access"',
-                DeprecationWarning)
-            # Workaround to allow this legacy API
-            if name in self.parent._arrays:
-                del self.parent._arrays[name]
-            self.parent.add_array(name,
-                                  shape,
-                                  dtype,
-                                  storage,
-                                  transient,
-                                  strides,
-                                  offset,
-                                  lifetime,
-                                  debuginfo,
-                                  find_new_name=find_new_name,
-                                  total_size=total_size,
-                                  alignment=alignment)
-            return self.add_access(name, debuginfo)
+    # DEPRECATED FUNCTIONS
+    ######################################
+    def add_array(self,
+                  name,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  transient=False,
+                  strides=None,
+                  offset=None,
+                  lifetime=dtypes.AllocationLifetime.Scope,
+                  debuginfo=None,
+                  total_size=None,
+                  find_new_name=False,
+                  alignment=0):
+        """ @attention: This function is deprecated. """
+        warnings.warn(
+            'The "SDFGState.add_array" API is deprecated, please '
+            'use "SDFG.add_array" and "SDFGState.add_access"',
+            DeprecationWarning)
+        # Workaround to allow this legacy API
+        if name in self.parent._arrays:
+            del self.parent._arrays[name]
+        self.parent.add_array(name,
+                              shape,
+                              dtype,
+                              storage,
+                              transient,
+                              strides,
+                              offset,
+                              lifetime,
+                              debuginfo,
+                              find_new_name=find_new_name,
+                              total_size=total_size,
+                              alignment=alignment)
+        return self.add_access(name, debuginfo)
 
     def add_stream(
         self,
