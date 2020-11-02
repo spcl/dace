@@ -36,11 +36,12 @@ class LoopUnroll(DetectLoop):
 
         guard = graph.node(candidate[DetectLoop._loop_guard])
         begin = graph.node(candidate[DetectLoop._loop_begin])
-        _, rng = find_for_loop(graph, guard, begin)
+        found = find_for_loop(graph, guard, begin)
 
         # If loop cannot be detected, fail
-        if not rng:
+        if not found:
             return False
+        _, rng = found
 
         # If loop is not specialized or constant-sized, fail
         if any(symbolic.issymbolic(r, sdfg.constants) for r in rng):
