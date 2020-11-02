@@ -94,7 +94,7 @@ class LoopToMap(DetectLoop):
         # Obtain iteration variable, range, and stride
         itervar, (start, end, step) = find_for_loop(sdfg, guard, body)
 
-        if step < 0:
+        if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a
             # correct map with a positive increment
             start, end, step = end, start, -step
