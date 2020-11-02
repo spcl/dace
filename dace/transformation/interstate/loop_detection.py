@@ -3,8 +3,10 @@
 
 import sympy as sp
 import networkx as nx
+import typing
+from typing import AnyStr, Optional, Tuple
 
-from dace import sdfg as sd
+from dace import sdfg as sd, symbolic
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
@@ -114,3 +116,68 @@ class DetectLoop(transformation.Transformation):
 
     def apply(self, sdfg):
         pass
+
+
+def find_for_loop(
+    sdfg: sd.SDFG, guard: sd.SDFGState, entry: sd.SDFGState
+) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType,
+                                  symbolic.SymbolicType]]]:
+    """
+    Finds loop range from state machine.
+    :param guard: State from which the outgoing edges detect whether to exit
+                  the loop or not.
+    :param entry: First state in the loop "body".
+    :return: (iteration variable, (start, end, stride)), or None if proper
+             for-loop was not detected. ``end`` is inclusive.
+    """
+
+    # Extract state transition edge information
+    guard_inedges = sdfg.in_edges(guard)
+    condition_edge = sdfg.edges_between(guard, entry)[0]
+    itervar = list(guard_inedges[0].data.assignments.keys())[0]
+    condition = condition_edge.data.condition_sympy()
+
+    # Find starting expression and stride
+    itersym = symbolic.symbol(itervar)
+    if (itersym in symbolic.pystr_to_symbolic(
+            guard_inedges[0].data.assignments[itervar]).free_symbols
+            and itersym not in symbolic.pystr_to_symbolic(
+                guard_inedges[1].data.assignments[itervar]).free_symbols):
+        stride = (symbolic.pystr_to_symbolic(
+            guard_inedges[0].data.assignments[itervar]) - itersym)
+        start = symbolic.pystr_to_symbolic(
+            guard_inedges[1].data.assignments[itervar])
+    elif (itersym in symbolic.pystr_to_symbolic(
+            guard_inedges[1].data.assignments[itervar]).free_symbols
+          and itersym not in symbolic.pystr_to_symbolic(
+              guard_inedges[0].data.assignments[itervar]).free_symbols):
+        stride = (symbolic.pystr_to_symbolic(
+            guard_inedges[1].data.assignments[itervar]) - itersym)
+        start = symbolic.pystr_to_symbolic(
+            guard_inedges[0].data.assignments[itervar])
+    else:
+        return None
+
+    # Find condition by matching expressions
+    end: Optional[symbolic.SymbolicType] = None
+    a = sp.Wild('a')
+    match = condition.match(itersym < a)
+    if match:
+        end = match[a] - 1
+    if end is None:
+        match = condition.match(itersym <= a)
+        if match:
+            end = match[a]
+    if end is None:
+        match = condition.match(itersym > a)
+        if match:
+            end = match[a] + 1
+    if end is None:
+        match = condition.match(itersym >= a)
+        if match:
+            end = match[a]
+
+    if end is None:  # No match found
+        return None
+
+    return itervar, (start, end, stride)
