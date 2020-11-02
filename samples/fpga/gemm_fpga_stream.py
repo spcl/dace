@@ -60,148 +60,6 @@ def make_copy_to_host_state(sdfg):
     return state
 
 
-def make_read_B_sdfg():
-
-    sdfg = dace.SDFG("gemm_read_B")
-
-    n_begin = sdfg.add_state("n_begin")
-    n_entry = sdfg.add_state("n_entry")
-    n_end = sdfg.add_state("n_end")
-
-    k_begin = sdfg.add_state("k_begin")
-    k_entry = sdfg.add_state("k_entry")
-    k_end = sdfg.add_state("k_end")
-
-    m_begin = sdfg.add_state("m_begin")
-    m_entry = sdfg.add_state("m_entry")
-    m_end = sdfg.add_state("m_end")
-
-    loop_body = sdfg.add_state("read_memory")
-
-    sdfg.add_edge(n_begin, n_entry,
-                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
-    sdfg.add_edge(k_begin, k_entry,
-                  dace.sdfg.InterstateEdge(assignments={"k": 0}))
-    sdfg.add_edge(m_begin, m_entry,
-                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
-
-    sdfg.add_edge(
-        n_entry, k_begin,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "n < N", language=dace.dtypes.Language.Python)))
-    sdfg.add_edge(
-        k_entry, m_begin,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "k < K", language=dace.dtypes.Language.Python)))
-    sdfg.add_edge(
-        m_entry, loop_body,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "m < M", language=dace.dtypes.Language.Python)))
-
-    sdfg.add_edge(k_end, n_entry,
-                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
-    sdfg.add_edge(m_end, k_entry,
-                  dace.sdfg.InterstateEdge(assignments={"k": "k + 1"}))
-    sdfg.add_edge(loop_body, m_entry,
-                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
-
-    sdfg.add_edge(
-        n_entry, n_end,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "n >= N", language=dace.dtypes.Language.Python)))
-    sdfg.add_edge(
-        k_entry, k_end,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "k >= K", language=dace.dtypes.Language.Python)))
-    sdfg.add_edge(
-        m_entry, m_end,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "m >= M", language=dace.dtypes.Language.Python)))
-
-    mem = loop_body.add_array("mem", [K, M],
-                              dtype=dace.float32,
-                              storage=dace.StorageType.FPGA_Global)
-
-    pipe = loop_body.add_stream("pipe",
-                                dace.float32,
-                                storage=dace.StorageType.FPGA_Local)
-
-    loop_body.add_memlet_path(mem,
-                              pipe,
-                              memlet=dace.memlet.Memlet.simple(
-                                  pipe, '0', other_subset_str="k, m"))
-
-    return sdfg
-
-
-def make_write_C_sdfg():
-
-    sdfg = dace.SDFG("gemm_write_C")
-
-    n_begin = sdfg.add_state("n_begin")
-    n_entry = sdfg.add_state("n_entry")
-    n_end = sdfg.add_state("n_end")
-
-    m_begin = sdfg.add_state("m_begin")
-    m_entry = sdfg.add_state("m_entry")
-    m_end = sdfg.add_state("m_end")
-
-    loop_body = sdfg.add_state("write_memory")
-
-    sdfg.add_edge(n_begin, n_entry,
-                  dace.sdfg.InterstateEdge(assignments={"n": 0}))
-    sdfg.add_edge(m_begin, m_entry,
-                  dace.sdfg.InterstateEdge(assignments={"m": 0}))
-
-    sdfg.add_edge(
-        n_entry, m_begin,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "n < N", language=dace.dtypes.Language.Python)))
-    sdfg.add_edge(
-        m_entry, loop_body,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "m < M", language=dace.dtypes.Language.Python)))
-
-    sdfg.add_edge(m_end, n_entry,
-                  dace.sdfg.InterstateEdge(assignments={"n": "n + 1"}))
-    sdfg.add_edge(loop_body, m_entry,
-                  dace.sdfg.InterstateEdge(assignments={"m": "m + 1"}))
-
-    sdfg.add_edge(
-        n_entry, n_end,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "n >= N", language=dace.dtypes.Language.Python)))
-    sdfg.add_edge(
-        m_entry, m_end,
-        dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "m >= M", language=dace.dtypes.Language.Python)))
-
-    mem = loop_body.add_array("mem", [N, M],
-                              dtype=dace.float32,
-                              storage=dace.StorageType.FPGA_Global)
-
-    pipe = loop_body.add_stream("pipe",
-                                dace.float32,
-                                storage=dace.StorageType.FPGA_Local)
-
-    loop_body.add_memlet_path(pipe,
-                              mem,
-                              memlet=dace.memlet.Memlet.simple(
-                                  mem, "n, m", other_subset_str="0"))
-
-    return sdfg
-
-
 def make_compute_sdfg():
 
     sdfg = dace.SDFG("gemm_compute")
@@ -507,18 +365,10 @@ def make_fpga_state(sdfg):
 
     state = sdfg.add_state("gemm")
 
-    read_B_sdfg = make_read_B_sdfg()
-    read_B_sdfg_node = state.add_nested_sdfg(read_B_sdfg, sdfg, {"mem"},
-                                             {"pipe"})
-
     compute_sdfg = make_compute_sdfg()
     compute_sdfg_node = state.add_nested_sdfg(compute_sdfg, sdfg,
                                               {"A_stream_in", "B_stream_in"},
                                               {"C_stream_out"})
-
-    write_C_sdfg = make_write_C_sdfg()
-    write_C_sdfg_node = state.add_nested_sdfg(write_C_sdfg, sdfg, {"pipe"},
-                                              {"mem"})
 
     A = state.add_array("A_device", [N, K],
                         dtype=dace.float32,
@@ -560,60 +410,45 @@ def make_fpga_state(sdfg):
 
     state.add_memlet_path(A, A_pipe_out, memlet=dace.memlet.Memlet("A_device"))
 
-    state.add_memlet_path(
-        A_pipe_in,
-        compute_sdfg_node,
-        dst_conn="A_stream_in",
-        memlet=dace.memlet.Memlet.simple(
-            A_pipe_in,
-            '0',
-            num_accesses=dace.symbolic.pystr_to_symbolic("N * K")))
+    state.add_memlet_path(A_pipe_in,
+                          compute_sdfg_node,
+                          dst_conn="A_stream_in",
+                          memlet=dace.Memlet("A_pipe"))
 
-    state.add_memlet_path(
-        B,
-        read_B_sdfg_node,
-        dst_conn="mem",
-        memlet=dace.memlet.Memlet.simple(
-            B,
-            "0:K, 0:M",
-            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
-    state.add_memlet_path(
-        read_B_sdfg_node,
-        B_pipe_out,
-        src_conn="pipe",
-        memlet=dace.memlet.Memlet.simple(
-            B_pipe_out,
-            "0",
-            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
-    state.add_memlet_path(
-        B_pipe_in,
-        compute_sdfg_node,
-        dst_conn="B_stream_in",
-        memlet=dace.memlet.Memlet.simple(
-            B_pipe_in,
-            '0',
-            num_accesses=dace.symbolic.pystr_to_symbolic("N * K * M")))
+    read_b_entry, read_b_exit = state.add_map(
+        "read_b", {
+            "n": "0:N",
+            "k": "0:K",
+            "m": "0:M"
+        },
+        schedule=dace.ScheduleType.FPGA_Device)
+    read_b_tasklet = state.add_tasklet("read_b", {"mem"}, {"pipe"},
+                                       "pipe = mem")
+    state.add_memlet_path(B,
+                          read_b_entry,
+                          read_b_tasklet,
+                          dst_conn="mem",
+                          memlet=dace.Memlet("B_device[k, m]"))
+    state.add_memlet_path(read_b_tasklet,
+                          read_b_exit,
+                          B_pipe_out,
+                          src_conn="pipe",
+                          memlet=dace.Memlet("B_pipe[0]"))
 
-    state.add_memlet_path(write_C_sdfg_node,
+    state.add_memlet_path(B_pipe_in,
+                          compute_sdfg_node,
+                          dst_conn="B_stream_in",
+                          memlet=dace.Memlet("B_pipe[0]"))
+
+    state.add_memlet_path(C_pipe_in,
                           C,
                           src_conn="mem",
-                          memlet=dace.memlet.Memlet.simple(C, "0:N, 0:M"))
-    state.add_memlet_path(
-        C_pipe_in,
-        write_C_sdfg_node,
-        dst_conn="pipe",
-        memlet=dace.memlet.Memlet.simple(
-            C_pipe_in,
-            '0',
-            num_accesses=dace.symbolic.pystr_to_symbolic("N * M")))
-    state.add_memlet_path(
-        compute_sdfg_node,
-        C_pipe_out,
-        src_conn="C_stream_out",
-        memlet=dace.memlet.Memlet.simple(
-            C_pipe_out,
-            '0',
-            num_accesses=dace.symbolic.pystr_to_symbolic("N * M")))
+                          memlet=dace.Memlet("C_device"))
+
+    state.add_memlet_path(compute_sdfg_node,
+                          C_pipe_out,
+                          src_conn="C_stream_out",
+                          memlet=dace.Memlet("C_pipe[0]"))
 
     return state
 
