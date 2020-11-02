@@ -173,7 +173,8 @@ def parse_dace_program(f,
     src_ast = GlobalResolver({
         k: v
         for k, v in global_vars.items()
-        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes and k != '_'
+        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes
+        and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -602,6 +603,27 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
+    def _constval(self, node: ast.AST, value: Any) -> ast.AST:
+        # Compatibility check since Python changed their AST nodes
+        if sys.version_info >= (3, 8):
+            newnode = ast.Constant(value=value, kind='')
+        else:
+            newnode = ast.Num(n=value)
+        return ast.copy_location(newnode, node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        if (isinstance(node.value, ast.Name)
+                and node.value.id not in self.current_scope
+                and node.value.id in self.globals):
+            visited_slice = self.visit(node.slice)
+            # Try to evaluate subscript with values we already have in globals
+            value = eval(
+                f'{self.globals[node.value.id]}[{astutils.unparse(visited_slice)}]',
+                self.globals)
+            return self._constval(node, value)
+
+        return self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.AugStore)):
             self.current_scope.add(node.id)
@@ -609,12 +631,8 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=self.globals[node.id], kind='')
-                else:
-                    newnode = ast.Num(n=self.globals[node.id])
-                return ast.copy_location(newnode, node)
+                return self._constval(node, self.globals[node.id])
+
         return node
 
 

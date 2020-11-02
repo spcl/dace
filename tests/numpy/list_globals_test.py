@@ -12,13 +12,13 @@ def global_list_program(A: dace.int32[3, 2, 4]):
     return np.transpose(A, axes=global_axes)
 
 
-def global_func_access_global_list_test():
+def test_global_func_access_global_list():
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
     result = global_list_program(A=inp.copy())
     assert np.allclose(result, np.transpose(inp.copy(), axes=global_axes))
 
 
-def local_func_access_global_list_test():
+def test_local_func_access_global_list():
     @dace
     def local_list_program(A: dace.int32[3, 2, 4]):
         return np.transpose(A, axes=global_axes)
@@ -28,7 +28,7 @@ def local_func_access_global_list_test():
     assert np.allclose(result, np.transpose(inp.copy(), axes=global_axes))
 
 
-def local_list_test():
+def test_local_list():
     local_axes = [1, 2, 0]
 
     @dace
@@ -40,19 +40,20 @@ def local_list_test():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
-def local_list_test_with_slice():
+def test_local_list_with_slice():
     local_axes = [1, 2, 0, 100]
 
     @dace
     def local_list(A: dace.int32[3, 2, 4]):
-        return np.transpose(A, axes=local_axes[0:-2])
+        return np.transpose(A, axes=local_axes[0:-1])
 
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
     result = local_list(A=inp.copy())
-    assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
+    assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes[0:-1]))
 
 
 if __name__ == "__main__":
-    local_func_access_global_list_test()
-    global_func_access_global_list_test()
-    local_list_test()
+    test_global_func_access_global_list()
+    test_local_func_access_global_list()
+    test_local_list()
+    test_local_list_with_slice()
