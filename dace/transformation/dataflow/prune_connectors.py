@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
+import itertools
 
 from dace import memlet, registry, SDFG, SDFGState
 from dace.transformation import transformation as pm, helpers
@@ -69,24 +70,9 @@ class PruneConnectors(pm.Transformation):
             for n in s.data_nodes():
                 all_data_used.add(n.data)
 
-        for conn in prune_in:
-            for e in state.in_edges(nsdfg):
-                if e.dst_conn == conn:
-                    break
-            else:
-                raise RuntimeError("Connector not found.")
-            state.remove_memlet_path(e, remove_orphans=True)
-            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
-                # If the data is now unused, we can also purge it from the SDFG
-                nsdfg.sdfg.remove_data(conn)
-
-        for conn in prune_out:
-            for e in state.out_edges(nsdfg):
-                if e.src_conn == conn:
-                    break
-            else:
-                raise RuntimeError("Connector not found.")
-            state.remove_memlet_path(e, remove_orphans=True)
-            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
-                # If the data is now unused, we can also purge it from the SDFG
-                nsdfg.sdfg.remove_data(conn)
+        for conn in itertools.chain(prune_in, prune_out):
+            for e in state.edges_by_connector(nsdfg, conn):
+                state.remove_memlet_path(e, remove_orphans=True)
+                if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
+                    # If the data is now unused, we can purge it from the SDFG
+                    nsdfg.sdfg.remove_data(conn)

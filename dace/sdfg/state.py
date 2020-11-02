@@ -14,7 +14,7 @@ from dace.properties import (Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import Any, Dict, Optional, List, Set, Tuple, Union
+from typing import Any, AnyStr, Dict, Optional, List, Set, Tuple, Union
 import warnings
 
 
@@ -215,6 +215,17 @@ class StateGraphView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
+    def edges_by_connector(self, node: nd.Node,
+                           connector: AnyStr) -> MultiConnectorEdge:
+        """ Returns a generator to the edges going to or from the the given
+            connector of the given node.
+            :param node: Source/destination node of edges.
+            :param connector: Source/destination connector of edges.
+        """
+        return itertools.chain(
+            (e for e in self.in_edges(node) if e.dst_conn == connector),
+            (e for e in self.out_edges(node) if e.src_conn == connector))
 
     ###################################################################
     # Scope-related methods
