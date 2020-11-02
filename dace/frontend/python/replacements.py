@@ -1592,9 +1592,11 @@ UfuncOutput = Union[str, None]
 ufuncs = dict(
     add = dict(name="_numpy_add_", inputs=["__in1", "__in2"],
                outputs=["__out"], code="__out = __in1 + __in2",
-               reduce="lambda a, b: a + b", initial=np.add.identity)
+               reduce="lambda a, b: a + b", initial=np.add.identity),
+    minimum = dict(name="_numpy_min_", inputs=["__in1", "__in2"],
+                   outputs=["__out"], code="__out = min(__in1, __in2)",
+                   reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
 )
-
 
 def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor',
                                   ast_node: ast.Call,
@@ -2321,7 +2323,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         inp_shape = [1]
     out_shape = [1]
     if 'axis' in kwargs.keys():
-        axis = kwargs['axis']
+        # Set to (0,) if the keyword arg value is None
+        axis = kwargs['axis'] or axis
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
     if axis is not None:
@@ -2357,6 +2360,41 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
             expected_out_shape = [1] * len(inp_shape)
         else:
             expected_out_shape = [1]
+    
+    # Validate 'initial' keyword
+    # This is set to be ufunc.identity, when it exists
+    initial = ufunc_impl['initial']
+    if 'initial' in kwargs.keys():
+        # NumPy documentation says that when 'initial' is set to None,
+        # then the first element of the reduction is used. However, it seems
+        # that when 'initial' is None and the ufunc has 'identity', then
+        # ufunc.identity is the default.
+        initial = kwargs['initial'] or initial
+        if initial is None:
+            initial = inputs[0]
+            if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
+                # TODO: This is a hack
+                # The input connector in the reduce node is called '_in'
+                # If the input data is a data.Scalar, then this is enough
+                initial = '_in'
+                inpdata = sdfg.arrays[inputs[0]]
+                # TODO: This is a hack
+                # In the input data has more than 1 dimensions and 'initial'
+                # is None, then NumPy uses a different 'initial' value for every
+                # non-reduced dimension. The following code computes the index
+                # expression to extract the correct 'initial' value for every
+                # non-reduce dimension.
+                if isinstance(inpdata, data.Array):
+                    idx = 0
+                    str_idx = None
+                    for i, s in enumerate(inpdata.strides):
+                        if i not in axis:
+                            if str_idx:
+                                str_idx += " + _o{i}*({s})".format(i=idx, s=s)
+                            else:
+                                str_idx = "_o{i}*({s})".format(i=idx, s=s)
+                            idx += 1
+                    initial += "[{}]".format(str_idx)
 
     # Validate 'where' keyword
     # Throw a warning that it is currently unsupported.
@@ -2423,7 +2461,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
 
     # Create subgraph
     _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], intermediate_name,
-            axis=axis, identity=ufunc_impl['initial'])
+            axis=axis, identity=initial)
     
     if keepdims:
         intermediate_node = None

@@ -254,6 +254,40 @@ def test_ufunc_add_reduce_keepdims():
     assert(np.array_equal(np.add.reduce(A, keepdims=True), s))
 
 
+@dace.program
+def ufunc_add_reduce_initial(A: dace.int32[2, 2, 2, 2, 2]):
+    return np.add.reduce(A, initial=5)
+
+
+def test_ufunc_add_reduce_initial():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2,), dtype=np.int32)
+    s = ufunc_add_reduce_initial(A)
+    assert(np.array_equal(np.add.reduce(A, initial=5), s))
+
+
+@dace.program
+def ufunc_minimum_reduce_initial(A: dace.int32[2, 2, 2, 2, 2]):
+    return np.minimum.reduce(A, initial=5)
+
+
+def test_ufunc_minimum_reduce_initial():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2,), dtype=np.int32)
+    s = ufunc_minimum_reduce_initial(A)
+    assert(np.array_equal(np.minimum.reduce(A, initial=5), s))
+
+
+@dace.program
+def ufunc_minimum_reduce_initial2(A: dace.int32[2, 2, 2, 2, 2]):
+    return np.minimum.reduce(A, initial=None)
+
+
+def test_ufunc_minimum_reduce_initial2():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2,), dtype=np.int32)
+    A[0, 0, 0, 0, 0] = 0
+    s = ufunc_minimum_reduce_initial2(A)
+    assert(np.array_equal(np.minimum.reduce(A, initial=None), s))
+
+
 if __name__ == "__main__":
     test_broadcast_success()
     test_broadcast_fail()
@@ -274,3 +308,6 @@ if __name__ == "__main__":
     test_ufunc_add_reduce_simple()
     test_ufunc_add_reduce_axis()
     test_ufunc_add_reduce_keepdims()
+    test_ufunc_add_reduce_initial()
+    test_ufunc_minimum_reduce_initial()
+    test_ufunc_minimum_reduce_initial2()
