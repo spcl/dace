@@ -2,6 +2,7 @@
 import pytest
 import numpy as np
 
+
 @pytest.mark.tensorflow
 def test_shapen():
     import tensorflow as tf
@@ -59,8 +60,13 @@ def test_mean():
 def test_addn():
     import tensorflow as tf
     from dace.frontend.tensorflow import TFSession
+    shape = [10, 11, 12, 13]
     inputs = [np.random.rand(*shape) for _ in range(10)]
     addn_test_0 = tf.add_n(inputs)
+
+    sess_tf = tf.Session()
+    sess_dace = TFSession()
+
     output_tf = sess_tf.run(addn_test_0)
     output_dace = sess_dace.run(addn_test_0)
     try:
@@ -93,12 +99,11 @@ def test_slice():
     size_tensor_2 = tf.constant([1, 2, 3])
     size_tensor_3 = tf.constant([2, 1, 3])
     tf_out = sess_tf.run(tf.slice(input_tensor, begin_tensor, size_tensor_3))
-    dace_out = sess_dace.run(
-        tf.slice(input_tensor, begin_tensor, size_tensor_3))
+    dace_out = sess_dace.run(tf.slice(input_tensor, begin_tensor,
+                                      size_tensor_3))
     print(tf_out)
     print(dace_out)
     assert (tf_out == dace_out).all()
-
 
 
 if __name__ == '__main__':
