@@ -212,7 +212,8 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
     datadef = memlet.data
-    offset_expr = '[' + cpp_offset_expr(desc, memlet.subset) + ']'
+    offset = cpp_offset_expr(desc, memlet.subset)
+    offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
@@ -257,14 +258,24 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
             ref = ''
             typedef = defined_ctype
             defined_type = DefinedType.StreamArray
-    elif defined_type == FPGA_ShiftRegister:
+    elif defined_type == DefinedType.FPGA_ShiftRegister:
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Pointer
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    # Cast as necessary
-    expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
+    if desc.storage == dace.StorageType.FPGA_Global:
+        # This is a device buffer.
+        # Can not be accessed with offset different than zero
+        if offset != 0:
+            raise TypeError("Can not offset device buffers from host code ({}, offset {})".format(datadef, offset))
+
+        # Device buffers are passed by reference
+        expr = datadef
+        ref = '&'
+    else:
+        # Cast as necessary
+        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
                                 is_scalar, defined_type)
 
     # Register defined variable

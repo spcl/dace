@@ -76,6 +76,9 @@ run_all() {
       run_sample ../samples/fpga/jacobi_fpga_stream jacobi_fpga_stream_Hx128xT 1 128 128 8
     fi
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
+
+    #Nested SDFGs generated as FPGA kernels
+    run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
 }
 
 # Check if xocc is vailable
