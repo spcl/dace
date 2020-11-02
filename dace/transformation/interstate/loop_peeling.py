@@ -40,7 +40,7 @@ class LoopPeeling(LoopUnroll):
 
         # If loop cannot be detected, fail
         found = find_for_loop(sdfg, guard, begin)
-        if not found:
+        if found is None:
             return False
 
         return True
