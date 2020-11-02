@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
 import numpy as np
+import os
 
 import dace
 from dace.transformation.dataflow import PruneConnectors
@@ -16,6 +17,7 @@ def make_sdfg():
     n = dace.symbol("N")
 
     sdfg_outer = dace.SDFG("prune_connectors_test")
+    sdfg_outer.set_global_code("#include <fstream>\n#include <mutex>")
     state_outer = sdfg_outer.add_state("state_outer")
     sdfg_outer.add_symbol("N", dace.int32)
 
@@ -112,8 +114,10 @@ def make_sdfg():
                                                  {"read_unused_isolated"},
                                                  {"write_unused_isolated"},
                                                  name="isolated")
+    isolated_sdfg.add_symbol("i", dace.int32)
+    isolated_nsdfg.symbol_mapping["i"] = "i"
     isolated_entry, isolated_exit = state_outer.add_map("isolated",
-                                                        {"i": "0:4"})
+                                                        {"i": "0:N"})
     state_outer.add_memlet_path(isolated_read,
                                 isolated_entry,
                                 isolated_nsdfg,
@@ -125,14 +129,49 @@ def make_sdfg():
                                 src_conn="write_unused_isolated",
                                 memlet=dace.Memlet("write_unused[0:N, 0:N]"))
     isolated_state = isolated_sdfg.add_state("isolated")
-		# Cannot figure out a good way to test that this is actually executed the
-    # right number of times: capturing stdout does not work because the SDFG
-		# is run in a subprocess
     isolated_state.add_tasklet("isolated", {}, {},
-                               "// I could have crazy side effects!",
+                               """\
+static std::mutex mutex;
+std::unique_lock<std::mutex> lock(mutex);
+std::ofstream of("prune_connectors_test.txt", std::ofstream::app);
+of << i << "\\n";""",
                                language=dace.Language.CPP)
 
     return sdfg_outer
+
+
+def test_prune_connectors(n=None):
+    if n is None:
+        n = 64
+
+    sdfg = make_sdfg()
+
+    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
+        raise RuntimeError("PruneConnectors was not applied.")
+
+    arr_in = np.zeros((n, n), dtype=np.uint16)
+    arr_out = np.empty((n, n), dtype=np.uint16)
+
+    try:
+        os.remove("prune_connectors_test.txt")
+    except FileNotFoundError:
+        pass
+
+    sdfg(read_used=arr_in,
+         read_unused=arr_in,
+         write_used=arr_out,
+         write_unused=arr_out,
+         N=n)
+
+    assert np.allclose(arr_out, arr_in + 1)
+
+    numbers_written = []
+    with open("prune_connectors_test.txt", "r") as f:
+        for line in f:
+            numbers_written.append(int(line.strip()))
+    assert all(sorted(numbers_written) == np.arange(n))
+
+    os.remove("prune_connectors_test.txt")
 
 
 if __name__ == "__main__":
@@ -143,19 +182,4 @@ if __name__ == "__main__":
 
     n = np.int32(args.N)
 
-    sdfg = make_sdfg()
-
-    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
-        raise RuntimeError("PruneConnectors was not applied.")
-
-    arr_in = np.zeros((n, n), dtype=np.uint16)
-    arr_out = np.empty((n, n), dtype=np.uint16)
-
-    sdfg(read_used=arr_in,
-         read_unused=arr_in,
-         write_used=arr_out,
-         write_unused=arr_out,
-         N=n)
-
-    if not all(arr_out.ravel() == arr_in.ravel() + 1):
-        raise ValueError("Validation failed.")
+    test_prune_connectors(n)
