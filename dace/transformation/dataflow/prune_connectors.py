@@ -20,7 +20,7 @@ def connectors_to_prune(
     write_set = set()
 
     for state in nsdfg.sdfg.states():
-        rs, ws = helpers.read_and_write_set(state)
+        rs, ws = helpers.read_and_write_sets(state)
         read_set |= rs
         write_set |= ws
 
