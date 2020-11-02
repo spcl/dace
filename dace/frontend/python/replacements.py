@@ -2360,41 +2360,6 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
             expected_out_shape = [1] * len(inp_shape)
         else:
             expected_out_shape = [1]
-    
-    # Validate 'initial' keyword
-    # This is set to be ufunc.identity, when it exists
-    initial = ufunc_impl['initial']
-    if 'initial' in kwargs.keys():
-        # NumPy documentation says that when 'initial' is set to None,
-        # then the first element of the reduction is used. However, it seems
-        # that when 'initial' is None and the ufunc has 'identity', then
-        # ufunc.identity is the default.
-        initial = kwargs['initial'] or initial
-        if initial is None:
-            initial = inputs[0]
-            if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-                # TODO: This is a hack
-                # The input connector in the reduce node is called '_in'
-                # If the input data is a data.Scalar, then this is enough
-                initial = '_in'
-                inpdata = sdfg.arrays[inputs[0]]
-                # TODO: This is a hack
-                # In the input data has more than 1 dimensions and 'initial'
-                # is None, then NumPy uses a different 'initial' value for every
-                # non-reduced dimension. The following code computes the index
-                # expression to extract the correct 'initial' value for every
-                # non-reduce dimension.
-                if isinstance(inpdata, data.Array):
-                    idx = 0
-                    str_idx = None
-                    for i, s in enumerate(inpdata.strides):
-                        if i not in axis:
-                            if str_idx:
-                                str_idx += " + _o{i}*({s})".format(i=idx, s=s)
-                            else:
-                                str_idx = "_o{i}*({s})".format(i=idx, s=s)
-                            idx += 1
-                    initial += "[{}]".format(str_idx)
 
     # Validate 'where' keyword
     # Throw a warning that it is currently unsupported.
@@ -2458,6 +2423,55 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                 intermediate_shape, result_type)
     else:
         intermediate_name = outputs[0]
+    
+    # Validate 'initial' keyword
+    # This is set to be ufunc.identity, when it exists
+    initial = ufunc_impl['initial']
+    if 'initial' in kwargs.keys():
+        # NumPy documentation says that when 'initial' is set to None,
+        # then the first element of the reduction is used. However, it seems
+        # that when 'initial' is None and the ufunc has 'identity', then
+        # ufunc.identity is the default.
+        initial = kwargs['initial'] or initial
+        if initial is None:
+            if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
+                inpdata = sdfg.arrays[inputs[0]]
+                # In the input data has more than 1 dimensions and 'initial'
+                # is None, then NumPy uses a different 'initial' value for every
+                # non-reduced dimension.
+                if isinstance(inpdata, data.Array):
+                    state.add_mapped_tasklet(
+                        name=state.label + "_reduce_initial",
+                        map_ranges={
+                            "__i{i}".format(i=i): "0:{s}".format(s=s)
+                            for i, s in enumerate(inpdata.shape)
+                            if i not in axis
+                        },
+                        inputs={
+                            "__inp": dace.Memlet.simple(inputs[0], ','.join([
+                                "0" if i in axis else "__i{i}".format(i=i)
+                                for i in range(len(inpdata.shape))
+                            ]))
+                        },
+                        outputs={
+                            "__out": dace.Memlet.simple(
+                                intermediate_name, ','.join([
+                                    "__i{i}".format(i=i)
+                                    for i in range(len(inpdata.shape))
+                                    if i not in axis
+                            ]))
+                        },
+                        code="__out = __inp",
+                        external_edges=True
+                    )
+                else:
+                    r = state.add_read(inputs[0])
+                    w = state.add_write(intermediate_name)
+                    state.add.nedge(
+                        r, w, dace.Memlet.simple.from_array(inpdata))
+                state = visitor._add_state(state.label + 'b')
+            else: 
+                initial = intermediate_name
 
     # Create subgraph
     _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], intermediate_name,
