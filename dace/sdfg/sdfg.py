@@ -1752,13 +1752,10 @@ class SDFG(OrderedDiGraph):
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
         # This is imported here to avoid an import loop
-        from dace.transformation.transformation import Transformation
+        from dace.transformation.transformation import (Transformation,
+                                                        strict_transformations)
 
-        strict_transformations = [
-            k for k, v in Transformation.extensions().items()
-            if v.get('strict', False)
-        ]
-        self.apply_transformations_repeated(strict_transformations,
+        self.apply_transformations_repeated(strict_transformations(),
                                             validate=validate,
                                             strict=True,
                                             validate_all=validate_all)
