@@ -70,7 +70,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
         passed = ref_norm < 1e-5
 
         if not passed:
-            raise RuntimeError('AXPY pure implementation wrong test results on config: ', config)
+            raise RuntimeError('AXPY {} implementation wrong test results on config: '.format(implementation), config)
 
 
 
@@ -84,45 +84,45 @@ def reference_result(x_in, y_in, alpha):
 # ---------- ----------
 # Pure graph program
 # ---------- ----------
-def pure_graph(vecWidth, precision, implementation="pure", testCase="0"):
+def pure_graph(veclen, precision, implementation="pure", testCase="0"):
     
     n = dace.symbol("n")
     a = dace.symbol("a")
 
     prec = "single" if precision == dace.float32 else "double"
-    test_sdfg = dace.SDFG("axpy_test_" + prec + "_v" + str(vecWidth) + "_" + implementation + "_" + testCase)
+    test_sdfg = dace.SDFG("axpy_test_" + prec + "_v" + str(veclen) + "_" + implementation + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
 
-    vecType = dace.vector(precision, vecWidth)
+    vecType = dace.vector(precision, veclen)
 
     test_sdfg.add_symbol(a.name, precision)
 
-    test_sdfg.add_array('x1', shape=[n/vecWidth], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n/vecWidth], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[n/vecWidth], dtype=vecType)
+    test_sdfg.add_array('x1', shape=[n/veclen], dtype=vecType)
+    test_sdfg.add_array('y1', shape=[n/veclen], dtype=vecType)
+    test_sdfg.add_array('z1', shape=[n/veclen], dtype=vecType)
 
     x_in = test_state.add_read('x1')
     y_in = test_state.add_read('y1')
     z_out = test_state.add_write('z1')
 
-    saxpy_node = blas.axpy.Axpy("axpy", precision, vecWidth=vecWidth)
+    saxpy_node = blas.axpy.Axpy("axpy", precision, veclen=veclen)
     saxpy_node.implementation = implementation
 
     test_state.add_memlet_path(
         x_in, saxpy_node,
         dst_conn='_x',
-        memlet=Memlet.simple(x_in, "0:n/{}".format(vecWidth))
+        memlet=Memlet.simple(x_in, "0:n/{}".format(veclen))
     )
     test_state.add_memlet_path(
         y_in, saxpy_node,
         dst_conn='_y',
-        memlet=Memlet.simple(y_in, "0:n/{}".format(vecWidth))
+        memlet=Memlet.simple(y_in, "0:n/{}".format(veclen))
     )
 
     test_state.add_memlet_path(
         saxpy_node, z_out,
         src_conn='_res',
-        memlet=Memlet.simple(z_out, "0:n/{}".format(vecWidth))
+        memlet=Memlet.simple(z_out, "0:n/{}".format(veclen))
     )
 
     test_sdfg.expand_library_nodes()
@@ -150,7 +150,7 @@ def test_pure():
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
-def fpga_graph(vecWidth, precision, vendor, testCase="0"):
+def fpga_graph(veclen, precision, vendor, testCase="0"):
     
     DATATYPE = precision
 
@@ -161,36 +161,36 @@ def fpga_graph(vecWidth, precision, vendor, testCase="0"):
     test_sdfg = dace.SDFG("axpy_test_" + vendor_mark + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
     
-    vecType = dace.vector(precision, vecWidth)
+    vecType = dace.vector(precision, veclen)
 
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    test_sdfg.add_array('x1', shape=[n/vecWidth], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n/vecWidth], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[n/vecWidth], dtype=vecType)
+    test_sdfg.add_array('x1', shape=[n/veclen], dtype=vecType)
+    test_sdfg.add_array('y1', shape=[n/veclen], dtype=vecType)
+    test_sdfg.add_array('z1', shape=[n/veclen], dtype=vecType)
 
-    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE , vecWidth=vecWidth, n=n, a=a)
+    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE , veclen=veclen, n=n, a=a)
     saxpy_node.implementation = 'fpga_stream'
 
-    x_stream = streaming.streamReadVector(
+    x_stream = streaming.StreamReadVector(
         'x1',
         n,
         DATATYPE,
-        vecWidth=vecWidth
+        veclen=veclen
     )
 
-    y_stream = streaming.streamReadVector(
+    y_stream = streaming.StreamReadVector(
         'y1',
         n,
         DATATYPE,
-        vecWidth=vecWidth
+        veclen=veclen
     )
 
-    z_stream = streaming.streamWriteVector(
+    z_stream = streaming.StreamWriteVector(
         'z1',
         n,
         DATATYPE,
-        vecWidth=vecWidth
+        veclen=veclen
     )
 
     preState, postState = streaming.fpga_setup_connect_streamers(

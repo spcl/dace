@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Various helper functions and classes for streaming BLAS operators on the FPGA
 
@@ -9,6 +10,7 @@ Various helper functions and classes for streaming BLAS operators on the FPGA
 import dace
 from dace.memlet import Memlet
 from dace import dtypes
+
 from dace.libraries.blas.utility import memory_operations as memOps
 
 
@@ -18,31 +20,31 @@ from dace.libraries.blas.utility import memory_operations as memOps
 # ---------- ---------- ---------- ----------
 
 
-def fpga_setup_states(sdfg, computeState):
+def fpga_setup_states(sdfg, compute_state):
     """
     Add states for copying data from and to the FPGA
     """
 
-    preState = sdfg.add_state('copyToFPGA')
-    postState = sdfg.add_state('copyToCPU')
+    pre_state = sdfg.add_state('copy_to_FPGA')
+    post_state = sdfg.add_state('copy_to_CPU')
 
-    sdfg.add_edge(preState, computeState, dace.InterstateEdge(None))
-    sdfg.add_edge(computeState, postState, dace.InterstateEdge(None))
+    sdfg.add_edge(pre_state, compute_state, dace.InterstateEdge(None))
+    sdfg.add_edge(compute_state, post_state, dace.InterstateEdge(None))
 
-    return (preState, postState)
+    return (pre_state, post_state)
 
 
 def fpga_setup_connect_streamers(
         sdfg,
         state,
-        libNodeIn,
-        inputStreams,
-        libNodeInCons,
-        libNodeOut,
-        outputStreams,
-        libNodeOutCons,
-        inputMemoryBanks=None,
-        outputMemoryBanks=None
+        lib_nodeIn,
+        input_streams,
+        lib_node_in_cons,
+        lib_nodeOut,
+        output_streams,
+        lib_node_out_cons,
+        input_memory_banks=None,
+        output_memory_banks=None
     ):
     """
     Add states for copying data from and to the FPGA
@@ -50,51 +52,51 @@ def fpga_setup_connect_streamers(
     access pattern and mem. location to the BLAS node
     """
 
-    preState, postState = fpga_setup_states(sdfg, state)
+    pre_state, post_state = fpga_setup_states(sdfg, state)
 
-    for i, stream, libCon in zip(range(len(libNodeInCons)), inputStreams, libNodeInCons):
+    for i, stream, libCon in zip(range(len(lib_node_in_cons)), input_streams, lib_node_in_cons):
 
-        stream.copyToFPGA(
-            sdfg, preState,
-            bank=(None if inputMemoryBanks is None else inputMemoryBanks[i])
+        stream.copy_to_FPGA(
+            sdfg, pre_state,
+            bank=(None if input_memory_banks is None else input_memory_banks[i])
         )
 
-        stream.connectToLib(
+        stream.connect_to_lib(
             sdfg,
             state,
-            libNodeIn,
+            lib_nodeIn,
             libCon
         )
 
-    for i, stream, libCon in zip(range(len(libNodeOutCons)), outputStreams, libNodeOutCons):
+    for i, stream, libCon in zip(range(len(lib_node_out_cons)), output_streams, lib_node_out_cons):
 
-        stream.copyToCPU(
-            sdfg, postState,
-            bank=(None if outputMemoryBanks is None else outputMemoryBanks[i])
+        stream.copy_to_CPU(
+            sdfg, post_state,
+            bank=(None if output_memory_banks is None else output_memory_banks[i])
         )
 
-        stream.connectToLib(
+        stream.connect_to_lib(
             sdfg,
             state,
-            libNodeOut,
+            lib_nodeOut,
             libCon
         )
 
-    return preState, postState
+    return pre_state, post_state
 
 
 
 def fpga_setup_ConnectStreamersMultiNode(
         sdfg,
         state,
-        libNodeIns,
-        inputStreams,
-        libNodeInCons,
-        libNodeOuts,
-        outputStreams,
-        libNodeOutCons,
-        inputMemoryBanks=None,
-        outputMemoryBanks=None
+        lib_nodeIns,
+        input_streams,
+        lib_node_in_cons,
+        lib_nodeOuts,
+        output_streams,
+        lib_node_out_cons,
+        input_memory_banks=None,
+        output_memory_banks=None
     ):
     """
     Add states for copying data from and to the FPGA
@@ -102,37 +104,37 @@ def fpga_setup_ConnectStreamersMultiNode(
     access pattern and mem. location to multiple diff. BLAS nodes
     """
 
-    preState, postState = fpga_setup_states(sdfg, state)
+    pre_state, post_state = fpga_setup_states(sdfg, state)
 
-    for i, stream, libCon, libNodeIn in zip(range(len(libNodeInCons)), inputStreams, libNodeInCons, libNodeIns):
+    for i, stream, libCon, lib_nodeIn in zip(range(len(lib_node_in_cons)), input_streams, lib_node_in_cons, lib_nodeIns):
 
-        stream.copyToFPGA(
-            sdfg, preState,
-            bank=(None if inputMemoryBanks is None else inputMemoryBanks[i])
+        stream.copy_to_FPGA(
+            sdfg, pre_state,
+            bank=(None if input_memory_banks is None else input_memory_banks[i])
         )
 
-        stream.connectToLib(
+        stream.connect_to_lib(
             sdfg,
             state,
-            libNodeIn,
+            lib_nodeIn,
             libCon
         )
 
-    for i, stream, libCon, libNodeOut in zip(range(len(libNodeOutCons)), outputStreams, libNodeOutCons, libNodeOuts):
+    for i, stream, libCon, lib_nodeOut in zip(range(len(lib_node_out_cons)), output_streams, lib_node_out_cons, lib_nodeOuts):
 
-        stream.copyToCPU(
-            sdfg, postState,
-            bank=(None if outputMemoryBanks is None else outputMemoryBanks[i])
+        stream.copy_to_CPU(
+            sdfg, post_state,
+            bank=(None if output_memory_banks is None else output_memory_banks[i])
         )
 
-        stream.connectToLib(
+        stream.connect_to_lib(
             sdfg,
             state,
-            libNodeOut,
+            lib_nodeOut,
             libCon
         )
 
-    return preState, postState
+    return pre_state, post_state
 
 
 
@@ -143,18 +145,18 @@ def fpga_setup_ConnectStreamersMultiNode(
 # ---------- ---------- ---------- ----------
 # BASE STREAMERS
 # ---------- ---------- ---------- ----------
-class streamReadBase():
+class StreamReadBase():
 
-    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+    def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
         print("WARNING, implement method 'connect' on child reader!")
         raise NotImplementedError
 
-    def getCopySize(self):
-        print("WARNING, implement method 'getCopySize' on child reader!")
+    def get_copy_size(self):
+        print("WARNING, implement method 'get_copy_size' on child reader!")
         raise NotImplementedError
 
-    def copyToFPGA(self, sdfg, preState, bank=None):
-        print("WARNING, implement method 'copyToFPGA' on child reader!")
+    def copy_to_FPGA(self, sdfg, pre_state, bank=None):
+        print("WARNING, implement method 'copy_to_FPGA' on child reader!")
         raise NotImplementedError
 
     def __eq__(self, other):
@@ -162,18 +164,18 @@ class streamReadBase():
 
 
 
-class streamWriteBase():
+class StreamWriteBase():
 
-    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+    def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
         print("WARNING, implement method 'connect' on child writer!")
         raise NotImplementedError
 
-    def getCopySize(self):
-        print("WARNING, implement method 'getCopySize' on child writer!")
+    def get_copy_size(self):
+        print("WARNING, implement method 'get_copy_size' on child writer!")
         raise NotImplementedError
 
-    def copyToCPU(self, sdfg, preState, bank=None):
-        print("WARNING, implement method 'copyToCPU' on child writer!")
+    def copy_to_CPU(self, sdfg, pre_state, bank=None):
+        print("WARNING, implement method 'copy_to_CPU' on child writer!")
         raise NotImplementedError
 
 
@@ -191,33 +193,31 @@ class streamWriteBase():
 # ---------- ---------- ---------- ----------
 # READERS
 # ---------- ---------- ---------- ----------
-class streamReadVector(streamReadBase):
+class StreamReadVector(StreamReadBase):
 
     def __init__(
             self,
             source,
-            memSize,
+            mem_size,
             dtype,
-            bufferSize=32,
-            vecWidth=1,
+            buffer_size=32,
+            veclen=1,
             unroll=False,
-            unrollWidth=1,
+            unroll_width=1,
             repeat=1
         ):
 
-        # if unrollWidth < vecWidth:
-        #     unrollWidth = vecWidth
-
-        assert unroll == False and unrollWidth == 1, "Unrolling not supported at the time"
+        if not (unroll == False and unroll_width == 1):
+            raise NotImplementedError("Unrolling on StreamReadVector not supported at the time")
 
         self.source = source
-        self.memSize = memSize
+        self.mem_size = mem_size
         self.dtype = dtype
 
-        self.bufferSize = bufferSize
-        self.vecWidth = vecWidth
+        self.buffer_size = buffer_size
+        self.veclen = veclen
         self.unroll = unroll
-        self.unrollWidth = unrollWidth
+        self.unroll_width = unroll_width
         self.repeat = repeat
 
         self.fpga_data = None
@@ -227,8 +227,8 @@ class streamReadVector(streamReadBase):
 
     def __eq__(self, other):
 
-        if (self.source == other.source and self.memSize == other.memSize and 
-            self.dtype == other.dtype and self.vecWidth == other.vecWidth and
+        if (self.source == other.source and self.mem_size == other.mem_size and 
+            self.dtype == other.dtype and self.veclen == other.veclen and
             self.repeat == other.repeat):
 
             return True
@@ -238,59 +238,59 @@ class streamReadVector(streamReadBase):
 
 
 
-    def copyToFPGA(self, sdfg, preState, bank=None):
+    def copy_to_FPGA(self, sdfg, pre_state, bank=None):
 
 
         fpga_inputs, fpgaIn_names = memOps.fpga_copy_CPU_to_global(
             sdfg,
-            preState,
+            pre_state,
             [self.source],
-            [self.memSize],
+            [self.mem_size],
             [self.dtype],
             bank=bank,
-            veclen=self.vecWidth
+            veclen=self.veclen
         )
 
         self.fpga_data = fpga_inputs[0]
         self.fpga_dataName = fpgaIn_names[0]
 
 
-    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+    def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
 
-        vecType = dace.vector(self.dtype, self.vecWidth)
+        vec_type = dace.vector(self.dtype, self.veclen)
 
         in_mem, in_name = self.stream(
             state,
             self.fpga_data.data,
-            self.memSize,
-            destName=libConnector,
+            self.mem_size,
+            destName=lib_connector,
             access=access
         )
 
         stream_inp = state.add_stream(
             in_name,
-            vecType,
-            buffer_size=self.bufferSize,
+            vec_type,
+            buffer_size=self.buffer_size,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
         )
         self.fpga_stream = stream_inp
 
         state.add_memlet_path(
-            stream_inp, libNode,
-            dst_conn=libConnector,
+            stream_inp, lib_node,
+            dst_conn=lib_connector,
             memlet=Memlet.simple(
-                stream_inp, "0", num_accesses=self.memSize
+                stream_inp, "0", num_accesses=self.mem_size
             )
         )
 
 
-    def getCopySize(self):
+    def get_copy_size(self):
 
-        return self.memSize
+        return self.mem_size
 
 
-    def stream(self, state, src, memSize, destName='', access=False):
+    def stream(self, state, src, mem_size, destName='', access=False):
 
         dest = src + "_"
         if destName != '':
@@ -303,29 +303,29 @@ class streamReadVector(streamReadBase):
         else:
             data_in = state.add_read(src)
 
-        vecType = dace.vector(self.dtype, self.vecWidth)
+        vec_type = dace.vector(self.dtype, self.veclen)
 
         data_out = state.add_stream(
             dest,
-            vecType,
-            buffer_size=self.bufferSize,
+            vec_type,
+            buffer_size=self.buffer_size,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
         )
 
-        repeatMap_entry = None
-        repeatMap_exit = None
+        repeat_map_entry = None
+        repeat_map_exit = None
 
         if self.repeat != 1:
-            repeatMap_entry, repeatMap_exit = state.add_map(
+            repeat_map_entry, repeat_map_exit = state.add_map(
                 'streamRepeat_{}_map'.format(dest),
                 dict(r = '0:{}'.format(self.repeat)),
                 schedule=dtypes.ScheduleType.FPGA_Device
             )
 
-        readMap_entry, readMap_exit = state.add_map(
+        read_map_entry, read_map_exit = state.add_map(
             'streamRead_{}_map'.format(dest),
-            dict(i='0:{0}/{1}'.format(memSize, self.vecWidth)),
+            dict(i='0:{0}/{1}'.format(mem_size, self.veclen)),
             schedule=dtypes.ScheduleType.FPGA_Device,
             unroll=self.unroll
         )
@@ -340,13 +340,13 @@ class streamReadVector(streamReadBase):
         if self.repeat != 1:
 
             state.add_memlet_path(
-                data_in, repeatMap_entry, readMap_entry, read_tasklet,
+                data_in, repeat_map_entry, read_map_entry, read_tasklet,
                 dst_conn='inCon',
                 memlet=Memlet.simple(data_in.data, 'i')
             )
 
             state.add_memlet_path(
-                read_tasklet, readMap_exit, repeatMap_exit, data_out,
+                read_tasklet, read_map_exit, repeat_map_exit, data_out,
                 src_conn='outCon',
                 memlet=Memlet.simple(data_out.data, '0')
             )
@@ -354,13 +354,13 @@ class streamReadVector(streamReadBase):
         else:
 
             state.add_memlet_path(
-                data_in, readMap_entry, read_tasklet,
+                data_in, read_map_entry, read_tasklet,
                 dst_conn='inCon',
                 memlet=Memlet.simple(data_in.data, 'i')
             )
 
             state.add_memlet_path(
-                read_tasklet, readMap_exit, data_out,
+                read_tasklet, read_map_exit, data_out,
                 src_conn='outCon',
                 memlet=Memlet.simple(data_out.data, '0')
             )
@@ -374,104 +374,102 @@ class streamReadVector(streamReadBase):
 # ---------- ---------- ---------- ----------
 
 
-class streamWriteVector(streamWriteBase):
+class StreamWriteVector(StreamWriteBase):
 
     def __init__(
             self,
             destination,
-            memSize,
+            mem_size,
             dtype,
-            bufferSize=32,
-            vecWidth=1,
+            buffer_size=32,
+            veclen=1,
             unroll=False,
-            unrollWidth=1,
+            unroll_width=1,
         ):
 
-        # if unrollWidth < vecWidth:
-        #     unrollWidth = vecWidth
-
-        assert unroll is False and unrollWidth == 1, "Unrolling not supported at the time"
+        if not (unroll == False and unroll_width == 1):
+            raise NotImplementedError("Unrolling on StreamWriteVector not supported at the time")
 
         self.destination = destination
-        self.memSize = memSize
+        self.mem_size = mem_size
         self.dtype = dtype
 
-        self.bufferSize = bufferSize
-        self.vecWidth = vecWidth
+        self.buffer_size = buffer_size
+        self.veclen = veclen
         self.unroll = unroll
-        self.unrollWidth = unrollWidth
+        self.unroll_width = unroll_width
 
         self.fpga_data = None
         self.fpga_dataName = None
         self.fpga_stream = None
 
 
-    def copyToCPU(self, sdfg, postState, bank=None):
+    def copy_to_CPU(self, sdfg, post_state, bank=None):
 
         fpga_outputs, fpgaOut_names = memOps.fpga_copy_global_to_CPU(
             sdfg,
-            postState,
+            post_state,
             [self.destination],
-            [self.memSize],
+            [self.mem_size],
             [self.dtype],
             bank=bank,
-            veclen=self.vecWidth
+            veclen=self.veclen
         )
 
         self.fpga_data = fpga_outputs[0]
         self.fpga_dataName = fpgaOut_names[0]
 
 
-    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+    def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
 
-        vecType = dace.vector(self.dtype, self.vecWidth)
+        vec_type = dace.vector(self.dtype, self.veclen)
 
         out_mem, out_name = self.stream(
             sdfg,
             state,
             self.fpga_data.data,
-            self.memSize,
+            self.mem_size,
             self.dtype,
-            srcName=libConnector,
+            src_name=lib_connector,
             access=access
         )  
 
         stream_out = state.add_stream(
             out_name,
-            vecType,
-            buffer_size=self.bufferSize,
+            vec_type,
+            buffer_size=self.buffer_size,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
         )
         self.fpga_stream = stream_out
 
         state.add_memlet_path(
-            libNode, stream_out,
-            src_conn=libConnector,
+            lib_node, stream_out,
+            src_conn=lib_connector,
             memlet=Memlet.simple(
                 stream_out, "0", num_accesses=-1
             )
         )
 
 
-    def getCopySize(self):
+    def get_copy_size(self):
 
-        return self.memSize
+        return self.mem_size
 
 
-    def stream(self, sdfg, state, dest, memSize, dtype, srcName='', access=False):
+    def stream(self, sdfg, state, dest, mem_size, dtype, src_name='', access=False):
 
         src = dest + "_"
-        if srcName != '':
-            src += srcName + "_" 
+        if src_name != '':
+            src += src_name + "_" 
         src += "wS"
 
-        vecType = dace.vector(self.dtype, self.vecWidth)
+        vec_type = dace.vector(self.dtype, self.veclen)
 
         data_in = state.add_stream(
             src,
-            vecType,
-            buffer_size=self.bufferSize,
+            vec_type,
+            buffer_size=self.buffer_size,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
         )
@@ -482,9 +480,9 @@ class streamWriteVector(streamWriteBase):
         else:
             data_out = state.add_write(dest)
 
-        writeMap_entry, writeMap_exit = state.add_map(
+        write_map_entry, write_map_exit = state.add_map(
             'streamWrite_{}_map'.format(src),
-            dict(i='0:{0}/{1}'.format(self.memSize, self.vecWidth)),
+            dict(i='0:{0}/{1}'.format(self.mem_size, self.veclen)),
             schedule=dtypes.ScheduleType.FPGA_Device,
             unroll=self.unroll
         )
@@ -497,13 +495,13 @@ class streamWriteVector(streamWriteBase):
         )
 
         state.add_memlet_path(
-            data_in, writeMap_entry, write_tasklet,
+            data_in, write_map_entry, write_tasklet,
             dst_conn='inCon',
             memlet=Memlet.simple(data_in.data, '0')
         )
 
         state.add_memlet_path(
-            write_tasklet, writeMap_exit, data_out,
+            write_tasklet, write_map_exit, data_out,
             src_conn='outCon',
             memlet=Memlet.simple(data_out.data, 'i')
         )

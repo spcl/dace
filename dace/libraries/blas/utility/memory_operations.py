@@ -1,12 +1,13 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for memory movements
 """
+import math
+import numpy as np
+
 import dace
 from dace.memlet import Memlet
-import math
-from dace.libraries.blas.utility.initialization import *
 from dace import dtypes
-import numpy as np
 
 
 
@@ -45,12 +46,12 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
 
         dest = "f_" + src
 
-        vecType = dace.vector(dtype, veclen)
+        vec_type = dace.vector(dtype, veclen)
 
         name, desc = sdfg.add_array(
             dest,
             shape=[size/veclen],
-            dtype=vecType,
+            dtype=vec_type,
             storage=dtypes.StorageType.FPGA_Global,
             transient=True
         )
@@ -87,12 +88,12 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, 
 
         src = "fpga_" + dest
 
-        vecType = dace.vector(dtype, veclen)
+        vec_type = dace.vector(dtype, veclen)
 
         name, desc = sdfg.add_array(
             src,
             shape=[size/veclen],
-            dtype=vecType,
+            dtype=vec_type,
             storage=dtypes.StorageType.FPGA_Global,
             transient=True
         )
