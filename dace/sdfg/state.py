@@ -1527,6 +1527,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Innermost edge memlet
         cur_memlet = memlet
 
+        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and
+                                   src_node.data == cur_memlet.data)
+
         # Verify that connectors exist
         if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors")
                 and isinstance(edges[0].src, nd.CodeNode)
