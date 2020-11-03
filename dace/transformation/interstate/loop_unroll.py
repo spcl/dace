@@ -86,14 +86,15 @@ class LoopUnroll(DetectLoop):
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
+        start, end, stride = (symbolic.evaluate(r, sdfg.constants)
+                              for r in rng)
 
         # Create states for loop subgraph
         unrolled_states = []
         for i in range(start, end + 1, stride):
             # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
-                                               itervar, i)
+            new_states = self.instantiate_loop(sdfg, loop_states,
+                                               loop_subgraph, itervar, i)
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
