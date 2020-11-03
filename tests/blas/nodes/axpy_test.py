@@ -202,8 +202,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         saxpy_node,
         [z_stream],
         ['_res'],
-        inputMemoryBanks=[0, 1],
-        outputMemoryBanks=[2]
+        input_memory_banks=[0, 1],
+        output_memory_banks=[2]
     )
 
     test_sdfg.expand_library_nodes()

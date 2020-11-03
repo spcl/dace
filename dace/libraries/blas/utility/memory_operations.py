@@ -5,7 +5,7 @@ Helper functions for memory movements
 import math
 import numpy as np
 
-import dace
+from dace import vector
 from dace.memlet import Memlet
 from dace import dtypes
 
@@ -48,7 +48,7 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
 
         dest = "f_" + src
 
-        vec_type = dace.vector(dtype, veclen)
+        vec_type = vector(dtype, veclen)
 
         name, desc = sdfg.add_array(
             dest,
@@ -92,7 +92,7 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, 
 
         src = "fpga_" + dest
 
-        vec_type = dace.vector(dtype, veclen)
+        vec_type = vector(dtype, veclen)
 
         name, desc = sdfg.add_array(
             src,

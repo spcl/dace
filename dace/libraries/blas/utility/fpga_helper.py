@@ -7,7 +7,7 @@ Various helper functions and classes for streaming BLAS operators on the FPGA
     using different access patterns
 """
 
-import dace
+from dace import InterstateEdge, vector
 from dace.memlet import Memlet
 from dace import dtypes
 
@@ -28,8 +28,8 @@ def fpga_setup_states(sdfg, compute_state):
     pre_state = sdfg.add_state('copy_to_FPGA')
     post_state = sdfg.add_state('copy_to_CPU')
 
-    sdfg.add_edge(pre_state, compute_state, dace.InterstateEdge(None))
-    sdfg.add_edge(compute_state, post_state, dace.InterstateEdge(None))
+    sdfg.add_edge(pre_state, compute_state, InterstateEdge())
+    sdfg.add_edge(compute_state, post_state, InterstateEdge())
 
     return (pre_state, post_state)
 
@@ -142,48 +142,6 @@ def fpga_setup_ConnectStreamersMultiNode(
 
 
 
-# ---------- ---------- ---------- ----------
-# BASE STREAMERS
-# ---------- ---------- ---------- ----------
-class StreamReadBase():
-
-    def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
-        print("WARNING, implement method 'connect' on child reader!")
-        raise NotImplementedError
-
-    def get_copy_size(self):
-        print("WARNING, implement method 'get_copy_size' on child reader!")
-        raise NotImplementedError
-
-    def copy_to_FPGA(self, sdfg, pre_state, bank=None):
-        print("WARNING, implement method 'copy_to_FPGA' on child reader!")
-        raise NotImplementedError
-
-    def __eq__(self, other):
-        raise NotImplementedError
-
-
-
-class StreamWriteBase():
-
-    def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
-        print("WARNING, implement method 'connect' on child writer!")
-        raise NotImplementedError
-
-    def get_copy_size(self):
-        print("WARNING, implement method 'get_copy_size' on child writer!")
-        raise NotImplementedError
-
-    def copy_to_CPU(self, sdfg, pre_state, bank=None):
-        print("WARNING, implement method 'copy_to_CPU' on child writer!")
-        raise NotImplementedError
-
-
-
-
-
-
-
 
 
 
@@ -193,7 +151,7 @@ class StreamWriteBase():
 # ---------- ---------- ---------- ----------
 # READERS
 # ---------- ---------- ---------- ----------
-class StreamReadVector(StreamReadBase):
+class StreamReadVector():
     """Configures a data streaming context for a DataNode. It is configured with a
     host memory data container and handles copying of data to the device and streams
     the data in a contiguous fashion with veclen sized chunks to the connected operator
@@ -262,7 +220,7 @@ class StreamReadVector(StreamReadBase):
 
     def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
 
-        vec_type = dace.vector(self.dtype, self.veclen)
+        vec_type = vector(self.dtype, self.veclen)
 
         in_mem, in_name = self.stream(
             state,
@@ -308,7 +266,7 @@ class StreamReadVector(StreamReadBase):
         else:
             data_in = state.add_read(src)
 
-        vec_type = dace.vector(self.dtype, self.veclen)
+        vec_type = vector(self.dtype, self.veclen)
 
         data_out = state.add_stream(
             dest,
@@ -379,7 +337,7 @@ class StreamReadVector(StreamReadBase):
 # ---------- ---------- ---------- ----------
 
 
-class StreamWriteVector(StreamWriteBase):
+class StreamWriteVector():
     """Configures a data streaming context for a DataNode. It is configured with a
     host memory data container and handles copying of data from the device to this host container
     and streams the data in a contiguous fashion with veclen sized chunks from the connected
@@ -432,7 +390,7 @@ class StreamWriteVector(StreamWriteBase):
 
     def connect_to_lib(self, sdfg, state, lib_node, lib_connector, access=False):
 
-        vec_type = dace.vector(self.dtype, self.veclen)
+        vec_type = vector(self.dtype, self.veclen)
 
         out_mem, out_name = self.stream(
             sdfg,
@@ -474,7 +432,7 @@ class StreamWriteVector(StreamWriteBase):
             src += src_name + "_" 
         src += "wS"
 
-        vec_type = dace.vector(self.dtype, self.veclen)
+        vec_type = vector(self.dtype, self.veclen)
 
         data_in = state.add_stream(
             src,

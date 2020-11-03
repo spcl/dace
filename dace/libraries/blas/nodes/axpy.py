@@ -162,7 +162,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
         return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a, node.buffer_size co)
+                                                 node.n, node.a, node.buffer_size)
 
 
 
