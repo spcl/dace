@@ -108,6 +108,15 @@ class LoopToMap(DetectLoop):
         body.add_node(entry)
         body.add_node(exit)
 
+        # If the map uses symbols from data containers, instantiate reads
+        containers_to_read = entry.free_symbols & sdfg.arrays.keys()
+        for rd in containers_to_read:
+            access_node = body.add_read(rd)
+            body.add_memlet_path(access_node,
+                                 entry,
+                                 dst_conn=rd,
+                                 memlet=memlet.Memlet(rd))
+
         # Reroute all memlets through the entry and exit nodes
         for n in source_nodes:
             if isinstance(n, nodes.AccessNode):
