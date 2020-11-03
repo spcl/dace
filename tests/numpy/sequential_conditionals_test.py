@@ -25,5 +25,9 @@ def seq_cond(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
         HD[n] = HD[n] - sigmaRSD[n]
 
 
-if __name__ == '__main__':
+def test():
     seq_cond.compile()
+
+
+if __name__ == '__main__':
+    test()

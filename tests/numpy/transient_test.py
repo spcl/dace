@@ -10,10 +10,6 @@ def ttest(A: dace.float32[M, N, K], B: dace.float32[M, N, K]):
     s = np.ndarray(shape=(K, N, M), dtype=np.int32)
     t = np.ndarray(A.shape, A.dtype)
 
-    # for i, j, k in dace.map[0:M, 0:N, 0:K]:
-    #     s[k, j, i] = t[i, j, k]
-    #     t[i, j, k] = 1.0
-
     for i in dace.map[0:M]:
         for j in dace.map[0:N]:
             for k in dace.map[0:K]:
@@ -23,10 +19,9 @@ def ttest(A: dace.float32[M, N, K], B: dace.float32[M, N, K]):
 
     t += 5 * A
     B -= t
-    # B += 5 * A @ B @ A @ B
 
 
-if __name__ == '__main__':
+def test():
     M.set(13)
     N.set(8)
     K.set(25)
@@ -38,4 +33,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(B - realB) / (M.get() * K.get() * N.get())
     print('Difference:', diff)
-    exit(1 if diff >= 1e-5 else 0)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test()

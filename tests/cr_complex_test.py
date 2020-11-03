@@ -16,7 +16,7 @@ def program(input, output):
         b = a
 
 
-if __name__ == "__main__":
+def test_cr_complex():
     print('CR non-atomic (complex value) test')
 
     A = np.random.rand(N).astype(np.complex128)
@@ -28,4 +28,8 @@ if __name__ == "__main__":
 
     diff = abs(np.sum(A) - B[0])
     print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_cr_complex()

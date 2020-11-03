@@ -30,7 +30,7 @@ def prog(A, B):
         out = 2 * inp
 
 
-if __name__ == '__main__':
+def test():
     W.set(3)
 
     A = dace.ndarray([W])
@@ -43,5 +43,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(4 * A - B) / W.get()
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

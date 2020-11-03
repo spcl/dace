@@ -13,7 +13,9 @@ def transients(A: dace.float32[10]):
     for i in dace.map[0:10]:
         if A[i] >= 0.5:
             A[i] >> ostream(-1)
-            oscalar += 1
+            with dace.tasklet:
+                out >> oscalar(1, lambda a,b: a+b)
+                out = 1
     ostream >> oarray
     return oscalar, oarray
 

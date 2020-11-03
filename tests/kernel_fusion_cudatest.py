@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import dace
 import numpy as np
 import sympy as sp
@@ -76,16 +77,16 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
                               imx1,
                               tmp,
                               src_conn='t',
-                              memlet=dace.Memlet.simple(
-                                  'tmp', 'j*%s + k' % tbsize_1))
+                              memlet=dace.Memlet.simple('tmp',
+                                                        'j*%s + k' % tbsize_1))
     else:
         state.add_memlet_path(a,
                               fme,
                               ime1,
                               tasklet1,
                               dst_conn='a',
-                              memlet=dace.Memlet.simple(
-                                  'A', '%s - 1 - j' % size))
+                              memlet=dace.Memlet.simple('A',
+                                                        '%s - 1 - j' % size))
         state.add_memlet_path(tasklet1,
                               imx1,
                               tmp,
@@ -100,16 +101,16 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
                               tbme2,
                               tasklet2,
                               dst_conn='t',
-                              memlet=dace.Memlet.simple(
-                                  'tmp', '(j*%s + k)' % tbsize_2))
+                              memlet=dace.Memlet.simple('tmp', '(j*%s + k)' %
+                                                        tbsize_2))
         state.add_memlet_path(tasklet2,
                               tbmx2,
                               imx2,
                               fmx,
                               b,
                               src_conn='b',
-                              memlet=dace.Memlet.simple(
-                                  'B', 'j*%s + k' % tbsize_2))
+                              memlet=dace.Memlet.simple('B',
+                                                        'j*%s + k' % tbsize_2))
     else:
         state.add_memlet_path(tmp,
                               ime2,
@@ -132,16 +133,19 @@ def _check_results(sdfg: dace.SDFG):
     assert np.allclose(B, A[::-1] * 5 + 1)
 
 
+@pytest.mark.gpu
 def test_fused_notb():
     sdfg = _construct_graph(None, None)
     _check_results(sdfg)
 
 
+@pytest.mark.gpu
 def test_fused_tb():
     sdfg = _construct_graph(64, 64)
     _check_results(sdfg)
 
 
+@pytest.mark.gpu
 def test_fused_mixedtb():
     sdfg = _construct_graph(256, None)
     _check_results(sdfg)

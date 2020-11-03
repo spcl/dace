@@ -1,9 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
-import argparse
 import dace
-import math
 import numpy as np
 
 N = dace.symbol('N')
@@ -19,23 +17,20 @@ def dot(A, B, out):
         o = a * b
 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=64)
-    args = vars(parser.parse_args())
-
-    N.set(args["N"])
-
-    print('Dot product %d' % (N.get()))
-
+def test_dot():
+    n = 64
+    N.set(n)
     A = dace.ndarray([N], dtype=dace.float32)
     out_AA = dace.scalar(dace.float64)
-    A[:] = np.random.rand(N.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(n).astype(dace.float32.type)
     out_AA[0] = dace.float64(0)
 
-    dot(A, A, out_AA, N=N)
+    dot(A, A, out_AA, N=n)
 
-    diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(N.get())
+    diff_aa = np.linalg.norm(np.dot(A, A) - out_AA) / float(n)
     print("Difference:", diff_aa)
-    exit(0 if (diff_aa <= 1e-5) else 1)
+    assert diff_aa <= 1e-5
+
+
+if __name__ == "__main__":
+    test_dot()

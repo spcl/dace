@@ -13,7 +13,7 @@ def expansion(A: dace.float32[20, 30, 5], rng: dace.int32[2]):
         b = a * 2
 
 
-if __name__ == '__main__':
+def test():
     A = np.random.rand(20, 30, 5).astype(np.float32)
     b = np.array([5, 10], dtype=np.int32)
     expected = A.copy()
@@ -30,4 +30,8 @@ if __name__ == '__main__':
     expected[:, 5:10, :] *= 2
     diff2 = np.linalg.norm(A - expected)
     print('Difference:', diff2)
-    exit(1 if (diff > 1e-5) or (diff2 > 1e-5) else 0)
+    assert (diff <= 1e-5) and (diff2 <= 1e-5)
+
+
+if __name__ == "__main__":
+    test()

@@ -64,30 +64,30 @@ vecAdd_state.add_memlet_path(vecAdd_tasklet,
 # Create Outer SDFG
 # ---------- ----------
 
-test_sdfg = dace.SDFG("saxpy_test")
-test_state = test_sdfg.add_state("test_state")
+sdfg = dace.SDFG("saxpy_test")
+state = sdfg.add_state("state")
 
-test_sdfg.add_array('x1', shape=[n], dtype=dace.float32)
-test_sdfg.add_array('y1', shape=[n], dtype=dace.float32)
-test_sdfg.add_array('z1', shape=[n], dtype=dace.float32)
+sdfg.add_array('x1', shape=[n], dtype=dace.float32)
+sdfg.add_array('y1', shape=[n], dtype=dace.float32)
+sdfg.add_array('z1', shape=[n], dtype=dace.float32)
 
-x_in1 = test_state.add_read('x1')
-y_in1 = test_state.add_read('y1')
-z_out1 = test_state.add_write('z1')
+x_in1 = state.add_read('x1')
+y_in1 = state.add_read('y1')
+z_out1 = state.add_write('z1')
 
-nested_sdfg = test_state.add_nested_sdfg(vecAdd_sdfg, test_sdfg, {"_x", "_y"},
+nested_sdfg = state.add_nested_sdfg(vecAdd_sdfg, sdfg, {"_x", "_y"},
                                          {"_res"})
 
-test_state.add_memlet_path(x_in1,
+state.add_memlet_path(x_in1,
                            nested_sdfg,
                            dst_conn='_x',
                            memlet=Memlet.simple(x_in1, "0:n"))
-test_state.add_memlet_path(y_in1,
+state.add_memlet_path(y_in1,
                            nested_sdfg,
                            dst_conn='_y',
                            memlet=Memlet.simple(y_in1, "0:n"))
 
-test_state.add_memlet_path(nested_sdfg,
+state.add_memlet_path(nested_sdfg,
                            z_out1,
                            src_conn='_res',
                            memlet=Memlet.simple(z_out1, "0:n"))
@@ -95,7 +95,7 @@ test_state.add_memlet_path(nested_sdfg,
 
 def test_nested_vectorization():
     # Compile
-    compiledSDFG = test_sdfg.compile()
+    compiled_sdfg = sdfg.compile()
 
     # Run and verify
     testSize = 96
@@ -105,7 +105,7 @@ def test_nested_vectorization():
     scaling = np.float32(1.0)
     c = np.zeros(testSize).astype(np.float32)
 
-    compiledSDFG(x1=a, y1=b, a1=scaling, z1=c, n=np.int32(a.shape[0]))
+    compiled_sdfg(x1=a, y1=b, a1=scaling, z1=c, n=np.int32(a.shape[0]))
     ref_result = scipy.linalg.blas.saxpy(a, b, a=scaling)
 
     diff = np.linalg.norm(c - ref_result)

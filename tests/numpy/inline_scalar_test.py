@@ -12,7 +12,7 @@ def transpose_add(A: dace.float32[M, K], B: dace.float32[K, M]):
         B[j, i] = A[i, j] + 1
 
 
-if __name__ == '__main__':
+def test_inline_scalar():
     K.set(24)
     M.set(25)
 
@@ -23,4 +23,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(A.transpose() - B + 1)
     print('Difference:', diff)
-    exit(0 if diff < 1e-5 else 1)
+    assert diff < 1e-5
+
+
+if __name__ == '__main__':
+    test_inline_scalar()

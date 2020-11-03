@@ -131,19 +131,19 @@ if __name__ == "__main__":
 
     code = sdfg.generate_code()[0].code
 
-    for_pattern = "for.*i\s*=\s*0.*i\s*<\s*16"
+    for_pattern = r"for.*i\s*=\s*0.*i\s*<\s*16"
     if re.search(for_pattern, code) is None:
         raise RuntimeError("For loop not detected in state transitions")
 
-    while_pattern = "while.+i\s*<\s*128"
+    while_pattern = r"while.+i\s*<\s*128"
     if re.search(while_pattern, code) is None:
         raise RuntimeError("While loop not detected in state transitions")
 
-    if_pattern = "if.+i\s*<\s*512"
+    if_pattern = r"if.+i\s*<\s*512"
     if re.search(if_pattern, code) is None:
         raise RuntimeError("If not detected in state transitions")
 
-    else_pattern = "}\s*else\s*{"
+    else_pattern = r"}\s*else\s*{"
     if re.search(else_pattern, code) is None:
         raise RuntimeError("Else not detected in state transitions")
 

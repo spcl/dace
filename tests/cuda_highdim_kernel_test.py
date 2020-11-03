@@ -1,6 +1,8 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.transformation.dataflow import GPUTransformMap
 import numpy as np
+import pytest
 
 # Symbols
 N = dace.symbol('N')
@@ -16,8 +18,8 @@ U = dace.symbol('U')
 
 
 @dace.program
-def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U],
-            B: dace.uint64[N, M, K, L]):
+def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K,
+                                                                      L]):
     @dace.mapscope
     def kernel(i: _[5:N - 5], j: _[0:M], k: _[7:K - 1], l: _[0:L]):
         @dace.map
@@ -34,19 +36,19 @@ def makendrange(*args):
     return result
 
 
-if __name__ == '__main__':
+def _test(sdfg):
     # 4D kernel with 5D block
-    N.set(12)
-    M.set(3)
-    K.set(14)
-    L.set(15)
-    X.set(1)
-    Y.set(2)
-    Z.set(3)
-    W.set(4)
-    U.set(5)
-    dims = tuple(s.get() for s in (N, M, K, L, X, Y, Z, W, U))
-    outdims = tuple(s.get() for s in (N, M, K, L))
+    N = 12
+    M = 3
+    K = 14
+    L = 15
+    X = 1
+    Y = 2
+    Z = 3
+    W = 4
+    U = 5
+    dims = tuple(s for s in (N, M, K, L, X, Y, Z, W, U))
+    outdims = tuple(s for s in (N, M, K, L))
     print('High-dimensional GPU kernel test', dims)
 
     A = dace.ndarray((N, M, K, L, X, Y, Z, W, U), dtype=dace.uint64)
@@ -56,18 +58,29 @@ if __name__ == '__main__':
     B_regression = np.zeros(outdims, dtype=np.uint64)
 
     # Equivalent python code
-    for i, j, k, l in dace.ndrange(
-            makendrange(5,
-                        N.get() - 5, 0, M.get(), 7,
-                        K.get() - 1, 0, L.get())):
+    for i, j, k, l in dace.ndrange(makendrange(5, N - 5, 0, M, 7, K - 1, 0, L)):
         for a, b, c, d, e in dace.ndrange(
-                makendrange(0, X.get(), 0, Y.get(), 1, Z.get(), 2,
-                            W.get() - 2, 0, U.get())):
+                makendrange(0, X, 0, Y, 1, Z, 2, W - 2, 0, U)):
             B_regression[i, j, k, l] += A[i, j, k, l, a, b, c, d, e]
 
-    highdim(A, B)
+    sdfg(A=A, B=B, N=N, M=M, K=K, L=L, X=X, Y=Y, Z=Z, W=W, U=U)
 
-    diff = np.linalg.norm(B_regression - B) / (N.get() * M.get() * K.get() *
-                                               L.get())
+    diff = np.linalg.norm(B_regression - B) / (N * M * K * L)
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+def test_cpu():
+    _test(highdim.to_sdfg())
+
+
+@pytest.mark.gpu
+def test_gpu():
+    sdfg = highdim.to_sdfg()
+    assert sdfg.apply_transformations(GPUTransformMap,
+                                      options=dict(fullcopy=True)) == 1
+    _test(sdfg)
+
+
+if __name__ == "__main__":
+    test_cpu()

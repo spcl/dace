@@ -27,8 +27,8 @@ out1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def test_program(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
-                 C: dace.float64[N, M, O]):
+def program(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
+            C: dace.float64[N, M, O]):
     for i, j in dace.map[0:N, 0:M]:
         with dace.tasklet:
             in1 << A[i, j, 0]
@@ -58,6 +58,7 @@ def helper_sdfg(AA: dace.float64[O], BB: dace.float64[O], CC: dace.float64[O]):
             out >> CC[z]
 
             out = 2 * in1 + 2 * in2 + in3
+
 
 def fix_sdfg(sdfg, graph):
     # fix sdfg as for now the SDFG gets parsed wrongly
@@ -122,7 +123,7 @@ def _test_quantitatively(sdfg, graph):
 
 
 def test_invariant_dim():
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     fix_sdfg(sdfg, graph)

@@ -16,9 +16,9 @@ from dace.memlet import Memlet
 #
 #        b = math.exp(a)
 
+
 # Constructs an SDFG manually and runs it
-if __name__ == '__main__':
-    print('Dynamic SDFG test with math functions')
+def test_dynamic_sdfg_with_math_functions():
     # Externals (parameters, symbols)
     N = dp.symbol('N')
     N.set(20)
@@ -47,5 +47,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(np.exp(input) - output) / N.get()
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test_dynamic_sdfg_with_math_functions()

@@ -8,10 +8,9 @@ def control_flow(A: dace.float64[10]):
     if A[0] < 0.5:
         for i in range(5):
             A[i] *= 2
-    # TODO: Disabled due to bug in control flow
-    # else:
-    #     for i in range(5, 10):
-    #         A[i] *= 2
+    else:
+        for i in range(5, 10):
+            A[i] *= 2
 
 
 def _configure():
@@ -19,8 +18,8 @@ def _configure():
     expected = A.copy()
     if A[0] < 0.5:
         expected[0:5] *= 2
-    # else:
-    #     expected[5:10] *= 2
+    else:
+        expected[5:10] *= 2
     sdfg = control_flow.to_sdfg()
     return sdfg, A, expected
 

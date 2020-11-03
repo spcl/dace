@@ -4,13 +4,13 @@ import numpy as np
 
 
 @dace
-def testprogram(A: dace.float64[20]):
+def program(A: dace.float64[20]):
     return A + A
 
 
 def test_short_decorator():
     A = np.random.rand(20)
-    assert np.allclose(testprogram(A), A + A)
+    assert np.allclose(program(A), A + A)
 
 
 if __name__ == '__main__':

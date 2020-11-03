@@ -24,11 +24,16 @@ state.add_edge_pair(mx,
                     internal_connector='b',
                     scope_connector='o')
 
-if __name__ == '__main__':
+
+def test():
     A = np.random.rand(31).astype(np.float64)
     B = np.array([0.], dtype=np.float64)
     sdfg(A=A, B=B)
 
     diff = np.linalg.norm(B[0] - np.sum(2 * A))
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test()

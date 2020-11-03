@@ -18,7 +18,7 @@ def my_func(a: dace.float32[K], b: dace.float32[M, K]):
         my_assign(a, b[j, :])
 
 
-def test():
+def test_assign_in_map():
     A = np.random.rand(4).astype(np.float32)
     B = np.random.rand(3, 4).astype(np.float32)
     my_func(A, B, M=B.shape[0], N=B.shape[1], K=B.shape[1])
@@ -27,4 +27,4 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
+    test_assign_in_map()

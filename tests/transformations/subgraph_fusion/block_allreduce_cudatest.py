@@ -1,7 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-
+import pytest
 from dace.transformation.subgraph import ReduceExpansion
 
 from dace.libraries.standard.nodes.reduce import Reduce
@@ -13,13 +13,13 @@ M.set(30)
 
 
 @dace.program
-def test_program(A: dace.float32[M, N]):
+def program(A: dace.float32[M, N]):
     return dace.reduce(lambda a, b: max(a, b), A, axis=1, identity=0)
 
-
+@pytest.mark.gpu
 def test_blockallreduce():
     A = np.random.rand(M.get(), N.get()).astype(np.float32)
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     sdfg.apply_gpu_transformations()
 
     graph = sdfg.nodes()[0]

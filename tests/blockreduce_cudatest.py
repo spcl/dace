@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 import dace
 from dace.transformation.interstate import GPUTransformSDFG
 from dace.memlet import Memlet
@@ -34,7 +35,9 @@ state.add_edge(mxi, None, mx, None, Memlet.simple(B, 'bi'))
 state.add_edge(mx, None, B, None, Memlet.simple(B, '0:2'))
 sdfg.fill_scope_connectors()
 
-if __name__ == '__main__':
+
+@pytest.mark.gpu
+def test_blockreduce():
     print('Block reduction test')
 
     Adata = np.random.rand(128).astype(np.float32)
@@ -49,5 +52,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(B_regression - Bdata) / 128.0
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_blockreduce()

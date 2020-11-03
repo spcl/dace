@@ -40,7 +40,8 @@ nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'C', 'D'})
 state.add_edge(nsdfg_node, 'C', A, None, dace.Memlet.simple('A', '0'))
 state.add_edge(nsdfg_node, 'D', B, None, dace.Memlet.simple('B', '0'))
 
-if __name__ == '__main__':
+
+def test():
     A = np.random.rand(1).astype(np.float32)
     B = np.random.rand(1).astype(np.float32)
 
@@ -56,4 +57,8 @@ if __name__ == '__main__':
     result = np.array([A[0], B[0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)
     print('Difference:', diff)
-    exit(1 if diff > 1e-6 else 0)
+    assert diff <= 1e-6
+
+
+if __name__ == "__main__":
+    test()

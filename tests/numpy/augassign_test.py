@@ -1,112 +1,92 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from common import compare_numpy_output
 
 
-@dace.program
-def augaddtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output()
+def test_augadd(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B += A
+    return B
 
 
-@dace.program
-def augsubtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output()
+def test_augsub(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B -= A
+    return B
 
 
-@dace.program
-def augmulttest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output()
+def test_augmult(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B *= A
+    return B
 
 
-@dace.program
-def augdivtest(A: dace.float64[5, 5], B: dace.float64[5, 5]):
+@compare_numpy_output(non_zero=True, positive=True)
+def test_augdiv(A: dace.float64[5, 5], B: dace.float64[5, 5]):
     B /= A
+    return B
 
 
-@dace.program
-def augfloordivtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output(non_zero=True, positive=True)
+def test_augfloordiv(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B //= A
+    return B
 
 
-@dace.program
-def augmodtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output(non_zero=True, positive=True)
+def test_augmod(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B %= A
+    return B
 
 
-@dace.program
-def augpowtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output(positive=True)
+def test_augpow(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B **= A
+    return B
 
 
-@dace.program
-def auglshifttest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output(positive=True)
+def test_auglshift(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B <<= A
+    return B
 
 
-@dace.program
-def augrshifttest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output(positive=True)
+def test_augrshift(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B >>= A
+    return B
 
 
-@dace.program
-def augbitortest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output()
+def test_augbitor(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B |= A
+    return B
 
 
-@dace.program
-def augbitxortest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output()
+def test_augbitxor(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B ^= A
+    return B
 
 
-@dace.program
-def augbitandtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
+@compare_numpy_output()
+def test_augbitand(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     B &= A
+    return B
 
 
 if __name__ == '__main__':
-    A = np.random.randint(1, 10, size=(5, 5))
-    Af = np.random.rand(5, 5)
-    B = np.random.randint(1, 10, size=(5, 5))
-    Bf = np.random.rand(5, 5)
-
-    failed_tests = set()
-
-    for opname, op in {
-            'add': '+',
-            'sub': '-',
-            'mult': '*',
-            'div': '/',
-            'floordiv': '//',
-            'mod': '%',
-            'pow': '**',
-            'lshift': '<<',
-            'rshift': '>>',
-            'bitor': '|',
-            'bitxor': '^',
-            'bitand': '&'
-    }.items():
-
-        def test(A, B):
-            daceB = B.copy()
-            exec('aug{opn}test(A, daceB)'.format(opn=opname))
-            numpyB = B.copy()
-            exec('numpyB {op}= A'.format(op=op))
-            norm_diff = np.linalg.norm(numpyB - daceB)
-            if norm_diff == 0.0:
-                print('Augmented {opn}: OK'.format(opn=opname))
-            else:
-                failed_tests.add(opname)
-                print('Augmented {opn}: FAIL ({diff})'.format(opn=opname,
-                                                              diff=norm_diff))
-
-        if opname == 'div':
-            test(Af, Bf)
-        else:
-            test(A, B)
-
-    if failed_tests:
-        print('FAILED TESTS:')
-        for t in failed_tests:
-            print(t)
-        exit(-1)
-    exit(0)
+    # Generate with cat augassign_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
+    test_augadd()
+    test_augsub()
+    test_augmult()
+    test_augdiv()
+    test_augfloordiv()
+    test_augmod()
+    test_augpow()
+    test_auglshift()
+    test_augrshift()
+    test_augbitor()
+    test_augbitxor()
+    test_augbitand()

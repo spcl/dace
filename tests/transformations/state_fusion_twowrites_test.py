@@ -55,7 +55,7 @@ def sftw(A: dace.float64[20]):
             a = d + e
 
 
-if __name__ == '__main__':
+def test_sftw():
     A = np.random.rand(20)
     expected = 2 * A + 7
     sdfg = sftw.to_sdfg()
@@ -67,3 +67,7 @@ if __name__ == '__main__':
     sdfg(A=A)
 
     assert np.allclose(A, expected)
+
+
+if __name__ == '__main__':
+    test_sftw()

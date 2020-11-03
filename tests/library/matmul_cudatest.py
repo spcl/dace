@@ -6,7 +6,7 @@ import dace.libraries.blas as blas
 import itertools
 import numpy as np
 import sys
-import warnings
+import pytest
 
 ###############################################################################
 
@@ -138,6 +138,7 @@ def _test_matmul(implementation,
     print("Test ran successfully for {}.".format(implementation))
 
 
+@pytest.mark.gpu
 def test_types():
     # Try different data types
     _test_matmul('cuBLAS double',
@@ -159,10 +160,10 @@ def test_types():
                  eps=1e-6)
 
 
+@pytest.mark.gpu
 def test_layouts():
     # Try all data layouts
-    for dl in map(lambda t: ''.join(t),
-                  itertools.product(*([['C', 'F']] * 3))):
+    for dl in map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3))):
         _test_matmul('cuBLAS float ' + dl,
                      dace.float32,
                      'cuBLAS',
@@ -170,6 +171,7 @@ def test_layouts():
                      data_layout=dl)
 
 
+@pytest.mark.gpu
 def test_batchmm():
     b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
 

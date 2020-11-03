@@ -18,7 +18,7 @@ O.set(70)
 
 
 @dace.program
-def test_program(A: dace.float64[M, N], B: dace.float64[M, N],
+def program(A: dace.float64[M, N], B: dace.float64[M, N],
                  C: dace.float64[M, N]):
     for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
@@ -61,7 +61,7 @@ def _test_quantitatively(sdfg, graph):
 
 
 def test_out_transient():
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     sdfg.apply_transformations_repeated(StateFusion)
     graph = sdfg.nodes()[0]
     _test_quantitatively(sdfg, graph)

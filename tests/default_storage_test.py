@@ -3,7 +3,7 @@ import dace
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 
 
-def notbmap_test():
+def test_notbmap():
     sdfg = dace.SDFG('default_storage_test_1')
     sdfg.add_array('A', [20], dace.float64, dace.StorageType.GPU_Global)
     sdfg.add_transient('tmp', [1], dace.float64)
@@ -31,7 +31,7 @@ def notbmap_test():
     assert sdfg.arrays['tmp'].storage == dace.StorageType.Register
 
 
-def tbmap_sequential_test():
+def test_tbmap_sequential():
     sdfg = dace.SDFG('default_storage_test_2')
     sdfg.add_array('A', [20, 32], dace.float64, dace.StorageType.GPU_Global)
     sdfg.add_transient('tmp', [1], dace.float64)
@@ -69,5 +69,5 @@ def tbmap_sequential_test():
 
 
 if __name__ == '__main__':
-    notbmap_test()
-    tbmap_sequential_test()
+    test_notbmap()
+    test_tbmap_sequential()
