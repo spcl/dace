@@ -508,7 +508,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Verify that source and destination subsets contain the same
         # number of elements
-        if e.data.other_subset is not None and not (
+        if not e.data.allow_oob and e.data.other_subset is not None and not (
             (isinstance(src_node, nd.AccessNode)
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)
