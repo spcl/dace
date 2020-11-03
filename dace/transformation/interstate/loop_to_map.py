@@ -62,27 +62,28 @@ class LoopToMap(DetectLoop):
         if len(read_set & write_set) != 0:
             return False
 
-        # Check that the iteration variable is not used on other edges
-        loop_edges = set(
-            itertools.chain(graph.out_edges(guard), graph.out_edges(begin)))
-        if any(itervar in e.data.free_symbols for e in sdfg.edges()
-               if e not in loop_edges):
-            return False
-
-        # Check that the iteration variable is not used in any reachable
-        # dataflow states
+        # Check that the iteration variable is not used on other edges or states
+        # before it is reassigned
         states = set()
         stack = [guard]
         while len(stack) > 0:
             s = stack.pop()
             states.add(s)
-            for e in graph.out_edges(s):
-                if e.dst not in states:
-                    stack.append(e.dst)
-        states.remove(begin)
-        for s in states:
-            if itervar in s.free_symbols:
+            if s is not begin and itervar in s.free_symbols:
+                # The final iterator value is used in this dataflow state
                 return False
+            for e in graph.out_edges(s):
+                if e.dst == begin:
+                    continue
+                if itervar in e.data.assignments:
+                    # Don't continue in this direction, as the variable has
+                    # now been reassigned
+                    states.add(e.dst)
+                elif e.src is not guard and itervar in e.data.free_symbols:
+                    # The final iterator value is used on this edge
+                    return False
+                elif e.dst not in states:
+                    stack.append(e.dst)
 
         return True
 
