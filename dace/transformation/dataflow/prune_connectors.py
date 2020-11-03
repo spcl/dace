@@ -7,27 +7,6 @@ from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 
 
-def connectors_to_prune(
-        nsdfg: nodes.NestedSDFG) -> Tuple[Set[AnyStr], Set[AnyStr]]:
-    """ Determines the sets of input and output connectors that can be safely
-        pruned from a nested SDFG.
-        :param nsdfg: Nested SDFG to prune.
-        :return: A two-tuple of the input connectors and output connectors that
-                 can be pruned.
-    """
-
-    read_set = set()
-    write_set = set()
-
-    for state in nsdfg.sdfg.states():
-        rs, ws = helpers.read_and_write_sets(state)
-        read_set |= rs
-        write_set |= ws
-
-    return (nsdfg.in_connectors.keys() - read_set,
-            nsdfg.out_connectors.keys() - write_set)
-
-
 @registry.autoregister_params(singlestate=True, strict=True)
 class PruneConnectors(pm.Transformation):
     """ Removes unused connectors from nested SDFGs, as well as their memlets
@@ -49,7 +28,9 @@ class PruneConnectors(pm.Transformation):
 
         nsdfg = graph.node(candidate[PruneConnectors.nsdfg])
 
-        prune_in, prune_out = connectors_to_prune(nsdfg)
+        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
+        prune_in = nsdfg.in_connectors.keys() - read_set
+        prune_out = nsdfg.out_connectors.keys() - write_set
 
         if len(prune_in) > 0 or len(prune_out) > 0:
             return True
@@ -61,14 +42,13 @@ class PruneConnectors(pm.Transformation):
         state = sdfg.node(self.state_id)
         nsdfg = self.nsdfg(sdfg)
 
-        prune_in, prune_out = connectors_to_prune(nsdfg)
+        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
+        prune_in = nsdfg.in_connectors.keys() - read_set
+        prune_out = nsdfg.out_connectors.keys() - write_set
 
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
-        all_data_used = set()
-        for s in nsdfg.sdfg.states():
-            for n in s.data_nodes():
-                all_data_used.add(n.data)
+        all_data_used = read_set | write_set
 
         for conn in prune_in:
             for e in state.in_edges_by_connector(nsdfg, conn):

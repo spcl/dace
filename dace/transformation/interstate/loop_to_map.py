@@ -24,7 +24,6 @@ class LoopToMap(DetectLoop):
        the body of the loop, and where the loop body only consists of a single
        state.
     """
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # Is this even a loop
@@ -58,12 +57,13 @@ class LoopToMap(DetectLoop):
 
         # Currently only detect the trivial case where the set of containers
         # that are read are completely disjoint from those that are written
-        read_set, write_set = helpers.read_and_write_sets(begin)
+        read_set, write_set = begin.read_and_write_sets()
         if len(read_set & write_set) != 0:
             return False
 
         # Check that the iteration variable is not used on other edges
-        loop_edges = set(itertools.chain(graph.out_edges(guard), graph.out_edges(begin)))
+        loop_edges = set(
+            itertools.chain(graph.out_edges(guard), graph.out_edges(begin)))
         if any(itervar in e.data.free_symbols for e in sdfg.edges()
                if e not in loop_edges):
             return False
@@ -131,7 +131,6 @@ class LoopToMap(DetectLoop):
                                        internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
-
 
         # Get rid of the loop exit condition edge
         sdfg.remove_edge(sdfg.edges_between(guard, after)[0])
