@@ -14,7 +14,8 @@ from dace.properties import (Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import Any, Dict, Optional, List, Set, Tuple, Union
+from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
+                    Union)
 import warnings
 
 
@@ -215,6 +216,36 @@ class StateGraphView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
+    def in_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges entering the given connector of the
+            given node.
+            :param node: Destination node of edges.
+            :param connector: Destination connector of edges.
+        """
+        return (e for e in self.in_edges(node) if e.dst_conn == connector)
+
+    def out_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges exiting the given connector of the
+            given node.
+            :param node: Source node of edges.
+            :param connector: Source connector of edges.
+        """
+        return (e for e in self.out_edges(node) if e.src_conn == connector)
+
+    def edges_by_connector(self, node: nd.Node,
+                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges entering or exiting the given
+            connector of the given node.
+            :param node: Source/destination node of edges.
+            :param connector: Source/destination connector of edges.
+        """
+        return itertools.chain(self.in_edges_by_connector(node, connector),
+                               self.out_edges_by_connector(node, connector))
 
     ###################################################################
     # Scope-related methods
@@ -667,7 +698,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
         """
         Sets the default source line information to be lineinfo, or None to
-        revert to default mode. 
+        revert to default mode.
         """
         self._default_lineinfo = lineinfo
 
@@ -1550,6 +1581,85 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.parent, self, edge)
+
+    def remove_memlet_path(self,
+                           edge: MultiConnectorEdge,
+                           remove_orphans: bool = True) -> None:
+        """ Removes all memlets and associated connectors along a path formed
+            by a given edge. Undefined behavior if the path is ambiguous.
+            Orphaned entry and exit nodes will be connected with empty edges to
+            maintain connectivity of the graph.
+
+            :param edge: An edge that is part of the path that should be
+                         removed, which will be passed to `memlet_path` to
+                         determine the edges to be removed.
+            :param remove_orphans: Remove orphaned data nodes from the graph if
+                                   they become orphans from removing this memlet
+                                   path.
+        """
+
+        path = self.memlet_path(edge)
+
+        is_read = isinstance(path[0], nd.AccessNode)
+        if is_read:
+            # Traverse from connector to access node, so we can check if it's
+            # safe to delete edges going out of a scope
+            path = reversed(path)
+
+        for edge in path:
+
+            self.remove_edge(edge)
+
+            edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
+
+            # Check if there are any other edges exiting the source node that
+            # use the same connector
+            for e in self.out_edges(edge.src):
+                if e.src_conn is not None and e.src_conn == edge.src_conn:
+                    other_outgoing = True
+                    break
+            else:
+                other_outgoing = False
+                edge.src.remove_out_connector(edge.src_conn)
+
+            # Check if there are any other edges entering the destination node
+            # that use the same connector
+            for e in self.in_edges(edge.dst):
+                if e.dst_conn is not None and e.dst_conn == edge.dst_conn:
+                    other_incoming = True
+                    break
+            else:
+                other_incoming = False
+                edge.dst.remove_in_connector(edge.dst_conn)
+
+            if isinstance(edge.src, nd.EntryNode):
+                # If removing this edge orphans the entry node, replace the
+                # edge with an empty edge
+                if not edges_remain:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_outgoing:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            if isinstance(edge.dst, nd.ExitNode):
+                # If removing this edge orphans the exit node, replace the
+                # edge with an empty edge
+                if not edges_remain:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_incoming:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            # Prune access nodes
+            if remove_orphans:
+                if (isinstance(edge.src, nd.AccessNode)
+                        and self.degree(edge.src) == 0):
+                    self.remove_node(edge.src)
+                if (isinstance(edge.dst, nd.AccessNode)
+                        and self.degree(edge.dst) == 0):
+                    self.remove_node(edge.dst)
 
     # DEPRECATED FUNCTIONS
     ######################################
