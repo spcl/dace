@@ -70,8 +70,15 @@ class PruneConnectors(pm.Transformation):
             for n in s.data_nodes():
                 all_data_used.add(n.data)
 
-        for conn in itertools.chain(prune_in, prune_out):
-            for e in state.edges_by_connector(nsdfg, conn):
+        for conn in prune_in:
+            for e in state.in_edges_by_connector(nsdfg, conn):
+                state.remove_memlet_path(e, remove_orphans=True)
+                if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
+                    # If the data is now unused, we can purge it from the SDFG
+                    nsdfg.sdfg.remove_data(conn)
+
+        for conn in prune_out:
+            for e in state.out_edges_by_connector(nsdfg, conn):
                 state.remove_memlet_path(e, remove_orphans=True)
                 if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                     # If the data is now unused, we can purge it from the SDFG
