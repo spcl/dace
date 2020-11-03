@@ -1170,8 +1170,6 @@ def propagate_subset(
         subset = None
         if use_dst and md.dst_subset is not None:
             subset = md.dst_subset
-        elif not use_dst and md.src_subset is not None:
-            subset = md.src_subset
         else:
             subset = md.subset
 
