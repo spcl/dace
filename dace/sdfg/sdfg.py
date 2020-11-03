@@ -415,6 +415,12 @@ class SDFG(OrderedDiGraph):
             stype = dtypes.DTYPE_TO_TYPECLASS[stype]
         self.symbols[name] = stype
 
+    def remove_symbol(self, name):
+        """ Removes a symbol from the SDFG.
+            :param name: Symbol name.
+        """
+        del self.symbols[name]
+
     @property
     def start_state(self):
         """ Returns the starting state of this SDFG. """

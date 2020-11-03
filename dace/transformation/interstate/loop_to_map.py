@@ -149,3 +149,7 @@ class LoopToMap(DetectLoop):
 
         # Route body directly to after state
         sdfg.add_edge(body, after, sd.InterstateEdge())
+
+        # Remove symbol from SDFG
+        if itervar in sdfg.symbols:
+            sdfg.remove_symbol(itervar)
