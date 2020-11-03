@@ -863,6 +863,11 @@ def isconstant(var, allow_recursive=False):
 
         :param allow_recursive: whether to allow dicts or lists containing constants.
     """
+    import dace.symbolic
+
+    if isinstance(var, dace.symbolic.symbol):
+        return var.dtype.type in _CONSTANT_TYPES
+
     if allow_recursive:
         if isinstance(var, (list, tuple)):
             return all(isconstant(v, allow_recursive=False) for v in var)
