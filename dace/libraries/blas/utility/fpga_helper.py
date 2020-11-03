@@ -194,6 +194,11 @@ class StreamWriteBase():
 # READERS
 # ---------- ---------- ---------- ----------
 class StreamReadVector(StreamReadBase):
+    """Configures a data streaming context for a DataNode. It is configured with a
+    host memory data container and handles copying of data to the device and streams
+    the data in a contiguous fashion with veclen sized chunks to the connected operator
+    on the device.
+    """
 
     def __init__(
             self,
@@ -375,6 +380,11 @@ class StreamReadVector(StreamReadBase):
 
 
 class StreamWriteVector(StreamWriteBase):
+    """Configures a data streaming context for a DataNode. It is configured with a
+    host memory data container and handles copying of data from the device to this host container
+    and streams the data in a contiguous fashion with veclen sized chunks from the connected
+    operator to the on-device memory and handles copying back to the host.
+    """
 
     def __init__(
             self,

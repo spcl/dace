@@ -162,12 +162,19 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
         return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a, node.buffer_size)
+                                                 node.n, node.a, node.buffer_size co)
 
 
 
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
+    """Executes a * _x + _y. It implements the BLAS AXPY operation
+        a vector-scalar product with a vector addition.
+
+        Implementations:
+        pure: dace primitive based implementation
+        fpga_stream: FPGA implementation optimized for streaming
+    """
 
     # Global properties
     implementations = {

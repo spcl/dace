@@ -37,6 +37,8 @@ def aligned_ndarray(arr, alignment=64):
 # SDFG
 # ---------- ----------
 def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, veclen=1):
+    """Copies memory from the CPU host to FPGA Global memory.
+    """
 
     inputs = zip(sources, sizes, types, range(len(sources)))
     outputs = []
@@ -79,6 +81,8 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
 
 
 def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, veclen=1):
+    """Copies memory from FPGA Global memory back to CPU host memory.
+    """
 
     inputs = zip(destinations, sizes, types, range(len(sizes)))
     outputs = []
