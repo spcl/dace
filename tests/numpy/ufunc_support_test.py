@@ -233,6 +233,29 @@ def test_ufunc_add_reduce_simple():
 
 
 @dace.program
+def ufunc_add_reduce_simple2(A: dace.int32[10]):
+    return np.add.reduce(5) + A
+
+
+def test_ufunc_add_reduce_simple2():
+    A = np.random.randint(1, 10, size=(10,), dtype=np.int32)
+    s = ufunc_add_reduce_simple2(A)
+    assert(np.array_equal(np.add.reduce(5) + A, s))
+
+
+@dace.program
+def ufunc_add_reduce_simple3(A: dace.int32[N]):
+    return np.add.reduce(N) + A
+
+
+def test_ufunc_add_reduce_simple3():
+    N.set(10)
+    A = np.random.randint(1, 10, size=(N.get(),), dtype=np.int32)
+    s = ufunc_add_reduce_simple3(A)
+    assert(np.array_equal(np.add.reduce(N.get()) + A, s))
+
+
+@dace.program
 def ufunc_add_reduce_axis(A: dace.int32[2, 2, 2, 2, 2]):
     return np.add.reduce(A, axis=(0, 2, 4))
 
@@ -306,6 +329,8 @@ if __name__ == "__main__":
     test_ufunc_add_where1_true()
     test_ufunc_add_where1_false()
     test_ufunc_add_reduce_simple()
+    test_ufunc_add_reduce_simple2()
+    test_ufunc_add_reduce_simple3()
     test_ufunc_add_reduce_axis()
     test_ufunc_add_reduce_keepdims()
     test_ufunc_add_reduce_initial()

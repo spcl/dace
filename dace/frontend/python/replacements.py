@@ -2474,8 +2474,16 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                 initial = intermediate_name
 
     # Create subgraph
-    _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], intermediate_name,
-            axis=axis, identity=initial)
+    if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
+        _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], intermediate_name,
+                axis=axis, identity=initial)
+    else:
+        tasklet = state.add_tasklet(state.label + "_tasklet", {}, {'__out'},
+                                    "__out = {}".format(inputs[0]))
+        out_node = state.add_write(intermediate_name)
+        datadesc = sdfg.arrays[intermediate_name]
+        state.add_edge(tasklet, '__out', out_node, None, dace.Memlet.simple(
+            intermediate_name, subsets.Range.from_array(datadesc)))
     
     if keepdims:
         intermediate_node = None
