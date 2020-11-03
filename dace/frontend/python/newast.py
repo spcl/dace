@@ -3009,7 +3009,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
-                required_args = list(sdfg.arglist().keys())
+                required_args = [a for a in sdfg.arglist().keys() if a not in sdfg.symbols]
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
@@ -3040,7 +3040,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 mapping = infer_symbols_from_shapes(
                     sdfg, {
                         k: self.sdfg.arrays[v]
-                        for k, v in args if v in self.sdfg.arrays
+                        for k, v in args
+                        if v in self.sdfg.arrays
                     },
                     set(sym.arg for sym in node.keywords if sym.arg in symbols))
             except ValueError as ex:
