@@ -1068,10 +1068,13 @@ def propagate_memlet(dfg_state,
                                   neighboring internal memlets within the same
                                   scope into account.
     """
+    use_dst = False
     if isinstance(scope_node, nodes.EntryNode):
+        use_dst = False
         entry_node = scope_node
         neighboring_edges = dfg_state.out_edges(scope_node)
     elif isinstance(scope_node, nodes.ExitNode):
+        use_dst = True
         entry_node = dfg_state.entry_node(scope_node)
         neighboring_edges = dfg_state.in_edges(scope_node)
     else:
@@ -1110,7 +1113,7 @@ def propagate_memlet(dfg_state,
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
         return propagate_subset(aggdata, arr, mapnode.params, mapnode.range,
-                                defined_vars, use_dst=False)
+                                defined_vars, use_dst=use_dst)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1170,6 +1173,8 @@ def propagate_subset(
         subset = None
         if use_dst and md.dst_subset is not None:
             subset = md.dst_subset
+        elif not use_dst and md.src_subset is not None:
+            subset = md.src_subset
         else:
             subset = md.subset
 
