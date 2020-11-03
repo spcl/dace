@@ -50,10 +50,11 @@ class LoopToMap(DetectLoop):
 
         itervar, (start, end, step) = found
 
-        for s in itertools.chain(start.free_symbols, end.free_symbols,
-                                 step.free_symbols):
-            if s in sdfg.arrays:
-                return False  # Reads from a data container
+        # We cannot handle symbols read from data containers unless they are
+        # scalar
+        for expr in (start, end, step):
+            if symbolic.contains_sympy_functions(expr):
+                return False
 
         # Currently only detect the trivial case where the set of containers
         # that are read are completely disjoint from those that are written
@@ -111,6 +112,9 @@ class LoopToMap(DetectLoop):
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
         for rd in containers_to_read:
+            # We are guaranteed that this is always a scalar, because
+            # can_be_applied makes sure there are no sympy functions in each of
+            # the loop expresions
             access_node = body.add_read(rd)
             body.add_memlet_path(access_node,
                                  entry,
