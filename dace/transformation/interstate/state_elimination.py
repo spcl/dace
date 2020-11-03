@@ -138,3 +138,12 @@ class StateAssignElimination(transformation.Transformation):
         for varname in keys_to_remove:
             # Remove assignments from edge
             del edge.data.assignments[varname]
+
+            for e in sdfg.edges():
+                if varname in edge.data.free_symbols:
+                    break
+            else:
+                # If removed assignment does not appear in any other edge,
+                # remove symbol
+                if varname in sdfg.symbols:
+                    sdfg.remove_symbol(varname)
