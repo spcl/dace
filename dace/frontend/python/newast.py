@@ -173,7 +173,8 @@ def parse_dace_program(f,
     src_ast = GlobalResolver({
         k: v
         for k, v in global_vars.items()
-        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes and k != '_'
+        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes
+        and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -602,6 +603,42 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
+    def global_value_to_node(self, value, parent_node=None):
+        # if parent node is None, we don't allow recursion into lists
+        if parent_node is None and isinstance(value, (list, tuple)):
+            # bail after more than one level of lists
+            return None
+
+        if isinstance(value, list):
+            elts = [
+                ast.copy_location(
+                    self.global_value_to_node(v, parent_node=None), parent_node)
+                for v in value
+            ]
+            if any(e is None for e in elts):
+                return None
+            newnode = ast.List(elts=elts, ctx=parent_node.ctx)
+        elif isinstance(value, tuple):
+            elts = [
+                ast.copy_location(
+                    self.global_value_to_node(v, parent_node=None), parent_node)
+                for v in value
+            ]
+            if any(e is None for e in elts):
+                return None
+            newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
+        elif isinstance(value, symbolic.symbol):
+            newnode = ast.Name(id=value.name, ctx=ast.Load)
+        else:
+            # otherwise we must have a non list or tuple constant; emit a constant node
+
+            # Compatibility check since Python changed their AST nodes
+            if sys.version_info >= (3, 8):
+                newnode = ast.Constant(value=value, kind='')
+            else:
+                newnode = ast.Num(n=value)
+        return newnode
+
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.AugStore)):
             self.current_scope.add(node.id)
@@ -609,11 +646,9 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=self.globals[node.id], kind='')
-                else:
-                    newnode = ast.Num(n=self.globals[node.id])
+                global_val = self.globals[node.id]
+                newnode = self.global_value_to_node(global_val,
+                                                    parent_node=node)
                 return ast.copy_location(newnode, node)
         return node
 
@@ -3009,7 +3044,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
-                required_args = [a for a in sdfg.arglist().keys() if a not in sdfg.symbols]
+                required_args = [
+                    a for a in sdfg.arglist().keys() if a not in sdfg.symbols
+                ]
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
@@ -3040,8 +3077,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 mapping = infer_symbols_from_shapes(
                     sdfg, {
                         k: self.sdfg.arrays[v]
-                        for k, v in args
-                        if v in self.sdfg.arrays
+                        for k, v in args if v in self.sdfg.arrays
                     },
                     set(sym.arg for sym in node.keywords if sym.arg in symbols))
             except ValueError as ex:

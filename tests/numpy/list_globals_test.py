@@ -42,17 +42,35 @@ def local_list_test():
 
 def local_list_test_with_slice():
     local_axes = [1, 2, 0, 100]
+    local_axes = local_axes[0:-1]
 
     @dace
     def local_list(A: dace.int32[3, 2, 4]):
-        return np.transpose(A, axes=local_axes[0:-2])
+        return np.transpose(A, axes=local_axes)
 
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
     result = local_list(A=inp.copy())
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
+def local_list_with_symbols_test():
+    N = dace.symbol('N')
+    local_shape = [N, 4]
+
+    @dace
+    def local_list(A: dace.int32[N, 2, 4]):
+        result = dace.define_local(local_shape, dace.int32)
+        result[:] = np.sum(A, axis=1)
+        return result
+
+    inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
+    result = local_list(A=inp.copy())
+    assert np.allclose(result, np.sum(inp.copy(), axis=1))
+
+
 if __name__ == "__main__":
     local_func_access_global_list_test()
     global_func_access_global_list_test()
     local_list_test()
+    local_list_test_with_slice()
+    local_list_with_symbols_test()
