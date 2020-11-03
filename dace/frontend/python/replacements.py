@@ -2266,6 +2266,110 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     return outputs
 
 
+def _validate_keepdims_kword(visitor: 'ProgramVisitor',
+                             ast_node: ast.Call,
+                             ufunc_name: str,
+                             kwargs: Dict[str, Any]) -> bool:
+    """ Validates the 'keepdims' keyword argument of a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param ufunc_name: Name of the ufunc
+        :param kwargs: Keyword arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: Boolean value of the 'keepdims' keyword argument
+    """
+
+    keepdims = False
+    if 'keepdims' in kwargs.keys():
+        keepdims = kwargs['keepdims']
+        if not isinstance(keepdims, (Integral, bool)):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Integer or boolean value expected for keyword argument "
+                "'keepdims' in reduction operation {f} (got {v}).".format(
+                    f=ufunc_name, v=keepdims))
+        if not isinstance(keepdims, bool):
+            keepdims = bool(keepdims)
+    
+    return keepdims
+
+
+def _validate_axis_kword(
+    visitor: 'ProgramVisitor',
+    ast_node: ast.Call,
+    sdfg: SDFG,
+    inputs: List[UfuncInput],
+    kwargs: Dict[str, Any],
+    keepdims: bool
+) -> Tuple[Tuple[int, ...], Union[Shape, None], Shape]:
+    """ Validates the 'axis' keyword argument of a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param inputs: Inputs of the ufunc call
+        :param kwargs: Keyword arguments of the ufunc call
+        :param keepdims: Boolean value of the 'keepdims' keyword argument
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: The value of the 'axis' keyword argument, the intermediate
+        data shape (if needed), and the expected output shape
+    """
+
+    # Validate 'axis' keyword
+    axis = (0,)
+    if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
+        inp_shape = sdfg.arrays[inputs[0]].shape
+    else:
+        inp_shape = [1]
+    if 'axis' in kwargs.keys():
+        # Set to (0,) if the keyword arg value is None
+        axis = kwargs['axis'] or axis
+        if axis is not None and not isinstance(axis, (tuple, list)):
+            axis = (axis, )
+    if axis is not None:
+        axis = tuple(pystr_to_symbolic(a) for a in axis)
+        axis = tuple(normalize_axes(axis, len(inp_shape)))
+        if len(axis) > len(inp_shape):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Axis {a} is out of bounds for data of dimension {d}".format(
+                    a=axis, d=inp_shape
+                )
+            )
+        for a in axis:
+            if a >= len(inp_shape):
+                raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Axis {a} is out of bounds for data of dimension {d}".format(
+                    a=a, d=inp_shape
+                )
+            )
+        if keepdims:
+            intermediate_shape = [d for i, d in enumerate(inp_shape)
+                                  if i not in axis]
+            expected_out_shape = [d if i not in axis else 1
+                                  for i, d in enumerate(inp_shape)]
+        else:
+            intermediate_shape = None
+            expected_out_shape = [d for i, d in enumerate(inp_shape)
+                                  if i not in axis]
+        expected_out_shape = expected_out_shape or [1]
+    else:
+        if keepdims:
+            intermediate_shape = [1]
+            expected_out_shape = [1] * len(inp_shape)
+        else:
+            intermediate_shape = None
+            expected_out_shape = [1]
+    
+    return axis, intermediate_shape, expected_out_shape
+
+
 def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                            ast_node: ast.Call,
                            sdfg: SDFG,
@@ -2303,63 +2407,11 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                                       args, kwargs)
 
     # Validate 'keepdims' keyword
-    keepdims = False
-    if 'keepdims' in kwargs.keys():
-        keepdims = kwargs['keepdims']
-        if not isinstance(keepdims, (Integral, bool)):
-            raise mem_parser.DaceSyntaxError(
-                visitor, ast_node,
-                "Integer or boolean value expected for keyword argument "
-                "'keepdims' in reduction operation {f} (got {v}).".format(
-                    f=ufunc_name, v=keepdims))
-        if not isinstance(keepdims, bool):
-            keepdims = bool(keepdims)
+    keepdims = _validate_keepdims_kword(visitor, ast_node, ufunc_name, kwargs)
     
     # Validate 'axis' keyword
-    axis = (0,)
-    if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-        inp_shape = sdfg.arrays[inputs[0]].shape
-    else:
-        inp_shape = [1]
-    out_shape = [1]
-    if 'axis' in kwargs.keys():
-        # Set to (0,) if the keyword arg value is None
-        axis = kwargs['axis'] or axis
-        if axis is not None and not isinstance(axis, (tuple, list)):
-            axis = (axis, )
-    if axis is not None:
-        axis = tuple(pystr_to_symbolic(a) for a in axis)
-        axis = tuple(normalize_axes(axis, len(inp_shape)))
-        if len(axis) > len(inp_shape):
-            raise mem_parser.DaceSyntaxError(
-                visitor, ast_node,
-                "Axis {a} is out of bounds for data of dimension {d}".format(
-                    a=axis, d=inp_shape
-                )
-            )
-        for a in axis:
-            if a >= len(inp_shape):
-                raise mem_parser.DaceSyntaxError(
-                visitor, ast_node,
-                "Axis {a} is out of bounds for data of dimension {d}".format(
-                    a=a, d=inp_shape
-                )
-            )
-        if keepdims:
-            intermediate_shape = [d for i, d in enumerate(inp_shape)
-                                  if i not in axis]
-            expected_out_shape = [d if i not in axis else 1
-                                  for i, d in enumerate(inp_shape)]
-        else:
-            expected_out_shape = [d for i, d in enumerate(inp_shape)
-                                  if i not in axis]
-        expected_out_shape = expected_out_shape or [1]
-    else:
-        if keepdims:
-            intermediate_shape = [1]
-            expected_out_shape = [1] * len(inp_shape)
-        else:
-            expected_out_shape = [1]
+    axis, intermediate_shape, expected_out_shape = _validate_axis_kword(
+        visitor, ast_node, sdfg, inputs, kwargs, keepdims)
 
     # Validate 'where' keyword
     # Throw a warning that it is currently unsupported.
@@ -2396,19 +2448,15 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
     else:
         out_shape = expected_out_shape
     
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
-    # result_type = dtypes.result_type_of(*input_dtypes)
+    # No casting needed
+    arg = inputs[0]
+    if isinstance(arg, str):
+        datadesc = sdfg.arrays[arg]
+        result_type = datadesc.dtype
+    elif isinstance(arg, Number):
+        result_type = dtypes.DTYPE_TO_TYPECLASS[type(arg)]
+    elif isinstance(arg, sp.Basic):
+        result_type = _sym_type(arg)
 
     # Create output data (if needed)
     # TODO: Fix storage
