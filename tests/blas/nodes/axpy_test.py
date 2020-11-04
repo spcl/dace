@@ -14,7 +14,7 @@ import dace.libraries.blas.utility.fpga_helper as streaming
 from dace.libraries.blas.utility import memory_operations as memOps
 from dace.transformation.interstate import GPUTransformSDFG
 
-from dace.libraries.blas.utility.memory_operations import aligned_ndarray
+from dace.libraries.standard.memory import aligned_ndarray
 
 from multiprocessing import Process, Queue
 
