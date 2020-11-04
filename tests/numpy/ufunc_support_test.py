@@ -116,7 +116,7 @@ def test_ufunc_add_out3():
 
 
 @dace.program
-def ufunc_add_where(A: dace.int32[10], B: dace.int32[10], W: dace.bool[10]):
+def ufunc_add_where(A: dace.int32[10], B: dace.int32[10], W: dace.bool_[10]):
     return np.add(A, B, where=W)
 
 
@@ -182,7 +182,7 @@ def test_ufunc_add_where_list():
 
 
 @dace.program
-def ufunc_add_where1(A: dace.int32[1], B: dace.int32[1], W: dace.bool[1]):
+def ufunc_add_where1(A: dace.int32[1], B: dace.int32[1], W: dace.bool_[1]):
     return np.add(A, B, where=W)
 
 
@@ -418,16 +418,34 @@ def test_ufunc_add_outer_simple5():
 @dace.program
 def ufunc_add_outer_where(A: dace.int32[2, 2, 2, 2, 2],
                           B: dace.int32[2, 2, 2, 2, 2],
-                          W: dace.int32[2, 2, 2, 2, 2, 2, 2, 2, 2, 2]):
+                          W: dace.bool_[2, 2, 2, 2, 2, 2, 2, 2, 2, 2]):
     return np.add.outer(A, B, where=W)
 
 
 def test_ufunc_add_outer_where():
     A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
-    W = np.random.randint(1, size=(2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
+    W = np.random.randint(2, size=(2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
     s = ufunc_add_outer_where(A, B, W)
     assert(np.array_equal(np.add.outer(A, B, where=W)[W], s[W]))
+
+
+@dace.program
+def ufunc_add_outer_where2(A: dace.int32[2, 2, 2, 2, 2],
+                           B: dace.int32[2, 2, 2, 2, 2],
+                           W: dace.bool_[2, 1, 2]):
+    return np.add.outer(A, B, where=W)
+
+
+def test_ufunc_add_outer_where2():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    W = np.random.randint(2, size=(2, 1, 2), dtype=np.bool_)
+    W[0, 0, 0] = True
+    C = ufunc_add_outer_where2(A, B, W)
+    where = np.empty((2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
+    where[:] = W
+    assert(np.array_equal(np.add.outer(A, B, where=W)[where], C[where]))
 
 
 if __name__ == "__main__":
@@ -465,3 +483,4 @@ if __name__ == "__main__":
     test_ufunc_add_outer_simple4()
     test_ufunc_add_outer_simple5()
     test_ufunc_add_outer_where()
+    test_ufunc_add_outer_where2()

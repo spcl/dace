@@ -2736,8 +2736,8 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
                                              ufunc_name, kwargs)
 
     # Validate data shapes
-    # TODO: 'where' shape is not validated
     out_shape = []
+    map_vars = []
     map_range = dict()
     input_indices = []
     output_idx = None
@@ -2749,6 +2749,8 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
             elif isinstance(datadesc, data.Array):
                 shape = datadesc.shape
                 out_shape.extend(shape)
+                map_vars.extend(["__i{i}_{j}".format(i=i, j=j)
+                                 for j in range(len(shape))])
                 map_range.update({
                     "__i{i}_{j}".format(i=i, j=j): "0:{}".format(sz)
                     for j, sz in enumerate(shape)})
@@ -2768,7 +2770,27 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
         input_indices.append(input_idx)
 
     if has_where and not isinstance(where, bool):
-        input_indices.append(output_idx)
+        where_shape = sdfg.arrays[where].shape
+        try:
+            bcast_out_shape, _, _, bcast_inp_indices = _broadcast(
+                [out_shape, where_shape])
+        except SyntaxError:
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "'where' shape {w} could not be broadcast together with 'out' "
+                "shape {o}.".format(w=where_shape, o=out_shape)
+            )
+        if list(bcast_out_shape) != list(out_shape):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Broadcasting 'where' shape {w} together with expected 'out' "
+                "shape {o} resulted in a different output shape {no}. This is "
+                "currently unsupported.".format(
+                    w=where_shape, o=out_shape, no=bcast_out_shape))
+        where_idx = bcast_inp_indices[1]
+        for i in range(len(out_shape)):
+            where_idx = where_idx.replace("__i{}".format(i), map_vars[i])
+        input_indices.append(where_idx)
     else:
         input_indices.append(None)
     
