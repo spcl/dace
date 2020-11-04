@@ -151,13 +151,6 @@ def parse_dace_program(f,
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
-    # Resolve symbols to their names
-    symrepl = {
-        k: v.name
-        for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
-    }
-    src_ast = astutils.ASTFindReplace(symrepl).visit(src_ast)
-
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)
 
@@ -171,11 +164,11 @@ def parse_dace_program(f,
         global_vars[modval] = newmod
 
     # Resolve constants to their values (if they are not already defined in this scope)
+    # and symbols to their names
     src_ast = GlobalResolver({
         k: v
         for k, v in global_vars.items()
-        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes
-        and k != '_'
+        if not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -628,8 +621,9 @@ class GlobalResolver(ast.NodeTransformer):
                 return None
             newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, symbolic.symbol):
+            # symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
-        else:
+        elif dtypes.isconstant(value):
             # otherwise we must have a non list or tuple constant; emit a constant node
 
             # Compatibility check since Python changed their AST nodes
@@ -637,6 +631,8 @@ class GlobalResolver(ast.NodeTransformer):
                 newnode = ast.Constant(value=value, kind='')
             else:
                 newnode = ast.Num(n=value)
+        else:
+            return None
 
         if parent_node is not None:
             return ast.copy_location(newnode, parent_node)
