@@ -857,21 +857,10 @@ _CONSTANT_TYPES = [
 ]
 
 
-def isconstant(var, allow_recursive=False):
+def isconstant(var):
     """ Returns True if a variable is designated a constant (i.e., that can be
         directly generated in code).
-
-        :param allow_recursive: whether to allow dicts or lists containing constants.
     """
-    import dace.symbolic
-
-    if isinstance(var, dace.symbolic.symbol):
-        return var.dtype.type in _CONSTANT_TYPES
-
-    if allow_recursive:
-        if isinstance(var, (list, tuple)):
-            return all(isconstant(v, allow_recursive=False) for v in var)
-
     return type(var) in _CONSTANT_TYPES
 
 
@@ -988,10 +977,18 @@ def ismodule_and_allowed(var):
     return False
 
 
-def isallowed(var):
-    """ Returns True if a given object is allowed in a DaCe program. """
+def isallowed(var, allow_recursive=False):
+    """ Returns True if a given object is allowed in a DaCe program.
+
+        :param allow_recursive: whether to allow dicts or lists containing constants.
+    """
     from dace.symbolic import symbol
-    return isconstant(var, allow_recursive=True) or ismodule(var) or isinstance(
+
+    if allow_recursive:
+        if isinstance(var, (list, tuple)):
+            return all(isallowed(v, allow_recursive=False) for v in var)
+
+    return isconstant(var) or ismodule(var) or isinstance(
         var, symbol) or isinstance(var, typeclass)
 
 
