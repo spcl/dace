@@ -2249,7 +2249,10 @@ def implement_ufunc(visitor: 'ProgramVisitor',
             input_dtypes.append(_sym_type(arg))
     input_types = [d.type for d in input_dtypes]
     result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
-    # result_type = dtypes.result_type_of(*input_dtypes)
+    if 'dtype' in kwargs.keys():
+        dtype = kwargs['dtype']
+        if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
+            result_type = dtype
 
     # Create output data (if needed)
     # TODO: Fix storage
@@ -2725,6 +2728,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
                                              ufunc_name, kwargs)
 
     # Validate data shapes
+    # TODO: 'where' shape is not validated
     out_shape = []
     map_range = dict()
     input_indices = []
@@ -2772,7 +2776,10 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
             input_dtypes.append(_sym_type(arg))
     input_types = [d.type for d in input_dtypes]
     result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
-    # result_type = dtypes.result_type_of(*input_dtypes)
+    if 'dtype' in kwargs.keys():
+        dtype = kwargs['dtype']
+        if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
+            result_type = dtype
 
     # Create output data (if needed)
     # TODO: Fix storage
