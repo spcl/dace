@@ -1615,7 +1615,7 @@ ufuncs = dict(
         name="_numpy_multipy_",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 * __in2",
-        reduce="lambda a, b: a * b", initial=np.multipy.identity),
+        reduce="lambda a, b: a * b", initial=np.multiply.identity),
     # TODO: Will be enabled when proper casting is implemented.
     # divide = dict(
     #     name="_numpy_divide_",
@@ -1626,6 +1626,27 @@ ufuncs = dict(
                    outputs=["__out"], code="__out = min(__in1, __in2)",
                    reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
 )
+
+
+def _get_ufunc_impl(visitor: 'ProgramVisitor',
+                    ast_node: ast.Call,
+                    ufunc_name: str) -> Dict[str, Any]:
+    """ Retrieves the implementation details for a NumPy ufunc call.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param ufunc_name: Name of the ufunc
+
+        :raises DaCeSyntaxError: When the ufunc implementation is missing
+    """
+
+    try:
+        return ufuncs[ufunc_name]
+    except KeyError:
+        raise mem_parser.DaceSyntaxError(
+            visitor, ast_node,
+            "Missing implementation for NumPy ufunc {f}.".format(f=ufunc_name))
+
 
 def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor',
                                   ast_node: ast.Call,
@@ -2246,12 +2267,8 @@ def implement_ufunc(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
-    try:
-        ufunc_impl = ufuncs[ufunc_name]
-    except KeyError:
-        raise mem_parser.DaceSyntaxError(
-            visitor, ast_node,
-            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
+    # Get the ufunc implementation details
+    ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = len(ufunc_impl['inputs'])
@@ -2434,12 +2451,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
-    try:
-        ufunc_impl = ufuncs[ufunc_name]
-    except KeyError:
-        raise mem_parser.DaceSyntaxError(
-            visitor, ast_node,
-            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
+    # Get the ufunc implementation details
+    ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = 1
@@ -2617,12 +2630,8 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
-    try:
-        ufunc_impl = ufuncs[ufunc_name]
-    except KeyError:
-        raise mem_parser.DaceSyntaxError(
-            visitor, ast_node,
-            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
+    # Get the ufunc implementation details
+    ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = 1
@@ -2765,12 +2774,8 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
-    try:
-        ufunc_impl = ufuncs[ufunc_name]
-    except KeyError:
-        raise mem_parser.DaceSyntaxError(
-            visitor, ast_node,
-            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
+    # Get the ufunc implementation details
+    ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = len(ufunc_impl['inputs'])
