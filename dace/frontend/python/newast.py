@@ -3283,6 +3283,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     print("NumPy ufunc {}, method {}".format(npfuncname, name))
                     if name == "reduce":
                         func = replacements.implement_ufunc_reduce
+                    elif name == "accumulate":
+                        func = replacements.implement_ufunc_accumulate
+                    elif name == "outer":
+                        func = replacements.implement_ufunc_outer
                     else:
                         raise NotImplementedError
                 else:

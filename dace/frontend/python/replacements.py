@@ -2682,3 +2682,104 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
                           src_conn=outconn)
 
     return outputs
+
+
+def implement_ufunc_outer(visitor: 'ProgramVisitor',
+                          ast_node: ast.Call,
+                          sdfg: SDFG,
+                          state: SDFGState,
+                          ufunc_name: str,
+                          ufunc_impl: Dict[str, Any],
+                          args: Sequence[UfuncInput],
+                          kwargs: Dict[str, Any]) -> List[UfuncOutput]:
+    """ Implements the 'outer' method of a NumPy ufunc.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param ufunc_name: Name of the ufunc
+        :param ufunc_impl: Information on how the ufunc must be implemented
+        :param args: Positional arguments of the ufunc call
+        :param kwargs: Keyword arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: List of output datanames
+    """
+
+    # Validate number of arguments, inputs, and outputs
+    num_inputs = len(ufunc_impl['inputs'])
+    num_outputs = len(ufunc_impl['outputs'])
+    num_args = len(args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
+                                  num_inputs, num_outputs, num_args)
+    inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
+                                    num_inputs, num_args, args)
+    outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
+                                      num_inputs, num_outputs, num_args,
+                                      args, kwargs)
+
+    # TODO: 'where' keyword currently unsupported
+    # # Validate 'where' keyword
+    # has_where, where = _validate_where_kword(visitor, ast_node, sdfg,
+    #                                          ufunc_name, kwargs)
+
+    # Validate data shapes
+    out_shape = []
+    map_range = dict()
+    input_indices = []
+    output_idx = None
+    for i, arg in enumerate(inputs):
+        if isinstance(arg, str) and arg in sdfg.arrays.keys():
+            datadesc = sdfg.arrays[arg]
+            if isinstance(datadesc, data.Scalar):
+                input_idx = '0'
+            elif isinstance(datadesc, data.Array):
+                shape = datadesc.shape
+                out_shape.extend(shape)
+                map_range.update({
+                    "__i{i}_{j}".format(i=i, j=j): "0:{}".format(sz)
+                    for j, sz in enumerate(shape)})
+                input_idx = ','.join(["__i{i}_{j}".format(i=i, j=j)
+                                      for j in range(len(shape))])
+                if output_idx:
+                    output_idx = ','.join([output_idx, input_idx])
+                else:
+                    output_idx = input_idx
+            else:
+                raise mem_parser.DaceSyntaxError(
+                    visitor, ast_node,
+                    "Unsuported data type {t} in 'outer' method of NumPy ufunc "
+                    "{f}.".format(t=type(datadesc), f=ufunc_name))
+        elif isinstance(arg, (Number, sp.Basic)):
+            input_idx = None
+        input_indices.append(input_idx)
+    
+    # Placeholder for applying NumPy casting rules
+    input_dtypes = []
+    for arg in inputs:
+        if isinstance(arg, str):
+            datadesc = sdfg.arrays[arg]
+            input_dtypes.append(datadesc.dtype)
+        elif isinstance(arg, Number):
+            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+        elif isinstance(arg, sp.Basic):
+            input_dtypes.append(_sym_type(arg))
+    input_types = [d.type for d in input_dtypes]
+    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # result_type = dtypes.result_type_of(*input_dtypes)
+
+    # Create output data (if needed)
+    # TODO: Fix storage
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
+
+    # Set tasklet parameters
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+
+    # Create subgraph
+    _create_subgraph(visitor, sdfg, state, inputs, outputs, map_range,
+                     input_indices, output_idx, out_shape, tasklet_params,
+                     has_where=False, where=None)
+
+    return outputs    
