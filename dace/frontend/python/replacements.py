@@ -1599,10 +1599,29 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 UfuncInput = Union[str, Number]
 UfuncOutput = Union[str, None]
 
+# TODO: Add all ufuncs in subsequent PR's.
 ufuncs = dict(
-    add = dict(name="_numpy_add_", inputs=["__in1", "__in2"],
-               outputs=["__out"], code="__out = __in1 + __in2",
-               reduce="lambda a, b: a + b", initial=np.add.identity),
+    add = dict(
+        name="_numpy_add_",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 + __in2",
+        reduce="lambda a, b: a + b", initial=np.add.identity),
+    subtract = dict(
+        name="_numpy_subtract_",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 - __in2",
+        reduce="lambda a, b: a - b", initial=np.subtract.identity),
+    multiply = dict(
+        name="_numpy_multipy_",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 * __in2",
+        reduce="lambda a, b: a * b", initial=np.multipy.identity),
+    # TODO: Will be enabled when proper casting is implemented.
+    # divide = dict(
+    #     name="_numpy_divide_",
+    #     inputs=["__in1", "__in2"],
+    #     outputs=["__out"], code="__out = __in1 / __in2",
+    #     reduce="lambda a, b: a / b", initial=np.divide.identity),
     minimum = dict(name="_numpy_min_", inputs=["__in1", "__in2"],
                    outputs=["__out"], code="__out = min(__in1, __in2)",
                    reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
