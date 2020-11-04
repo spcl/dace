@@ -161,6 +161,12 @@ class StateFusion(transformation.Transformation):
                 if dst == second_state:
                     return False
 
+        # No data containers written in the first state can be free symbols in
+        # the second
+        _, write_set = first_state.read_and_write_sets()
+        if len(write_set & second_state.free_symbols) > 0:
+            return False
+
         if strict:
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
