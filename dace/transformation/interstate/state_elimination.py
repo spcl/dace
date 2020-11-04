@@ -61,16 +61,10 @@ class EndStateElimination(transformation.Transformation):
 def _assignments_to_consider(sdfg, edge):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
-        # Assignments must not use a data container
         as_symbolic = symbolic.pystr_to_symbolic(assign)
-        for s in as_symbolic.free_symbols:
-            # They will appear either as symbols...
-            if str(s) in sdfg.arrays:
-                break
-        else:
-            # ...or as "functions" (when they are subscripted)
-            if not symbolic.contains_sympy_functions(as_symbolic):
-                assignments_to_consider[var] = assign
+        # Assignments cannot subscript a data container
+        if not symbolic.contains_sympy_functions(as_symbolic):
+            assignments_to_consider[var] = assign
     return assignments_to_consider
 
 
