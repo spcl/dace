@@ -911,7 +911,17 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
         result_type = eval('dace.int{}'.format(4 * max_bytes))
 
     elif _is_op_boolean(operator):
-        result_type = dace.int8
+        result_type = dace.bool_
+
+    else:
+        result_type = dace.DTYPE_TO_TYPECLASS[
+            np.result_type(dtype1.type, dtype2.type).type]
+        if max(type1, type2) == 3:
+            if type1 < 3:
+                left_cast = dtype2
+            elif type2 < 3:
+                right_cast = dtype1
+
 
     return result_type, left_cast, right_cast
 
