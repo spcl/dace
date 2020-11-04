@@ -311,28 +311,76 @@ def test_ufunc_minimum_reduce_initial2():
     assert(np.array_equal(np.minimum.reduce(A, initial=None), s))
 
 
+@dace.program
+def ufunc_add_accumulate_simple(A: dace.int32[2, 2, 2, 2, 2]):
+    return np.add.accumulate(A)
+
+
+def test_ufunc_add_accumulate_simple():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2,), dtype=np.int32)
+    s = ufunc_add_accumulate_simple(A)
+    assert(np.array_equal(np.add.accumulate(A), s))
+
+
+@dace.program
+def ufunc_add_accumulate_simple2(A: dace.int32[10, 10, 10]):
+    return np.add.accumulate(A)
+
+
+def test_ufunc_add_accumulate_simple2():
+    A = np.random.randint(1, 10, size=(10, 10, 10), dtype=np.int32)
+    s = ufunc_add_accumulate_simple2(A)
+    assert(np.array_equal(np.add.accumulate(A), s))
+
+
+@dace.program
+def ufunc_add_accumulate_axis(A: dace.int32[3, 6, 7, 5, 4]):
+    return np.add.accumulate(A, axis=2)
+
+
+def test_ufunc_add_accumulate_axis():
+    A = np.random.randint(1, 10, size=(3, 6, 7, 5, 4), dtype=np.int32)
+    s = ufunc_add_accumulate_axis(A)
+    assert(np.array_equal(np.add.accumulate(A, axis=2), s))
+
+
+@dace.program
+def ufunc_add_accumulate_axis2(A: dace.int32[3, 6, 7, 5, 4]):
+    return np.add.accumulate(A, axis=(2,))
+
+
+def test_ufunc_add_accumulate_axis2():
+    A = np.random.randint(1, 10, size=(3, 6, 7, 5, 4), dtype=np.int32)
+    s = ufunc_add_accumulate_axis2(A)
+    assert(np.array_equal(np.add.accumulate(A, axis=(2,)), s))
+
+
 if __name__ == "__main__":
-    test_broadcast_success()
-    test_broadcast_fail()
-    test_ufunc_add_simple()
-    test_ufunc_add_simple2()
-    test_ufunc_add_simple3()
-    test_ufunc_add_simple4()
-    test_ufunc_add_out()
-    test_ufunc_add_out2()
-    test_ufunc_add_out3()
-    test_ufunc_add_where()
-    test_ufunc_add_where_true()
-    test_ufunc_add_where_false()
-    test_ufunc_add_where_list()
-    test_ufunc_add_where1()
-    test_ufunc_add_where1_true()
-    test_ufunc_add_where1_false()
-    test_ufunc_add_reduce_simple()
-    test_ufunc_add_reduce_simple2()
-    test_ufunc_add_reduce_simple3()
-    test_ufunc_add_reduce_axis()
-    test_ufunc_add_reduce_keepdims()
-    test_ufunc_add_reduce_initial()
-    test_ufunc_minimum_reduce_initial()
-    test_ufunc_minimum_reduce_initial2()
+    # test_broadcast_success()
+    # test_broadcast_fail()
+    # test_ufunc_add_simple()
+    # test_ufunc_add_simple2()
+    # test_ufunc_add_simple3()
+    # test_ufunc_add_simple4()
+    # test_ufunc_add_out()
+    # test_ufunc_add_out2()
+    # test_ufunc_add_out3()
+    # test_ufunc_add_where()
+    # test_ufunc_add_where_true()
+    # test_ufunc_add_where_false()
+    # test_ufunc_add_where_list()
+    # test_ufunc_add_where1()
+    # test_ufunc_add_where1_true()
+    # test_ufunc_add_where1_false()
+    # test_ufunc_add_reduce_simple()
+    # test_ufunc_add_reduce_simple2()
+    # test_ufunc_add_reduce_simple3()
+    # test_ufunc_add_reduce_axis()
+    # test_ufunc_add_reduce_keepdims()
+    # test_ufunc_add_reduce_initial()
+    # test_ufunc_minimum_reduce_initial()
+    # test_ufunc_minimum_reduce_initial2()
+    # test_ufunc_add_accumulate_simple()
+    test_ufunc_add_accumulate_simple2()
+    test_ufunc_add_accumulate_axis()
+    test_ufunc_add_accumulate_axis2()

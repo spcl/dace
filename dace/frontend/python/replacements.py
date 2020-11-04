@@ -2546,3 +2546,139 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
            outputs[0], subsets.Range.from_array(sdfg.arrays[outputs[0]])))
 
     return outputs
+
+
+def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
+                               ast_node: ast.Call,
+                               sdfg: SDFG,
+                               state: SDFGState,
+                               ufunc_name: str,
+                               ufunc_impl: Dict[str, Any],
+                               args: Sequence[UfuncInput],
+                               kwargs: Dict[str, Any]) -> List[UfuncOutput]:
+    """ Implements the 'accumulate' method of a NumPy ufunc.
+
+        :param visitor: ProgramVisitor object handling the ufunc call
+        :param ast_node: AST node corresponding to the ufunc call
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param ufunc_name: Name of the ufunc
+        :param ufunc_impl: Information on how the ufunc must be implemented
+        :param args: Positional arguments of the ufunc call
+        :param kwargs: Keyword arguments of the ufunc call
+
+        :raises DaCeSyntaxError: When validation fails
+
+        :returns: List of output datanames
+    """
+
+    # Validate number of arguments, inputs, and outputs
+    num_inputs = 1
+    num_outputs = 1
+    num_args = len(args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
+                                  num_inputs, num_outputs, num_args)
+    inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
+                                    num_inputs, num_args, args)
+    outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
+                                      num_inputs, num_outputs, num_args,
+                                      args, kwargs)
+    
+    # No casting needed
+    arg = inputs[0]
+    if isinstance(arg, str) and arg in sdfg.arrays.keys():
+        datadesc = sdfg.arrays[arg]
+        if not isinstance(datadesc, data.Array):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Cannot accumulate on a data.Scalar or data.Stream.")
+        out_shape = datadesc.shape
+        result_type = datadesc.dtype
+    else:
+        raise mem_parser.DaceSyntaxError(
+            visitor, ast_node, "Can accumulate only on a data.Array.")
+    
+    # Valdate 'axis' keyword argument
+    axis = 0
+    if 'axis' in kwargs.keys():
+        axis = kwargs['axis'] or axis
+        if isinstance(axis, (list, tuple)) and len(axis) == 1:
+            axis = axis[0]
+        if not isinstance(axis, Integral):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Value of keyword argument 'axis' in 'accumulate' method of {f}"
+                " must be an integer (value {v}).".format(
+                    f=ufunc_name, v=axis))
+    
+    # Create output data (if needed)
+    # TODO: Fix storage
+    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
+
+    # Create subgraph
+    shape = datadesc.shape
+    map_range = {"__i{}".format(i): "0:{}".format(s)
+                 for i, s in enumerate(shape) if i != axis}
+    input_idx = ','.join(["__i{}".format(i)
+                          if i != axis else "0:{}".format(shape[i])
+                          for i in range(len(shape))])
+    output_idx = ','.join(["__i{}".format(i)
+                           if i != axis else "0:{}".format(shape[i])
+                           for i in range(len(shape))])
+
+    nested_sdfg = dace.SDFG(state.label + "_for_loop")
+    nested_sdfg._temp_transients = sdfg._temp_transients
+    inpconn = nested_sdfg.temp_data_name()
+    outconn = nested_sdfg.temp_data_name()
+    shape = [datadesc.shape[axis]]
+    strides = [datadesc.strides[axis]]
+    nested_sdfg.add_array(inpconn, shape, result_type, strides=strides)
+    nested_sdfg.add_array(outconn, shape, result_type, strides=strides)
+    
+    init_state = nested_sdfg.add_state(label="init")
+    r = init_state.add_read(inpconn)
+    w = init_state.add_write(outconn)
+    init_state.add_nedge(r, w, dace.Memlet.simple(
+        inpconn, '0', other_subset_str='0'))
+
+    body_state = nested_sdfg.add_state(label="body")
+    r1 = body_state.add_read(inpconn)
+    r2 = body_state.add_read(outconn)
+    w = body_state.add_write(outconn)
+    t = body_state.add_tasklet(
+        name=state.label + "_for_loop_tasklet",
+        inputs=ufunc_impl['inputs'],
+        outputs=ufunc_impl['outputs'],
+        code=ufunc_impl['code']
+    )
+
+    loop_idx = "__i{}".format(axis)
+    loop_idx_m1 = "__i{} - 1".format(axis)
+    body_state.add_edge(r1, None, t, '__in1',
+                        dace.Memlet.simple(inpconn, loop_idx))
+    body_state.add_edge(r2, None, t, '__in2',
+                        dace.Memlet.simple(outconn, loop_idx_m1))
+    body_state.add_edge(t, '__out', w, None,
+                        dace.Memlet.simple(outconn, loop_idx))
+
+    init_expr = str(1)
+    cond_expr = "__i{i} < {s}".format(i=axis, s=shape[0])
+    incr_expr = "__i{} + 1".format(axis)
+    nested_sdfg.add_loop(init_state, body_state, None, loop_idx,
+                         init_expr, cond_expr, incr_expr)
+
+    sdfg._temp_transients = nested_sdfg._temp_transients
+
+    r = state.add_read(inputs[0])
+    w = state.add_write(outputs[0])
+    codenode = state.add_nested_sdfg(nested_sdfg, sdfg,
+                                        {inpconn}, {outconn})
+    me, mx = state.add_map(state.label + '_map', map_range)
+    state.add_memlet_path(r, me, codenode,
+                          memlet=dace.Memlet.simple(inputs[0], input_idx),
+                          dst_conn=inpconn)
+    state.add_memlet_path(codenode, mx, w,
+                          memlet=dace.Memlet.simple(outputs[0], output_idx),
+                          src_conn=outconn)
+
+    return outputs
