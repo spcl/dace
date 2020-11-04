@@ -3272,25 +3272,14 @@ class ProgramVisitor(ExtNodeVisitor):
             npfuncname = until(name, '.')
             func = getattr(self.globals[modname], npfuncname)
             if isinstance(func, numpy.ufunc):
-                print("NumPy ufunc {}".format(npfuncname))
-                if npfuncname not in replacements.ufuncs.keys():
-                    raise NotImplementedError
-                found_ufunc = True
                 ufunc_name = npfuncname
-                ufunc_impl = replacements.ufuncs[ufunc_name]
                 if len(funcname) > len(modname) + len(npfuncname) + 1:
-                    name = funcname[len(modname) + len(npfuncname) + 2:]
-                    print("NumPy ufunc {}, method {}".format(npfuncname, name))
-                    if name == "reduce":
-                        func = replacements.implement_ufunc_reduce
-                    elif name == "accumulate":
-                        func = replacements.implement_ufunc_accumulate
-                    elif name == "outer":
-                        func = replacements.implement_ufunc_outer
-                    else:
-                        raise NotImplementedError
+                    method_name = funcname[len(modname) + len(npfuncname) + 2:]
                 else:
-                    func = replacements.implement_ufunc
+                    method_name = None
+                func = oprepo.Replacements.get_ufunc(method_name)
+                if func:
+                    found_ufunc = True
 
         # Otherwise, try to find a default implementation for the SDFG
         if not found_ufunc:
@@ -3318,7 +3307,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if found_ufunc:
             result = func(self, node, self.sdfg, self.last_state,
-                          ufunc_name, ufunc_impl, args, keywords)
+                          ufunc_name, args, keywords)
         else:
             result = func(self.sdfg, self.last_state, *args, **keywords)
 

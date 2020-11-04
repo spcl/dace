@@ -2204,12 +2204,12 @@ def _create_subgraph(visitor: 'ProgramVisitor',
         )
 
 
+@oprepo.replaces_ufunc('ufunc')
 def implement_ufunc(visitor: 'ProgramVisitor',
                     ast_node: ast.Call,
                     sdfg: SDFG,
                     state: SDFGState,
                     ufunc_name: str,
-                    ufunc_impl: Dict[str, Any],
                     args: Sequence[UfuncInput],
                     kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements a NumPy ufunc.
@@ -2219,7 +2219,6 @@ def implement_ufunc(visitor: 'ProgramVisitor',
         :param sdfg: SDFG object
         :param state: SDFG State object
         :param ufunc_name: Name of the ufunc
-        :param ufunc_impl: Information on how the ufunc must be implemented
         :param args: Positional arguments of the ufunc call
         :param kwargs: Keyword arguments of the ufunc call
 
@@ -2227,6 +2226,13 @@ def implement_ufunc(visitor: 'ProgramVisitor',
 
         :returns: List of output datanames
     """
+
+    try:
+        ufunc_impl = ufuncs[ufunc_name]
+    except KeyError:
+        raise mem_parser.DaceSyntaxError(
+            visitor, ast_node,
+            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = len(ufunc_impl['inputs'])
@@ -2386,12 +2392,12 @@ def _validate_axis_kword(
     return axis, intermediate_shape, expected_out_shape
 
 
+@oprepo.replaces_ufunc('reduce')
 def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                            ast_node: ast.Call,
                            sdfg: SDFG,
                            state: SDFGState,
                            ufunc_name: str,
-                           ufunc_impl: Dict[str, Any],
                            args: Sequence[UfuncInput],
                            kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'reduce' method of a NumPy ufunc.
@@ -2401,7 +2407,6 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         :param sdfg: SDFG object
         :param state: SDFG State object
         :param ufunc_name: Name of the ufunc
-        :param ufunc_impl: Information on how the ufunc must be implemented
         :param args: Positional arguments of the ufunc call
         :param kwargs: Keyword arguments of the ufunc call
 
@@ -2409,6 +2414,13 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
 
         :returns: List of output datanames
     """
+
+    try:
+        ufunc_impl = ufuncs[ufunc_name]
+    except KeyError:
+        raise mem_parser.DaceSyntaxError(
+            visitor, ast_node,
+            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = 1
@@ -2563,12 +2575,12 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
     return outputs
 
 
+@oprepo.replaces_ufunc('accumulate')
 def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
                                ast_node: ast.Call,
                                sdfg: SDFG,
                                state: SDFGState,
                                ufunc_name: str,
-                               ufunc_impl: Dict[str, Any],
                                args: Sequence[UfuncInput],
                                kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'accumulate' method of a NumPy ufunc.
@@ -2578,7 +2590,6 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
         :param sdfg: SDFG object
         :param state: SDFG State object
         :param ufunc_name: Name of the ufunc
-        :param ufunc_impl: Information on how the ufunc must be implemented
         :param args: Positional arguments of the ufunc call
         :param kwargs: Keyword arguments of the ufunc call
 
@@ -2586,6 +2597,13 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
 
         :returns: List of output datanames
     """
+
+    try:
+        ufunc_impl = ufuncs[ufunc_name]
+    except KeyError:
+        raise mem_parser.DaceSyntaxError(
+            visitor, ast_node,
+            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = 1
@@ -2705,12 +2723,12 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     return outputs
 
 
+@oprepo.replaces_ufunc('outer')
 def implement_ufunc_outer(visitor: 'ProgramVisitor',
                           ast_node: ast.Call,
                           sdfg: SDFG,
                           state: SDFGState,
                           ufunc_name: str,
-                          ufunc_impl: Dict[str, Any],
                           args: Sequence[UfuncInput],
                           kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'outer' method of a NumPy ufunc.
@@ -2720,7 +2738,6 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
         :param sdfg: SDFG object
         :param state: SDFG State object
         :param ufunc_name: Name of the ufunc
-        :param ufunc_impl: Information on how the ufunc must be implemented
         :param args: Positional arguments of the ufunc call
         :param kwargs: Keyword arguments of the ufunc call
 
@@ -2728,6 +2745,13 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
 
         :returns: List of output datanames
     """
+
+    try:
+        ufunc_impl = ufuncs[ufunc_name]
+    except KeyError:
+        raise mem_parser.DaceSyntaxError(
+            visitor, ast_node,
+            "Missing implementation for NumPy ufunc {f}.",format(f=ufunc_name))
 
     # Validate number of arguments, inputs, and outputs
     num_inputs = len(ufunc_impl['inputs'])
