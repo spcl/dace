@@ -165,7 +165,8 @@ class LoopToMap(DetectLoop):
                 body.add_nedge(n, exit, memlet.Memlet())
 
         # Get rid of the loop exit condition edge
-        sdfg.remove_edge(sdfg.edges_between(guard, after)[0])
+        after_edge = sdfg.edges_between(guard, after)[0]
+        sdfg.remove_edge(after_edge)
 
         # Remove the assignment on the edge to the guard
         for e in sdfg.in_edges(guard):
@@ -179,8 +180,11 @@ class LoopToMap(DetectLoop):
         # Get rid of backedge to guard
         sdfg.remove_edge(sdfg.edges_between(body, guard)[0])
 
-        # Route body directly to after state
-        sdfg.add_edge(body, after, sd.InterstateEdge())
+        # Route body directly to after state, maintaining any other assignments
+        # it might have had
+        sdfg.add_edge(
+            body, after,
+            sd.InterstateEdge(assignments=after_edge.data.assignments))
 
         # Remove symbol from SDFG
         if itervar in sdfg.symbols:

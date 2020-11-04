@@ -13,7 +13,7 @@ from dace.config import Config
 
 @registry.autoregister_params(strict=True)
 class EndStateElimination(transformation.Transformation):
-    """ 
+    """
     End-state elimination removes a redundant state that has one incoming edge
     and no contents.
     """
@@ -60,7 +60,7 @@ class EndStateElimination(transformation.Transformation):
 
 @registry.autoregister_params(strict=True)
 class StateAssignElimination(transformation.Transformation):
-    """ 
+    """
     State assign elimination removes all assignments into the final state
     and subsumes the assigned value into its contents.
     """
