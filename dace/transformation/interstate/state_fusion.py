@@ -25,9 +25,9 @@ class CCDesc:
 @registry.autoregister_params(strict=True)
 class StateFusion(transformation.Transformation):
     """ Implements the state-fusion transformation.
-        
+
         State-fusion takes two states that are connected through a single edge,
-        and fuses them into one state. If strict, only applies if no memory 
+        and fuses them into one state. If strict, only applies if no memory
         access hazards are created.
     """
 
@@ -80,9 +80,9 @@ class StateFusion(transformation.Transformation):
                           inputs_a: bool, graph_b: SDFGState,
                           group_b: List[nodes.AccessNode],
                           inputs_b: bool) -> bool:
-        """ 
+        """
         Performs an all-pairs check for subset intersection on two
-        groups of nodes. If group intersects or result is indeterminate, 
+        groups of nodes. If group intersects or result is indeterminate,
         returns True as a precaution.
         :param graph_a: The graph in which the first set of nodes reside.
         :param group_a: The first set of nodes to check.

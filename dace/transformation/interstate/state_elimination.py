@@ -58,6 +58,22 @@ class EndStateElimination(transformation.Transformation):
         sdfg.remove_node(state)
 
 
+def _assignments_to_consider(sdfg, edge):
+    assignments_to_consider = {}
+    for var, assign in edge.data.assignments.items():
+        # Assignments must not use a data container
+        as_symbolic = symbolic.pystr_to_symbolic(assign)
+        for s in as_symbolic.free_symbols:
+            # They will appear either as symbols...
+            if str(s) in sdfg.arrays:
+                break
+        else:
+            # ...or as "functions" (when they are subscripted)
+            if not symbolic.contains_sympy_functions(as_symbolic):
+                assignments_to_consider[var] = assign
+    return assignments_to_consider
+
+
 @registry.autoregister_params(strict=True)
 class StateAssignElimination(transformation.Transformation):
     """
@@ -83,13 +99,7 @@ class StateAssignElimination(transformation.Transformation):
             return False
         edge = in_edges[0]
 
-        assignments_to_consider = copy.copy(edge.data.assignments)
-
-        # Assignments must not contain subscripts
-        for var, assign in edge.data.assignments.items():
-            if (symbolic.contains_sympy_functions(
-                    symbolic.pystr_to_symbolic(assign))):
-                del assignments_to_consider[var]
+        assignments_to_consider = _assignments_to_consider(sdfg, edge)
 
         # No assignments to eliminate
         if len(assignments_to_consider) == 0:
@@ -128,10 +138,8 @@ class StateAssignElimination(transformation.Transformation):
         # undefined behavior (e.g., {m: n, n: m}), we can replace each
         # assignment separately.
         keys_to_remove = set()
-        for varname, assignment in edge.data.assignments.items():
-            if (symbolic.contains_sympy_functions(
-                    symbolic.pystr_to_symbolic(assignment))):
-                continue
+        assignments_to_consider = _assignments_to_consider(sdfg, edge)
+        for varname, assignment in assignments_to_consider.items():
             state.replace(varname, assignment)
             keys_to_remove.add(varname)
 
