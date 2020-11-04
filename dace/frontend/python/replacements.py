@@ -2596,14 +2596,14 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
         if not isinstance(datadesc, data.Array):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
-                "Cannot accumulate on a data.Scalar or data.Stream.")
+                "Cannot accumulate on a dace.data.Scalar or dace.data.Stream.")
         out_shape = datadesc.shape
         result_type = datadesc.dtype
     else:
         raise mem_parser.DaceSyntaxError(
-            visitor, ast_node, "Can accumulate only on a data.Array.")
+            visitor, ast_node, "Can accumulate only on a dace.data.Array.")
     
-    # Valdate 'axis' keyword argument
+    # Validate 'axis' keyword argument
     axis = 0
     if 'axis' in kwargs.keys():
         axis = kwargs['axis'] or axis
@@ -2615,6 +2615,13 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
                 "Value of keyword argument 'axis' in 'accumulate' method of {f}"
                 " must be an integer (value {v}).".format(
                     f=ufunc_name, v=axis))
+        if axis >= len(out_shape):
+            raise mem_parser.DaceSyntaxError(
+                visitor, ast_node,
+                "Axis {a} is out of bounds for dace.data.Array of dimension "
+                "{l}".format(a=axis, l=len(out_shape)))
+        # Normalize negative axis
+        axis = normalize_axes([axis], len(out_shape))[0]
     
     # Create output data (if needed)
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
