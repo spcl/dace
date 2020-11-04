@@ -1929,18 +1929,22 @@ def _create_output(sdfg: SDFG,
         :returns: New outputs of the ufunc call
     """
 
-    # Set storage typpe
-    storage = storage or dtypes.StorageType.Default
-
     # Check if the result is scalar
     is_output_scalar = True
     for arg in inputs:
         if isinstance(arg, str) and arg in sdfg.arrays.keys():
             datadesc = sdfg.arrays[arg]
+            # If storage is not set, then choose the storage of the first
+            # data input.
+            if not storage:
+                storage = datadesc.storage
             # TODO: What about streams?
             if not isinstance(datadesc, data.Scalar):
                 is_output_scalar = False
                 break
+
+    # Set storage
+    storage = storage or dtypes.StorageType.Default
 
     # Create output data (if needed)
     for i, arg in enumerate(outputs):
@@ -2255,7 +2259,6 @@ def implement_ufunc(visitor: 'ProgramVisitor',
             result_type = dtype
 
     # Create output data (if needed)
-    # TODO: Fix storage
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
@@ -2462,7 +2465,6 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         result_type = _sym_type(arg)
 
     # Create output data (if needed)
-    # TODO: Fix storage
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type,
                              force_scalar=True)
     if keepdims:
@@ -2615,7 +2617,6 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
                     f=ufunc_name, v=axis))
     
     # Create output data (if needed)
-    # TODO: Fix storage
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Create subgraph
@@ -2782,7 +2783,6 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
             result_type = dtype
 
     # Create output data (if needed)
-    # TODO: Fix storage
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
