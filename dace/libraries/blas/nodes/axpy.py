@@ -30,9 +30,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # ---------- ----------
         # MEMORY LOCATIONS
         # ---------- ----------
-        vec_add_sdfg.add_array('_x', shape=[n/veclen], dtype=vec_type)
-        vec_add_sdfg.add_array('_y', shape=[n/veclen], dtype=vec_type)
-        vec_add_sdfg.add_array('_res', shape=[n/veclen], dtype=vec_type)
+        vec_add_sdfg.add_array('_x', shape=[n / veclen], dtype=vec_type)
+        vec_add_sdfg.add_array('_y', shape=[n / veclen], dtype=vec_type)
+        vec_add_sdfg.add_array('_res', shape=[n / veclen], dtype=vec_type)
 
         x_in = vec_add_state.add_read('_x')
         y_in = vec_add_state.add_read('_y')
@@ -49,28 +49,23 @@ class ExpandAxpyVectorized(ExpandTransformation):
             'z_con = {} * x_con + y_con'.format(a))
 
         vec_add_state.add_memlet_path(x_in,
-                                     vec_map_entry,
-                                     vecAdd_tasklet,
-                                     dst_conn='x_con',
-                                     memlet=dace.Memlet.simple(
-                                         x_in.data,
-                                         'i'))
+                                      vec_map_entry,
+                                      vecAdd_tasklet,
+                                      dst_conn='x_con',
+                                      memlet=dace.Memlet.simple(x_in.data, 'i'))
 
         vec_add_state.add_memlet_path(y_in,
-                                     vec_map_entry,
-                                     vecAdd_tasklet,
-                                     dst_conn='y_con',
-                                     memlet=dace.Memlet.simple(
-                                         y_in.data,
-                                         'i'))
+                                      vec_map_entry,
+                                      vecAdd_tasklet,
+                                      dst_conn='y_con',
+                                      memlet=dace.Memlet.simple(y_in.data, 'i'))
 
         vec_add_state.add_memlet_path(vecAdd_tasklet,
-                                     vec_map_exit,
-                                     z_out,
-                                     src_conn='z_con',
-                                     memlet=dace.Memlet.simple(
-                                         z_out.data,
-                                         'i'))
+                                      vec_map_exit,
+                                      z_out,
+                                      src_conn='z_con',
+                                      memlet=dace.Memlet.simple(
+                                          z_out.data, 'i'))
 
         return vec_add_sdfg
 
@@ -108,17 +103,17 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         # vec_add_sdfg.add_scalar('_a', dtype=dtype, storage=dtypes.StorageType.FPGA_Global)
 
         x_in = vec_add_state.add_stream('_x',
-                                       vec_type,
-                                       buffer_size=buffer_size,
-                                       storage=dtypes.StorageType.FPGA_Local)
-        y_in = vec_add_state.add_stream('_y',
-                                       vec_type,
-                                       buffer_size=buffer_size,
-                                       storage=dtypes.StorageType.FPGA_Local)
-        z_out = vec_add_state.add_stream('_res',
                                         vec_type,
                                         buffer_size=buffer_size,
                                         storage=dtypes.StorageType.FPGA_Local)
+        y_in = vec_add_state.add_stream('_y',
+                                        vec_type,
+                                        buffer_size=buffer_size,
+                                        storage=dtypes.StorageType.FPGA_Local)
+        z_out = vec_add_state.add_stream('_res',
+                                         vec_type,
+                                         buffer_size=buffer_size,
+                                         storage=dtypes.StorageType.FPGA_Local)
 
         # ---------- ----------
         # COMPUTE
@@ -133,25 +128,23 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             'z_con = {} * x_con + y_con'.format(a))
 
         vec_add_state.add_memlet_path(x_in,
-                                     vec_map_entry,
-                                     vecAdd_tasklet,
-                                     dst_conn='x_con',
-                                     memlet=dace.Memlet.simple(
-                                         x_in.data, '0'))
+                                      vec_map_entry,
+                                      vecAdd_tasklet,
+                                      dst_conn='x_con',
+                                      memlet=dace.Memlet.simple(x_in.data, '0'))
 
         vec_add_state.add_memlet_path(y_in,
-                                     vec_map_entry,
-                                     vecAdd_tasklet,
-                                     dst_conn='y_con',
-                                     memlet=dace.Memlet.simple(
-                                         y_in.data, '0'))
+                                      vec_map_entry,
+                                      vecAdd_tasklet,
+                                      dst_conn='y_con',
+                                      memlet=dace.Memlet.simple(y_in.data, '0'))
 
         vec_add_state.add_memlet_path(vecAdd_tasklet,
-                                     vec_map_exit,
-                                     z_out,
-                                     src_conn='z_con',
-                                     memlet=dace.Memlet.simple(
-                                         z_out.data, '0'))
+                                      vec_map_exit,
+                                      z_out,
+                                      src_conn='z_con',
+                                      memlet=dace.Memlet.simple(
+                                          z_out.data, '0'))
 
         return vec_add_sdfg
 
@@ -162,8 +155,8 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
         return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a, node.buffer_size)
-
+                                                 node.n, node.a,
+                                                 node.buffer_size)
 
 
 @dace.library.node
@@ -250,7 +243,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if size != out_memlet.subset.size():
             raise ValueError("Output of axpy must have same size as input")
 
-
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):
             raise ValueError("WCR on axpy memlets not supported")
@@ -259,23 +251,18 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def make_stream_reader(self):
         return {
-            "_x":
-            StreamReadVector('-',
-                             self.n,
-                             self.dtype,
-                             veclen=int(self.veclen)),
-            "_y":
-            StreamReadVector('-',
-                             self.n,
-                             self.dtype,
-                             veclen=int(self.veclen))
+            "_x": StreamReadVector('-',
+                                   self.n,
+                                   self.dtype,
+                                   veclen=int(self.veclen)),
+            "_y": StreamReadVector('-',
+                                   self.n,
+                                   self.dtype,
+                                   veclen=int(self.veclen))
         }
 
     def make_stream_writer(self):
         return {
             "_res":
-            StreamWriteVector('-',
-                              self.n,
-                              self.dtype,
-                              veclen=int(self.veclen))
+            StreamWriteVector('-', self.n, self.dtype, veclen=int(self.veclen))
         }

@@ -10,7 +10,6 @@ from dace.memlet import Memlet
 from dace import dtypes
 
 
-
 # ---------- ----------
 # NUMPY
 # ---------- ----------
@@ -36,7 +35,13 @@ def aligned_ndarray(arr, alignment=64):
 # ---------- ----------
 # SDFG
 # ---------- ----------
-def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, veclen=1):
+def fpga_copy_CPU_to_global(sdfg,
+                            state,
+                            sources,
+                            sizes,
+                            types,
+                            bank=None,
+                            veclen=1):
     """Copies memory from the CPU host to FPGA Global memory.
     """
 
@@ -50,13 +55,11 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
 
         vec_type = vector(dtype, veclen)
 
-        name, desc = sdfg.add_array(
-            dest,
-            shape=[size/veclen],
-            dtype=vec_type,
-            storage=dtypes.StorageType.FPGA_Global,
-            transient=True
-        )
+        name, desc = sdfg.add_array(dest,
+                                    shape=[size / veclen],
+                                    dtype=vec_type,
+                                    storage=dtypes.StorageType.FPGA_Global,
+                                    transient=True)
         if bank is not None:
             if isinstance(bank, list):
                 desc.location = {"bank": bank[i]}
@@ -67,11 +70,10 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
         cpu_in = state.add_read(src)
         fpga_out = state.add_write(dest)
 
-        
-        state.add_memlet_path(
-            cpu_in, fpga_out,
-            memlet=Memlet.simple(cpu_in.data, "0:{}/{}".format(size, veclen))
-        )
+        state.add_memlet_path(cpu_in,
+                              fpga_out,
+                              memlet=Memlet.simple(
+                                  cpu_in.data, "0:{}/{}".format(size, veclen)))
 
         outputs.append(fpga_out)
         names.append(dest)
@@ -79,8 +81,13 @@ def fpga_copy_CPU_to_global(sdfg, state, sources, sizes, types, bank=None, vecle
     return (outputs, names)
 
 
-
-def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, veclen=1):
+def fpga_copy_global_to_CPU(sdfg,
+                            state,
+                            destinations,
+                            sizes,
+                            types,
+                            bank=None,
+                            veclen=1):
     """Copies memory from FPGA Global memory back to CPU host memory.
     """
 
@@ -94,13 +101,11 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, 
 
         vec_type = vector(dtype, veclen)
 
-        name, desc = sdfg.add_array(
-            src,
-            shape=[size/veclen],
-            dtype=vec_type,
-            storage=dtypes.StorageType.FPGA_Global,
-            transient=True
-        )
+        name, desc = sdfg.add_array(src,
+                                    shape=[size / veclen],
+                                    dtype=vec_type,
+                                    storage=dtypes.StorageType.FPGA_Global,
+                                    transient=True)
         if bank is not None:
             if isinstance(bank, list):
                 desc.location = {"bank": bank[i]}
@@ -111,10 +116,10 @@ def fpga_copy_global_to_CPU(sdfg, state, destinations, sizes, types, bank=None, 
         fpga_in = state.add_read(src)
         cpu_out = state.add_write(dest)
 
-        state.add_memlet_path(
-            fpga_in, cpu_out,
-            memlet=Memlet.simple(cpu_out.data, "0:{}/{}".format(size, veclen))
-        )
+        state.add_memlet_path(fpga_in,
+                              cpu_out,
+                              memlet=Memlet.simple(
+                                  cpu_out.data, "0:{}/{}".format(size, veclen)))
 
         outputs.append(fpga_in)
         names.append(src)
