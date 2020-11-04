@@ -167,8 +167,7 @@ def parse_dace_program(f,
     # and symbols to their names
     src_ast = GlobalResolver({
         k: v
-        for k, v in global_vars.items()
-        if not k in argtypes and k != '_'
+        for k, v in global_vars.items() if not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -605,18 +604,12 @@ class GlobalResolver(ast.NodeTransformer):
             return None
 
         if isinstance(value, list):
-            elts = [
-                self.global_value_to_node(v, parent_node)
-                for v in value
-            ]
+            elts = [self.global_value_to_node(v, parent_node) for v in value]
             if any(e is None for e in elts):
                 return None
             newnode = ast.List(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, tuple):
-            elts = [
-                self.global_value_to_node(v, parent_node)
-                for v in value
-            ]
+            elts = [self.global_value_to_node(v, parent_node) for v in value]
             if any(e is None for e in elts):
                 return None
             newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
@@ -648,11 +641,18 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.globals:
                 global_val = self.globals[node.id]
                 newnode = self.global_value_to_node(global_val,
-                                                    parent_node=node, recurse=True)
+                                                    parent_node=node,
+                                                    recurse=True)
                 if newnode is None:
                     return node
                 return newnode
         return node
+
+    def visit_keyword(self, node: ast.keyword):
+        if node.arg in self.globals and isinstance(self.globals[node.arg],
+                                                   symbolic.symbol):
+            node.arg = self.globals[node.arg].name
+        return self.generic_visit(node)
 
 
 class TaskletTransformer(ExtNodeTransformer):

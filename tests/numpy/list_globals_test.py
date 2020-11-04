@@ -44,11 +44,10 @@ def local_list_test():
 
 def local_list_test_with_slice():
     local_axes = [1, 2, 0, 100]
-    local_axes = local_axes[0:-1]
 
     @dace
     def local_list(A: dace.int32[3, 2, 4]):
-        return np.transpose(A, axes=local_axes)
+        return np.transpose(A, axes=local_axes[0:-2])
 
     inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
     result = local_list(A=inp.copy())
@@ -69,7 +68,8 @@ def local_list_with_symbols_test():
     result = local_list(A=inp.copy())
     assert np.allclose(result, np.sum(inp.copy(), axis=1))
 
-def local_list_nested_lists():
+
+def local_list_nested_lists_test():
     N = dace.symbol('N')
     local_shape = [[N], 4]
 
@@ -89,10 +89,10 @@ def local_list_nested_lists():
 
     assert False, "excepted exception"
 
+
 if __name__ == "__main__":
     local_func_access_global_list_test()
     global_func_access_global_list_test()
     local_list_test()
-    local_list_test_with_slice()
     local_list_with_symbols_test()
-    local_list_nested_lists()
+    local_list_nested_lists_test()
