@@ -2602,7 +2602,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                 intermediate_node = n
                 break
         if not intermediate_node:
-            raise Exception("Something went wrong!")
+            raise ValueError("Keyword argument 'keepdims' is True, but "
+                             "intermediate access node was not found.")
         out_node = state.add_write(outputs[0])
         state.add_nedge(
             intermediate_node, out_node,
