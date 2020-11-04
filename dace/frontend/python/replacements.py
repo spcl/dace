@@ -2086,7 +2086,7 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                     sdfg.add_scalar(name, where_data.dtype, transient=True)
                     r = cond_state.add_read(where)
                     w = cond_state.add_write(name)
-                    cond_state.add_nedge(r, w, dace.Memlet.simple(r, '0'))
+                    cond_state.add_nedge(r, w, dace.Memlet("{}[0]".format(r)))
                 true_state = sdfg.add_state(label=cond_state.label + '_true')
                 state = true_state
                 visitor.last_state = state
@@ -2163,7 +2163,7 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                                            transient=True)
                     r = cond_state.add_read(nested_sdfg_inputs[where][0])
                     w = cond_state.add_write(name)
-                    cond_state.add_nedge(r, w, dace.Memlet.simple(r, '0'))
+                    cond_state.add_nedge(r, w, dace.Memlet("{}[0]".format(r)))
 
                 sdfg._temp_transients = nested_sdfg._temp_transients
 
@@ -2212,15 +2212,17 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                 for arg in inputs + [where]:
                     n = state.add_read(arg)
                     conn, idx = nested_sdfg_inputs[arg]
-                    state.add_memlet_path(n, me, codenode,
-                                          memlet=dace.Memlet.simple(n, idx),
-                                          dst_conn=conn)
+                    state.add_memlet_path(
+                        n, me, codenode,
+                        memlet=dace.Memlet("{a}[{i}]".format(a=n, i=idx)),
+                        dst_conn=conn)
                 for arg in outputs:
                     n = state.add_write(arg)
                     conn, idx = nested_sdfg_outputs[arg]
-                    state.add_memlet_path(codenode, mx, n,
-                                          memlet=dace.Memlet.simple(n, idx),
-                                          src_conn=conn)
+                    state.add_memlet_path(
+                        codenode, mx, n,
+                        memlet=dace.Memlet("{a}[{i}]".format(a=n, i=idx)),
+                        src_conn=conn)
                 return
 
         input_memlets = dict()
@@ -2555,18 +2557,19 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                             if i not in axis
                         },
                         inputs={
-                            "__inp": dace.Memlet.simple(inputs[0], ','.join([
-                                "0" if i in axis else "__i{i}".format(i=i)
-                                for i in range(len(inpdata.shape))
-                            ]))
+                            "__inp": dace.Memlet("{a}[{i}]".format(
+                                a=inputs[0], i=','.join([
+                                    "0" if i in axis else "__i{i}".format(i=i)
+                                    for i in range(len(inpdata.shape))
+                            ])))
                         },
                         outputs={
-                            "__out": dace.Memlet.simple(
-                                intermediate_name, ','.join([
+                            "__out": dace.Memlet("{a}[{i}]".format(
+                                a=intermediate_name, i=','.join([
                                     "__i{i}".format(i=i)
                                     for i in range(len(inpdata.shape))
                                     if i not in axis
-                            ]))
+                            ])))
                         },
                         code="__out = __inp",
                         external_edges=True
@@ -2575,7 +2578,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                     r = state.add_read(inputs[0])
                     w = state.add_write(intermediate_name)
                     state.add.nedge(
-                        r, w, dace.Memlet.simple.from_array(inpdata))
+                        r, w, dace.Memlet.from_array(inputs[0], inpdata))
                 state = visitor._add_state(state.label + 'b')
             else: 
                 initial = intermediate_name
@@ -2589,8 +2592,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                                     "__out = {}".format(inputs[0]))
         out_node = state.add_write(intermediate_name)
         datadesc = sdfg.arrays[intermediate_name]
-        state.add_edge(tasklet, '__out', out_node, None, dace.Memlet.simple(
-            intermediate_name, subsets.Range.from_array(datadesc)))
+        state.add_edge(tasklet, '__out', out_node, None,
+                       dace.Memlet.from_array(intermediate_name, datadesc))
     
     if keepdims:
         intermediate_node = None
@@ -2601,8 +2604,9 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         if not intermediate_node:
             raise Exception("Something went wrong!")
         out_node = state.add_write(outputs[0])
-        state.add_nedge(intermediate_node, out_node, dace.Memlet.simple(
-           outputs[0], subsets.Range.from_array(sdfg.arrays[outputs[0]])))
+        state.add_nedge(
+            intermediate_node, out_node,
+            dace.Memlet.from_array(outputs[0], sdfg.arrays[outputs[0]]))
 
     return outputs
 
@@ -2705,8 +2709,8 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     init_state = nested_sdfg.add_state(label="init")
     r = init_state.add_read(inpconn)
     w = init_state.add_write(outconn)
-    init_state.add_nedge(r, w, dace.Memlet.simple(
-        inpconn, '0', other_subset_str='0'))
+    init_state.add_nedge(r, w, dace.Memlet("{a}[{i}] -> {oi}".format(
+        a=inpconn, i='0', oi='0')))
 
     body_state = nested_sdfg.add_state(label="body")
     r1 = body_state.add_read(inpconn)
@@ -2722,11 +2726,12 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     loop_idx = "__i{}".format(axis)
     loop_idx_m1 = "__i{} - 1".format(axis)
     body_state.add_edge(r1, None, t, '__in1',
-                        dace.Memlet.simple(inpconn, loop_idx))
-    body_state.add_edge(r2, None, t, '__in2',
-                        dace.Memlet.simple(outconn, loop_idx_m1))
+                        dace.Memlet("{a}[{i}]".format(a=inpconn, i=loop_idx)))
+    body_state.add_edge(
+        r2, None, t, '__in2',
+        dace.Memlet("{a}[{i}]".format(a=outconn, i=loop_idx_m1)))
     body_state.add_edge(t, '__out', w, None,
-                        dace.Memlet.simple(outconn, loop_idx))
+                        dace.Memlet("{a}[{i}]".format(a=outconn, i=loop_idx)))
 
     init_expr = str(1)
     cond_expr = "__i{i} < {s}".format(i=axis, s=shape[0])
@@ -2741,12 +2746,14 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     codenode = state.add_nested_sdfg(nested_sdfg, sdfg,
                                         {inpconn}, {outconn})
     me, mx = state.add_map(state.label + '_map', map_range)
-    state.add_memlet_path(r, me, codenode,
-                          memlet=dace.Memlet.simple(inputs[0], input_idx),
-                          dst_conn=inpconn)
-    state.add_memlet_path(codenode, mx, w,
-                          memlet=dace.Memlet.simple(outputs[0], output_idx),
-                          src_conn=outconn)
+    state.add_memlet_path(
+        r, me, codenode,
+        memlet=dace.Memlet("{a}[{i}]".format(a=inputs[0], i=input_idx)),
+        dst_conn=inpconn)
+    state.add_memlet_path(
+        codenode, mx, w,
+        memlet=dace.Memlet("{a}[{i}]".format(a=outputs[0], i=output_idx)),
+        src_conn=outconn)
 
     return outputs
 
