@@ -380,6 +380,55 @@ def test_ufunc_add_outer_simple2():
     assert(np.array_equal(np.add.outer(A, B), s))
 
 
+@dace.program
+def ufunc_add_outer_simple3(A: dace.int32[2, 2, 2, 2, 2]):
+    return np.add.outer(A, 5)
+
+
+def test_ufunc_add_outer_simple3():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    s = ufunc_add_outer_simple3(A)
+    assert(np.array_equal(np.add.outer(A, 5), s))
+
+
+@dace.program
+def ufunc_add_outer_simple4(A: dace.int32[2, 2, 2, 2, N]):
+    return np.add.outer(A, N)
+
+
+def test_ufunc_add_outer_simple4():
+    N.set(10)
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, N.get()), dtype=np.int32)
+    s = ufunc_add_outer_simple4(A)
+    assert(np.array_equal(np.add.outer(A, N.get()), s))
+
+
+@dace.program
+def ufunc_add_outer_simple5(A: dace.int32[2, 2, 2, 2, 2], B: dace.int32):
+    return np.add.outer(A, B)
+
+
+def test_ufunc_add_outer_simple5():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(1,), dtype=np.int32)[0]
+    s = ufunc_add_outer_simple5(A, B)
+    assert(np.array_equal(np.add.outer(A, B), s))
+
+
+@dace.program
+def ufunc_add_outer_where(A: dace.int32[2, 2, 2, 2, 2],
+                          B: dace.int32[2, 2, 2, 2, 2],
+                          W: dace.int32[2, 2, 2, 2, 2, 2, 2, 2, 2, 2]):
+    return np.add.outer(A, B, where=W)
+
+
+def test_ufunc_add_outer_where():
+    A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
+    W = np.random.randint(1, size=(2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
+    s = ufunc_add_outer_where(A, B, W)
+    assert(np.array_equal(np.add.outer(A, B, where=W)[W], s[W]))
+
 
 if __name__ == "__main__":
     test_broadcast_success()
@@ -412,3 +461,7 @@ if __name__ == "__main__":
     test_ufunc_add_accumulate_axis2()
     test_ufunc_add_outer_simple()
     test_ufunc_add_outer_simple2()
+    test_ufunc_add_outer_simple3()
+    test_ufunc_add_outer_simple4()
+    test_ufunc_add_outer_simple5()
+    test_ufunc_add_outer_where()

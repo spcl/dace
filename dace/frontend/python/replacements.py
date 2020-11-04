@@ -2720,10 +2720,9 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
                                       num_inputs, num_outputs, num_args,
                                       args, kwargs)
 
-    # TODO: 'where' keyword currently unsupported
-    # # Validate 'where' keyword
-    # has_where, where = _validate_where_kword(visitor, ast_node, sdfg,
-    #                                          ufunc_name, kwargs)
+    # Validate 'where' keyword
+    has_where, where = _validate_where_kword(visitor, ast_node, sdfg,
+                                             ufunc_name, kwargs)
 
     # Validate data shapes
     out_shape = []
@@ -2755,6 +2754,11 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
         elif isinstance(arg, (Number, sp.Basic)):
             input_idx = None
         input_indices.append(input_idx)
+
+    if has_where and not isinstance(where, bool):
+        input_indices.append(output_idx)
+    else:
+        input_indices.append(None)
     
     # Placeholder for applying NumPy casting rules
     input_dtypes = []
@@ -2780,6 +2784,6 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     # Create subgraph
     _create_subgraph(visitor, sdfg, state, inputs, outputs, map_range,
                      input_indices, output_idx, out_shape, tasklet_params,
-                     has_where=False, where=None)
+                     has_where=has_where, where=where)
 
     return outputs    
