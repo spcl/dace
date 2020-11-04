@@ -153,6 +153,12 @@ class StateFusion(transformation.Transformation):
                                 if isinstance(n, nodes.AccessNode)
                                 and first_state.in_degree(n) > 0):
                 return False
+            # Fail if symbols assigned on the first edge are free symbols on the
+            # second edge
+            symbols_used = set(out_edges[0].data.free_symbols)
+            for e in in_edges:
+                if e.data.assignments.keys() & symbols_used:
+                    return False
 
         # There can be no state that have output edges pointing to both the
         # first and the second state. Such a case will produce a multi-graph.
