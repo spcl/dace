@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import astunparse
 from collections import OrderedDict
 import copy
 import itertools
@@ -603,16 +604,16 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
-    def global_value_to_node(self, value, parent_node=None):
-        # if parent node is None, we don't allow recursion into lists
-        if parent_node is None and isinstance(value, (list, tuple)):
+    def global_value_to_node(self, value, parent_node, recurse=False):
+        # if recurse is false, we don't allow recursion into lists
+        # this should not happen anyway; the globals dict should only contain single "level" lists
+        if not recurse and isinstance(value, (list, tuple)):
             # bail after more than one level of lists
             return None
 
         if isinstance(value, list):
             elts = [
-                ast.copy_location(
-                    self.global_value_to_node(v, parent_node=None), parent_node)
+                self.global_value_to_node(v, parent_node)
                 for v in value
             ]
             if any(e is None for e in elts):
@@ -620,15 +621,14 @@ class GlobalResolver(ast.NodeTransformer):
             newnode = ast.List(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, tuple):
             elts = [
-                ast.copy_location(
-                    self.global_value_to_node(v, parent_node=None), parent_node)
+                self.global_value_to_node(v, parent_node)
                 for v in value
             ]
             if any(e is None for e in elts):
                 return None
             newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
         elif isinstance(value, symbolic.symbol):
-            newnode = ast.Name(id=value.name, ctx=ast.Load)
+            newnode = ast.Name(id=value.name, ctx=ast.Load())
         else:
             # otherwise we must have a non list or tuple constant; emit a constant node
 
@@ -637,7 +637,11 @@ class GlobalResolver(ast.NodeTransformer):
                 newnode = ast.Constant(value=value, kind='')
             else:
                 newnode = ast.Num(n=value)
-        return newnode
+
+        if parent_node is not None:
+            return ast.copy_location(newnode, parent_node)
+        else:
+            return newnode
 
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.AugStore)):
@@ -648,8 +652,10 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.globals:
                 global_val = self.globals[node.id]
                 newnode = self.global_value_to_node(global_val,
-                                                    parent_node=node)
-                return ast.copy_location(newnode, node)
+                                                    parent_node=node, recurse=True)
+                if newnode is None:
+                    return node
+                return newnode
         return node
 
 
