@@ -251,18 +251,26 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def make_stream_reader(self):
         return {
-            "_x": StreamReadVector('-',
-                                   self.n,
-                                   self.dtype,
-                                   veclen=int(self.veclen)),
-            "_y": StreamReadVector('-',
-                                   self.n,
-                                   self.dtype,
-                                   veclen=int(self.veclen))
+            "_x":
+            StreamReadVector('-',
+                             self.n,
+                             self.dtype,
+                             veclen=int(self.veclen),
+                             buffer_size=self.buffer_size),
+            "_y":
+            StreamReadVector('-',
+                             self.n,
+                             self.dtype,
+                             veclen=int(self.veclen),
+                             buffer_size=self.buffer_size)
         }
 
     def make_stream_writer(self):
         return {
             "_res":
-            StreamWriteVector('-', self.n, self.dtype, veclen=int(self.veclen))
+            StreamWriteVector('-',
+                              self.n,
+                              self.dtype,
+                              veclen=int(self.veclen),
+                              buffer_size=self.buffer_size)
         }
