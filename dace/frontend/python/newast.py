@@ -2240,26 +2240,37 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add a guard state
         self._add_state('if_guard')
         # TODO: Experimental
-        cond = self.visit(node.test)
-        if cond in self.sdfg.arrays:
-            cond_dt = self.sdfg.arrays[cond]
-            if isinstance(cond_dt, data.Array):
-                cond += '[0]'
-            cond_else = 'not ({})'.format(cond)
+        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+        is_test_simple = isinstance(node.test, simple_ast_nodes)
+        if not is_test_simple:
+            if isinstance(node.test, ast.Compare):
+                is_left_simple = isinstance(node.test.left, simple_ast_nodes)
+                is_right_simple = (
+                    len(node.test.comparators) == 1 and isinstance(
+                        node.test.comparators[0], simple_ast_nodes))
+                if is_left_simple and is_right_simple:
+                    is_test_simple = True
+        if not is_test_simple:
+            visited_test = self.visit(node.test)
+            if visited_test in self.sdfg.arrays:
+                cond = visited_test
+                datadesc = self.sdfg.arrays[visited_test]
+                if isinstance(datadesc, data.Array):
+                    cond += '[0]'
+                cond_else = 'not ({})'.format(cond)
+            elif isinstance(visited_test, sympy.Basic):
+                cond = str(visited_test)
+                if isinstance(visited_test, sympy.Rel):
+                    cond_else = str(~visited_test)
+                else:
+                    cond_else = 'not ({})'.format(visited_test)
+            else:
+                raise DaceSyntaxError(
+                    self, node, "Unsupported if-statement: {}".format(
+                        astutils.unparse(node)))
         else:
             cond = astutils.unparse(node.test)
             cond_else = astutils.unparse(astutils.negate_expr(node.test))
-        # if (isinstance(node.test, ast.Compare)
-        #         and isinstance(node.test.left, ast.Subscript)):
-        #     cond = self.visit(node.test)
-        #     if cond in self.sdfg.arrays:
-        #         cond_dt = self.sdfg.arrays[cond]
-        #         if isinstance(cond_dt, data.Array):
-        #             cond += '[0]'
-        #     cond_else = 'not ({})'.format(cond)
-        # else:
-        #     cond = astutils.unparse(node.test)
-        #     cond_else = astutils.unparse(astutils.negate_expr(node.test))
 
         # Visit recursively
         laststate, first_if_state, last_if_state = \
