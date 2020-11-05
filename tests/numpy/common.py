@@ -7,7 +7,7 @@ import dace
 import numpy as np
 
 
-def compare_numpy_output(non_zero=False, positive=False):
+def compare_numpy_output(non_zero=False, positive=False, check_result_type=True):
     """Check that the `dace.program` func works identically to the python version (including errors).
 
        `func` will be run once as a dace program, and once using python. The inputs to the function
@@ -83,6 +83,8 @@ def compare_numpy_output(non_zero=False, positive=False):
                     type(dace_thrown), dace_thrown, type(numpy_thrown),
                     numpy_thrown)
             else:
+                if check_result_type:
+                    assert reference_result.dtype == dace_result.dtype, "expected {}, got {}".format(reference_result.dtype, dace_result.dtype)
                 assert np.allclose(reference_result, dace_result)
 
         return test

@@ -830,7 +830,7 @@ def _sym_type(expr: Union[symbolic.symbol, sp.Expr]) -> dtypes.typeclass:
     return dtypes.DTYPE_TO_TYPECLASS[np.result_type(*typeclasses).type]
 
 
-def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
+def _convert_type(dtype1, dtype2, operator, value1=None, value2=None) -> Tuple[dace.dtypes.typeclass]:
 
     complex_types = {dace.complex64, dace.complex128,
                      np.complex64, np.complex128}
@@ -895,7 +895,8 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
         else:
             # TODO: Does this always make sense?
             result_type = dace.DTYPE_TO_TYPECLASS[
-                np.result_type(dtype1.type, dtype2.type).type]
+                np.result_type(dtype1.type if value1 is None else value1,
+                               dtype2.type if value2 is None else value2).type]
             if max(type1, type2) == 3:
                 if type1 < 3:
                     left_cast = dtype2
@@ -998,6 +999,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
                        opcode: str):
     '''Operands are an Array and a Constant'''
 
+    # one of the two operands is an array, the other is a constant
     if left_operand in sdfg.arrays:
         left_arr = sdfg.arrays[left_operand]
         left_type = left_arr.dtype
@@ -1018,7 +1020,9 @@ def _array_const_binop(visitor: 'ProgramVisitor',
         tasklet_args = [str(left_operand), '__in2']
 
     result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+                                                       operator,
+                                                       value1=None if type(left_operand) is str else left_operand,
+                                                       value2=None if type(right_operand) is str else right_operand)
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])

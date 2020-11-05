@@ -27,8 +27,9 @@ def test_divl(A: dace.float64[5, 5], B: dace.float64):
     return A / B
 
 
-# A // B is not implemented correctly in dace for negative numbers
-@compare_numpy_output(non_zero=True, positive=True)
+# A // B is not implemented correctly in dace for negative numbers.
+# result type explicitly deviates from the numpy result
+@compare_numpy_output(non_zero=True, positive=True, check_result_type=False)
 def test_floordivl(A: dace.int64[5, 5], B: dace.int64):
     return A // B
 
@@ -40,63 +41,63 @@ def test_modl(A: dace.int64[5, 5], B: dace.int64):
 
 
 # numpy throws an error for negative B, dace doesn't
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, check_result_type=False)
 def test_powl(A: dace.int64[5, 5], B: dace.int64):
     return A**B
 
 
 # dace has weird behavior here too
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, check_result_type=False)
 def test_lshiftl(A: dace.int64[5, 5], B: dace.int64):
     return A << B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, check_result_type=False)
 def test_rshiftl(A: dace.int64[5, 5], B: dace.int64):
     return A >> B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_bitorl(A: dace.int64[5, 5], B: dace.int64):
     return A | B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_bitxorl(A: dace.int64[5, 5], B: dace.int64):
     return A ^ B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_bitandl(A: dace.int64[5, 5], B: dace.int64):
     return A & B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_eql(A: dace.int64[5, 5], B: dace.int64):
     return A == B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_noteql(A: dace.int64[5, 5], B: dace.int64):
     return A != B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_ltl(A: dace.int64[5, 5], B: dace.int64):
     return A < B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_ltel(A: dace.int64[5, 5], B: dace.int64):
     return A <= B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_gtl(A: dace.int64[5, 5], B: dace.int64):
     return A > B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_gtel(A: dace.int64[5, 5], B: dace.int64):
     return A >= B
 
@@ -124,7 +125,7 @@ def test_divr(A: dace.float64, B: dace.float64[5, 5]):
     return A / B
 
 
-@compare_numpy_output(non_zero=True, positive=True)
+@compare_numpy_output(non_zero=True, positive=True, check_result_type=False)
 def test_floordivr(A: dace.int64, B: dace.int64[5, 5]):
     return A // B
 
@@ -134,62 +135,62 @@ def test_modr(A: dace.int64, B: dace.int64[5, 5]):
     return A % B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, check_result_type=False)
 def test_powr(A: dace.int64, B: dace.int64[5, 5]):
     return A**B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, check_result_type=False)
 def test_lshiftr(A: dace.int64, B: dace.int64[5, 5]):
     return A << B
 
 
-@compare_numpy_output(positive=True)
+@compare_numpy_output(positive=True, check_result_type=False)
 def test_rshiftr(A: dace.int64, B: dace.int64[5, 5]):
     return A >> B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_bitorr(A: dace.int64, B: dace.int64[5, 5]):
     return A | B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_bitxorr(A: dace.int64, B: dace.int64[5, 5]):
     return A ^ B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_bitandr(A: dace.int64, B: dace.int64[5, 5]):
     return A & B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_eqr(A: dace.int64, B: dace.int64[5, 5]):
     return A == B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_noteqr(A: dace.int64, B: dace.int64[5, 5]):
     return A != B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_ltr(A: dace.int64, B: dace.int64[5, 5]):
     return A < B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_lter(A: dace.int64, B: dace.int64[5, 5]):
     return A <= B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_gtr(A: dace.int64, B: dace.int64[5, 5]):
     return A > B
 
 
-@compare_numpy_output()
+@compare_numpy_output(check_result_type=False)
 def test_gter(A: dace.int64, B: dace.int64[5, 5]):
     return A >= B
 
