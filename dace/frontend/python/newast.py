@@ -292,7 +292,8 @@ def add_indirection_subgraph(sdfg: SDFG,
                              memlet: Memlet,
                              local_name: str,
                              pvisitor: 'ProgramVisitor',
-                             output: bool = False):
+                             output: bool = False,
+                             with_wcr: bool = False):
     """ Replaces the specified edge in the specified graph with a subgraph that
         implements indirection without nested memlet subsets. """
 
@@ -521,6 +522,8 @@ def add_indirection_subgraph(sdfg: SDFG,
             path = out_base_path + [dst]
         else:
             raise Exception("Src node type for indirection is invalid.")
+        if with_wcr:
+            fullMemlet.wcr = memlet.wcr
         graph.add_memlet_path(*path,
                               src_conn='__ind_' + local_name,
                               memlet=fullMemlet)
@@ -2815,47 +2818,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 rng = dace.subsets.Range(
                     astutils.subscript_to_slice(true_target, defined_arrays)[1])
 
-            # Handle output indirection
             if self.nested and not new_data:
                 new_name, new_rng = self._add_write_access(name, rng, target)
             else:
                 new_name, new_rng = true_name, rng
-            output_indirection = None
-            if _subset_has_indirection(rng, self):
-                output_indirection = self.sdfg.add_state(
-                    'wslice_%s_%d' % (new_name, node.lineno))
-                wnode = output_indirection.add_write(
-                    new_name, debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(new_name, str(rng))
-                tmp = self.sdfg.temp_data_name()
-                ind_name = add_indirection_subgraph(self.sdfg,
-                                                    output_indirection, None,
-                                                    wnode, memlet, tmp, self,
-                                                    True)
-                wtarget = ind_name
-            else:
-                wtarget = (new_name, new_rng)
 
-            # Handle augassign output indirection
+            # Strict independent access check for augmented assignments
             if op:
-                if _subset_has_indirection(rng, self):
-                    self._add_state('rslice_%s_%d' % (new_name, node.lineno))
-                    rnode = self.last_state.add_read(
-                        new_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(new_name, str(rng))
-                    tmp = self.sdfg.temp_data_name()
-                    ind_name = add_indirection_subgraph(self.sdfg,
-                                                        self.last_state, rnode,
-                                                        None, memlet, tmp, self)
-                    rtarget = ind_name
-                else:
-                    rtarget = (new_name, new_rng)
-
-            # Generate subgraph for assignment
-            if op:
-                # Strict independent access check
                 independent = True
-                waccess = inverse_dict_lookup(self.accesses, wtarget)
+                waccess = inverse_dict_lookup(self.accesses,
+                                              (new_name, new_rng))
                 if waccess:
                     for s in self.map_symbols:
                         if s not in waccess[1].free_symbols:
@@ -2863,15 +2835,53 @@ class ProgramVisitor(ExtNodeVisitor):
                             break
                 else:
                     independent = False
-                
-                if independent:
-                    # Without WCR
-                    self._add_aug_assignment(node, rtarget, wtarget, result, op)
-                else:
-                    # With WCR
-                    self._add_assignment(node, wtarget, result, op=op)
+
+            # Handle output indirection
+            output_indirection = None
+            if _subset_has_indirection(rng, self):
+                output_indirection = self.sdfg.add_state(
+                    'wslice_%s_%d' % (new_name, node.lineno))
+                wnode = output_indirection.add_write(
+                    new_name, debuginfo=self.current_lineinfo)
+                memlet = Memlet.simple(new_name, str(rng))
+                # Dependent augmented assignments need WCR in the            
+                # indirection edge.
+                with_wcr = False
+                if op and not independent:
+                    memlet.wcr = LambdaProperty.from_string(
+                        'lambda x, y: x {} y'.format(op))
+                    with_wcr = True
+                    # WCR not needed in the assignment edge any longer.
+                    op = None
+                tmp = self.sdfg.temp_data_name()
+                ind_name = add_indirection_subgraph(
+                    self.sdfg, output_indirection, None,
+                    wnode, memlet, tmp, self, True, with_wcr=with_wcr)
+                wtarget = ind_name
             else:
-                self._add_assignment(node, wtarget, result)
+                wtarget = (new_name, new_rng)
+
+            # Handle augassign input indirection
+            # (only needed for independent augmented assignments)
+            if op and independent:
+                if _subset_has_indirection(rng, self):
+                    self._add_state('rslice_%s_%d' % (new_name, node.lineno))
+                    rnode = self.last_state.add_read(
+                        new_name, debuginfo=self.current_lineinfo)
+                    memlet = Memlet.simple(new_name, str(rng))
+                    tmp = self.sdfg.temp_data_name()
+                    ind_name = add_indirection_subgraph(
+                        self.sdfg, self.last_state, rnode,
+                        None, memlet, tmp, self)
+                    rtarget = ind_name
+                else:
+                    rtarget = (new_name, new_rng)
+
+            # Generate subgraph for assignment
+            if op and independent:
+                self._add_aug_assignment(node, rtarget, wtarget, result, op)
+            else:
+                self._add_assignment(node, wtarget, result, op=op)
 
             # Connect states properly when there is output indirection
             if output_indirection:
