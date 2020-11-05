@@ -17,7 +17,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, inverse_dict_lookup
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
-from dace.frontend.python import nested_call
+from dace.frontend.python import nested_call, replacements
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
@@ -2988,7 +2988,11 @@ class ProgramVisitor(ExtNodeVisitor):
         modname = until(funcname, '.')
         if ('.' in funcname and len(modname) > 0 and modname in self.globals
                 and dtypes.ismodule(self.globals[modname])):
-            func = getattr(self.globals[modname], funcname[len(modname) + 1:])
+            try:
+                func = getattr(self.globals[modname],
+                               funcname[len(modname) + 1:])
+            except AttributeError:
+                func = None
 
             # Not an SDFG, ignore (might be a recognized function, see below)
             if not isinstance(func, (SDFG, DaceProgram)):
@@ -3261,19 +3265,36 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # TODO: If the function is a callback, implement it as a tasklet
 
+        # NumPy ufunc support
+        found_ufunc = False
+        if modname == "numpy" and len(funcname) > 6:
+            name = funcname[len(modname) + 1:]
+            npfuncname = until(name, '.')
+            func = getattr(self.globals[modname], npfuncname)
+            if isinstance(func, numpy.ufunc):
+                ufunc_name = npfuncname
+                if len(funcname) > len(modname) + len(npfuncname) + 1:
+                    method_name = funcname[len(modname) + len(npfuncname) + 2:]
+                else:
+                    method_name = None
+                func = oprepo.Replacements.get_ufunc(method_name)
+                if func:
+                    found_ufunc = True
+
         # Otherwise, try to find a default implementation for the SDFG
-        func = oprepo.Replacements.get(funcname)
-        if func is None:
-            # Check for SDFG as fallback
+        if not found_ufunc:
             func = oprepo.Replacements.get(funcname)
             if func is None:
-                raise DaceSyntaxError(
-                    self, node,
-                    'Function "%s" is not registered with an SDFG implementation'
-                    % funcname)
-            print(
-                'WARNING: Function "%s" is not registered with an %s implementation, falling back to SDFG'
-                % funcname)
+                # Check for SDFG as fallback
+                func = oprepo.Replacements.get(funcname)
+                if func is None:
+                    raise DaceSyntaxError(
+                        self, node,
+                        'Function "%s" is not registered with an SDFG '
+                        'implementation' % funcname)
+                print(
+                    'WARNING: Function "%s" is not registered with an %s '
+                    'implementation, falling back to SDFG' % funcname)
 
         args = [self._parse_function_arg(arg) for arg in node.args]
         keywords = {
@@ -3284,7 +3305,11 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('call_%d' % node.lineno)
         self.last_state.set_default_lineinfo(self.current_lineinfo)
 
-        result = func(self.sdfg, self.last_state, *args, **keywords)
+        if found_ufunc:
+            result = func(self, node, self.sdfg, self.last_state,
+                          ufunc_name, args, keywords)
+        else:
+            result = func(self.sdfg, self.last_state, *args, **keywords)
 
         self.last_state.set_default_lineinfo(None)
 

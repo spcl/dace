@@ -63,7 +63,20 @@ def rname(node):
     if isinstance(node, ast.Call):  # form @dace.attr(...)
         if isinstance(node.func, ast.Name):
             return node.func.id
-        return node.func.value.id + '.' + node.func.attr
+        # Assuming isinstance(node.func, ast.Attribute) == True
+        name = node.func.attr
+        # Handle calls with submodules and methods, e.g. numpy.add.reduce
+        value = node.func.value
+        while isinstance(value, ast.Attribute):
+            name = value.attr + '.' + name
+            value = value.value
+        if isinstance(value, ast.Name):
+            name = value.id + '.' + name
+        else:
+            raise NotImplementedError("Unsupported AST {n} node nested inside "
+                                      "AST call node: {s}".format(
+                                          n=type(value), s=unparse(value)))
+        return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
         return node.name
     if isinstance(node, ast.keyword):
