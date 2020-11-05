@@ -51,12 +51,10 @@ class AnnotateBranch(DetectBranch):
         branch_states = []
         branch_states.append(out_edges.pop().dst)
         common_frontier = (
-            dom_frontier[branch_states[0]] | set([branch_states[0]])
+            dom_frontier[branch_states[0]] | {branch_states[0]}
         )
         for oedge in out_edges:
-            common_frontier = (
-                common_frontier & (dom_frontier[oedge.dst] | set([oedge.dst]))
-            )
+            common_frontier &= dom_frontier[oedge.dst] | {oedge.dst}
             branch_states.append(oedge.dst)
 
         if len(common_frontier) == 1:

@@ -10,6 +10,52 @@ import dace
 N = dace.symbol('N')
 M = dace.symbol('M')
 
+def memlet_check_parameters(memlet, volume, dynamic, subsets):
+    if memlet.volume != volume:
+        raise RuntimeError(
+            'Expected volume of {}, got {}'.format(volume, memlet.volume)
+        )
+    elif dynamic and not memlet.dynamic:
+        raise RuntimeError(
+            'Expected dynamic volume, got static'
+        )
+    elif memlet.dynamic and not dynamic:
+        raise RuntimeError(
+            'Expected static volume, got dynamic'
+        )
+
+    if len(subsets) != memlet.subset.dims():
+        raise RuntimeError(
+            'Expected subset of dim {}, got {}'.format(
+                len(subsets),
+                memlet.subset.dims()
+            )
+        )
+
+    for i in range(len(subsets)):
+        if subsets[i] != memlet.subset.ranges[i]:
+            raise RuntimeError(
+                'Expected subset {} at dim {}, got {}'.format(
+                    subsets[i],
+                    i,
+                    memlet.subset.ranges[i]
+                )
+            )
+
+def state_check_executions(state, expected, expected_dynamic=False):
+    if state.executions != expected:
+        raise RuntimeError(
+            'Expected {} executions, got {}'.format(expected, state.executions)
+        )
+    elif expected_dynamic and not state.dynamic_executions:
+        raise RuntimeError(
+            'Expected dynamic executions, got static'
+        )
+    elif state.dynamic_executions and not expected_dynamic:
+        raise RuntimeError(
+            'Expected static executions, got dynamic'
+        )
+
 def make_nested_sdfg():
     sdfg = dace.SDFG('vol_propagation_nested')
 
@@ -54,8 +100,8 @@ def make_nested_sdfg():
                                        storage=StorageType.FPGA_Local)
     tasklet2 = loop_state.add_tasklet(
         'compute',
-        ['_IN_a'],
-        ['_OUT_stream'],
+        {'_IN_a'},
+        {'_OUT_stream'},
         '_OUT_stream = _IN_a[0]'
     )
     loop_state.add_memlet_path(
@@ -131,21 +177,12 @@ if __name__ == '__main__':
     bound_stream_in_memlet = main_state.edges()[1].data
     out_stream_memlet = main_state.edges()[2].data
 
-    assert data_in_memlet.volume == 0
-    assert data_in_memlet.dynamic == True
-    assert data_in_memlet.subset[0] == (0, N - 1, 1)
-
-    assert bound_stream_in_memlet.volume == 1
-    assert bound_stream_in_memlet.dynamic == False
-    assert bound_stream_in_memlet.subset[0] == (0, 0, 1)
-
-    assert out_stream_memlet.volume == 0
-    assert out_stream_memlet.dynamic == True
-    assert out_stream_memlet.subset[0] == (0, 0, 1)
+    memlet_check_parameters(data_in_memlet, 0, True, [(0, N - 1, 1)])
+    memlet_check_parameters(bound_stream_in_memlet, 1, False, [(0, 0, 1)])
+    memlet_check_parameters(out_stream_memlet, 0, True, [(0, 0, 1)])
 
     nested_sdfg = main_state.nodes()[3].sdfg
 
     loop_state = nested_sdfg.nodes()[2]
 
-    assert loop_state.executions == symbol('loop_bound')
-    assert loop_state.dynamic_executions == False
+    state_check_executions(loop_state, symbol('loop_bound'))

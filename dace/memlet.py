@@ -390,7 +390,7 @@ class Memlet(object):
             self.dst_subset == other.dst_subset, self.wcr == other.wcr
         ])
 
-    def substitute_symbol(self, repl_dict):
+    def substitute_symbols(self, repl_dict):
         """ Substitute a given set of symbols with a different set of symbols.
             :param repl_dict: A dict of string symbol names to symbols with
                               which to replace them.

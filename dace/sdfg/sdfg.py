@@ -1744,7 +1744,8 @@ class SDFG(OrderedDiGraph):
                               validate: bool = True,
                               validate_all: bool = False,
                               strict: bool = False,
-                              states: Optional[List[Any]] = None) -> int:
+                              states: Optional[List[Any]] = None,
+                              print_report: bool = False) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
             :param xforms: A Transformation class or a sequence.

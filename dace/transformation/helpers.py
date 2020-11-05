@@ -321,12 +321,13 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
 
 
 def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet,
-                     preserve_minima=False):
+                     preserve_minima: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
                                 before modification.
         :param external_memlet: The external memlet before modification.
+        :param preserve_minima: Do not change the subset's minimum elements.
         :return: Offset Memlet to set on the resulting graph.
     """
     result = copy.deepcopy(internal_memlet)

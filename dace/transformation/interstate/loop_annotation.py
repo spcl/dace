@@ -52,7 +52,7 @@ class AnnotateLoop(DetectLoop):
             last_state: sd.SDFGState = guard_inedges[0].src
 
         # Make sure the range is flipped in a direction such that the stride
-        # is positive.
+        # is positive (in order to match subsets.Range).
         start, stop, stride = rng
         if (stride < 0) == True:
             rng = (stop, start, -stride)
