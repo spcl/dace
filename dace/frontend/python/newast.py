@@ -2360,15 +2360,39 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if target_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
-                op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
-                op2 = state.add_write(target_name,
-                                      debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(target_name, target_subset)
-                memlet.other_subset = op_subset
-                if op:
-                    memlet.wcr = LambdaProperty.from_string(
-                        'lambda x, y: x {} y'.format(op))
-                state.add_nedge(op1, op2, memlet)
+                if target_subset.size() == op_subset.size() and op:
+                    inp_subset = copy.deepcopy(op_subset)
+                    inp_subset.offset(target_subset, True)
+                    inp_memlet = Memlet.simple(
+                        op_name, ','.join([
+                            '__i%d + %d' % (i, s)
+                            for i, (s, _, _) in enumerate(inp_subset)
+                        ]))
+                    out_memlet = Memlet.simple(
+                        target_name, ','.join(
+                            ['__i%d' % i for i in range(len(target_subset))]))
+                    if op:
+                        out_memlet.wcr = LambdaProperty.from_string(
+                            'lambda x, y: x {} y'.format(op))
+                    state.add_mapped_tasklet(state.label, {
+                        '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
+                        for i, (start, end, step) in enumerate(target_subset)},
+                        {'__inp': inp_memlet},
+                        '__out = __inp'),
+                        {'__out': out_memlet},
+                        external_edges=True,
+                        debuginfo=self.current_lineinfo)
+                else:
+                    op1 = state.add_read(op_name,
+                                         debuginfo=self.current_lineinfo)
+                    op2 = state.add_write(target_name,
+                                          debuginfo=self.current_lineinfo)
+                    memlet = Memlet.simple(target_name, target_subset)
+                    memlet.other_subset = op_subset
+                    if op:
+                        memlet.wcr = LambdaProperty.from_string(
+                            'lambda x, y: x {} y'.format(op))
+                    state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet.simple(
                     target_name,
