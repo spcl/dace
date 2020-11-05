@@ -7,7 +7,7 @@ import re
 import sys
 import warnings
 from numbers import Number
-from typing import Any, Dict, List, Tuple, Union, Callable, Optional
+from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
 
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
@@ -1022,7 +1022,8 @@ class ProgramVisitor(ExtNodeVisitor):
         constants: Dict[str, Any],
         scope_arrays: Dict[str, data.Data],
         scope_vars: Dict[str, str],
-        other_sdfgs: Dict[str, SDFG],  # Dict[str, Union[SDFG, DaceProgram]]
+        map_symbols: Set[Union[str, 'symbol']] = None,
+        other_sdfgs: Dict[str, Union[SDFG, 'DaceProgram']] = None,
         nested: bool = False,
         tmp_idx: int = 0,
         strict: Optional[bool] = None):
@@ -1067,6 +1068,11 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
 
+        # Keep track of map symbols from upper scopes
+        map_symbols = map_symbols or set()
+        self.map_symbols = set()
+        self.map_symbols.update(map_symbols)
+
         # Entry point to the program
         # self.program = None
         self.sdfg = SDFG(self.name)
@@ -1103,7 +1109,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.continue_states = []
         self.break_states = []
 
-        # Tmp fix for missing state symbol propatation
+        # Tmp fix for missing state symbol propagation
         self.symbols = dict()
 
     def visit(self, node: ast.AST):
@@ -1255,8 +1261,11 @@ class ProgramVisitor(ExtNodeVisitor):
                           name,
                           node,
                           is_tasklet=False,
-                          extra_symbols=None):
+                          extra_symbols=None,
+                          extra_map_symbols=None):
         extra_symbols = extra_symbols or {}
+        extra_map_symbols = extra_map_symbols or set()
+        map_symbols = self.map_symbols.union(extra_map_symbols)
         local_vars = {}
         local_vars.update(self.globals)
         local_vars.update(extra_symbols)
@@ -1274,6 +1283,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                 **self.scope_vars,
                                 **self.variables,
                             },
+                            map_symbols=map_symbols,
                             other_sdfgs=self.other_sdfgs,
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
@@ -1362,6 +1372,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 params = self._decorator_or_annotation_params(node)
                 params, map_inputs = self._parse_map_inputs(
                     node.name, params, node)
+                map_symbols = self._symbols_from_params(params, map_inputs)
                 entry, exit = state.add_map(node.name,
                                             ndrange=params,
                                             debuginfo=self.current_lineinfo)
@@ -1372,6 +1383,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     PE_tuple, (stream_elem, self.sdfg.arrays[stream_name].dtype)
                 ]
                 map_inputs = {}
+                map_symbols = set()
                 entry, exit = state.add_consume(node.name,
                                                 PE_tuple,
                                                 condition,
@@ -1384,7 +1396,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg, inputs, outputs, _ = self._parse_subprogram(
                     node.name,
                     node,
-                    extra_symbols=self._symbols_from_params(params, map_inputs))
+                    extra_symbols=self._symbols_from_params(params, map_inputs),
+                    extra_map_symbols=map_symbols)
             else:  # Scope + tasklet (e.g., @dace.map)
                 name = "{}_body".format(entry.label)
                 # TODO: Now that we return the nested for-loop symbols,
@@ -1393,7 +1406,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     name,
                     node,
                     True,
-                    extra_symbols=self._symbols_from_params(params, map_inputs))
+                    extra_symbols=self._symbols_from_params(params, map_inputs),
+                    extra_map_symbols=map_symbols)
 
             internal_node = state.add_nested_sdfg(
                 sdfg,
@@ -2063,7 +2077,8 @@ class ProgramVisitor(ExtNodeVisitor):
             body, inputs, outputs, symbols = self._parse_subprogram(
                 self.name,
                 node,
-                extra_symbols=self._symbols_from_params(params, map_inputs))
+                extra_symbols=self._symbols_from_params(params, map_inputs),
+                extra_map_symbols=self._symbols_from_params(params, map_inputs))
             tasklet = state.add_nested_sdfg(body,
                                             self.sdfg,
                                             inputs.keys(),
@@ -2221,17 +2236,27 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_If(self, node: ast.If):
         # Add a guard state
         self._add_state('if_guard')
-        if (isinstance(node.test, ast.Compare)
-                and isinstance(node.test.left, ast.Subscript)):
-            cond = self.visit(node.test)
-            if cond in self.sdfg.arrays:
-                cond_dt = self.sdfg.arrays[cond]
-                if isinstance(cond_dt, data.Array):
-                    cond += '[0]'
+        # TODO: Experimental
+        cond = self.visit(node.test)
+        if cond in self.sdfg.arrays:
+            cond_dt = self.sdfg.arrays[cond]
+            if isinstance(cond_dt, data.Array):
+                cond += '[0]'
             cond_else = 'not ({})'.format(cond)
         else:
             cond = astutils.unparse(node.test)
             cond_else = astutils.unparse(astutils.negate_expr(node.test))
+        # if (isinstance(node.test, ast.Compare)
+        #         and isinstance(node.test.left, ast.Subscript)):
+        #     cond = self.visit(node.test)
+        #     if cond in self.sdfg.arrays:
+        #         cond_dt = self.sdfg.arrays[cond]
+        #         if isinstance(cond_dt, data.Array):
+        #             cond += '[0]'
+        #     cond_else = 'not ({})'.format(cond)
+        # else:
+        #     cond = astutils.unparse(node.test)
+        #     cond_else = astutils.unparse(astutils.negate_expr(node.test))
 
         # Visit recursively
         laststate, first_if_state, last_if_state = \
@@ -2326,6 +2351,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                       debuginfo=self.current_lineinfo)
                 memlet = Memlet.simple(target_name, target_subset)
                 memlet.other_subset = op_subset
+                if op:
+                    memlet.wcr = LambdaProperty.from_string(
+                        'lambda x, y: x {} y'.format(op))
                 state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet.simple(
@@ -2372,6 +2400,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 inp_memlet = Memlet.simple(op_name, '%s' % op_subset)
                 state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
             out_memlet = Memlet.simple(target_name, '%s' % target_subset)
+            if op:
+                out_memlet.wcr = LambdaProperty.from_string(
+                        'lambda x, y: x {} y'.format(op))
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
     def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
@@ -2822,7 +2853,23 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Generate subgraph for assignment
             if op:
-                self._add_aug_assignment(node, rtarget, wtarget, result, op)
+                # Strict independent access check
+                independent = True
+                waccess = inverse_dict_lookup(self.accesses, wtarget)
+                if waccess:
+                    for s in self.map_symbols:
+                        if s not in waccess[1].free_symbols:
+                            independent = False
+                            break
+                else:
+                    independent = False
+                
+                if independent:
+                    # Without WCR
+                    self._add_aug_assignment(node, rtarget, wtarget, result, op)
+                else:
+                    # With WCR
+                    self._add_assignment(node, wtarget, result, op=op)
             else:
                 self._add_assignment(node, wtarget, result)
 
