@@ -1,6 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" 
-Contains classes that represent data-centric transformations. 
+"""
+Contains classes that represent data-centric transformations.
 
 There are three general types of transformations:
   * Pattern-matching Transformations (extending Transformation): Transformations
@@ -26,11 +26,11 @@ from typing import Any, Dict, List, Optional, Set, Type, Union
 class Transformation(object):
     """ Base class for transformations, as well as a static registry of
         transformations, where new transformations can be added in a
-        decentralized manner. 
+        decentralized manner.
         An instance of a Transformation represents a match of the transformation
         on an SDFG, complete with a subgraph candidate and properties.
 
-        New transformations that extend this class must contain static 
+        New transformations that extend this class must contain static
         `PatternNode` fields that represent the nodes in the pattern graph, and
         use them to implement at least three methods:
           * `expressions`: A static method that returns a list of graph
@@ -45,11 +45,11 @@ class Transformation(object):
         For more information and optimization opportunities, see the respective
         methods' documentation.
 
-        In order to be included in lists and apply through the 
+        In order to be included in lists and apply through the
         `sdfg.apply_transformations` API, each transformation shouls be
         registered with ``Transformation.register`` (or, more commonly,
-        the ``@dace.registry.autoregister_params`` class decorator) with two 
-        optional boolean keyword arguments: ``singlestate`` (default: False) 
+        the ``@dace.registry.autoregister_params`` class decorator) with two
+        optional boolean keyword arguments: ``singlestate`` (default: False)
         and ``strict`` (default: False).
         If ``singlestate`` is True, the transformation is matched on subgraphs
         inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
@@ -175,7 +175,7 @@ class Transformation(object):
         return self._subgraph_user
 
     def apply_pattern(self, sdfg: SDFG) -> Union[Any, None]:
-        """ 
+        """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
         memlet propagation as necessary.
@@ -192,7 +192,7 @@ class Transformation(object):
         return retval
 
     def __lt__(self, other: 'Transformation') -> bool:
-        """ 
+        """
         Comparing two transformations by their class name and node IDs
         in match. Used for ordering transformations consistently.
         """
@@ -231,7 +231,7 @@ class Transformation(object):
 
     @classmethod
     def _get_pattern_nodes(cls) -> Dict[str, 'PatternNode']:
-        """ 
+        """
         Returns a dictionary of pattern-matching node in this transformation
         subclass. Used internally for pattern-matching.
         :return: A dictionary mapping between pattern-node name and its type.
@@ -265,7 +265,7 @@ class Transformation(object):
         ```
 
         :param sdfg: The SDFG to apply the transformation to.
-        :param options: A set of parameters to use for applying the 
+        :param options: A set of parameters to use for applying the
                         transformation.
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
@@ -379,9 +379,9 @@ class Transformation(object):
 
 
 class PatternNode(object):
-    """ 
+    """
     Static field wrapper of a node or an SDFG state that designates it as part
-    of a subgraph pattern. These objects are used in subclasses of 
+    of a subgraph pattern. These objects are used in subclasses of
     `Transformation` to represent the subgraph patterns.
 
     Example use:
@@ -435,7 +435,7 @@ class ExpandTransformation(Transformation):
     subgraph, and thus needs only simple matching and replacement
     functionality. Subclasses only need to implement the method
     "expansion".
-    
+
     This is an internal interface used to track the expansion of library nodes.
     """
     @classmethod
@@ -512,10 +512,10 @@ class ExpandTransformation(Transformation):
 @make_properties
 class SubgraphTransformation(object):
     """
-    Base class for transformations that apply on arbitrary subgraphs, rather 
-    than matching a specific pattern. 
-    
-    Subclasses need to implement the `can_be_applied` and `apply` operations, 
+    Base class for transformations that apply on arbitrary subgraphs, rather
+    than matching a specific pattern.
+
+    Subclasses need to implement the `can_be_applied` and `apply` operations,
     as well as registered with the subclass registry. See the `Transformation`
     class docstring for more information.
     """
@@ -574,7 +574,7 @@ class SubgraphTransformation(object):
         Tries to match the transformation on a given subgraph, returning
         True if this transformation can be applied.
         :param sdfg: The SDFG that includes the subgraph.
-        :param subgraph: The SDFG or state subgraph to try to apply the 
+        :param subgraph: The SDFG or state subgraph to try to apply the
                          transformation on.
         :return: True if the subgraph can be transformed, or False otherwise.
         """
@@ -598,10 +598,10 @@ class SubgraphTransformation(object):
         nodes. Raises an error if arguments are invalid or transformation is
         not applicable.
 
-        To apply the transformation on a specific subgraph, the `where` 
+        To apply the transformation on a specific subgraph, the `where`
         parameter can be used either on a subgraph object (`SubgraphView`), or
         on directly on a list of subgraph nodes, given as `Node` or `SDFGState`
-        objects. Transformation properties can then be given as keyword 
+        objects. Transformation properties can then be given as keyword
         arguments. For example, applying `SubgraphFusion` on a subgraph of three
         nodes can be called in one of two ways:
         ```
@@ -616,7 +616,7 @@ class SubgraphTransformation(object):
         :param sdfg: The SDFG to apply the transformation to.
         :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
         :param verify: Check that `can_be_applied` returns True before applying.
-        :param options: A set of parameters to use for applying the 
+        :param options: A set of parameters to use for applying the
                         transformation.
         """
         subgraph = None
@@ -690,3 +690,12 @@ class SubgraphTransformation(object):
             context=context,
             ignore_properties={'transformation', 'type'})
         return ret
+
+
+def strict_transformations() -> List[Transformation]:
+    """ :return: List of all registered strict transformations.
+    """
+    return [
+        k for k, v in Transformation.extensions().items()
+        if v.get('strict', False)
+    ]
