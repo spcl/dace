@@ -477,12 +477,12 @@ def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int64):
     return _argminmax(sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int64):
     return _argminmax(sdfg, state, a, axis, func="min", result_type=result_type)
 
 
@@ -491,7 +491,7 @@ def _argminmax(sdfg: SDFG,
                a: str,
                axis,
                func,
-               result_type=dace.int32,
+               result_type=dace.int64,
                return_both=False):
     nest = NestedCall(sdfg, state)
 

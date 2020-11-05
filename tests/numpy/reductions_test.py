@@ -116,17 +116,17 @@ def test_return_both():
 def test_argmin_result_type():
     @dace.program
     def test_argmin_result(A: dace.float64[10, 5, 3]):
-        return np.argmin(A, axis=1, result_type=dace.int64)
+        return np.argmin(A, axis=1, result_type=dace.int32)
 
     res = test_argmin_result(np.random.rand(10, 5, 3))
-    assert res.dtype == np.int64
+    assert res.dtype == np.int32
 
     @dace.program
     def test_argmin_result(A: dace.float64[10, 5, 3]):
         return np.argmin(A, axis=1)
 
     res = test_argmin_result(np.random.rand(10, 5, 3))
-    assert res.dtype == np.int32
+    assert res.dtype == np.int64
 
 
 @compare_numpy_output()
