@@ -1761,7 +1761,7 @@ class ProgramVisitor(ExtNodeVisitor):
                           symbols: Dict[str, 'dace.symbol'] = dict()):
 
         # Parse map inputs (for memory-based ranges)
-        if map_inputs is not None:
+        if map_inputs:
             for conn, memlet in map_inputs.items():
                 if self.nested:
                     # TODO: Make this work nested for-loops
