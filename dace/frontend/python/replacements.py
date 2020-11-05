@@ -1519,7 +1519,8 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
                    ('LShift', '<<'), ('RShift', '>>'), ('BitOr', '|'),
                    ('BitXor', '^'), ('BitAnd', '&'), ('And', 'and'),
                    ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='), ('Lt', '<'),
-                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
+                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>='),
+                   ('Is', 'is'), ('IsNot', 'is not')]:
     _makebinop(op, opcode)
 
 

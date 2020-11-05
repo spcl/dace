@@ -10,7 +10,7 @@ def augassign_wcr(A: dace.int32[10, 10, 10],
     count = 0
     for i in dace.map[0:10]:
         B[i] = 0
-        if W[i]:
+        if W[i] is not False:
             count += 1
             for j in range(10):
                 for k in range(10):
