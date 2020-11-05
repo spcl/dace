@@ -1341,6 +1341,26 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
     return out_operand
 
 
+def _py2sym_boolop(op: str) -> str:
+    """ Converts Python boolean operators to their bitwise counterparts.
+        This is needed for compatiblity with Sympy Relational objects.
+
+        :param op: Python boolean operator
+
+        :returns: Corresponding bitwise operator. If the input is not a boolean
+        operator, it returns the input itself.
+    """
+
+    if op == "and":
+        return '&'
+    elif op == "or":
+        return '|'
+    elif op == "not":
+        return "~"
+    else:
+        return op
+
+
 def _const_const_binop(visitor: 'ProgramVisitor',
                        sdfg: SDFG,
                        state: SDFGState,
@@ -1375,6 +1395,10 @@ def _const_const_binop(visitor: 'ProgramVisitor',
     else:
         right = right_operand
 
+    # Boolean ops between sympy relationals (==, !=, <, >, <=, >=)
+    # work only with bitwise and/or (&, |)
+    if isinstance(left, sp.Rel) or isinstance(right, sp.Rel):
+        opcode = _py2sym_boolop(opcode)
     expr = 'l {o} r'.format(o=opcode)
     vars = {'l': left, 'r': right}
     return eval(expr, vars)
