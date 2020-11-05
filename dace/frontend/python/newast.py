@@ -2378,7 +2378,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)},
                         {'__inp': inp_memlet},
-                        '__out = __inp'),
+                        '__out = __inp',
                         {'__out': out_memlet},
                         external_edges=True,
                         debuginfo=self.current_lineinfo)
