@@ -1395,10 +1395,15 @@ def _const_const_binop(visitor: 'ProgramVisitor',
     else:
         right = right_operand
 
-    # Boolean ops between sympy relationals (==, !=, <, >, <=, >=)
+    # Boolean ops between sympy relational expressions (==, !=, <, >, <=, >=)
     # work only with bitwise and/or (&, |)
     if isinstance(left, sp.Rel) or isinstance(right, sp.Rel):
         opcode = _py2sym_boolop(opcode)
+    # Comparison ops between sympy expressions (especially equality)
+    # do not work as expected with normal Python comparison operators
+    if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
+        if opcode in sp.Rel.ValidRelationOperator.keys():
+            return sp.Rel.ValidRelationOperator[opcode](left, right)
     expr = 'l {o} r'.format(o=opcode)
     vars = {'l': left, 'r': right}
     return eval(expr, vars)

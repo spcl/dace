@@ -65,6 +65,22 @@ augassign_ops = {
 }
 
 
+_symrel2pyop = {
+    sympy.Equality: '==',
+    sympy.Unequality: '!=',
+    sympy.GreaterThan: '>=',
+    sympy.LessThan: '<=',
+    sympy.StrictGreaterThan: '>',
+    sympy.StrictLessThan: '<'
+}
+
+
+def _sym2pystr_rel(expr: sympy.Rel) -> str:
+    """ Converts a Sympy relational expression to a Python string. """
+    pyop = _symrel2pyop[type(expr)]
+    return "{l} {op} {r}".format(l=expr.args[0], op=pyop, r=expr.args[1])
+
+
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
 
@@ -2258,12 +2274,12 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(datadesc, data.Array):
                     cond += '[0]'
                 cond_else = 'not ({})'.format(cond)
+            elif isinstance(visited_test, sympy.Rel):
+                cond = _sym2pystr_rel(visited_test)
+                cond_else = _sym2pystr_rel(~visited_test)
             elif isinstance(visited_test, sympy.Basic):
                 cond = str(visited_test)
-                if isinstance(visited_test, sympy.Rel):
-                    cond_else = str(~visited_test)
-                else:
-                    cond_else = 'not ({})'.format(visited_test)
+                cond_else = 'not ({})'.format(visited_test)
             else:
                 raise DaceSyntaxError(
                     self, node, "Unsupported if-statement: {}".format(
