@@ -746,8 +746,9 @@ def propagate_states(sdfg) -> None:
                         outer_itvar = symbolic.pystr_to_symbolic(
                             outer_itvar_string)
                         loop_executions = Sum(
-                            ceiling(loop_executions / outer_stride),
-                            (outer_itvar, outer_start, outer_stop))
+                            loop_executions * outer_stride,
+                            (outer_itvar, outer_start,
+                             ceiling(outer_stop / outer_stride)))
                     loop_executions = loop_executions.doit()
 
                     itvar_stack.append(state.itvar)
