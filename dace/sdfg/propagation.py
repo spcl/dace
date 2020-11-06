@@ -2,9 +2,9 @@
 """ Functionality relating to Memlet propagation (deducing external memlets
     from internal memory accesses and scope ranges). """
 
+from collections import deque
 import copy
 from dace.symbolic import issymbolic, pystr_to_symbolic
-from dace.sdfg.nodes import AccessNode
 import itertools
 import functools
 import sympy
@@ -558,6 +558,7 @@ def propagate_states(sdfg) -> None:
     Annotate the states of an SDFG with the number of executions.
 
     :param sdfg: The SDFG to annotate.
+    :note: This operates on the SDFG in-place.
     """
 
     # We import here to avoid cyclic imports.
@@ -575,7 +576,10 @@ def propagate_states(sdfg) -> None:
 
     # Annotate for-loops with ranges and find loop guards, and annotate any
     # branch constructs that fully merge together at some point again.
-    sdfg.apply_transformations_repeated([AnnotateLoop, AnnotateBranch])
+    sdfg.apply_transformations_repeated(
+        [AnnotateLoop, AnnotateBranch],
+        print_report=False
+    )
 
     # Identify and annotate any un-annotated loops (e.g. while loops).
     unannotated_cycle_states = []
@@ -937,7 +941,7 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['in'][iedge.dst_conn]
                     if internal_memlet is None:
                         continue
-                    iedge._data = unsqueeze_memlet(
+                    iedge.data = unsqueeze_memlet(
                         internal_memlet,
                         iedge.data,
                         True
@@ -952,7 +956,7 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['out'][oedge.src_conn]
                     if internal_memlet is None:
                         continue
-                    oedge._data = unsqueeze_memlet(
+                    oedge.data = unsqueeze_memlet(
                         internal_memlet,
                         oedge.data,
                         True
@@ -1031,7 +1035,7 @@ def _propagate_node(dfg_state, node):
                                  if e.data.data == edge.data.data)
             new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
                                           True)
-        edge._data = new_memlet
+        edge.data = new_memlet
 
 
 # External API
@@ -1130,6 +1134,8 @@ def propagate_subset(
                                   same throughout propagation. If None, assumes
                                   that all symbols outside of `params` have been
                                   defined.
+        :param use_dst: Whether to propagate the memlets' dst subset or us the
+                        src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
     """
     # Argument handling
