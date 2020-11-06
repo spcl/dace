@@ -150,6 +150,12 @@ def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
         return None
+    # Support for SymPy expressions
+    if isinstance(node, sympy.Basic):
+        return sympy.printing.pycode(node)
+    # Suport for string
+    if isinstance(node, str):
+        return node
     return astunparse.unparse(node).strip()
 
 
@@ -234,6 +240,14 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 def negate_expr(node):
     """ Negates an AST expression by adding a `Not` AST node in front of it. 
     """
+
+    # Negation support for SymPy expressions
+    if isinstance(node, sympy.Basic):
+        return sympy.Not(node)
+    # Negation support for strings (most likely dace.Data.Scalar names)
+    if isinstance(node, str):
+        return "not ({})".format(node)
+
     from dace.properties import CodeBlock  # Avoid import loop
     if isinstance(node, CodeBlock):
         node = node.code
