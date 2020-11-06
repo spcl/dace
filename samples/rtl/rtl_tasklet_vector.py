@@ -31,39 +31,40 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
                             inputs={'a': dace.vector(dace.int32, WIDTH)},
                             outputs={'b'},
                             code='''
-    /*
-        Convention:
-           |----------------------------------------------------|
-        -->| clk_i (clock input)                                |
-        -->| rst_i (reset input, rst on high)                   |
-           |                                                    |
-        -->| {inputs}                             reg {outputs} |-->
-           |                                                    |
-        <--| ready_o (ready for data)       (data avail) valid_o|-->
-        -->| valid_i (new data avail)    (data consumed) ready_i|<--
-           |----------------------------------------------------|
-    */
+        /*
+            Convention:
+               |----------------------------------------------------|
+            -->| clk_i (clock input)                                |
+            -->| rst_i (reset input, rst on high)                   |
+               |                                                    |
+            -->| {inputs}                             reg {outputs} |-->
+               |                                                    |
+            <--| ready_o (ready for data)       (data avail) valid_o|-->
+            -->| valid_i (new data avail)    (data consumed) ready_i|<--
+               |----------------------------------------------------|
+        */
 
-    typedef enum [1:0] {READY, BUSY, DONE} state_e;
-    state_e state;
-
-    always@(posedge clk_i) begin
-        if (rst_i) begin // case: reset
-            b <= 0;
-            ready_o <= 1'b1;
-            state <= READY;
-        end else if (valid_i && state == READY) begin // case: load a 
-            b <= a[0];
-            ready_o <= 1'b0;
-            state <= BUSY;
-        end else if (b < 100) // case: increment counter b
-            b <= b + 1;
-        else
-            b <= b;
-            state <= DONE;
-    end    
-
-    assign valid_o = (b >= 100) ? 1'b1:1'b0;  
+        typedef enum [1:0] {READY, BUSY, DONE} state_e;
+        state_e state;
+    
+        always@(posedge clk_i) begin
+            if (rst_i) begin // case: reset
+                b <= 0;
+                ready_o <= 1'b1;
+                state <= READY;
+            end else if (valid_i && state == READY) begin // case: load a 
+                b <= a[0];
+                ready_o <= 1'b0;
+                state <= BUSY;
+            end else if (b < a[0] + a[1] && state == BUSY) begin // case: increment counter b
+                b <= b + 1;
+            end else if (state == BUSY) begin
+                b <= b;
+                state <= DONE;
+            end
+        end    
+    
+        assign valid_o = (b >= a[0] + a[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
     ''',
                             language=dace.Language.RTL)
 
@@ -95,3 +96,6 @@ if __name__ == '__main__':
 
     # show result
     print("a={}, b={}".format(a, b))
+
+    # check result
+    assert b == a[0] + a[1]

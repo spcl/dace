@@ -87,3 +87,6 @@ if __name__ == '__main__':
 
     # show result
     print("a={}, b={}".format(a, b))
+
+    # check result
+    assert b == 100

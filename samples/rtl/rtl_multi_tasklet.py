@@ -107,3 +107,7 @@ if __name__ == '__main__':
 
     # show result
     print("a={}, b={}, c={}".format(a, b, c))
+
+    # check result
+    assert b == 80
+    assert c == 100
