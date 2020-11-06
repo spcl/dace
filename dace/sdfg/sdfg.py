@@ -1904,12 +1904,23 @@ class SDFG(OrderedDiGraph):
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate_all:
-                    self.validate()
+                    try:
+                        self.validate()
+                    except InvalidSDFGError as err:
+                        raise InvalidSDFGError(
+                            "Validation failed after applying {}.".format(
+                                match.print_match(sdfg)), sdfg,
+                            match.state_id) from err
                 applied = True
                 break
 
         if validate:
-            self.validate()
+            try:
+                self.validate()
+            except InvalidSDFGError as err:
+                raise InvalidSDFGError(
+                    "Validation failed after applying {}.".format(
+                        match.print_match(sdfg)), sdfg, match.state_id) from err
 
         if Config.get_bool('debugprint') and len(applied_transformations) > 0:
             print('Applied {}.'.format(', '.join([
