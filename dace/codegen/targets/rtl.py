@@ -199,14 +199,6 @@ class RTLCodeGen(TargetCodeGenerator):
                 for i, key in enumerate(constants)
             ]))
 
-    def check_issymbolic(self, iterator: iter, sdfg):
-        for item in iterator:
-            # catch symbolic (compile time variables)
-            if symbolic.issymbolic(item, sdfg.constants):
-                raise RuntimeError(
-                    "Please use sdfg.specialize to specialize the symbol in expression: {}"
-                    .format(item))
-
     def generate_rtl_inputs_outputs(self, sdfg, tasklet):
         # construct input / output module header
         inputs = list()
@@ -214,7 +206,7 @@ class RTLCodeGen(TargetCodeGenerator):
             # add vector index
             idx_str = ""
             # catch symbolic (compile time variables)
-            self.check_issymbolic([
+            check_issymbolic([
                 tasklet.in_connectors[inp].veclen,
                 tasklet.in_connectors[inp].bytes
             ], sdfg)
@@ -238,7 +230,7 @@ class RTLCodeGen(TargetCodeGenerator):
             # add vector index
             idx_str = ""
             # catch symbolic (compile time variables)
-            self.check_issymbolic([
+            check_issymbolic([
                 tasklet.out_connectors[inp].veclen,
                 tasklet.out_connectors[inp].bytes
             ], sdfg)
@@ -548,3 +540,12 @@ module {name}
         return """\
 endmodule
 """
+
+
+def check_issymbolic(iterator: iter, sdfg):
+    for item in iterator:
+        # catch symbolic (compile time variables)
+        if symbolic.issymbolic(item, sdfg.constants):
+            raise RuntimeError(
+                "Please use sdfg.specialize to specialize the symbol in expression: {}"
+                .format(item))
