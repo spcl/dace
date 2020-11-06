@@ -103,12 +103,16 @@ class LoopUnroll(DetectLoop):
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
+        # Get any assignments that might be on the edge to the after state
+        after_assignments = (sdfg.edges_between(
+            guard, after_state)[0].data.assignments)
+
         # Connect new states to before and after states without conditions
         if unrolled_states:
             sdfg.add_edge(before_state, unrolled_states[0][0],
                           sd.InterstateEdge())
             sdfg.add_edge(unrolled_states[-1][1], after_state,
-                          sd.InterstateEdge())
+                          sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)
