@@ -9,6 +9,9 @@ from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_fusion import MapFusion
 from .map_fission import MapFission
+from .trivial_map_elimination import TrivialMapElimination
+from .trivial_map_range_elimination import TrivialMapRangeElimination
+
 
 # Data movement
 from .strip_mining import StripMining
@@ -27,6 +30,7 @@ from .redundant_array_copying import (RedundantArrayCopying,
                                       RedundantArrayCopying2,
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays
+from .prune_connectors import PruneConnectors
 
 # Device-related
 from .copy_to_device import CopyToDevice

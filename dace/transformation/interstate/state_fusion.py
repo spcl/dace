@@ -25,9 +25,9 @@ class CCDesc:
 @registry.autoregister_params(strict=True)
 class StateFusion(transformation.Transformation):
     """ Implements the state-fusion transformation.
-        
+
         State-fusion takes two states that are connected through a single edge,
-        and fuses them into one state. If strict, only applies if no memory 
+        and fuses them into one state. If strict, only applies if no memory
         access hazards are created.
     """
 
@@ -80,9 +80,9 @@ class StateFusion(transformation.Transformation):
                           inputs_a: bool, graph_b: SDFGState,
                           group_b: List[nodes.AccessNode],
                           inputs_b: bool) -> bool:
-        """ 
+        """
         Performs an all-pairs check for subset intersection on two
-        groups of nodes. If group intersects or result is indeterminate, 
+        groups of nodes. If group intersects or result is indeterminate,
         returns True as a precaution.
         :param graph_a: The graph in which the first set of nodes reside.
         :param group_a: The first set of nodes to check.
@@ -153,6 +153,12 @@ class StateFusion(transformation.Transformation):
                                 if isinstance(n, nodes.AccessNode)
                                 and first_state.in_degree(n) > 0):
                 return False
+            # Fail if symbols assigned on the first edge are free symbols on the
+            # second edge
+            symbols_used = set(out_edges[0].data.free_symbols)
+            for e in in_edges:
+                if e.data.assignments.keys() & symbols_used:
+                    return False
 
         # There can be no state that have output edges pointing to both the
         # first and the second state. Such a case will produce a multi-graph.
@@ -160,6 +166,12 @@ class StateFusion(transformation.Transformation):
             for _, dst, _ in graph.out_edges(src):
                 if dst == second_state:
                     return False
+
+        # No data containers written in the first state can be free symbols in
+        # the second
+        _, write_set = first_state.read_and_write_sets()
+        if len(write_set & second_state.free_symbols) > 0:
+            return False
 
         if strict:
             # If second state has other input edges, there might be issues

@@ -1141,8 +1141,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         defined_type, _ = self.defined_vars.get(node.id)
         updated = node
 
-        if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
-                and memlet.num_accesses != 1:
+        if ((defined_type == DefinedType.Stream
+             or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)

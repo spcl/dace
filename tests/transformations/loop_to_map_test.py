@@ -6,10 +6,10 @@ import os
 from dace.transformation.interstate import LoopToMap
 
 
-def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable):
+def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after):
 
     sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
-                     f"{reverse_loop}_{use_variable}")
+                     f"{reverse_loop}_{use_variable}_{assign_after}")
     sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
@@ -33,7 +33,9 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable):
         sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i < 0"))
         sdfg.add_edge(body, guard,
                       dace.InterstateEdge(assignments={"i": "i - 1"}))
-    sdfg.add_edge(after, post, dace.InterstateEdge())
+    sdfg.add_edge(
+        after, post,
+        dace.InterstateEdge(assignments={"i": "N"} if assign_after else None))
 
     sdfg.add_array("A", [N], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
@@ -136,26 +138,39 @@ def apply_and_verify(sdfg, n):
 
 def test_loop_to_map(n=None):
     # Case 0: no wcr, no dataflow in guard. Transformation should apply
-    if apply_and_verify(make_sdfg(False, False, False, False), n) != 1:
+    if apply_and_verify(make_sdfg(False, False, False, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
-def test_loop_to_map_negative_step(n=None):
-    # Case 1: loop order reversed. Transformation should still apply
-    if apply_and_verify(make_sdfg(False, False, True, False), n) != 1:
+def test_loop_to_map_wcr(n=None):
+    # Case 1: WCR on the edge. Transformation should apply
+    if apply_and_verify(make_sdfg(True, False, False, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
 def test_loop_to_map_dataflow_on_guard(n=None):
-    # Case 3: there is dataflow on the guard state
-    if apply_and_verify(make_sdfg(False, False, False, False), n) != 1:
+    # Case 2: there is dataflow on the guard state. Should not apply
+    if apply_and_verify(make_sdfg(False, True, False, False, False), n) != 0:
+        raise RuntimeError("LoopToMap should not have been applied.")
+
+
+def test_loop_to_map_negative_step(n=None):
+    # Case 3: loop order reversed. Transformation should still apply
+    if apply_and_verify(make_sdfg(False, False, True, False, False), n) != 1:
         raise RuntimeError("LoopToMap was not applied.")
 
 
 def test_loop_to_map_variable_used(n=None):
     # Case 4: the loop variable is used in a later state: should not apply
-    if apply_and_verify(make_sdfg(False, False, False, True), n) != 0:
+    if apply_and_verify(make_sdfg(False, False, False, True, False), n) != 0:
         raise RuntimeError("LoopToMap should not have been applied.")
+
+
+def test_loop_to_map_variable_reassigned(n=None):
+    # Case 5: the loop variable is used in a later state, but reassigned first:
+    # should apply
+    if apply_and_verify(make_sdfg(False, False, False, True, True), n) != 1:
+        raise RuntimeError("LoopToMap was not applied.")
 
 
 if __name__ == "__main__":
@@ -167,6 +182,8 @@ if __name__ == "__main__":
     n = np.int32(args.N)
 
     test_loop_to_map(n)
-    test_loop_to_map_negative_step(n)
+    test_loop_to_map_wcr(n)
     test_loop_to_map_dataflow_on_guard(n)
+    test_loop_to_map_negative_step(n)
     test_loop_to_map_variable_used(n)
+    test_loop_to_map_variable_reassigned(n)

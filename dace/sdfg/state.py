@@ -14,7 +14,8 @@ from dace.properties import (Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import Any, Dict, Optional, List, Set, Tuple, Union
+from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
+                    Union)
 import warnings
 
 
@@ -28,7 +29,8 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
         return old_dinfo
 
     caller = getframeinfo(stack()[2][0])
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
+                            caller.filename)
 
 
 class StateGraphView(object):
@@ -76,7 +78,8 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self,
+                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -122,7 +125,8 @@ class StateGraphView(object):
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst)
-                                 if e.src_conn == "OUT_" + curedge.dst_conn[3:])
+                                 if e.src_conn == "OUT_" +
+                                 curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
 
@@ -143,7 +147,8 @@ class StateGraphView(object):
             (isinstance(edge.dst, nd.EntryNode) and edge.dst_conn is not None
              and edge.dst_conn.startswith('IN_'))):
             propagate_forward = True
-        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None) or
+        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None)
+                or
             (isinstance(edge.dst, nd.ExitNode) and edge.dst_conn is not None)):
             propagate_backward = True
 
@@ -215,6 +220,36 @@ class StateGraphView(object):
 
         # Return node that corresponds to current edge
         return traverse(tree_root)
+
+    def in_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges entering the given connector of the
+            given node.
+            :param node: Destination node of edges.
+            :param connector: Destination connector of edges.
+        """
+        return (e for e in self.in_edges(node) if e.dst_conn == connector)
+
+    def out_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges exiting the given connector of the
+            given node.
+            :param node: Source node of edges.
+            :param connector: Source connector of edges.
+        """
+        return (e for e in self.out_edges(node) if e.src_conn == connector)
+
+    def edges_by_connector(self, node: nd.Node,
+                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges entering or exiting the given
+            connector of the given node.
+            :param node: Source/destination node of edges.
+            :param connector: Source/destination connector of edges.
+        """
+        return itertools.chain(self.in_edges_by_connector(node, connector),
+                               self.out_edges_by_connector(node, connector))
 
     ###################################################################
     # Scope-related methods
@@ -312,9 +347,9 @@ class StateGraphView(object):
         return result
 
     def scope_children(
-        self,
-        return_ids: bool = False,
-        validate: bool = True
+            self,
+            return_ids: bool = False,
+            validate: bool = True
     ) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
         """ Returns a dictionary that maps each SDFG entry node to its children,
             not including the children of children entry nodes. The key `None`
@@ -416,6 +451,27 @@ class StateGraphView(object):
             defined_syms.update(snode.new_symbols(defined_syms))
 
         return defined_syms
+
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        """
+        Determines what data is read and written in this subgraph. Writes
+        with conflict resolution are included as both reads and writes.
+        :return: A two-tuple of sets of things denoting
+                 ({data read}, {data written}).
+        """
+        read_set = set()
+        write_set = set()
+        for n in self.data_nodes():
+            in_edges = self.in_edges(n)
+            if len(in_edges) > 0:
+                write_set.add(n.data)
+            for e in in_edges:
+                if e.data.wcr is not None:
+                    read_set.add(n.data)
+                    break
+            if len(self.out_edges(n)) > 0:
+                read_set.add(n.data)
+        return read_set, write_set
 
     def arglist(self) -> Dict[str, dt.Data]:
         """
@@ -562,7 +618,10 @@ class StateGraphView(object):
             for k, v in self.arglist().items()
         ]
 
-    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
+    def scope_subgraph(self,
+                       entry_node,
+                       include_entry=True,
+                       include_exit=True):
         from dace.sdfg.scope import _scope_subgraph
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
@@ -606,9 +665,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(
+        choices=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     location = DictProperty(
         key_type=str,
@@ -713,8 +773,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                             str(type(memlet)))
 
         self._clear_scopedict_cache()
-        result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
-                                                 memlet)
+        result = super(SDFGState, self).add_edge(u, u_connector, v,
+                                                 v_connector, memlet)
         memlet.try_initialize(self.parent, self, result)
         return result
 
@@ -855,7 +915,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
+            for path in sdfg.all_simple_paths(start_state, self,
+                                              as_edges=True):
                 for e in path:
                     symbols.update(e.data.new_symbols(symbols))
         except ValueError:
@@ -1032,12 +1093,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return params, map_range
 
     def add_map(
-            self,
-            name,
-            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
-            schedule=dtypes.ScheduleType.Default,
-            unroll=False,
-            debuginfo=None,
+        self,
+        name,
+        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+        schedule=dtypes.ScheduleType.Default,
+        unroll=False,
+        debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
@@ -1261,12 +1322,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-            self,
-            wcr,
-            axes,
-            identity=None,
-            schedule=dtypes.ScheduleType.Default,
-            debuginfo=None,
+        self,
+        wcr,
+        axes,
+        identity=None,
+        schedule=dtypes.ScheduleType.Default,
+        debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
@@ -1547,6 +1608,85 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.parent, self, edge)
+
+    def remove_memlet_path(self,
+                           edge: MultiConnectorEdge,
+                           remove_orphans: bool = True) -> None:
+        """ Removes all memlets and associated connectors along a path formed
+            by a given edge. Undefined behavior if the path is ambiguous.
+            Orphaned entry and exit nodes will be connected with empty edges to
+            maintain connectivity of the graph.
+
+            :param edge: An edge that is part of the path that should be
+                         removed, which will be passed to `memlet_path` to
+                         determine the edges to be removed.
+            :param remove_orphans: Remove orphaned data nodes from the graph if
+                                   they become orphans from removing this memlet
+                                   path.
+        """
+
+        path = self.memlet_path(edge)
+
+        is_read = isinstance(path[0], nd.AccessNode)
+        if is_read:
+            # Traverse from connector to access node, so we can check if it's
+            # safe to delete edges going out of a scope
+            path = reversed(path)
+
+        for edge in path:
+
+            self.remove_edge(edge)
+
+            edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
+
+            # Check if there are any other edges exiting the source node that
+            # use the same connector
+            for e in self.out_edges(edge.src):
+                if e.src_conn is not None and e.src_conn == edge.src_conn:
+                    other_outgoing = True
+                    break
+            else:
+                other_outgoing = False
+                edge.src.remove_out_connector(edge.src_conn)
+
+            # Check if there are any other edges entering the destination node
+            # that use the same connector
+            for e in self.in_edges(edge.dst):
+                if e.dst_conn is not None and e.dst_conn == edge.dst_conn:
+                    other_incoming = True
+                    break
+            else:
+                other_incoming = False
+                edge.dst.remove_in_connector(edge.dst_conn)
+
+            if isinstance(edge.src, nd.EntryNode):
+                # If removing this edge orphans the entry node, replace the
+                # edge with an empty edge
+                if not edges_remain:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_outgoing:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            if isinstance(edge.dst, nd.ExitNode):
+                # If removing this edge orphans the exit node, replace the
+                # edge with an empty edge
+                if not edges_remain:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_incoming:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            # Prune access nodes
+            if remove_orphans:
+                if (isinstance(edge.src, nd.AccessNode)
+                        and self.degree(edge.src) == 0):
+                    self.remove_node(edge.src)
+                if (isinstance(edge.dst, nd.AccessNode)
+                        and self.degree(edge.dst) == 0):
+                    self.remove_node(edge.dst)
 
     # DEPRECATED FUNCTIONS
     ######################################

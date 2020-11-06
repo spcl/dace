@@ -325,9 +325,14 @@ def test_promote_indirection():
     sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j', 'k'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    for cursdfg in sdfg.all_sdfgs_recursive():
+        scalar_to_symbol.remove_symbol_indirection(cursdfg)
     sdfg.apply_strict_transformations()
 
-    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_nodes() == 1
+    assert all(e.data.subset.num_elements() == 1 for e in sdfg.node(0).edges()
+               if isinstance(e.src, dace.nodes.Tasklet)
+               or isinstance(e.dst, dace.nodes.Tasklet))
 
     # Check result
     A = np.random.rand(2, 3, 4, 5)
@@ -357,7 +362,7 @@ def test_promote_output_indirection():
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_strict_transformations()
 
-    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_nodes() == 1
 
     # Check result
     A = np.random.rand(10)
@@ -386,10 +391,10 @@ def test_promote_indirection_c():
     sdfg: dace.SDFG = testprog.to_sdfg(strict=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
-
-    assert sdfg.number_of_nodes() == 2
     assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
+
+    sdfg.apply_strict_transformations()
+    assert sdfg.number_of_nodes() == 1
 
     # Check result
     A = np.random.rand(10)
@@ -418,7 +423,7 @@ def test_promote_indirection_impossible():
     sdfg.apply_strict_transformations()
 
     # [A,scal->Tasklet->A]
-    assert sdfg.number_of_nodes() == 2
+    assert sdfg.number_of_nodes() == 1
     assert sdfg.sink_nodes()[0].number_of_nodes() == 4
 
     A = np.random.rand(20, 20)
