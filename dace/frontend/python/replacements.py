@@ -767,7 +767,10 @@ def _makeunop(op, opcode):
             op1: 'symbol',
             op2=None):
         if opcode in _pyop2symtype.keys():
-            return _pyop2symtype[opcode](op1)
+            try:
+                return _pyop2symtype[opcode](op1)
+            except TypeError:
+                pass
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
@@ -1395,7 +1398,15 @@ def _const_const_binop(visitor: 'ProgramVisitor',
     # Support for SymPy expressions
     if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
         if opcode in _pyop2symtype.keys():
-            return _pyop2symtype[opcode](left, right)
+            try:
+                return _pyop2symtype[opcode](left, right)
+            except TypeError:
+                # This may happen in cases such as `False or (N + 1)`.
+                # (N + 1) is a symbolic expressions, but because it is not
+                # boolean, SymPy returns TypeError when trying to create
+                # `sympy.Or(False, N + 1)`. In such a case, we try again with
+                # the normal Python operator.
+                pass
 
     expr = 'l {o} r'.format(o=opcode)
     vars = {'l': left, 'r': right}
