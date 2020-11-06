@@ -537,8 +537,7 @@ class SDFG(OrderedDiGraph):
         """
         if location not in self.exit_code:
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
-        self.exit_code[
-            location].code = cpp_code + self.exit_code[location].code
+        self.exit_code[location].code = cpp_code + self.exit_code[location].code
 
     def append_transformation(self, transformation):
         """
@@ -1404,9 +1403,8 @@ class SDFG(OrderedDiGraph):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1484,8 +1482,7 @@ class SDFG(OrderedDiGraph):
         else:
             cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, InterstateEdge(cond_ast))
-        self.add_edge(guard, after_state,
-                      InterstateEdge(negate_expr(cond_ast)))
+        self.add_edge(guard, after_state, InterstateEdge(negate_expr(cond_ast)))
 
         # Loop incrementation
         incr = None if increment_expr is None else {loop_var: increment_expr}
@@ -1596,8 +1593,8 @@ class SDFG(OrderedDiGraph):
             sdfg, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(
-            program_folder, sdfg.name)
+        shared_library = compiler.configure_and_compile(program_folder,
+                                                        sdfg.name)
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -1899,12 +1896,23 @@ class SDFG(OrderedDiGraph):
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate_all:
-                    self.validate()
+                    try:
+                        self.validate()
+                    except InvalidSDFGError as err:
+                        raise InvalidSDFGError(
+                            "Validation failed after applying {}.".format(
+                                match.print_match(sdfg)), sdfg,
+                            match.state_id) from err
                 applied = True
                 break
 
         if validate:
-            self.validate()
+            try:
+                self.validate()
+            except InvalidSDFGError as err:
+                raise InvalidSDFGError(
+                    "Validation failed after applying {}.".format(
+                        match.print_match(sdfg)), sdfg, match.state_id) from err
 
         if Config.get_bool('debugprint') and len(applied_transformations) > 0:
             print('Applied {}.'.format(', '.join([
@@ -1951,8 +1959,8 @@ class SDFG(OrderedDiGraph):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     node.expand(self, state)
-                    print("Automatically expanded library node \"" +
-                          str(node) + "\".")
+                    print("Automatically expanded library node \"" + str(node) +
+                          "\".")
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
