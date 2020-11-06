@@ -591,6 +591,9 @@ if(DACE_ENABLE_RTL)
     set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
   endif()
 
+  # add verilated.cpp source
+  set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
+
   foreach(RTL_FILE ${DACE_RTL_FILES})
 
     # extract design name
@@ -599,7 +602,6 @@ if(DACE_ENABLE_RTL)
     # add verilated .cpp files
     set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
     set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
-    set(VERILATOR_SRC "${VERILATOR_SRC}" "${VERILATOR_ROOT}/include/verilated.cpp")
     set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
     # add verilated design
