@@ -591,7 +591,6 @@ if(DACE_ENABLE_RTL)
     set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
   endif()
 
-  message(WARNING "${DACE_RTL_FILES}")
   foreach(RTL_FILE ${DACE_RTL_FILES})
 
     # extract design name
