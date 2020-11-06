@@ -613,10 +613,8 @@ def propagate_states(sdfg) -> None:
 
     # Annotate for-loops with ranges and find loop guards, and annotate any
     # branch constructs that fully merge together at some point again.
-    sdfg.apply_transformations_repeated(
-        [AnnotateLoop, AnnotateBranch],
-        print_report=False
-    )
+    sdfg.apply_transformations_repeated([AnnotateLoop, AnnotateBranch],
+                                        print_report=False)
 
     # Identify and annotate any un-annotated loops (e.g. while loops).
     unannotated_cycle_states = []
@@ -672,16 +670,13 @@ def propagate_states(sdfg) -> None:
                 # of the paths reaching it. If the state additionally completely
                 # merges a previously branched out state tree, we know that the
                 # number of executions isn't dynamic anymore.
-                state.executions = sympy.Max(
-                    state.executions,
-                    proposed_executions
-                ).doit()
+                state.executions = sympy.Max(state.executions,
+                                             proposed_executions).doit()
                 if state in full_merge_states:
                     state.dynamic_executions = False
                 else:
-                    state.dynamic_executions = (
-                        state.dynamic_executions or proposed_dynamic
-                    )
+                    state.dynamic_executions = (state.dynamic_executions
+                                                or proposed_dynamic)
         elif proposed_dynamic and proposed_executions == 0:
             # We're propagating a dynamic unbounded number of executions, which
             # always gets propagated unconditionally. Propagate to all children.
@@ -692,8 +687,7 @@ def propagate_states(sdfg) -> None:
             if len(out_edges) > 0:
                 for oedge in out_edges:
                     traversal_q.append(
-                        (oedge.dst, proposed_executions, proposed_dynamic)
-                    )
+                        (oedge.dst, proposed_executions, proposed_dynamic))
         else:
             # If the state hasn't been visited yet and we're not propagating a
             # dynamic unbounded number of executions, we calculate the number of
@@ -715,8 +709,7 @@ def propagate_states(sdfg) -> None:
                     # an upper bound and marked as dynamic.
                     proposed_dynamic = True
                 traversal_q.append(
-                    (out_edges[0].dst, proposed_executions, proposed_dynamic)
-                )
+                    (out_edges[0].dst, proposed_executions, proposed_dynamic))
             elif out_degree > 1:
                 if getattr(state, 'is_loop_guard', False):
                     itvar = symbolic.symbol(state.itvar)
@@ -729,40 +722,29 @@ def propagate_states(sdfg) -> None:
                     # This resolves ranges based on the order of iteration
                     # variables pushed on to the stack if we're in a nested
                     # loop.
-                    loop_executions = Sum(
-                        ceiling(1 / stride),
-                        (itvar, start, stop)
-                    )
+                    loop_executions = ceiling(((stop + 1) - start) / stride)
                     for outer_itvar_string in reversed(itvar_stack):
-                        outer_range = state.ranges[
-                            outer_itvar_string
-                        ]
+                        outer_range = state.ranges[outer_itvar_string]
                         outer_start = outer_range[0][0]
                         outer_stop = outer_range[0][1]
                         outer_stride = outer_range[0][2]
                         outer_itvar = symbolic.pystr_to_symbolic(
-                            outer_itvar_string
-                        )
+                            outer_itvar_string)
                         loop_executions = Sum(
                             ceiling(loop_executions / outer_stride),
-                            (outer_itvar, outer_start, outer_stop)
-                        )
+                            (outer_itvar, outer_start, outer_stop))
                     loop_executions = loop_executions.doit()
 
                     itvar_stack.append(state.itvar)
 
                     loop_state = state.condition_edge.dst
-                    end_state = (
-                        out_edges[0].dst if out_edges[1].dst == loop_state
-                        else out_edges[1].dst
-                    )
+                    end_state = (out_edges[0].dst if out_edges[1].dst
+                                 == loop_state else out_edges[1].dst)
 
                     traversal_q.append(
-                        (end_state, state.executions, proposed_dynamic)
-                    )
+                        (end_state, state.executions, proposed_dynamic))
                     traversal_q.append(
-                        (loop_state, loop_executions, proposed_dynamic)
-                    )
+                        (loop_state, loop_executions, proposed_dynamic))
                 else:
                     # Conditional split or unannotated (dynamic unbounded) loop.
                     unannotated_loop_edge = None
@@ -776,25 +758,19 @@ def propagate_states(sdfg) -> None:
                         out_edges.remove(unannotated_loop_edge)
                         for oedge in out_edges:
                             traversal_q.append(
-                                (oedge.dst, state.executions, False)
-                            )
+                                (oedge.dst, state.executions, False))
                         state.is_loop_guard = True
-                        traversal_q.append(
-                            (unannotated_loop_edge.dst, 0, True)
-                        )
+                        traversal_q.append((unannotated_loop_edge.dst, 0, True))
                     else:
                         # Traverse as a conditional split.
                         proposed_executions = state.executions
                         proposed_dynamic = True
-                        if (getattr(state, 'full_merge_state', None)
-                            is not None and not state.dynamic_executions):
+                        if (getattr(state, 'full_merge_state', None) is not None
+                                and not state.dynamic_executions):
                             full_merge_states.add(state.full_merge_state)
                         for oedge in out_edges:
-                            traversal_q.append((
-                                oedge.dst,
-                                proposed_executions,
-                                proposed_dynamic
-                            ))
+                            traversal_q.append((oedge.dst, proposed_executions,
+                                                proposed_dynamic))
 
 
 def propagate_memlets_nested_sdfg(sdfg, border_memlets):
@@ -829,34 +805,26 @@ def propagate_memlets_nested_sdfg(sdfg, border_memlets):
                     if memlet is None:
                         # Use the first encountered memlet as a 'border' memlet
                         # and accumulate the sum on it.
-                        memlet = copy.deepcopy(inside_memlet)
-                        memlet.dynamic = False
-                        memlet.volume = 0
-                        memlet.subset = None
-                        memlet.other_subset = None
+                        memlet = Memlet(data=inside_memlet.data, volume=0)
                         memlet._is_data_src = True
                         border_memlets[direction][node.label] = memlet
 
                     if memlet.dynamic and memlet.volume == 0:
                         # Dynamic unbounded - this won't change.
                         continue
-                    elif ((inside_memlet.dynamic and
-                            inside_memlet.volume == 0) or
-                            (state.dynamic_executions and
-                            state.executions == 0)):
+                    elif ((inside_memlet.dynamic and inside_memlet.volume == 0)
+                          or
+                          (state.dynamic_executions and state.executions == 0)):
                         # At least one dynamic unbounded memlet means the sum
                         # must be dynamic unbounded.
                         memlet.dynamic = True
                         memlet.volume = 0
                     else:
-                        memlet.volume += (
-                            inside_memlet.volume * state.executions
-                        )
-                        memlet.dynamic = (
-                            memlet.dynamic or
-                            inside_memlet.dynamic or
-                            state.dynamic_executions
-                        )
+                        memlet.volume += (inside_memlet.volume *
+                                          state.executions)
+                        memlet.dynamic = (memlet.dynamic
+                                          or inside_memlet.dynamic
+                                          or state.dynamic_executions)
 
                 # Given all of this access nodes' memlets, propagate the subset
                 # according to the state's variable ranges.
@@ -878,20 +846,18 @@ def propagate_memlets_nested_sdfg(sdfg, border_memlets):
                     use_dst = False
                     if direction == 'out':
                         use_dst = True
-                    subset = propagate_subset(
-                        memlets,
-                        sdfg.arrays[node.label],
-                        params,
-                        subsets.Range(ranges),
-                        use_dst=use_dst
-                    ).subset
+                    subset = propagate_subset(memlets,
+                                              sdfg.arrays[node.label],
+                                              params,
+                                              subsets.Range(ranges),
+                                              use_dst=use_dst).subset
 
                     # If the border memlet already has a set range, compute the
                     # union of the ranges to merge the subsets.
                     if memlet.subset is not None:
                         if memlet.subset.dims() != subset.dims():
                             raise ValueError('Cannot merge subset ranges '
-                                                'of unequal dimension!')
+                                             'of unequal dimension!')
                         else:
                             memlet.subset = subsets.union(memlet.subset, subset)
                     else:
@@ -979,11 +945,8 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['in'][iedge.dst_conn]
                     if internal_memlet is None:
                         continue
-                    iedge.data = unsqueeze_memlet(
-                        internal_memlet,
-                        iedge.data,
-                        True
-                    )
+                    iedge.data = unsqueeze_memlet(internal_memlet, iedge.data,
+                                                  True)
                     if symbolic.issymbolic(iedge.data.volume):
                         if any(str(s) not in sdfg.symbols
                                for s in iedge.data.volume.free_symbols):
@@ -994,11 +957,8 @@ def propagate_memlets_state(sdfg, state):
                     internal_memlet = border_memlets['out'][oedge.src_conn]
                     if internal_memlet is None:
                         continue
-                    oedge.data = unsqueeze_memlet(
-                        internal_memlet,
-                        oedge.data,
-                        True
-                    )
+                    oedge.data = unsqueeze_memlet(internal_memlet, oedge.data,
+                                                  True)
                     if symbolic.issymbolic(oedge.data.volume):
                         if any(str(s) not in sdfg.symbols
                                for s in oedge.data.volume.free_symbols):
@@ -1136,8 +1096,12 @@ def propagate_memlet(dfg_state,
     # Propagate subset
     if isinstance(entry_node, nodes.MapEntry):
         mapnode = entry_node.map
-        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range,
-                                defined_vars, use_dst=use_dst)
+        return propagate_subset(aggdata,
+                                arr,
+                                mapnode.params,
+                                mapnode.range,
+                                defined_vars,
+                                use_dst=use_dst)
 
     elif isinstance(entry_node, nodes.ConsumeEntry):
         # Nothing to analyze/propagate in consume
@@ -1153,13 +1117,12 @@ def propagate_memlet(dfg_state,
 
 
 # External API
-def propagate_subset(
-        memlets: List[Memlet],
-        arr: data.Data,
-        params: List[str],
-        rng: subsets.Subset,
-        defined_variables: Set[symbolic.SymbolicType] = None,
-        use_dst: bool = False) -> Memlet:
+def propagate_subset(memlets: List[Memlet],
+                     arr: data.Data,
+                     params: List[str],
+                     rng: subsets.Subset,
+                     defined_variables: Set[symbolic.SymbolicType] = None,
+                     use_dst: bool = False) -> Memlet:
     """ Tries to propagate a list of memlets through a range (computes the 
         image of the memlet function applied on an integer set of, e.g., a 
         map range) and returns a new memlet object.
@@ -1213,8 +1176,7 @@ def propagate_subset(
             # No patterns found. Emit a warning and propagate the entire
             # array
             warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' %
-                          (str(subset), str(rng)))
+                          'propagate %s through %s' % (str(subset), str(rng)))
             tmp_subset = subsets.Range.from_array(arr)
 
         # Union edges as necessary
