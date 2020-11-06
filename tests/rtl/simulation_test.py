@@ -83,14 +83,8 @@ def test_tasklet_scalar():
     a = np.random.randint(0, 100, 1).astype(np.int32)
     b = np.random.randint(0, 100, 1).astype(np.int32)
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
-
     # call program
     sdfg(A=a, B=b)
-
-    # show result
-    print("a={}, b={}".format(a, b))
 
     # check result
     assert b == 100
@@ -175,14 +169,8 @@ def test_tasklet_parameter():
     a = np.random.randint(0, 100, 1).astype(np.int32)
     b = np.random.randint(0, 100, 1).astype(np.int32)
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
-
     # call program
     sdfg(A=a, B=b)
-
-    # show result
-    print("a={}, b={}".format(a, b))
 
     # check result
     assert b == sdfg.constants["MAX_VAL"]
@@ -272,14 +260,8 @@ def test_tasklet_vector():
         N, sdfg.constants)).astype(np.int32)
     b = np.array([0]).astype(np.int32)
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
-
     # call program
     sdfg(A=a, B=b)
-
-    # show result
-    print("a={}, b={}".format(a, b))
 
     # check result
     assert b == a[0] + a[1]
@@ -381,14 +363,8 @@ def test_multi_tasklet():
     b = np.array([0]).astype(np.int32)
     c = np.array([0]).astype(np.int32)
 
-    # show initial values
-    print("a={}, b={}, c={}".format(a, b, c))
-
     # call program
     sdfg(A=a, B=b, C=c)
-
-    # show result
-    print("a={}, b={}, c={}".format(a, b, c))
 
     # check result
     assert b == 80
