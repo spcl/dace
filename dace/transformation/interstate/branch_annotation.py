@@ -6,6 +6,7 @@ import networkx as nx
 from dace.transformation.interstate.branch_detection import DetectBranch
 from dace.registry import autoregister
 
+
 @autoregister
 class AnnotateBranch(DetectBranch):
     """
@@ -18,18 +19,15 @@ class AnnotateBranch(DetectBranch):
     `full_merge_state`, which points to the state where all the branches meet
     again.
     """
-
     @staticmethod
     def annotates_memlets():
         # DO NOT REAPPLY MEMLET PROPAGATION!
         return True
 
-
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict):
-        if not DetectBranch.can_be_applied(
-            graph, candidate, expr_index, sdfg, strict
-        ):
+        if not DetectBranch.can_be_applied(graph, candidate, expr_index, sdfg,
+                                           strict):
             return False
 
         guard = graph.node(candidate[DetectBranch._branch_guard])
@@ -43,72 +41,35 @@ class AnnotateBranch(DetectBranch):
 
         return True
 
-
     def apply(self, sdfg):
         guard = sdfg.node(self.subgraph[DetectBranch._branch_guard])
 
         guard.full_merge_state = None
 
+        # We construct the dominance frontier for each state of the graph. For
+        # this to work correctly, there needs to be one common explicit exit
+        # state.
         dom_frontier = nx.dominance_frontiers(sdfg.nx, sdfg.start_state)
 
-        common_frontier = {}
+        common_frontier = set()
         out_edges = sdfg.out_edges(guard)
-        branch_states = []
-        branch_states.append(out_edges.pop().dst)
-        common_frontier = (
-            dom_frontier[branch_states[0]] | {branch_states[0]}
-        )
-        for oedge in out_edges:
-            common_frontier &= dom_frontier[oedge.dst] | {oedge.dst}
-            branch_states.append(oedge.dst)
 
+        # Get the dominance frontier frontier for each child state and merge
+        # them into one common frontier, representing the loop's dominance
+        # frontier. If a state has no dominance frontier, add the state itself
+        # to the frontier. This takes care of the case where a branch is fully
+        # merged, but one branch contains no states.
+        for oedge in out_edges:
+            frontier = dom_frontier[oedge.dst]
+            if not frontier:
+                frontier = {oedge.dst}
+            common_frontier |= frontier
+
+        # If the common loop dominance frontier is exactly one state, we know
+        # that all the branches merge at that state.
         if len(common_frontier) == 1:
             frontier_state = list(common_frontier)[0]
-
-            traversal_queue = []
-            visited_states = [guard]
-
-            share = 1 / len(branch_states)
-            received_shares = 0
-
-            state = branch_states.pop()
-            for branch_state in branch_states:
-                traversal_queue.append({
-                    'state': branch_state,
-                    'share': share,
-                })
-            while state is not None:
-                if state == guard:
-                    # We've gone around in a loop, abort.
-                    state = None
-                    break
-                elif state in visited_states or state == frontier_state:
-                    received_shares += share
-                else:
-                    visited_states.append(state)
-                    oedges = sdfg.out_edges(state)
-                    if len(oedges) == 1:
-                        state = oedges[0].dst
-                        continue
-                    elif len(oedges) > 1:
-                        share = share / len(oedges)
-                        state = oedges.pop().dst
-                        for e in oedges:
-                            traversal_queue.append({
-                                'state': e.dst,
-                                'share': share,
-                            })
-                        continue
-                if len(traversal_queue) > 0:
-                    traversal = traversal_queue.pop()
-                    state = traversal['state']
-                    share = traversal['share']
-                    continue
-                else:
-                    state = None
-                    break
-            if received_shares == 1:
-                guard.full_merge_state = frontier_state
+            guard.full_merge_state = frontier_state
 
         # Mark this conditional branch construct as annotated, so it doesn't
         # get processed again when applied repeatedly.

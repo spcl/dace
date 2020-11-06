@@ -605,16 +605,31 @@ def propagate_states(sdfg) -> None:
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.branch_annotation import AnnotateBranch
     from dace.transformation.interstate.loop_annotation import AnnotateLoop
+    from dace.sdfg import InterstateEdge
     from dace.transformation.helpers import split_interstate_edges
 
     # Clean up the state machine by separating combined condition and assignment
     # edges.
     split_interstate_edges(sdfg)
 
+    # To enable branch annotation, we add a temporary exit state that connects
+    # to all child-less states. With this, we can use the dominance frontier
+    # to determine a full-merge state for branches.
+    temp_exit_state = None
+    for s in sdfg.nodes():
+        if sdfg.out_degree(s) == 0:
+            if temp_exit_state is None:
+                temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
+            sdfg.add_edge(s, temp_exit_state, InterstateEdge())
+
     # Annotate for-loops with ranges and find loop guards, and annotate any
     # branch constructs that fully merge together at some point again.
     sdfg.apply_transformations_repeated([AnnotateLoop, AnnotateBranch],
                                         print_report=False)
+
+    # If we had to create a temporary exit state, we remove it again here.
+    if temp_exit_state is not None:
+        sdfg.remove_node(temp_exit_state)
 
     # Identify and annotate any un-annotated loops (e.g. while loops).
     unannotated_cycle_states = []

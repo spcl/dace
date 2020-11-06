@@ -1,5 +1,8 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
+from dace.dtypes import Language
+from dace.properties import CodeProperty
+from dace.sdfg.sdfg import InterstateEdge
 import dace
 from dace.sdfg.propagation import propagate_states
 
@@ -17,6 +20,54 @@ def state_check_executions(state, expected, expected_dynamic=False):
         raise RuntimeError(
             'Expected static executions, got dynamic'
         )
+
+
+def test_conditional_fake_merge():
+    sdfg = dace.SDFG('fake_merge')
+
+    state_init = sdfg.add_state('init')
+    state_a = sdfg.add_state('A')
+    state_b = sdfg.add_state('B')
+    state_c = sdfg.add_state('C')
+    state_d = sdfg.add_state('D')
+    state_e = sdfg.add_state('E')
+
+    sdfg.add_edge(state_init, state_a, InterstateEdge(
+        assignments={
+            'i': '0',
+            'j': '0',
+        }
+    ))
+    sdfg.add_edge(state_a, state_b, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'i < 10',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(state_a, state_c, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'not (i < 10)',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(state_b, state_d, InterstateEdge())
+    sdfg.add_edge(state_c, state_d, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'j < 10',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(state_c, state_e, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'not (j < 10)',
+            language=Language.Python
+        )
+    ))
+
+    propagate_states(sdfg)
+
+    state_check_executions(state_d, 1, True)
+    state_check_executions(state_e, 1, True)
 
 
 def test_conditional_full_merge():
@@ -487,3 +538,4 @@ if __name__ == "__main__":
     test_for_with_nested_full_merge_branch()
     test_while_inside_for()
     test_conditional_full_merge()
+    test_conditional_fake_merge()
