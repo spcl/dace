@@ -64,8 +64,8 @@ def type_match(node_a, node_b):
     """
     if isinstance(node_b['node'], xf.PatternNode):
         return isinstance(node_a['node'], node_b['node'].node)
-    elif isinstance(node_a['node'], xf.PatternNode):
-        return isinstance(node_b['node'], node_a['node'].node)
+    # elif isinstance(node_a['node'], xf.PatternNode):
+    #     return isinstance(node_b['node'], node_a['node'].node)
     return isinstance(node_a['node'], type(node_b['node']))
 
 
@@ -148,14 +148,11 @@ def get_transformation_metadata(
     """
     singlestate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
     interstate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
+    ext_dict = xf.Transformation.extensions()
     for pattern in patterns:
+        # Find if the transformation is inter-state
+        is_interstate = not ext_dict[pattern].get('singlestate', False)
         for i, expr in enumerate(pattern.expressions()):
-            # Find if the transformations are inter-state by checking whether
-            # pattern subgraph is within states or SDFGs
-            pnode = expr.node(0)
-            is_interstate = (isinstance(pnode, SDFGState)
-                             or (isinstance(pnode, xf.PatternNode)
-                                 and pnode.node is SDFGState))
             # Make a networkx-version of the match subgraph
             nxpattern = collapse_multigraph_to_nx(expr)
 
