@@ -578,7 +578,7 @@ if(DACE_ENABLE_RTL)
   # check minimal version requirements
   set(VERILATOR_MIN_VERSION "4.028")
   if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
-    message(WARNING "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
+    message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
   endif()
 
   # get verilator flags from dace.conf
