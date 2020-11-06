@@ -928,7 +928,7 @@ def propagate_memlets_state(sdfg, state):
                 for connector in border_memlets[direction]:
                     border_memlet = border_memlets[direction][connector]
                     if border_memlet is not None:
-                        border_memlet.substitute_symbols(node.symbol_mapping)
+                        border_memlet.replace(node.symbol_mapping)
 
             # Propagate the inside 'border' memlets outside the SDFG by
             # offsetting, and unsqueezing if necessary.
