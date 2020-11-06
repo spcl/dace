@@ -610,11 +610,9 @@ if(DACE_ENABLE_RTL)
     include_directories(${VERILATOR_INCLUDE})
 
     # verilate design
-    #verilate(VERILATED_LIB SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
     verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
-    message(WARNING "ASDF: ${RTL_FILE}")
+
     # add object library for linking
-    #set(DACE_LIBS ${DACE_LIBS} ${VERILATED_LIB})
     set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
 
   endforeach()
