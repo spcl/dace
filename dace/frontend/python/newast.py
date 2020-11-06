@@ -65,20 +65,20 @@ augassign_ops = {
 }
 
 
-_symrel2pyop = {
-    sympy.Equality: '==',
-    sympy.Unequality: '!=',
-    sympy.GreaterThan: '>=',
-    sympy.LessThan: '<=',
-    sympy.StrictGreaterThan: '>',
-    sympy.StrictLessThan: '<'
-}
+# _symrel2pyop = {
+#     sympy.Equality: '==',
+#     sympy.Unequality: '!=',
+#     sympy.GreaterThan: '>=',
+#     sympy.LessThan: '<=',
+#     sympy.StrictGreaterThan: '>',
+#     sympy.StrictLessThan: '<'
+# }
 
 
-def _sym2pystr_rel(expr: sympy.Rel) -> str:
-    """ Converts a Sympy relational expression to a Python string. """
-    pyop = _symrel2pyop[type(expr)]
-    return "{l} {op} {r}".format(l=expr.args[0], op=pyop, r=expr.args[1])
+# def _sym2pystr_rel(expr: sympy.Rel) -> str:
+#     """ Converts a Sympy relational expression to a Python string. """
+#     pyop = _symrel2pyop[type(expr)]
+#     return "{l} {op} {r}".format(l=expr.args[0], op=pyop, r=expr.args[1])
 
 
 class AddTransientMethods(object):
@@ -2255,7 +2255,10 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_If(self, node: ast.If):
         # Add a guard state
         self._add_state('if_guard')
-        # TODO: Experimental
+
+        # Fix for scalar promotion tests
+        # TODO: Maybe those tests should use the SDFG API instead of the
+        # Python frontend which can change how it handles conditions.
         simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
         is_test_simple = isinstance(node.test, simple_ast_nodes)
         if not is_test_simple:
@@ -2266,27 +2269,20 @@ class ProgramVisitor(ExtNodeVisitor):
                         node.test.comparators[0], simple_ast_nodes))
                 if is_left_simple and is_right_simple:
                     is_test_simple = True
+        
+        # Visit if-condition
         if not is_test_simple:
-            visited_test = self.visit(node.test)
-            if visited_test in self.sdfg.arrays:
-                cond = visited_test
-                datadesc = self.sdfg.arrays[visited_test]
+            parsed_node = self.visit(node.test)
+            if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
+                datadesc = self.sdfg.arrays[parsed_node]
                 if isinstance(datadesc, data.Array):
-                    cond += '[0]'
-                cond_else = 'not ({})'.format(cond)
-            elif isinstance(visited_test, sympy.Rel):
-                cond = _sym2pystr_rel(visited_test)
-                cond_else = _sym2pystr_rel(~visited_test)
-            elif isinstance(visited_test, sympy.Basic):
-                cond = str(visited_test)
-                cond_else = 'not ({})'.format(visited_test)
-            else:
-                raise DaceSyntaxError(
-                    self, node, "Unsupported if-statement: {}".format(
-                        astutils.unparse(node)))
+                    parsed_node += '[0]'
         else:
-            cond = astutils.unparse(node.test)
-            cond_else = astutils.unparse(astutils.negate_expr(node.test))
+            parsed_node = astutils.unparse(node.test)
+        
+        # Generate conditions
+        cond = astutils.unparse(parsed_node)
+        cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
 
         # Visit recursively
         laststate, first_if_state, last_if_state = \
