@@ -1,18 +1,23 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Conditional branch annotation transformation """
 
-from math import e
 import networkx as nx
 
 from dace.transformation.interstate.branch_detection import DetectBranch
-from dace import sdfg as sd, symbolic
 from dace.registry import autoregister
-from dace.sdfg import graph as gr, utils as sdutil
-from dace.subsets import Range
 
 @autoregister
 class AnnotateBranch(DetectBranch):
-    """ Annotates states in conditional branch constructs. """
+    """
+    Annotates states in conditional branch constructs.
+
+    This annotates each processed branch pattern with the boolean attribute
+    `_branch_annotated` (True) to make sure it does not get processed in any
+    subsequent application of this pattern. Additionally, each guard state to a
+    branch pattern that gets fully merged again, receives the attribute
+    `full_merge_state`, which points to the state where all the branches meet
+    again.
+    """
 
     @staticmethod
     def annotates_memlets():

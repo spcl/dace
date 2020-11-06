@@ -10,7 +10,15 @@ from dace.subsets import Range
 
 @autoregister
 class AnnotateLoop(DetectLoop):
-    """ Annotates states in loop constructs according to the loop range. """
+    """
+    Annotates states in loop constructs according to the loop range.
+
+    This sets the `ranges` property for each state with a loop range.
+    Additionally, each loop guard gets annotated with the boolean attribute
+    `is_loop_guard` (True), the string attribute `itvar` which holds the name
+    of the loop's iteration variable, and the attribute `condition_edge`, which
+    points to the edge holding the condition leading in to the loop.
+    """
 
     @staticmethod
     def annotates_memlets():
