@@ -664,7 +664,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
         """
         Sets the default source line information to be lineinfo, or None to
-        revert to default mode. 
+        revert to default mode.
         """
         self._default_lineinfo = lineinfo
 

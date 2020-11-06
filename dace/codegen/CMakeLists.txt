@@ -591,7 +591,6 @@ if(DACE_ENABLE_RTL)
     set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
   endif()
 
-  message(WARNING "${DACE_RTL_FILES}")
   foreach(RTL_FILE ${DACE_RTL_FILES})
 
     # extract design name
@@ -604,7 +603,6 @@ if(DACE_ENABLE_RTL)
     set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
 
     # add verilated design
-    #add_library(VERILATED_LIB OBJECT)
     add_library("${RTL_FILE_NAME}" OBJECT)
 
     # include verilator
