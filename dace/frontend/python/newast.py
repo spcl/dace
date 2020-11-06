@@ -66,22 +66,6 @@ augassign_ops = {
 }
 
 
-# _symrel2pyop = {
-#     sympy.Equality: '==',
-#     sympy.Unequality: '!=',
-#     sympy.GreaterThan: '>=',
-#     sympy.LessThan: '<=',
-#     sympy.StrictGreaterThan: '>',
-#     sympy.StrictLessThan: '<'
-# }
-
-
-# def _sym2pystr_rel(expr: sympy.Rel) -> str:
-#     """ Converts a Sympy relational expression to a Python string. """
-#     pyop = _symrel2pyop[type(expr)]
-#     return "{l} {op} {r}".format(l=expr.args[0], op=pyop, r=expr.args[1])
-
-
 class AddTransientMethods(object):
     """ A management singleton for methods that add transient data to SDFGs. """
 
@@ -2412,14 +2396,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 if target_subset.size() == op_subset.size() and op:
                     inp_subset = copy.deepcopy(op_subset)
                     inp_subset.offset(target_subset, True)
-                    inp_memlet = Memlet.simple(
-                        op_name, ','.join([
+                    inp_memlet = Memlet("{a}[{s}]".format(
+                        a=op_name, s=','.join([
                             '__i%d + %d' % (i, s)
                             for i, (s, _, _) in enumerate(inp_subset)
-                        ]))
-                    out_memlet = Memlet.simple(
-                        target_name, ','.join(
-                            ['__i%d' % i for i in range(len(target_subset))]))
+                        ])))
+                    out_memlet = Memlet("{a}[{s}]".format(
+                        a=target_name, s=','.join(
+                            ['__i%d' % i for i in range(len(target_subset))])))
                     if op:
                         out_memlet.wcr = LambdaProperty.from_string(
                             'lambda x, y: x {} y'.format(op))
@@ -2436,22 +2420,24 @@ class ProgramVisitor(ExtNodeVisitor):
                                          debuginfo=self.current_lineinfo)
                     op2 = state.add_write(target_name,
                                           debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(target_name, target_subset)
+                    memlet = Memlet("{a}[{s}]".format(a=target_name,
+                                                      s=target_subset))
                     memlet.other_subset = op_subset
                     if op:
                         memlet.wcr = LambdaProperty.from_string(
                             'lambda x, y: x {} y'.format(op))
                     state.add_nedge(op1, op2, memlet)
             else:
-                memlet = Memlet.simple(
-                    target_name,
-                    ','.join(['__i%d' % i for i in range(len(target_subset))]))
+                memlet = Memlet("{a}[{s}]".format(
+                    a=target_name, s=','.join([
+                        '__i%d' % i for i in range(len(target_subset))])))
                 if op:
                     memlet.wcr = LambdaProperty.from_string(
                         'lambda x, y: x {} y'.format(op))
                 if op_name:
                     inp_memlet = {
-                        '__inp': Memlet.simple(op_name, '%s' % op_subset)
+                        '__inp': Memlet("{a}[{s}]".format(a=op_name,
+                                                          s=op_subset))
                     }
                     tasklet_code = '__out = __inp'
                 else:
