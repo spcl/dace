@@ -382,6 +382,12 @@ class SDFG(OrderedDiGraph):
         if name == new_name:
             return
 
+        symrepl = {
+            symbolic.symbol(name):
+            symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str) else new_name
+        }
+
         # Replace in arrays and symbols (if a variable name)
         if validate_name(new_name):
             replace_dict(self._arrays, name, new_name)
@@ -389,7 +395,7 @@ class SDFG(OrderedDiGraph):
 
         # Replace inside data descriptors
         for array in self.arrays.values():
-            replace_properties(array, name, new_name)
+            replace_properties(array, symrepl, name, new_name)
 
         # Replace in inter-state edges
         for edge in self.edges():
@@ -537,8 +543,7 @@ class SDFG(OrderedDiGraph):
         """
         if location not in self.exit_code:
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
-        self.exit_code[
-            location].code = cpp_code + self.exit_code[location].code
+        self.exit_code[location].code = cpp_code + self.exit_code[location].code
 
     def append_transformation(self, transformation):
         """
@@ -1125,7 +1130,7 @@ class SDFG(OrderedDiGraph):
         view(self, filename=filename)
 
     @staticmethod
-    def from_file(filename: str):
+    def from_file(filename: str) -> 'SDFG':
         """ Constructs an SDFG from a file.
             :param filename: File name to load SDFG from.
             :return: An SDFG.
@@ -1404,9 +1409,8 @@ class SDFG(OrderedDiGraph):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1484,8 +1488,7 @@ class SDFG(OrderedDiGraph):
         else:
             cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, InterstateEdge(cond_ast))
-        self.add_edge(guard, after_state,
-                      InterstateEdge(negate_expr(cond_ast)))
+        self.add_edge(guard, after_state, InterstateEdge(negate_expr(cond_ast)))
 
         # Loop incrementation
         incr = None if increment_expr is None else {loop_var: increment_expr}
@@ -1596,8 +1599,8 @@ class SDFG(OrderedDiGraph):
             sdfg, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(
-            program_folder, sdfg.name)
+        shared_library = compiler.configure_and_compile(program_folder,
+                                                        sdfg.name)
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -1806,7 +1809,6 @@ class SDFG(OrderedDiGraph):
             raise ValueError('Length of options and transformations mismatch')
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
-
         for xform, opts in zip(xforms, options):
             # Find only the first match
             try:
@@ -1881,6 +1883,9 @@ class SDFG(OrderedDiGraph):
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
+        # Cache transformations as metadata for faster application
+        opt.set_transformation_metadata(xforms)
+
         applied = True
         while applied:
             applied = False
@@ -1951,8 +1956,8 @@ class SDFG(OrderedDiGraph):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     node.expand(self, state)
-                    print("Automatically expanded library node \"" +
-                          str(node) + "\".")
+                    print("Automatically expanded library node \"" + str(node) +
+                          "\".")
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:

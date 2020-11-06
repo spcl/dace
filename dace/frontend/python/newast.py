@@ -3251,13 +3251,18 @@ class ProgramVisitor(ExtNodeVisitor):
                         # to avoid clashes
                         for sym, symvalue in mapping.items():
                             if str(sym) != str(symvalue):
-                                sd.replace_properties(newarr, sym,
-                                                      '__dacesym_' + sym)
+                                sd.replace_properties(
+                                    newarr, {
+                                        symbolic.symbol(sym):
+                                        symbolic.symbol('__dacesym_' + symvalue)
+                                    }, sym, '__dacesym_' + sym)
                         for sym, symvalue in mapping.items():
                             if str(sym) != str(symvalue):
-                                sd.replace_properties(newarr,
-                                                      '__dacesym_' + sym,
-                                                      symvalue)
+                                sd.replace_properties(
+                                    newarr, {
+                                        symbolic.symbol('__dacesym_' + symvalue):
+                                        symbolic.pystr_to_symbolic(symvalue)
+                                    }, '__dacesym_' + sym, symvalue)
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname,
                                                          newarr,
@@ -3331,9 +3336,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         self, node,
                         'Function "%s" is not registered with an SDFG '
                         'implementation' % funcname)
-                print(
-                    'WARNING: Function "%s" is not registered with an %s '
-                    'implementation, falling back to SDFG' % funcname)
+                print('WARNING: Function "%s" is not registered with an %s '
+                      'implementation, falling back to SDFG' % funcname)
 
         args = [self._parse_function_arg(arg) for arg in node.args]
         keywords = {
@@ -3345,8 +3349,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_state.set_default_lineinfo(self.current_lineinfo)
 
         if found_ufunc:
-            result = func(self, node, self.sdfg, self.last_state,
-                          ufunc_name, args, keywords)
+            result = func(self, node, self.sdfg, self.last_state, ufunc_name,
+                          args, keywords)
         else:
             result = func(self.sdfg, self.last_state, *args, **keywords)
 
