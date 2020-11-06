@@ -26,11 +26,10 @@ def test_tasklet_scalar():
     sdfg.add_constant("DEBUG", 1)
 
     # add custom cpp tasklet
-    tasklet = state.add_tasklet(
-        name='rtl_tasklet',
-        inputs={'a'},
-        outputs={'b'},
-        code='''
+    tasklet = state.add_tasklet(name='rtl_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code='''
         /*
             Convention:
                |----------------------------------------------------|
@@ -65,7 +64,7 @@ def test_tasklet_scalar():
         
         assign valid_o = (b >= 100) ? 1'b1:1'b0; 
         ''',
-        language=dace.Language.RTL)
+                                language=dace.Language.RTL)
 
     # add input/output array
     A = state.add_read('A')
@@ -77,7 +76,6 @@ def test_tasklet_scalar():
 
     # validate sdfg
     sdfg.validate()
-
     """
         Execute    
     """
@@ -120,11 +118,10 @@ def test_tasklet_parameter():
     sdfg.add_constant("MAX_VAL", 42)
 
     # add custom cpp tasklet
-    tasklet = state.add_tasklet(
-        name='rtl_tasklet',
-        inputs={'a'},
-        outputs={'b'},
-        code='''
+    tasklet = state.add_tasklet(name='rtl_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code='''
         /*
             Convention:
                |----------------------------------------------------|
@@ -159,7 +156,7 @@ def test_tasklet_parameter():
     
         assign valid_o = (b >= MAX_VAL) ? 1'b1:1'b0;
         ''',
-        language=dace.Language.RTL)
+                                language=dace.Language.RTL)
 
     # add input/output array
     A = state.add_read('A')
@@ -171,7 +168,6 @@ def test_tasklet_parameter():
 
     # validate sdfg
     sdfg.validate()
-
     """
         Execute    
     """
@@ -217,11 +213,10 @@ def test_tasklet_vector():
     sdfg.add_constant("DEBUG", 1)
 
     # add custom cpp tasklet
-    tasklet = state.add_tasklet(
-        name='rtl_tasklet',
-        inputs={'a': dace.vector(dace.int32, N)},
-        outputs={'b'},
-        code='''
+    tasklet = state.add_tasklet(name='rtl_tasklet',
+                                inputs={'a': dace.vector(dace.int32, N)},
+                                outputs={'b'},
+                                code='''
         /*
             Convention:
                |----------------------------------------------------|
@@ -257,7 +252,7 @@ def test_tasklet_vector():
     
         assign valid_o = (b >= a[0] + a[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
         ''',
-        language=dace.Language.RTL)
+                                language=dace.Language.RTL)
 
     # add input/output array
     A = state.add_read('A')
@@ -269,12 +264,12 @@ def test_tasklet_vector():
 
     # validate sdfg
     sdfg.validate()
-
     """
         Execute    
     """
     # init data structures
-    a = np.random.randint(0, 100, dace.symbolic.evaluate(N, sdfg.constants)).astype(np.int32)
+    a = np.random.randint(0, 100, dace.symbolic.evaluate(
+        N, sdfg.constants)).astype(np.int32)
     b = np.array([0]).astype(np.int32)
 
     # show initial values
@@ -310,11 +305,10 @@ def test_multi_tasklet():
     sdfg.add_constant("DEBUG", 1)
 
     # add custom cpp tasklet
-    tasklet0 = state.add_tasklet(
-        name='rtl_tasklet0',
-        inputs={'a'},
-        outputs={'b'},
-        code='''
+    tasklet0 = state.add_tasklet(name='rtl_tasklet0',
+                                 inputs={'a'},
+                                 outputs={'b'},
+                                 code='''
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
     
@@ -336,13 +330,12 @@ def test_multi_tasklet():
     
         assign valid_o = (b >= 80) ? 1'b1:1'b0; 
         ''',
-        language=dace.Language.RTL)
+                                 language=dace.Language.RTL)
 
-    tasklet1 = state.add_tasklet(
-        name='rtl_tasklet1',
-        inputs={'b'},
-        outputs={'c'},
-        code='''
+    tasklet1 = state.add_tasklet(name='rtl_tasklet1',
+                                 inputs={'b'},
+                                 outputs={'c'},
+                                 code='''
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
     
@@ -364,7 +357,7 @@ def test_multi_tasklet():
     
         assign valid_o = (c >= 100) ? 1'b1:1'b0;  
         ''',
-        language=dace.Language.RTL)
+                                 language=dace.Language.RTL)
 
     # add input/output array
     A = state.add_read('A')
@@ -380,7 +373,6 @@ def test_multi_tasklet():
 
     # validate sdfg
     sdfg.validate()
-
     """
         Execute    
     """

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-
 """
     RTL tasklet with a vector input of 4 int32 (width=128bits) and a single scalar output. It increments b from a[31:0] up to 100.
 """
@@ -30,11 +29,10 @@ sdfg.add_array('B', [1], dtype=dace.int32)
 sdfg.add_constant("DEBUG", 1)
 
 # add custom cpp tasklet
-tasklet = state.add_tasklet(
-    name='rtl_tasklet',
-    inputs={'a': dace.vector(dace.int32, WIDTH)},
-    outputs={'b'},
-    code='''
+tasklet = state.add_tasklet(name='rtl_tasklet',
+                            inputs={'a': dace.vector(dace.int32, WIDTH)},
+                            outputs={'b'},
+                            code='''
     /*
         Convention:
            |----------------------------------------------------|
@@ -69,7 +67,7 @@ tasklet = state.add_tasklet(
 
     assign valid_o = (b >= 100) ? 1'b1:1'b0;  
     ''',
-    language=dace.Language.RTL)
+                            language=dace.Language.RTL)
 
 # add input/output array
 A = state.add_read('A')
@@ -84,11 +82,11 @@ sdfg.validate()
 
 ######################################################################
 
-
 if __name__ == '__main__':
 
     # init data structures
-    a = np.random.randint(0, 100, dace.symbolic.evaluate(WIDTH, sdfg.constants)).astype(np.int32)
+    a = np.random.randint(0, 100, dace.symbolic.evaluate(
+        WIDTH, sdfg.constants)).astype(np.int32)
     b = np.array([0]).astype(np.int32)
 
     # show initial values

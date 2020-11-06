@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-
 """
     Pipelined, axi-handshake compliant example that increments b from a up to 100.
 """
@@ -30,11 +29,10 @@ sdfg.add_array('B', [N], dtype=dace.int32)
 sdfg.add_constant("DEBUG", 1)
 
 # add custom cpp tasklet
-tasklet = state.add_tasklet(
-    name='rtl_tasklet',
-    inputs={'a'},
-    outputs={'b'},
-    code='''
+tasklet = state.add_tasklet(name='rtl_tasklet',
+                            inputs={'a'},
+                            outputs={'b'},
+                            code='''
     /*
         Convention:
            |----------------------------------------------------|
@@ -119,7 +117,7 @@ tasklet = state.add_tasklet(
         end
     end
     ''',
-    language=dace.Language.RTL)
+                            language=dace.Language.RTL)
 
 # add input/output array
 A = state.add_read('A')
@@ -133,7 +131,6 @@ state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0:N-1'))
 sdfg.validate()
 
 ######################################################################
-
 
 if __name__ == '__main__':
     # init data structures

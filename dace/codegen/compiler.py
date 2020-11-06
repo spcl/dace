@@ -97,8 +97,7 @@ def generate_program_folder(sdfg,
     return out_path
 
 
-def configure_and_compile(program_folder,
-                          program_name=None,
+def configure_and_compile(program_folder, program_name=None,
                           output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.

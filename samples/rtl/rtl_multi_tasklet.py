@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-
 """
     Two sequential RTL tasklets connected through a memlet.
 """
@@ -25,11 +24,10 @@ sdfg.add_array('C', [1], dtype=dace.int32)
 sdfg.add_constant("DEBUG", 1)
 
 # add custom cpp tasklet
-tasklet0 = state.add_tasklet(
-    name='rtl_tasklet0',
-    inputs={'a'},
-    outputs={'b'},
-    code="""\
+tasklet0 = state.add_tasklet(name='rtl_tasklet0',
+                             inputs={'a'},
+                             outputs={'b'},
+                             code="""\
 typedef enum [1:0] {READY, BUSY, DONE} state_e;
 state_e state;
 
@@ -51,13 +49,12 @@ end
 
 assign valid_o = (b >= 80) ? 1'b1:1'b0;
 """,
-    language=dace.Language.RTL)
+                             language=dace.Language.RTL)
 
-tasklet1 = state.add_tasklet(
-    name='rtl_tasklet1',
-    inputs={'b'},
-    outputs={'c'},
-    code="""\
+tasklet1 = state.add_tasklet(name='rtl_tasklet1',
+                             inputs={'b'},
+                             outputs={'c'},
+                             code="""\
 typedef enum [1:0] {READY, BUSY, DONE} state_e;
 state_e state;
 
@@ -79,7 +76,7 @@ end
 
 assign valid_o = (c >= 100) ? 1'b1:1'b0;   
 """,
-    language=dace.Language.RTL)
+                             language=dace.Language.RTL)
 
 # add input/output array
 A = state.add_read('A')
@@ -97,7 +94,6 @@ state.add_edge(tasklet1, 'c', C, None, dace.Memlet.simple('C', '0'))
 sdfg.validate()
 
 ######################################################################
-
 
 if __name__ == '__main__':
     # init data structures
