@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import subprocess
-from subprocess import PIPE
 from typing import Any, Dict, List
 import warnings
 
@@ -98,7 +97,8 @@ class ReloadableDLL(object):
             reason = ''
             if os.name == 'posix':
                 result = subprocess.run(['ld', self._library_filename],
-                                        stdout=PIPE, stderr=PIPE)
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE)
                 stderr = result.stderr.decode('utf-8')
                 reason = 'Reason:\n' + '\n'.join(
                     [l for l in stderr.split('\n') if '_start' not in l])
