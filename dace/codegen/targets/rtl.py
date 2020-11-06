@@ -4,8 +4,7 @@ import itertools
 
 from typing import List, Tuple, Dict
 
-import dace
-from dace import registry, symbolic, nodes, StorageType, Language
+from dace import registry, symbolic, nodes, StorageType, Language, SDFG
 from dace.config import Config
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.prettycode import CodeIOStream
@@ -15,6 +14,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import StateSubgraphView
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.codegen.codeobject import CodeObject
+from dace.dtypes import pointer, vector
 
 
 @registry.autoregister_params(name='rtl')
@@ -23,11 +23,11 @@ class RTLCodeGen(TargetCodeGenerator):
 
     title = 'RTL'
     target_name = 'rtl'
-    language = dace.Language.RTL
+    language = Language.RTL
 
-    def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
+    def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: SDFG):
         # store reference to sdfg
-        self.sdfg: dace.SDFG = sdfg
+        self.sdfg: SDFG = sdfg
         # store reference to frame code generator
         self.frame: DaCeCodeGenerator = frame_codegen
         # get dispatcher to register callbacks for allocation/nodes/.. code generators
@@ -53,12 +53,11 @@ class RTLCodeGen(TargetCodeGenerator):
         # local variables
         self.code_objects: List[CodeObject] = list()
 
-    def generate_node(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
-                      state_id: int, node: nodes.Node,
-                      function_stream: CodeIOStream,
+    def generate_node(self, sdfg: SDFG, dfg: StateSubgraphView, state_id: int,
+                      node: nodes.Node, function_stream: CodeIOStream,
                       callsite_stream: CodeIOStream):
         # check instance type
-        if isinstance(node, dace.nodes.Tasklet):
+        if isinstance(node, nodes.Tasklet):
             """ 
             handle Tasklet: 
                 (1) generate in->tasklet
@@ -89,8 +88,8 @@ class RTLCodeGen(TargetCodeGenerator):
                 "Only tasklets are handled here, not {}. This should have been filtered by the predicate"
                 .format(type(node)))
 
-    def copy_memory(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
-                    state_id: int, src_node: nodes.Node, dst_node: nodes.Node,
+    def copy_memory(self, sdfg: SDFG, dfg: StateSubgraphView, state_id: int,
+                    src_node: nodes.Node, dst_node: nodes.Node,
                     edge: MultiConnectorEdge, function_stream: CodeIOStream,
                     callsite_stream: CodeIOStream):
         """
@@ -99,12 +98,12 @@ class RTLCodeGen(TargetCodeGenerator):
         if isinstance(edge.src, nodes.AccessNode) and isinstance(
                 edge.dst, nodes.Tasklet):  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn],
-                          dace.pointer):  # pointer accessor
+                          pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     edge.src.data)
             elif isinstance(dst_node.in_connectors[edge.dst_conn],
-                            dace.vector):  # vector accessor
+                            vector):  # vector accessor
                 line: str = "{} {} = *({} *)(&{}[0]);".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.src.data)
@@ -119,7 +118,7 @@ class RTLCodeGen(TargetCodeGenerator):
         # write accessor to file
         callsite_stream.write(line)
 
-    def define_out_memlet(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
+    def define_out_memlet(self, sdfg: SDFG, dfg: StateSubgraphView,
                           state_id: int, src_node: nodes.Node,
                           dst_node: nodes.Node, edge: MultiConnectorEdge,
                           function_stream: CodeIOStream,
@@ -130,12 +129,12 @@ class RTLCodeGen(TargetCodeGenerator):
         if isinstance(edge.src, nodes.Tasklet) and isinstance(
                 edge.dst, nodes.AccessNode):
             if isinstance(src_node.out_connectors[edge.src_conn],
-                          dace.pointer):  # pointer accessor
+                          pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     edge.dst.data)
             elif isinstance(src_node.out_connectors[edge.src_conn],
-                            dace.vector):  # vector accessor
+                            vector):  # vector accessor
                 line: str = "{} {} = *({} *)(&{}[0]);".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     src_node.out_connectors[edge.src_conn].ctype, edge.dst.data)
@@ -281,28 +280,26 @@ class RTLCodeGen(TargetCodeGenerator):
             b[0] = (int)model->b;
         """
         input_read_string = "\n".join([
-            "model->{name} = {name}[in_ptr++];".format(
-                name=var_name) if isinstance(tasklet.in_connectors[var_name],
-                                             dace.dtypes.pointer) else """\
+            "model->{name} = {name}[in_ptr++];".format(name=var_name)
+            if isinstance(tasklet.in_connectors[var_name], pointer) else """\
  for(int i = 0; i < {veclen}; i++){{
    model->{name}[i] = {name}[i];
  }}\
  """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-            if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector)
-            else "model->{name} = {name}[in_ptr++];".format(name=var_name)
+            if isinstance(tasklet.in_connectors[var_name], vector) else
+            "model->{name} = {name}[in_ptr++];".format(name=var_name)
             for var_name in tasklet.in_connectors
         ])
 
         output_read_string = "\n".join([
-            "{name}[out_ptr++] = (int)model->{name};".format(
-                name=var_name) if isinstance(tasklet.out_connectors[var_name],
-                                             dace.dtypes.pointer) else """\
+            "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
+            if isinstance(tasklet.out_connectors[var_name], pointer) else """\
 for(int i = 0; i < {veclen}; i++){{
   {name}[i] = (int)model->{name}[i];
 }}\
 """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
-            if isinstance(tasklet.out_connectors[var_name], dace.dtypes.vector)
-            else "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
+            if isinstance(tasklet.out_connectors[var_name], vector) else
+            "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
             for var_name in tasklet.out_connectors
         ])
         # return generated strings
@@ -315,8 +312,8 @@ for(int i = 0; i < {veclen}; i++){{
          model->{name}[i] = 0;
         }}\
         """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-            if isinstance(tasklet.in_connectors[var_name], dace.dtypes.vector)
-            else "" for var_name in tasklet.in_connectors
+            if isinstance(tasklet.in_connectors[var_name], vector) else ""
+            for var_name in tasklet.in_connectors
         ])
         return init_vector_string
 
@@ -339,9 +336,8 @@ for(int i = 0; i < {veclen}; i++){{
         ])
         return internal_state_str, internal_state_var
 
-    def unparse_tasklet(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
-                        state_id: int, node: nodes.Node,
-                        function_stream: CodeIOStream,
+    def unparse_tasklet(self, sdfg: SDFG, dfg: StateSubgraphView, state_id: int,
+                        node: nodes.Node, function_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
 
         # extract data
