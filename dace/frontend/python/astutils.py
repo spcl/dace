@@ -4,6 +4,7 @@ import ast
 import astunparse
 from collections import OrderedDict
 import inspect
+import numbers
 import sympy
 from typing import Any, Dict, List, Tuple
 
@@ -153,6 +154,9 @@ def unparse(node):
     # Support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
+    # Support for numerical constants
+    if isinstance(node, numbers.Number):
+        return str(node)
     # Suport for string
     if isinstance(node, str):
         return node
@@ -244,6 +248,9 @@ def negate_expr(node):
     # Negation support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
+     # Support for numerical constants
+    if isinstance(node, numbers.Number):
+        return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
     if isinstance(node, str):
         return "not ({})".format(node)
