@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import astunparse
 from collections import OrderedDict
 import copy
 import itertools
@@ -166,13 +167,6 @@ def parse_dace_program(f,
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
-    # Resolve symbols to their names
-    symrepl = {
-        k: v.name
-        for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
-    }
-    src_ast = astutils.ASTFindReplace(symrepl).visit(src_ast)
-
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)
 
@@ -186,10 +180,10 @@ def parse_dace_program(f,
         global_vars[modval] = newmod
 
     # Resolve constants to their values (if they are not already defined in this scope)
+    # and symbols to their names
     src_ast = GlobalResolver({
         k: v
-        for k, v in global_vars.items()
-        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes and k != '_'
+        for k, v in global_vars.items() if not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -621,6 +615,42 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
+    def global_value_to_node(self, value, parent_node, recurse=False):
+        # if recurse is false, we don't allow recursion into lists
+        # this should not happen anyway; the globals dict should only contain single "level" lists
+        if not recurse and isinstance(value, (list, tuple)):
+            # bail after more than one level of lists
+            return None
+
+        if isinstance(value, list):
+            elts = [self.global_value_to_node(v, parent_node) for v in value]
+            if any(e is None for e in elts):
+                return None
+            newnode = ast.List(elts=elts, ctx=parent_node.ctx)
+        elif isinstance(value, tuple):
+            elts = [self.global_value_to_node(v, parent_node) for v in value]
+            if any(e is None for e in elts):
+                return None
+            newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
+        elif isinstance(value, symbolic.symbol):
+            # symbols resolve to the symbol name
+            newnode = ast.Name(id=value.name, ctx=ast.Load())
+        elif dtypes.isconstant(value):
+            # otherwise we must have a non list or tuple constant; emit a constant node
+
+            # Compatibility check since Python changed their AST nodes
+            if sys.version_info >= (3, 8):
+                newnode = ast.Constant(value=value, kind='')
+            else:
+                newnode = ast.Num(n=value)
+        else:
+            return None
+
+        if parent_node is not None:
+            return ast.copy_location(newnode, parent_node)
+        else:
+            return newnode
+
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.AugStore)):
             self.current_scope.add(node.id)
@@ -628,13 +658,20 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=self.globals[node.id], kind='')
-                else:
-                    newnode = ast.Num(n=self.globals[node.id])
-                return ast.copy_location(newnode, node)
+                global_val = self.globals[node.id]
+                newnode = self.global_value_to_node(global_val,
+                                                    parent_node=node,
+                                                    recurse=True)
+                if newnode is None:
+                    return node
+                return newnode
         return node
+
+    def visit_keyword(self, node: ast.keyword):
+        if node.arg in self.globals and isinstance(self.globals[node.arg],
+                                                   symbolic.symbol):
+            node.arg = self.globals[node.arg].name
+        return self.generic_visit(node)
 
 
 class TaskletTransformer(ExtNodeTransformer):
@@ -3111,7 +3148,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
-                required_args = list(sdfg.arglist().keys())
+                required_args = [
+                    a for a in sdfg.arglist().keys() if a not in sdfg.symbols
+                ]
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
