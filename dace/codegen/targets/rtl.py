@@ -302,7 +302,7 @@ for(int i = 0; i < {veclen}; i++){{
             if isinstance(tasklet.in_connectors[var_name], vector) else ""
             for var_name in tasklet.in_connectors
         ])
-        return init_vector_string
+        return "// initialize vector\n" if len(init_vector_string) > 0 else "" + init_vector_string
 
     def generate_cpp_num_elements(self):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
@@ -409,7 +409,6 @@ model->valid_i = 0; // not valid
 model->ready_i = 0; // not ready 
 model->eval();
 
-// init vector
 {vector_init}
 
 // reset design
