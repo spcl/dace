@@ -461,8 +461,8 @@ while (out_ptr < num_elements) {{
     // report internal state
     if(DEBUG){{
         VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
-        VL_PRINTF("{internal_state_str}", {internal_state_var});
-        std::cout << std::endl;
+        VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
+        std::cout << std::flush;
     }}
 
     // check if valid_i and ready_o have been asserted at the rising clock edge
@@ -481,7 +481,6 @@ while (out_ptr < num_elements) {{
         write_output_hs = false;
     }}
 
-
     // negative clock edge
     model->clk_i = !model->clk_i;
     model->eval();
@@ -490,8 +489,8 @@ while (out_ptr < num_elements) {{
 // report internal state
 if(DEBUG){{
     VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
-    VL_PRINTF("{internal_state_str}", {internal_state_var});
-    std::cout << std::endl;
+    VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
+    std::cout << std::flush;
 }}
 
 // final model cleanup
