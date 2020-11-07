@@ -789,7 +789,32 @@ def propagate_states(sdfg) -> None:
                                                 proposed_dynamic))
 
 
-def propagate_memlets_nested_sdfg(sdfg, border_memlets):
+def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
+    '''
+    Propagate memlets out of a nested sdfg.
+
+    :param parent_sdfg: The parent SDFG this nested SDFG is in.
+    :param parent_state: The state containing this nested SDFG.
+    :param nsdfg_node: The NSDFG node containing this nested SDFG.
+    :note: This operates in-place on the parent SDFG.
+    '''
+    # We import late to avoid cyclic imports here.
+    from dace.transformation.helpers import unsqueeze_memlet
+
+    # Build a map of connectors to associated 'border' memlets inside
+    # the nested SDFG. This map will be populated with memlets once they
+    # get propagated in the SDFG.
+    border_memlets = {
+        'in': {},
+        'out': {},
+    }
+    for connector in nsdfg_node.in_connectors:
+        border_memlets['in'][connector] = None
+    for connector in nsdfg_node.out_connectors:
+        border_memlets['out'][connector] = None
+
+    sdfg = nsdfg_node.sdfg
+
     # For each state, go through all access nodes corresponding to any in- or
     # out-connectors to and from this SDFG. Given those access nodes, collect
     # the corresponding memlets and use them to calculate the memlet volume and
@@ -879,21 +904,50 @@ def propagate_memlets_nested_sdfg(sdfg, border_memlets):
                     else:
                         memlet.subset = subset
 
+    # Make sure any potential NSDFG symbol mapping is correctly reversed
+    # when propagating out.
+    for direction in border_memlets:
+        for connector in border_memlets[direction]:
+            border_memlet = border_memlets[direction][connector]
+            if border_memlet is not None:
+                border_memlet.replace(nsdfg_node.symbol_mapping)
 
-def propagate_memlets_sdfg(sdfg, border_memlets=None):
+    # Propagate the inside 'border' memlets outside the SDFG by
+    # offsetting, and unsqueezing if necessary.
+    for iedge in parent_state.in_edges(nsdfg_node):
+        if iedge.dst_conn in border_memlets['in']:
+            internal_memlet = border_memlets['in'][iedge.dst_conn]
+            if internal_memlet is None:
+                continue
+            iedge.data = unsqueeze_memlet(internal_memlet, iedge.data,
+                                          True)
+            if symbolic.issymbolic(iedge.data.volume):
+                if any(str(s) not in parent_sdfg.symbols
+                        for s in iedge.data.volume.free_symbols):
+                    iedge.data.volume = 0
+                    iedge.data.dynamic = True
+    for oedge in parent_state.out_edges(nsdfg_node):
+        if oedge.src_conn in border_memlets['out']:
+            internal_memlet = border_memlets['out'][oedge.src_conn]
+            if internal_memlet is None:
+                continue
+            oedge.data = unsqueeze_memlet(internal_memlet, oedge.data,
+                                          True)
+            if symbolic.issymbolic(oedge.data.volume):
+                if any(str(s) not in parent_sdfg.symbols
+                        for s in oedge.data.volume.free_symbols):
+                    oedge.data.volume = 0
+                    oedge.data.dynamic = True
+
+
+def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
-        :param border_memlets: A map between connectors to and from this SDFG
-                               (if it's a nested SDFG), to their connected
-                               'border' memlets.
         :note: This is an in-place operation on the SDFG.
     """
     for state in sdfg.nodes():
         propagate_memlets_state(sdfg, state)
 
     propagate_states(sdfg)
-
-    if border_memlets is not None:
-        propagate_memlets_nested_sdfg(sdfg, border_memlets)
 
 
 def propagate_memlets_state(sdfg, state):
@@ -925,61 +979,15 @@ def propagate_memlets_state(sdfg, state):
     # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
     #    Accumulate information about each array in the target node.
 
-    # We import late to avoid cyclic imports here.
-    from dace.transformation.helpers import unsqueeze_memlet
-
     # First, propagate nested SDFGs in a bottom-up fashion
     for node in state.nodes():
         if isinstance(node, nodes.NestedSDFG):
-            # Build a map of connectors to associated 'border' memlets inside
-            # the nested SDFG. This map will be populated with memlets once they
-            # get propagated in the SDFG.
-            border_memlets = {
-                'in': {},
-                'out': {},
-            }
-            for connector in node.in_connectors:
-                border_memlets['in'][connector] = None
-            for connector in node.out_connectors:
-                border_memlets['out'][connector] = None
 
             # Propagate memlets inside the nested SDFG.
-            propagate_memlets_sdfg(node.sdfg, border_memlets)
+            propagate_memlets_sdfg(node.sdfg)
 
-            # Make sure any potential NSDFG symbol mapping is correctly reversed
-            # when propagating out.
-            for direction in border_memlets:
-                for connector in border_memlets[direction]:
-                    border_memlet = border_memlets[direction][connector]
-                    if border_memlet is not None:
-                        border_memlet.replace(node.symbol_mapping)
-
-            # Propagate the inside 'border' memlets outside the SDFG by
-            # offsetting, and unsqueezing if necessary.
-            for iedge in state.in_edges(node):
-                if iedge.dst_conn in border_memlets['in']:
-                    internal_memlet = border_memlets['in'][iedge.dst_conn]
-                    if internal_memlet is None:
-                        continue
-                    iedge.data = unsqueeze_memlet(internal_memlet, iedge.data,
-                                                  True)
-                    if symbolic.issymbolic(iedge.data.volume):
-                        if any(str(s) not in sdfg.symbols
-                               for s in iedge.data.volume.free_symbols):
-                            iedge.data.volume = 0
-                            iedge.data.dynamic = True
-            for oedge in state.out_edges(node):
-                if oedge.src_conn in border_memlets['out']:
-                    internal_memlet = border_memlets['out'][oedge.src_conn]
-                    if internal_memlet is None:
-                        continue
-                    oedge.data = unsqueeze_memlet(internal_memlet, oedge.data,
-                                                  True)
-                    if symbolic.issymbolic(oedge.data.volume):
-                        if any(str(s) not in sdfg.symbols
-                               for s in oedge.data.volume.free_symbols):
-                            oedge.data.volume = 0
-                            oedge.data.dynamic = True
+            # Propagate memlets out of the nested SDFG.
+            propagate_memlets_nested_sdfg(sdfg, state, node)
 
     # Process scopes from the leaves upwards
     propagate_memlets_scope(sdfg, state, state.scope_leaves())
