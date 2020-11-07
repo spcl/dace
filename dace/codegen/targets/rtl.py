@@ -348,12 +348,12 @@ for(int i = 0; i < {veclen}; i++){{
         # create rtl code object (that is later written to file)
         self.code_objects.append(
             CodeObject(name="{}".format(unique_name),
-                       code=RTLCodeGen.rtl_header().format(
+                       code=RTLCodeGen.RTL_HEADER.format(
                            name=unique_name,
                            parameters=parameter_string,
                            inputs="\n".join(inputs),
                            outputs="\n".join(outputs)) + tasklet.code.code +
-                       RTLCodeGen.rtl_footer(),
+                       RTLCodeGen.RTL_FOOTER,
                        language="sv",
                        target=RTLCodeGen,
                        title="rtl",
@@ -370,11 +370,11 @@ for(int i = 0; i < {veclen}; i++){{
             tasklet)
 
         # add header code do stream
-        sdfg.append_global_code(cpp_code=RTLCodeGen.header_template().format(
+        sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_HEADER_TEMPLATE.format(
             name=unique_name))
 
         # add main cpp code to stream
-        callsite_stream.write(contents=RTLCodeGen.main_template().format(
+        callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
             name=unique_name,
             inputs=inputs,
             outputs=outputs,
@@ -386,12 +386,7 @@ for(int i = 0; i < {veclen}; i++){{
                               state_id=state_id,
                               node_id=node)
 
-    @staticmethod
-    def header_template():
-        """
-            Cpp Header Template
-        """
-        return """\
+    CPP_HEADER_TEMPLATE = """\
 // generic includes
 #include <iostream>
 
@@ -402,12 +397,7 @@ for(int i = 0; i < {veclen}; i++){{
 #include "V{name}.h"
 """
 
-    @staticmethod
-    def main_template():
-        """
-            Cpp Main Verilator Simulator Template
-        """
-        return """\
+    CPP_MAIN_TEMPLATE = """\
 std::cout << "SIM START" << std::endl;
 
 vluint64_t main_time = 0;
@@ -519,9 +509,7 @@ model = NULL;
 std::cout << "SIM END" << std::endl;
 """
 
-    @staticmethod
-    def rtl_header():
-        return """\
+    RTL_HEADER = """\
 module {name}
 {parameters}
 ( input                  clk_i  // convention: clk_i clocks the design
@@ -535,9 +523,7 @@ module {name}
 );
 """
 
-    @staticmethod
-    def rtl_footer():
-        return """\
+    RTL_FOOTER = """\
 endmodule
 """
 
