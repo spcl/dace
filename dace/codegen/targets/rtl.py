@@ -393,7 +393,9 @@ for(int i = 0; i < {veclen}; i++){{
 """
 
     CPP_MAIN_TEMPLATE = """\
-std::cout << "SIM START" << std::endl;
+if(DEBUG){{
+    std::cout << "SIM {name} START" << std::endl;
+}}
 
 vluint64_t main_time = 0;
 
@@ -438,14 +440,18 @@ while (out_ptr < num_elements) {{
     }} 
     // feed new element
     if(model->valid_i == 0 && in_ptr < num_elements){{
-        std::cout << "feed new element" << std::endl;
+        if(DEBUG){{
+            std::cout << "feed new element" << std::endl;
+        }}
         {inputs}
         model->valid_i = 1;
     }}
 
     // export element
     if(model->valid_o == 1){{
-        std::cout << "export element" << std::endl;
+        if(DEBUG){{
+            std::cout << "export element" << std::endl;
+        }}
         {outputs}
         model->ready_i = 1;
     }}
@@ -468,16 +474,20 @@ while (out_ptr < num_elements) {{
     // check if valid_i and ready_o have been asserted at the rising clock edge
     if (read_input_hs){{
         // remove valid_i flag
-        std::cout << "remove read_input_hs flag" << std::endl;
         model->valid_i = 0;
+        if(DEBUG){{
+            std::cout << "remove read_input_hs flag" << std::endl;
+        }}
         read_input_hs = false;
     }}
 
     // check if valid_o and ready_i have been asserted at the rising clock edge
     if (write_output_hs){{
-        // remove valid_i flag
-        std::cout << "remove write_output_hs flag" << std::endl;
+        // remove ready_i flag
         model->ready_i = 0;
+        if(DEBUG){{
+            std::cout << "remove write_output_hs flag" << std::endl;
+        }}
         write_output_hs = false;
     }}
 
@@ -500,7 +510,9 @@ model->final();
 delete model;
 model = NULL;
 
-std::cout << "SIM END" << std::endl;
+if(DEBUG){{
+    std::cout << "SIM {name} END" << std::endl;
+}}
 """
 
     RTL_HEADER = """\

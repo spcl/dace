@@ -5,7 +5,7 @@ import dace
 import numpy as np
 
 
-def test_tasklet_scalar():
+def test_tasklet_scalar(debug=False):
     """
         Test the simple scalar execution sample.
     """
@@ -19,9 +19,6 @@ def test_tasklet_scalar():
     # add arrays
     sdfg.add_array('A', [1], dtype=dace.int32)
     sdfg.add_array('B', [1], dtype=dace.int32)
-
-    # enable debugging output
-    sdfg.add_constant("DEBUG", 1)
 
     # add custom cpp tasklet
     tasklet = state.add_tasklet(name='rtl_tasklet',
@@ -77,6 +74,10 @@ def test_tasklet_scalar():
     """
         Execute    
     """
+
+    # set debugging output
+    sdfg.add_constant("DEBUG", 1 if debug else 0)
+
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
     b = np.random.randint(0, 100, 1).astype(np.int32)
@@ -88,7 +89,7 @@ def test_tasklet_scalar():
     assert b == 100
 
 
-def test_tasklet_parameter():
+def test_tasklet_parameter(debug=False):
     """
         Test the sv parameter support.
     """
@@ -163,6 +164,9 @@ def test_tasklet_parameter():
     """
         Execute    
     """
+    # set debugging output
+    sdfg.add_constant("DEBUG", 1 if debug else 0)
+
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
     b = np.random.randint(0, 100, 1).astype(np.int32)
@@ -174,7 +178,7 @@ def test_tasklet_parameter():
     assert b == sdfg.constants["MAX_VAL"]
 
 
-def test_tasklet_vector():
+def test_tasklet_vector(debug=False):
     """
         Test rtl tasklet vector support.
     """
@@ -253,6 +257,9 @@ def test_tasklet_vector():
     """
         Execute    
     """
+    # set debugging output
+    sdfg.add_constant("DEBUG", 1 if debug else 0)
+
     # init data structures
     a = np.random.randint(0, 100, dace.symbolic.evaluate(
         N, sdfg.constants)).astype(np.int32)
@@ -265,7 +272,7 @@ def test_tasklet_vector():
     assert b == a[0] + a[1]
 
 
-def test_multi_tasklet():
+def test_multi_tasklet(debug=False):
     """
         Test multiple rtl tasklet support.
     """
@@ -356,6 +363,9 @@ def test_multi_tasklet():
     """
         Execute    
     """
+    # set debugging output
+    sdfg.add_constant("DEBUG", 1 if debug else 0)
+
     # init data structures
     a = np.random.randint(0, 80, 1).astype(np.int32)
     b = np.array([0]).astype(np.int32)

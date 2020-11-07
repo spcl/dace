@@ -4,6 +4,7 @@
 """
 
 import dace
+import argparse
 
 import numpy as np
 
@@ -17,9 +18,6 @@ state = sdfg.add_state()
 sdfg.add_array('A', [1], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
 sdfg.add_array('C', [1], dtype=dace.int32)
-
-# enable debugging output
-sdfg.add_constant("DEBUG", 1)
 
 # add custom cpp tasklet
 tasklet0 = state.add_tasklet(name='rtl_tasklet0',
@@ -94,6 +92,15 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+
+    # parse command line args
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--debug', action='store_true', default=False)
+    args = parser.parse_args()
+
+    # set debugging output
+    sdfg.add_constant("DEBUG", 1 if args.debug else 0)
+
     # init data structures
     a = np.random.randint(0, 80, 1).astype(np.int32)
     b = np.array([0]).astype(np.int32)
