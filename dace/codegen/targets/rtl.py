@@ -43,8 +43,9 @@ class RTLCodeGen(TargetCodeGenerator):
                 src_storage, dst_storage, None, self,
                 lambda sdfg, dfg, src_node, dest_node:
                 (isinstance(src_node, nodes.Tasklet) and src_node.language ==
-                 Language.SystemVerilog) or (isinstance(dest_node, nodes.Tasklet) and
-                                   dest_node.language == Language.SystemVerilog))
+                 Language.SystemVerilog) or
+                (isinstance(dest_node, nodes.Tasklet) and dest_node.language ==
+                 Language.SystemVerilog))
         # local variables
         self.code_objects: List[CodeObject] = list()
 
@@ -302,7 +303,8 @@ for(int i = 0; i < {veclen}; i++){{
             if isinstance(tasklet.in_connectors[var_name], vector) else ""
             for var_name in tasklet.in_connectors
         ])
-        return "// initialize vector\n" if len(init_vector_string) > 0 else "" + init_vector_string
+        return "// initialize vector\n" if len(
+            init_vector_string) > 0 else "" + init_vector_string
 
     def generate_cpp_num_elements(self):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
