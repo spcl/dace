@@ -1000,8 +1000,8 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
-        elif lang.endswith("RTL"):
-            lang = dace.dtypes.Language.RTL
+        elif lang.endswith("sv") or lang.endswith("systemverilog"):
+            lang = dace.dtypes.Language.SystemVerilog
 
         try:
             cdata = tmp['string_data']
@@ -1051,8 +1051,8 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
-        elif lang.endswith("RTL"):
-            lang = dace.dtypes.Language.RTL
+        elif lang.endswith("sv") or lang.endswith("SystemVerilog") or lang.endswith("RTL"):
+            lang = dace.dtypes.Language.SystemVerilog
 
         try:
             cdata = tmp['string_data']

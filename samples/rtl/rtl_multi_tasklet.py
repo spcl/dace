@@ -47,7 +47,7 @@ end
 
 assign valid_o = (b >= 80) ? 1'b1:1'b0;
 """,
-                             language=dace.Language.RTL)
+                             language=dace.Language.SystemVerilog)
 
 tasklet1 = state.add_tasklet(name='rtl_tasklet1',
                              inputs={'b'},
@@ -74,7 +74,7 @@ end
 
 assign valid_o = (c >= 100) ? 1'b1:1'b0;   
 """,
-                             language=dace.Language.RTL)
+                             language=dace.Language.SystemVerilog)
 
 # add input/output array
 A = state.add_read('A')

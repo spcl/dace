@@ -23,7 +23,7 @@ class RTLCodeGen(TargetCodeGenerator):
 
     title = 'RTL'
     target_name = 'rtl'
-    language = Language.RTL
+    languages = [Language.SystemVerilog]
 
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: SDFG):
         # store reference to sdfg
@@ -35,7 +35,7 @@ class RTLCodeGen(TargetCodeGenerator):
         # register node dispatcher -> generate_node(), predicate: process tasklets only
         self.dispatcher.register_node_dispatcher(
             self, lambda sdfg, node: isinstance(node, nodes.Tasklet) and node.
-            language == Language.RTL)
+            language == Language.SystemVerilog)
         # register all storage types that connect from/to an RTL tasklet
         for src_storage, dst_storage in itertools.product(
                 StorageType, StorageType):
@@ -43,8 +43,8 @@ class RTLCodeGen(TargetCodeGenerator):
                 src_storage, dst_storage, None, self,
                 lambda sdfg, dfg, src_node, dest_node:
                 (isinstance(src_node, nodes.Tasklet) and src_node.language ==
-                 Language.RTL) or (isinstance(dest_node, nodes.Tasklet) and
-                                   dest_node.language == Language.RTL))
+                 Language.SystemVerilog) or (isinstance(dest_node, nodes.Tasklet) and
+                                   dest_node.language == Language.SystemVerilog))
         # local variables
         self.code_objects: List[CodeObject] = list()
 

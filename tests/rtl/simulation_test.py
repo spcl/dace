@@ -62,7 +62,7 @@ def test_tasklet_scalar():
         
         assign valid_o = (b >= 100) ? 1'b1:1'b0; 
         ''',
-                                language=dace.Language.RTL)
+                                language=dace.Language.SystemVerilog)
 
     # add input/output array
     A = state.add_read('A')
@@ -148,7 +148,7 @@ def test_tasklet_parameter():
     
         assign valid_o = (b >= MAX_VAL) ? 1'b1:1'b0;
         ''',
-                                language=dace.Language.RTL)
+                                language=dace.Language.SystemVerilog)
 
     # add input/output array
     A = state.add_read('A')
@@ -238,7 +238,7 @@ def test_tasklet_vector():
     
         assign valid_o = (b >= a[0] + a[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
         ''',
-                                language=dace.Language.RTL)
+                                language=dace.Language.SystemVerilog)
 
     # add input/output array
     A = state.add_read('A')
@@ -310,7 +310,7 @@ def test_multi_tasklet():
     
         assign valid_o = (b >= 80) ? 1'b1:1'b0; 
         ''',
-                                 language=dace.Language.RTL)
+                                 language=dace.Language.SystemVerilog)
 
     tasklet1 = state.add_tasklet(name='rtl_tasklet1',
                                  inputs={'b'},
@@ -337,7 +337,7 @@ def test_multi_tasklet():
     
         assign valid_o = (c >= 100) ? 1'b1:1'b0;  
         ''',
-                                 language=dace.Language.RTL)
+                                 language=dace.Language.SystemVerilog)
 
     # add input/output array
     A = state.add_read('A')
