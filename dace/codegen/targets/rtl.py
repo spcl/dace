@@ -36,14 +36,9 @@ class RTLCodeGen(TargetCodeGenerator):
         self.dispatcher.register_node_dispatcher(
             self, lambda sdfg, node: isinstance(node, nodes.Tasklet) and node.
             language == Language.RTL)
-        # register all cpu type copies
-        cpu_storage_types = [
-            StorageType.CPU_Pinned, StorageType.CPU_Heap,
-            StorageType.CPU_ThreadLocal, StorageType.Register,
-            StorageType.Default
-        ]
+        # register all storage types that connect from/to an RTL tasklet
         for src_storage, dst_storage in itertools.product(
-                cpu_storage_types, cpu_storage_types):
+                StorageType, StorageType):
             self.dispatcher.register_copy_dispatcher(
                 src_storage, dst_storage, None, self,
                 lambda sdfg, dfg, src_node, dest_node:
@@ -347,20 +342,20 @@ for(int i = 0; i < {veclen}; i++){{
 
         # create rtl code object (that is later written to file)
         self.code_objects.append(
-            CodeObject(name="{}".format(unique_name),
-                       code=RTLCodeGen.RTL_HEADER.format(
-                           name=unique_name,
-                           parameters=parameter_string,
-                           inputs="\n".join(inputs),
-                           outputs="\n".join(outputs)) + tasklet.code.code +
-                       RTLCodeGen.RTL_FOOTER,
-                       language="sv",
-                       target=RTLCodeGen,
-                       title="rtl",
-                       target_type="",
-                       additional_compiler_kwargs="",
-                       linkable=True,
-                       environments=None))
+            CodeObject(
+                name="{}".format(unique_name),
+                code=RTLCodeGen.RTL_HEADER.format(name=unique_name,
+                                                  parameters=parameter_string,
+                                                  inputs="\n".join(inputs),
+                                                  outputs="\n".join(outputs)) +
+                tasklet.code.code + RTLCodeGen.RTL_FOOTER,
+                language="sv",
+                target=RTLCodeGen,
+                title="rtl",
+                target_type="",
+                additional_compiler_kwargs="",
+                linkable=True,
+                environments=None))
 
         # generate verilator simulation cpp code components
         inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
