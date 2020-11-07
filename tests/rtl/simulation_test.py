@@ -104,9 +104,6 @@ def test_tasklet_parameter(debug=False):
     sdfg.add_array('A', [1], dtype=dace.int32)
     sdfg.add_array('B', [1], dtype=dace.int32)
 
-    # enable debugging output
-    sdfg.add_constant("DEBUG", 1)
-
     # add parameter(s)
     sdfg.add_constant("MAX_VAL", 42)
 
@@ -199,9 +196,6 @@ def test_tasklet_vector(debug=False):
     sdfg.add_array('A', [N], dtype=dace.int32)
     sdfg.add_array('B', [1], dtype=dace.int32)
 
-    # enable debugging output
-    sdfg.add_constant("DEBUG", 1)
-
     # add custom cpp tasklet
     tasklet = state.add_tasklet(name='rtl_tasklet',
                                 inputs={'a': dace.vector(dace.int32, N)},
@@ -287,9 +281,6 @@ def test_multi_tasklet(debug=False):
     sdfg.add_array('A', [1], dtype=dace.int32)
     sdfg.add_array('B', [1], dtype=dace.int32)
     sdfg.add_array('C', [1], dtype=dace.int32)
-
-    # enable debugging output
-    sdfg.add_constant("DEBUG", 1)
 
     # add custom cpp tasklet
     tasklet0 = state.add_tasklet(name='rtl_tasklet0',
