@@ -551,7 +551,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 if input.language is dtypes.Language.Python:
                     newcode = astutils.unparse(input.code.code[0].value)
                 elif input.language is dtypes.Language.CPP:
-                    newcode = re.findall(r'.*=\s*(.*);',
+                    newcode = re.findall(r'.*?=\s*(.*);',
                                          input.code.as_string.strip())[0]
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
