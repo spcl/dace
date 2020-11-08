@@ -1765,7 +1765,8 @@ class SDFG(OrderedDiGraph):
                               validate: bool = True,
                               validate_all: bool = False,
                               strict: bool = False,
-                              states: Optional[List[Any]] = None) -> int:
+                              states: Optional[List[Any]] = None,
+                              print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
             :param xforms: A Transformation class or a sequence.
@@ -1776,6 +1777,9 @@ class SDFG(OrderedDiGraph):
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
+            :param print_report: Whether to show debug prints or not (None if
+                                 the DaCe config option 'debugprint' should
+                                 apply)
             :return: Number of transformations applied.
 
             Examples::
@@ -1824,7 +1828,8 @@ class SDFG(OrderedDiGraph):
         if validate:
             self.validate()
 
-        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+        if (len(applied_transformations) > 0 and (print_report or
+            (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
@@ -1839,7 +1844,8 @@ class SDFG(OrderedDiGraph):
             validate: bool = True,
             validate_all: bool = False,
             strict: bool = False,
-            states: Optional[List[Any]] = None) -> int:
+            states: Optional[List[Any]] = None,
+            print_report: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -1850,6 +1856,9 @@ class SDFG(OrderedDiGraph):
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
+            :param print_report: Whether to show debug prints or not (None if
+                                 the DaCe config option 'debugprint' should
+                                 apply)
             :return: Number of transformations applied.
 
             Examples::
@@ -1914,7 +1923,8 @@ class SDFG(OrderedDiGraph):
                     "Validation failed after applying {}.".format(
                         match.print_match(sdfg)), sdfg, match.state_id) from err
 
-        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+        if (len(applied_transformations) > 0 and (print_report or
+            (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
@@ -1983,10 +1993,6 @@ class SDFG(OrderedDiGraph):
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
-
-        # Propagate memlets in the graph
-        if sdfg.propagate:
-            propagate_memlets_sdfg(sdfg)
 
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
