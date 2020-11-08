@@ -596,7 +596,8 @@ def propagate_states(sdfg) -> None:
                 3.3.3: Otherwise this must be a conditional branch, so this
                        state's number of executions is given to all child states
                        as an upper bound.
-    4. The traversal ends when all states have been visited at least once.
+    4. The traversal ends when all reachable states have been visited at least
+       once.
 
     :param sdfg: The SDFG to annotate.
     :note: This operates on the SDFG in-place.
@@ -745,10 +746,13 @@ def propagate_states(sdfg) -> None:
                         outer_stride = outer_range[0][2]
                         outer_itvar = symbolic.pystr_to_symbolic(
                             outer_itvar_string)
+                        exec_repl = loop_executions.subs({
+                            outer_itvar:
+                            (outer_itvar * outer_stride + outer_start)
+                        })
                         loop_executions = Sum(
-                            loop_executions * outer_stride,
-                            (outer_itvar, outer_start,
-                             ceiling(outer_stop / outer_stride)))
+                            exec_repl, (outer_itvar, 0,
+                            ceiling((outer_stop - outer_start) / outer_stride)))
                     loop_executions = loop_executions.doit()
 
                     itvar_stack.append(state.itvar)
@@ -919,8 +923,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            iedge.data = unsqueeze_memlet(internal_memlet, iedge.data,
-                                          True)
+            iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
             if symbolic.issymbolic(iedge.data.volume):
                 if any(str(s) not in parent_sdfg.symbols
                         for s in iedge.data.volume.free_symbols):
@@ -931,8 +934,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            oedge.data = unsqueeze_memlet(internal_memlet, oedge.data,
-                                          True)
+            oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
             if symbolic.issymbolic(oedge.data.volume):
                 if any(str(s) not in parent_sdfg.symbols
                         for s in oedge.data.volume.free_symbols):
@@ -1159,7 +1161,7 @@ def propagate_subset(memlets: List[Memlet],
                                   same throughout propagation. If None, assumes
                                   that all symbols outside of `params` have been
                                   defined.
-        :param use_dst: Whether to propagate the memlets' dst subset or us the
+        :param use_dst: Whether to propagate the memlets' dst subset or use the
                         src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
     """

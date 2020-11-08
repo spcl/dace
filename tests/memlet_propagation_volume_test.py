@@ -168,7 +168,7 @@ def make_sdfg():
     return sdfg
 
 
-if __name__ == '__main__':
+def test_memlet_volume_propagation_nsdfg():
     sdfg = make_sdfg()
     propagation.propagate_memlets_sdfg(sdfg)
 
@@ -186,3 +186,7 @@ if __name__ == '__main__':
     loop_state = nested_sdfg.nodes()[2]
 
     state_check_executions(loop_state, symbol('loop_bound'))
+
+
+if __name__ == '__main__':
+    test_memlet_volume_propagation_nsdfg()

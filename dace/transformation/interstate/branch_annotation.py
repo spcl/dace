@@ -54,11 +54,11 @@ class AnnotateBranch(DetectBranch):
         common_frontier = set()
         out_edges = sdfg.out_edges(guard)
 
-        # Get the dominance frontier frontier for each child state and merge
-        # them into one common frontier, representing the loop's dominance
-        # frontier. If a state has no dominance frontier, add the state itself
-        # to the frontier. This takes care of the case where a branch is fully
-        # merged, but one branch contains no states.
+        # Get the dominance frontier for each child state and merge them into
+        # one common frontier, representing the loop's dominance frontier. If a
+        # state has no dominance frontier, add the state itself to the frontier.
+        # This takes care of the case where a branch is fully merged, but one
+        # branch contains no states.
         for oedge in out_edges:
             frontier = dom_frontier[oedge.dst]
             if not frontier:
