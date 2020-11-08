@@ -198,8 +198,8 @@ def match_patterns(sdfg: SDFG,
         (interstate_transformations,
          singlestate_transformations) = get_transformation_metadata(patterns)
 
-    # Collect SDFG and nested SDFGs (reverse due to transforming bottom-up)
-    sdfgs: List[SDFG] = reversed(list(sdfg.all_sdfgs_recursive()))
+    # Collect SDFG and nested SDFGs
+    sdfgs = sdfg.all_sdfgs_recursive()
 
     # Try to find transformations on each SDFG
     for tsdfg in sdfgs:
