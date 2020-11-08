@@ -97,7 +97,8 @@ class ReloadableDLL(object):
             reason = ''
             if os.name == 'posix':
                 result = subprocess.run(['ld', self._library_filename],
-                                        capture_output=True)
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE)
                 stderr = result.stderr.decode('utf-8')
                 reason = 'Reason:\n' + '\n'.join(
                     [l for l in stderr.split('\n') if '_start' not in l])

@@ -783,9 +783,10 @@ class TaskletTransformer(ExtNodeTransformer):
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
+                use_dst = True if access_type == 'w' else False
                 for s, r in self.symbols.items():
                     tmp_memlet = propagate_subset([tmp_memlet], parent_array,
-                                                  [s], r)
+                                                  [s], r, use_dst=use_dst)
 
             squeezed_rng = copy.deepcopy(rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)
@@ -1843,7 +1844,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r)
+                    memlet = propagate_subset([memlet], arr, [s], r,
+                                              use_dst=False)
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
@@ -1956,7 +1958,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r)
+                    memlet = propagate_subset([memlet], arr, [s], r,
+                                              use_dst=True)
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
@@ -2668,9 +2671,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if ignore_indices:
                 tmp_memlet = Memlet.simple(parent_name, rng)
+                use_dst = True if access_type == 'w' else False
                 for s, r in self.symbols.items():
                     tmp_memlet = propagate_subset([tmp_memlet], parent_array,
-                                                  [s], r)
+                                                  [s], r, use_dst=use_dst)
 
             squeezed_rng = copy.deepcopy(rng)
             non_squeezed = squeezed_rng.squeeze(ignore_indices)

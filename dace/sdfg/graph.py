@@ -36,6 +36,10 @@ class Edge(object):
     def data(self):
         return self._data
 
+    @data.setter
+    def data(self, new_data):
+        self._data = new_data
+
     def __iter__(self):
         yield self._src
         yield self._dst
