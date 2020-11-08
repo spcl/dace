@@ -468,12 +468,14 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
                         for ise in dst.sdfg.edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
+                            # Remove subscript occurrences as well
+                            ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[
-                            symname].dtype
+                            node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
