@@ -98,4 +98,5 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
               and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                propval[symname] = sym_mapping.subs(symrepl)
+                propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
+                    symrepl)
