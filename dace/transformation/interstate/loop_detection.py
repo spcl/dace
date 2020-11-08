@@ -70,10 +70,7 @@ class DetectLoop(transformation.Transformation):
         if itervar not in guard_inedges[1].data.assignments:
             return False
 
-        # Outgoing edges must not have assignments and be a negation of each
-        # other
-        if any(len(e.data.assignments) > 0 for e in guard_outedges):
-            return False
+        # Outgoing edges must be a negation of each other
         if guard_outedges[0].data.condition_sympy() != (sp.Not(
                 guard_outedges[1].data.condition_sympy())):
             return False

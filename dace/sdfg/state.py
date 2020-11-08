@@ -30,7 +30,8 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
         return old_dinfo
 
     caller = getframeinfo(stack()[2][0])
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
+                            caller.filename)
 
 
 class StateGraphView(object):
@@ -78,7 +79,8 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self,
+                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -124,7 +126,8 @@ class StateGraphView(object):
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst)
-                                 if e.src_conn == "OUT_" + curedge.dst_conn[3:])
+                                 if e.src_conn == "OUT_" +
+                                 curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
 
@@ -145,7 +148,8 @@ class StateGraphView(object):
             (isinstance(edge.dst, nd.EntryNode) and edge.dst_conn is not None
              and edge.dst_conn.startswith('IN_'))):
             propagate_forward = True
-        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None) or
+        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None)
+                or
             (isinstance(edge.dst, nd.ExitNode) and edge.dst_conn is not None)):
             propagate_backward = True
 
@@ -449,6 +453,27 @@ class StateGraphView(object):
 
         return defined_syms
 
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        """
+        Determines what data is read and written in this subgraph. Writes
+        with conflict resolution are included as both reads and writes.
+        :return: A two-tuple of sets of things denoting
+                 ({data read}, {data written}).
+        """
+        read_set = set()
+        write_set = set()
+        for n in self.data_nodes():
+            in_edges = self.in_edges(n)
+            if len(in_edges) > 0:
+                write_set.add(n.data)
+            for e in in_edges:
+                if e.data.wcr is not None:
+                    read_set.add(n.data)
+                    break
+            if len(self.out_edges(n)) > 0:
+                read_set.add(n.data)
+        return read_set, write_set
+
     def arglist(self) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
@@ -594,7 +619,10 @@ class StateGraphView(object):
             for k, v in self.arglist().items()
         ]
 
-    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
+    def scope_subgraph(self,
+                       entry_node,
+                       include_entry=True,
+                       include_exit=True):
         from dace.sdfg.scope import _scope_subgraph
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
@@ -638,9 +666,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(choices=dtypes.InstrumentationType,
-                          desc="Measure execution statistics with given method",
-                          default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(
+        choices=dtypes.InstrumentationType,
+        desc="Measure execution statistics with given method",
+        default=dtypes.InstrumentationType.No_Instrumentation)
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -758,8 +787,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                             str(type(memlet)))
 
         self._clear_scopedict_cache()
-        result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
-                                                 memlet)
+        result = super(SDFGState, self).add_edge(u, u_connector, v,
+                                                 v_connector, memlet)
         memlet.try_initialize(self.parent, self, result)
         return result
 
@@ -900,7 +929,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
+            for path in sdfg.all_simple_paths(start_state, self,
+                                              as_edges=True):
                 for e in path:
                     symbols.update(e.data.new_symbols(symbols))
         except ValueError:

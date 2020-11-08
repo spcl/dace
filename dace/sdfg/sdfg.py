@@ -12,7 +12,8 @@ import random
 import re
 import shutil
 import sys
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
+from typing import (Any, AnyStr, Dict, Iterator, List, Optional, Set, Tuple,
+                    Type, Union)
 import warnings
 import numpy as np
 import sympy as sp
@@ -413,6 +414,12 @@ class SDFG(OrderedDiGraph):
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.DTYPE_TO_TYPECLASS[stype]
         self.symbols[name] = stype
+
+    def remove_symbol(self, name):
+        """ Removes a symbol from the SDFG.
+            :param name: Symbol name.
+        """
+        del self.symbols[name]
 
     @property
     def start_state(self):
@@ -887,6 +894,23 @@ class SDFG(OrderedDiGraph):
 
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
+
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        """
+        Determines what data containers are read and written in this SDFG.
+        Writes with conflict resolution are included as both reads and writes.
+        :return: A two-tuple of sets of things denoting
+                 ({data read}, {data written}).
+        """
+        read_set = set()
+        write_set = set()
+        for state in self.states():
+            rs, ws = state.read_and_write_sets()
+            read_set |= rs
+            write_set |= ws
+        for edge in self.edges():
+            read_set |= edge.data.free_symbols & self.arrays.keys()
+        return read_set, write_set
 
     def arglist(self) -> Dict[str, dt.Data]:
         """
@@ -1506,8 +1530,8 @@ class SDFG(OrderedDiGraph):
             self.add_constant(str(k), v)
 
     def optimize(self, optimizer=None) -> 'SDFG':
-        """ 
-        Optimize an SDFG using the CLI or external hooks. 
+        """
+        Optimize an SDFG using the CLI or external hooks.
         :param optimizer: If defines a valid class name, it will be called
                           during compilation to transform the SDFG as
                           necessary. If None, uses configuration setting.
@@ -1725,13 +1749,10 @@ class SDFG(OrderedDiGraph):
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
         # This is imported here to avoid an import loop
-        from dace.transformation.transformation import Transformation
+        from dace.transformation.transformation import (Transformation,
+                                                        strict_transformations)
 
-        strict_transformations = [
-            k for k, v in Transformation.extensions().items()
-            if v.get('strict', False)
-        ]
-        self.apply_transformations_repeated(strict_transformations,
+        self.apply_transformations_repeated(strict_transformations(),
                                             validate=validate,
                                             strict=True,
                                             validate_all=validate_all)
@@ -1884,12 +1905,23 @@ class SDFG(OrderedDiGraph):
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate_all:
-                    self.validate()
+                    try:
+                        self.validate()
+                    except InvalidSDFGError as err:
+                        raise InvalidSDFGError(
+                            "Validation failed after applying {}.".format(
+                                match.print_match(sdfg)), sdfg,
+                            match.state_id) from err
                 applied = True
                 break
 
         if validate:
-            self.validate()
+            try:
+                self.validate()
+            except InvalidSDFGError as err:
+                raise InvalidSDFGError(
+                    "Validation failed after applying {}.".format(
+                        match.print_match(sdfg)), sdfg, match.state_id) from err
 
         if (len(applied_transformations) > 0 and (print_report or
             (print_report is None and Config.get_bool('debugprint')))):

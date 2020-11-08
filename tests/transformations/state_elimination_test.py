@@ -1,6 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.interstate import StateAssignElimination
+from dace.transformation.interstate import StateAssignElimination, StateFusion
 
 
 def test_eliminate_end_state():
@@ -30,11 +30,11 @@ def test_state_assign_elimination():
                   dace.InterstateEdge(assignments=dict(k='k + 1')))
 
     # Assertions before/after transformations
-    sdfg.apply_strict_transformations()
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
     assert sdfg.number_of_nodes() == 3
     assert sdfg.apply_transformations_repeated(StateAssignElimination) == 1
     assert str(sdfg.nodes()[-1].edges()[0].data.subset) == 'k + 1'
-    sdfg.apply_strict_transformations()
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
     assert sdfg.number_of_nodes() == 2
 
     # Applying transformations again should yield one state

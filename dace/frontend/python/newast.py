@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import astunparse
 from collections import OrderedDict
 import copy
 import itertools
@@ -17,7 +18,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import DaceSyntaxError, inverse_dict_lookup
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
-from dace.frontend.python import nested_call
+from dace.frontend.python import nested_call, replacements
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet,
                                                 pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
@@ -150,13 +151,6 @@ def parse_dace_program(f,
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
-    # Resolve symbols to their names
-    symrepl = {
-        k: v.name
-        for k, v in global_vars.items() if isinstance(v, symbolic.symbol)
-    }
-    src_ast = astutils.ASTFindReplace(symrepl).visit(src_ast)
-
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)
 
@@ -170,10 +164,10 @@ def parse_dace_program(f,
         global_vars[modval] = newmod
 
     # Resolve constants to their values (if they are not already defined in this scope)
+    # and symbols to their names
     src_ast = GlobalResolver({
         k: v
-        for k, v in global_vars.items()
-        if dtypes.isconstant(v, allow_recursive=True) and not k in argtypes and k != '_'
+        for k, v in global_vars.items() if not k in argtypes and k != '_'
     }).visit(src_ast)
 
     pv = ProgramVisitor(name=f.__name__,
@@ -602,6 +596,42 @@ class GlobalResolver(ast.NodeTransformer):
         else:
             return super().generic_visit(node)
 
+    def global_value_to_node(self, value, parent_node, recurse=False):
+        # if recurse is false, we don't allow recursion into lists
+        # this should not happen anyway; the globals dict should only contain single "level" lists
+        if not recurse and isinstance(value, (list, tuple)):
+            # bail after more than one level of lists
+            return None
+
+        if isinstance(value, list):
+            elts = [self.global_value_to_node(v, parent_node) for v in value]
+            if any(e is None for e in elts):
+                return None
+            newnode = ast.List(elts=elts, ctx=parent_node.ctx)
+        elif isinstance(value, tuple):
+            elts = [self.global_value_to_node(v, parent_node) for v in value]
+            if any(e is None for e in elts):
+                return None
+            newnode = ast.Tuple(elts=elts, ctx=parent_node.ctx)
+        elif isinstance(value, symbolic.symbol):
+            # symbols resolve to the symbol name
+            newnode = ast.Name(id=value.name, ctx=ast.Load())
+        elif dtypes.isconstant(value):
+            # otherwise we must have a non list or tuple constant; emit a constant node
+
+            # Compatibility check since Python changed their AST nodes
+            if sys.version_info >= (3, 8):
+                newnode = ast.Constant(value=value, kind='')
+            else:
+                newnode = ast.Num(n=value)
+        else:
+            return None
+
+        if parent_node is not None:
+            return ast.copy_location(newnode, parent_node)
+        else:
+            return newnode
+
     def visit_Name(self, node: ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.AugStore)):
             self.current_scope.add(node.id)
@@ -609,13 +639,20 @@ class GlobalResolver(ast.NodeTransformer):
             if node.id in self.current_scope:
                 return node
             if node.id in self.globals:
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=self.globals[node.id], kind='')
-                else:
-                    newnode = ast.Num(n=self.globals[node.id])
-                return ast.copy_location(newnode, node)
+                global_val = self.globals[node.id]
+                newnode = self.global_value_to_node(global_val,
+                                                    parent_node=node,
+                                                    recurse=True)
+                if newnode is None:
+                    return node
+                return newnode
         return node
+
+    def visit_keyword(self, node: ast.keyword):
+        if node.arg in self.globals and isinstance(self.globals[node.arg],
+                                                   symbolic.symbol):
+            node.arg = self.globals[node.arg].name
+        return self.generic_visit(node)
 
 
 class TaskletTransformer(ExtNodeTransformer):
@@ -1745,7 +1782,7 @@ class ProgramVisitor(ExtNodeVisitor):
                           symbols: Dict[str, 'dace.symbol'] = dict()):
 
         # Parse map inputs (for memory-based ranges)
-        if map_inputs is not None:
+        if map_inputs:
             for conn, memlet in map_inputs.items():
                 if self.nested:
                     # TODO: Make this work nested for-loops
@@ -2992,7 +3029,11 @@ class ProgramVisitor(ExtNodeVisitor):
         modname = until(funcname, '.')
         if ('.' in funcname and len(modname) > 0 and modname in self.globals
                 and dtypes.ismodule(self.globals[modname])):
-            func = getattr(self.globals[modname], funcname[len(modname) + 1:])
+            try:
+                func = getattr(self.globals[modname],
+                               funcname[len(modname) + 1:])
+            except AttributeError:
+                func = None
 
             # Not an SDFG, ignore (might be a recognized function, see below)
             if not isinstance(func, (SDFG, DaceProgram)):
@@ -3009,7 +3050,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 sdfg = copy.deepcopy(func)
                 args = [(arg.arg, self._parse_function_arg(arg.value))
                         for arg in node.keywords]
-                required_args = list(sdfg.arglist().keys())
+                required_args = [
+                    a for a in sdfg.arglist().keys() if a not in sdfg.symbols
+                ]
             elif isinstance(func, DaceProgram):
                 args = [(aname, self._parse_function_arg(arg))
                         for aname, arg in zip(func.argnames, node.args)]
@@ -3265,19 +3308,36 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # TODO: If the function is a callback, implement it as a tasklet
 
+        # NumPy ufunc support
+        found_ufunc = False
+        if modname == "numpy" and len(funcname) > 6:
+            name = funcname[len(modname) + 1:]
+            npfuncname = until(name, '.')
+            func = getattr(self.globals[modname], npfuncname)
+            if isinstance(func, numpy.ufunc):
+                ufunc_name = npfuncname
+                if len(funcname) > len(modname) + len(npfuncname) + 1:
+                    method_name = funcname[len(modname) + len(npfuncname) + 2:]
+                else:
+                    method_name = None
+                func = oprepo.Replacements.get_ufunc(method_name)
+                if func:
+                    found_ufunc = True
+
         # Otherwise, try to find a default implementation for the SDFG
-        func = oprepo.Replacements.get(funcname)
-        if func is None:
-            # Check for SDFG as fallback
+        if not found_ufunc:
             func = oprepo.Replacements.get(funcname)
             if func is None:
-                raise DaceSyntaxError(
-                    self, node,
-                    'Function "%s" is not registered with an SDFG implementation'
-                    % funcname)
-            print(
-                'WARNING: Function "%s" is not registered with an %s implementation, falling back to SDFG'
-                % funcname)
+                # Check for SDFG as fallback
+                func = oprepo.Replacements.get(funcname)
+                if func is None:
+                    raise DaceSyntaxError(
+                        self, node,
+                        'Function "%s" is not registered with an SDFG '
+                        'implementation' % funcname)
+                print(
+                    'WARNING: Function "%s" is not registered with an %s '
+                    'implementation, falling back to SDFG' % funcname)
 
         args = [self._parse_function_arg(arg) for arg in node.args]
         keywords = {
@@ -3288,7 +3348,11 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('call_%d' % node.lineno)
         self.last_state.set_default_lineinfo(self.current_lineinfo)
 
-        result = func(self.sdfg, self.last_state, *args, **keywords)
+        if found_ufunc:
+            result = func(self, node, self.sdfg, self.last_state,
+                          ufunc_name, args, keywords)
+        else:
+            result = func(self.sdfg, self.last_state, *args, **keywords)
 
         self.last_state.set_default_lineinfo(None)
 
