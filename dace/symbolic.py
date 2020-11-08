@@ -624,6 +624,18 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             args=[self.visit(value) for value in node.values],
                             keywords=[])
         return ast.copy_location(new_node, node)
+    
+    def visit_Compare(self, node: ast.Compare):
+        if len(node.ops) > 1 or len(node.comparators) > 1:
+            raise NotImplementedError
+        op = node.ops[0]
+        arguments = [node.left, node.comparators[0]]
+        func_node = ast.copy_location(
+            ast.Name(id=type(op).__name__, ctx=ast.Load()), node)
+        new_node = ast.Call(func=func_node,
+                            args=[self.visit(arg) for arg in arguments],
+                            keywords=[])
+        return ast.copy_location(new_node, node)
 
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
@@ -641,9 +653,11 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
 
+
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b', expr):
+    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|==|!=',
+                                           expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
