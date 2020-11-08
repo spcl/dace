@@ -436,7 +436,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not'
+    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq',
+    'NotEq'
 }
 
 
@@ -455,7 +456,8 @@ def contains_sympy_functions(expr):
 def free_symbols_and_functions(expr: SymbolicType) -> Set[str]:
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
-        if is_sympy_userfunction(atom):
+        if (is_sympy_userfunction(atom)
+                and str(atom.func) not in _builtin_userfunctions):
             result.add(str(atom.func))
     return result
 
@@ -624,7 +626,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             args=[self.visit(value) for value in node.values],
                             keywords=[])
         return ast.copy_location(new_node, node)
-    
+
     def visit_Compare(self, node: ast.Compare):
         if len(node.ops) > 1 or len(node.comparators) > 1:
             raise NotImplementedError
@@ -652,7 +654,6 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
-
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
