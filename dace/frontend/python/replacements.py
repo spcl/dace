@@ -1599,7 +1599,7 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
 # NumPy ufunc support #########################################################
 
-UfuncInput = Union[str, Number]
+UfuncInput = Union[str, Number, sp.Basic]
 UfuncOutput = Union[str, None]
 
 # TODO: Add all ufuncs in subsequent PR's.
@@ -2891,4 +2891,65 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
                      input_indices, output_idx, out_shape, tasklet_params,
                      has_where=has_where, where=where)
 
-    return outputs    
+    return outputs
+
+
+# Datatype constructors #######################################################
+
+for typeclass in dtypes.TYPECLASS_STRINGS:
+    _make_datatype_coverter(typeclass)
+
+
+def _make_datatype_coverter(typeclass: str):
+    if typeclass in {"int", "float", "complex"}:
+        dtype = dtypes.DTYPE_TO_TYPECLASS[typeclass]
+    else:
+        dtype = dtypes.DTYPE_TO_TYPECLASS["numpy.{}".format(typeclass)]
+    @oprepo.replaces(typeclass)
+    @oprepo.replaces("dace.{}".format(typeclass))
+    @oprepo.replaces("numpy.{}".format(typeclass))
+    def _converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput):
+        _datatype_converter(sdfg, state, arg, dtype=dtype)
+
+
+def _datatype_converter(sdfg: SDFG,
+                        state: SDFGState,
+                        arg: UfuncInput,
+                        dtype: dtypes.typeclass) -> UfuncOutput:
+    """ Out-of-place datatype conversion of the input argument.
+
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param arg: Input argument
+        :param dtype: Datatype to convert input argument into
+
+        :returns: dace.data.Array of same size as input or dace.data.Scalar
+    """
+
+    # Get shape and indices
+    if isinstance(arg, str) and arg in sdfg.arrays.keys():
+        inp_shapes = [sdfg.arrays[arg].shape]
+    else:
+        inp_shapes = [1]
+    (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
+         None, None, sdfg, None, inp_shapes, [None])
+
+    # Create output data
+    outputs = _create_output(sdfg, [arg], [None], out_shape, dtype)
+
+    # Set tasklet parameters
+    impl = {
+        'name': "_convert_to_{}_".format(dtype),
+        'inputs': ['__inp'],
+        'outputs': ['__out'],
+        'code': "__out = {}(__in1)".format(
+str(dtype).replace('::', '.'))
+    }
+    tasklet_params = _set_tasklet_params(impl, [arg])
+
+    # Visitor input only needed when `has_where == True`.
+    _create_subgraph(None, sdfg, state, [arg], outputs, map_indices,
+                     inp_indices, out_indices, out_shape, tasklet_params,
+                     has_where=has_where, where=where)
+    
+    return outputs
