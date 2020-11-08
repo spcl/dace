@@ -646,8 +646,6 @@ def propagate_states(sdfg) -> None:
             # This loop is no fully annotated for loop.
             unannotated_cycle_states.extend(cycle)
 
-    # Keep track of encountered nested loop variables.
-    itvar_stack = []
     # Keep track of states that fully merge a previous conditional split. We do
     # this so we can remove the dynamic executions flag for those states.
     full_merge_states = set()
@@ -655,9 +653,10 @@ def propagate_states(sdfg) -> None:
     visited_states = set()
 
     traversal_q = deque()
-    traversal_q.append((sdfg.start_state, 1, False))
+    traversal_q.append((sdfg.start_state, 1, False, []))
     while traversal_q:
-        (state, proposed_executions, proposed_dynamic) = traversal_q.pop()
+        (state, proposed_executions, proposed_dynamic,
+         itvar_stack) = traversal_q.pop()
 
         out_degree = sdfg.out_degree(state)
         out_edges = sdfg.out_edges(state)
@@ -677,7 +676,6 @@ def propagate_states(sdfg) -> None:
                 # number of executions.
                 if state.executions != 0 and not state.dynamic_executions:
                     state.executions += proposed_executions
-                itvar_stack.pop()
             else:
                 # If we have already visited this state, but it is NOT a loop
                 # guard, this means that we can reach this state via multiple
@@ -686,13 +684,20 @@ def propagate_states(sdfg) -> None:
                 # of the paths reaching it. If the state additionally completely
                 # merges a previously branched out state tree, we know that the
                 # number of executions isn't dynamic anymore.
-                state.executions = sympy.Max(state.executions,
-                                             proposed_executions).doit()
-                if state in full_merge_states:
-                    state.dynamic_executions = False
+                # The only exception to this rule: If the state is in an
+                # unannotated loop, i.e. should be annotated as dynamic
+                # unbounded instead, we do that.
+                if (state in unannotated_cycle_states):
+                    state.executions = 0
+                    state.dynamic_executions = True
                 else:
-                    state.dynamic_executions = (state.dynamic_executions
-                                                or proposed_dynamic)
+                    state.executions = sympy.Max(state.executions,
+                                                 proposed_executions).doit()
+                    if state in full_merge_states:
+                        state.dynamic_executions = False
+                    else:
+                        state.dynamic_executions = (state.dynamic_executions
+                                                    or proposed_dynamic)
         elif proposed_dynamic and proposed_executions == 0:
             # We're propagating a dynamic unbounded number of executions, which
             # always gets propagated unconditionally. Propagate to all children.
@@ -702,8 +707,8 @@ def propagate_states(sdfg) -> None:
             # This gets pushed through to all children unconditionally.
             if len(out_edges) > 0:
                 for oedge in out_edges:
-                    traversal_q.append(
-                        (oedge.dst, proposed_executions, proposed_dynamic))
+                    traversal_q.append((oedge.dst, proposed_executions,
+                                        proposed_dynamic, itvar_stack))
         else:
             # If the state hasn't been visited yet and we're not propagating a
             # dynamic unbounded number of executions, we calculate the number of
@@ -724,8 +729,8 @@ def propagate_states(sdfg) -> None:
                     # child state's number of executions is thus only given as
                     # an upper bound and marked as dynamic.
                     proposed_dynamic = True
-                traversal_q.append(
-                    (out_edges[0].dst, proposed_executions, proposed_dynamic))
+                traversal_q.append((out_edges[0].dst, proposed_executions,
+                                    proposed_dynamic, itvar_stack))
             elif out_degree > 1:
                 if getattr(state, 'is_loop_guard', False):
                     itvar = symbolic.symbol(state.itvar)
@@ -755,16 +760,15 @@ def propagate_states(sdfg) -> None:
                             ceiling((outer_stop - outer_start) / outer_stride)))
                     loop_executions = loop_executions.doit()
 
-                    itvar_stack.append(state.itvar)
-
                     loop_state = state.condition_edge.dst
                     end_state = (out_edges[0].dst if out_edges[1].dst
                                  == loop_state else out_edges[1].dst)
 
+                    traversal_q.append((end_state, state.executions,
+                                        proposed_dynamic, itvar_stack))
                     traversal_q.append(
-                        (end_state, state.executions, proposed_dynamic))
-                    traversal_q.append(
-                        (loop_state, loop_executions, proposed_dynamic))
+                        (loop_state, loop_executions, proposed_dynamic,
+                         itvar_stack + [state.itvar]))
                 else:
                     # Conditional split or unannotated (dynamic unbounded) loop.
                     unannotated_loop_edge = None
@@ -777,10 +781,10 @@ def propagate_states(sdfg) -> None:
                         # Traverse as an unbounded loop.
                         out_edges.remove(unannotated_loop_edge)
                         for oedge in out_edges:
-                            traversal_q.append(
-                                (oedge.dst, state.executions, False))
-                        state.is_loop_guard = True
-                        traversal_q.append((unannotated_loop_edge.dst, 0, True))
+                            traversal_q.append((oedge.dst, state.executions,
+                                                False, itvar_stack))
+                        traversal_q.append(
+                            (unannotated_loop_edge.dst, 0, True, itvar_stack))
                     else:
                         # Traverse as a conditional split.
                         proposed_executions = state.executions
@@ -790,7 +794,7 @@ def propagate_states(sdfg) -> None:
                             full_merge_states.add(state.full_merge_state)
                         for oedge in out_edges:
                             traversal_q.append((oedge.dst, proposed_executions,
-                                                proposed_dynamic))
+                                                proposed_dynamic, itvar_stack))
 
 
 def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
