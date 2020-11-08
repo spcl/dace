@@ -31,7 +31,32 @@ class DetectBranch(transformation.Transformation):
             DetectBranch._second_branch,
             sd.InterstateEdge()
         )
-        return [sdfg]
+
+        # Second case, at least two children but with them connected among
+        # themselves. This happens if one branch contains one state, and the
+        # other contains none, and then having them merge right away.
+        second_sdfg = sd.SDFG('_')
+        second_sdfg.add_nodes_from([
+            DetectBranch._branch_guard,
+            DetectBranch._first_branch,
+            DetectBranch._second_branch,
+        ])
+        second_sdfg.add_edge(
+            DetectBranch._branch_guard,
+            DetectBranch._first_branch,
+            sd.InterstateEdge()
+        )
+        second_sdfg.add_edge(
+            DetectBranch._branch_guard,
+            DetectBranch._second_branch,
+            sd.InterstateEdge()
+        )
+        second_sdfg.add_edge(
+            DetectBranch._first_branch,
+            DetectBranch._second_branch,
+            sd.InterstateEdge()
+        )
+        return [sdfg, second_sdfg]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
