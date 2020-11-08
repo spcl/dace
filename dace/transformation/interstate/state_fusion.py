@@ -15,11 +15,15 @@ from dace.config import Config
 # Helper class for finding connected component correspondences
 class CCDesc:
     def __init__(self, first_inputs: Set[str], first_outputs: Set[str],
-                 second_inputs: Set[str], second_outputs: Set[str]) -> None:
+                 first_output_nodes: Set[nodes.AccessNode],
+                 second_inputs: Set[str], second_outputs: Set[str],
+                 second_input_nodes: Set[nodes.AccessNode]) -> None:
         self.first_inputs = first_inputs
         self.first_outputs = first_outputs
+        self.first_output_nodes = first_output_nodes
         self.second_inputs = second_inputs
         self.second_outputs = second_outputs
+        self.second_input_nodes = second_input_nodes
 
 
 @registry.autoregister_params(strict=True)
@@ -64,14 +68,18 @@ class StateFusion(transformation.Transformation):
         result = []
         for cc in nx.weakly_connected_components(g):
             input1, output1, input2, output2 = set(), set(), set(), set()
+            outn1, inpn2 = set(), set()
             for gind, cind in cc:
                 if gind == 0:
                     input1 |= {n.data for n in first_cc_input[cind]}
                     output1 |= {n.data for n in first_cc_output[cind]}
+                    outn1 |= first_cc_output[cind]
                 else:
                     input2 |= {n.data for n in second_cc_input[cind]}
                     output2 |= {n.data for n in second_cc_output[cind]}
-            result.append(CCDesc(input1, output1, input2, output2))
+                    inpn2 |= second_cc_input[cind]
+            result.append(CCDesc(input1, output1, outn1, input2, output2,
+                                 inpn2))
 
         return result
 
@@ -346,6 +354,24 @@ class StateFusion(transformation.Transformation):
                                     return False
                     # End of data race check
 
+                # Read-after-write dependencies: if there is more than one first
+                # output with the same data, make sure it can be unambiguously
+                # connected to the second state
+                if (len(fused_cc.first_output_nodes) > len(
+                        fused_cc.first_outputs)):
+                    for inpnode in fused_cc.second_input_nodes:
+                        found = False
+                        for outnode in fused_cc.first_output_nodes:
+                            if outnode.data != inpnode.data:
+                                continue
+                            if StateFusion.memlets_intersect(
+                                    first_state, [outnode], False, second_state,
+                                [inpnode], True):
+                                # If found more than once, ambiguous
+                                if found:
+                                    return False
+                                found = True
+
         return True
 
     @staticmethod
@@ -400,7 +426,7 @@ class StateFusion(transformation.Transformation):
         first_input = [
             node for node in first_input
             if next((x for x in first_output
-                     if x.label == node.label), None) is None
+                     if x.data == node.data), None) is None
         ]
 
         # Merge second state to first state
@@ -417,11 +443,26 @@ class StateFusion(transformation.Transformation):
         # Merge common (data) nodes
         for node in second_input:
             if first_state.in_degree(node) == 0:
-                n = next((x for x in order if x.label == node.label), None)
-                if n:
-                    sdutil.change_edge_src(first_state, node, n)
-                    first_state.remove_node(node)
-                    n.access = dtypes.AccessType.ReadWrite
+                candidates = [x for x in order if x.data == node.data]
+                if len(candidates) == 0:
+                    continue
+                elif len(candidates) == 1:
+                    n = candidates[0]
+                else:
+                    # Choose first candidate that intersects memlets
+                    for cand in candidates:
+                        if StateFusion.memlets_intersect(
+                                first_state, [cand], False, second_state,
+                                [node], True):
+                            n = cand
+                            break
+                    else:
+                        raise ValueError('Ambiguous node to fuse for "%s"' %
+                                         node.data)
+
+                sdutil.change_edge_src(first_state, node, n)
+                first_state.remove_node(node)
+                n.access = dtypes.AccessType.ReadWrite
 
         # Redirect edges and remove second state
         sdutil.change_edge_src(sdfg, second_state, first_state)
