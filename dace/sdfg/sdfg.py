@@ -49,6 +49,14 @@ def _arrays_from_json(obj, context=None):
     return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
 
 
+def _replace_dict(d, old, new):
+    if old in d:
+        if new in d:
+            raise FileExistsError('"%s" already exists in SDFG' % new)
+        d[new] = d[old]
+        del d[old]
+
+
 def _assignments_from_string(astr):
     """ Returns a dictionary of assignments from a semicolon-delimited
         string of expressions. """
@@ -129,6 +137,18 @@ class InterstateEdge(object):
                 symbolic.pystr_to_symbolic(assign))
 
         return result - set(self.assignments.keys())
+
+    def replace(self, name: str, new_name: str) -> None:
+        """
+        Replaces all occurrences of ``name`` with ``new_name``.
+        :param name: The source name.
+        :param new_name: The replacement name.
+        """
+        _replace_dict(self.assignments, name, new_name)
+        for k, v in self.assignments.items():
+            self.assignments[k] = v.replace(name, new_name)
+        condition = self.condition
+        self.condition.as_string = condition.as_string.replace(name, new_name)
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -372,13 +392,6 @@ class SDFG(OrderedDiGraph):
             :param new_name: Name to replace.
             :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
-        def replace_dict(d, old, new):
-            if old in d:
-                if new in d:
-                    raise FileExistsError('"%s" already exists in SDFG' % new)
-                d[new] = d[old]
-                del d[old]
-
         if name == new_name:
             return
 
@@ -390,8 +403,8 @@ class SDFG(OrderedDiGraph):
 
         # Replace in arrays and symbols (if a variable name)
         if validate_name(new_name):
-            replace_dict(self._arrays, name, new_name)
-            replace_dict(self.symbols, name, new_name)
+            _replace_dict(self._arrays, name, new_name)
+            _replace_dict(self.symbols, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -399,12 +412,7 @@ class SDFG(OrderedDiGraph):
 
         # Replace in inter-state edges
         for edge in self.edges():
-            replace_dict(edge.data.assignments, name, new_name)
-            for k, v in edge.data.assignments.items():
-                edge.data.assignments[k] = v.replace(name, new_name)
-            condition = edge.data.condition
-            edge.data.condition.as_string = condition.as_string.replace(
-                name, new_name)
+            edge.data.replace(name, new_name)
 
         # Replace in states
         for state in self.nodes():
@@ -1833,8 +1841,9 @@ class SDFG(OrderedDiGraph):
         if validate:
             self.validate()
 
-        if (len(applied_transformations) > 0 and (print_report or
-            (print_report is None and Config.get_bool('debugprint')))):
+        if (len(applied_transformations) > 0
+                and (print_report or
+                     (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
@@ -1912,10 +1921,6 @@ class SDFG(OrderedDiGraph):
 
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
-                print(', '.join([
-                    '%d %s' % (v, k)
-                    for k, v in applied_transformations.items()
-                ]))
                 if validate_all:
                     try:
                         self.validate()
@@ -1935,8 +1940,9 @@ class SDFG(OrderedDiGraph):
                     "Validation failed after applying {}.".format(
                         match.print_match(sdfg)), sdfg, match.state_id) from err
 
-        if (len(applied_transformations) > 0 and (print_report or
-            (print_report is None and Config.get_bool('debugprint')))):
+        if (len(applied_transformations) > 0
+                and (print_report or
+                     (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
