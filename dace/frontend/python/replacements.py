@@ -1958,6 +1958,10 @@ def _broadcast(
     output_indices = to_string(output_indices)
     input_indices = [to_string(idx) for idx in input_indices]
 
+    if not out_shape:
+        out_shape = (1,)
+        output_indices = "0"
+
     return out_shape, map_indices, output_indices, input_indices
 
 
@@ -2035,7 +2039,7 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
     # Remove input connectors related to constants
     # and fix constants/symbols in the tasklet code
     for i, arg in reversed(list(enumerate(inputs))):
-        if isinstance(arg, (Number, sp.Symbol)):
+        if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
             code = code.replace(inp_conn, astutils.unparse(arg))
             inp_connectors.pop(i)
@@ -2894,22 +2898,22 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     return outputs
 
 
-# Datatype constructors #######################################################
+# Datatype converter #########################################################
 
-for typeclass in dtypes.TYPECLASS_STRINGS:
-    _make_datatype_coverter(typeclass)
-
-
-def _make_datatype_coverter(typeclass: str):
+def _make_datatype_converter(typeclass: str):
     if typeclass in {"int", "float", "complex"}:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[typeclass]
+        dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
     else:
-        dtype = dtypes.DTYPE_TO_TYPECLASS["numpy.{}".format(typeclass)]
+        dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
     @oprepo.replaces("numpy.{}".format(typeclass))
     def _converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput):
-        _datatype_converter(sdfg, state, arg, dtype=dtype)
+        return _datatype_converter(sdfg, state, arg, dtype=dtype)
+
+
+for typeclass in dtypes.TYPECLASS_STRINGS:
+    _make_datatype_converter(typeclass)
 
 
 def _datatype_converter(sdfg: SDFG,
@@ -2927,29 +2931,24 @@ def _datatype_converter(sdfg: SDFG,
     """
 
     # Get shape and indices
-    if isinstance(arg, str) and arg in sdfg.arrays.keys():
-        inp_shapes = [sdfg.arrays[arg].shape]
-    else:
-        inp_shapes = [1]
     (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
-         None, None, sdfg, None, inp_shapes, [None])
+         None, None, sdfg, None, [arg], [None])
 
     # Create output data
     outputs = _create_output(sdfg, [arg], [None], out_shape, dtype)
 
     # Set tasklet parameters
     impl = {
-        'name': "_convert_to_{}_".format(dtype),
+        'name': "_convert_to_{}_".format(dtype.to_string()),
         'inputs': ['__inp'],
         'outputs': ['__out'],
-        'code': "__out = {}(__in1)".format(
-str(dtype).replace('::', '.'))
+        'code': "__out = dace.{}(__inp)".format(dtype.to_string())
     }
     tasklet_params = _set_tasklet_params(impl, [arg])
 
     # Visitor input only needed when `has_where == True`.
     _create_subgraph(None, sdfg, state, [arg], outputs, map_indices,
                      inp_indices, out_indices, out_shape, tasklet_params,
-                     has_where=has_where, where=where)
+                     has_where=False, where=None)
     
     return outputs
