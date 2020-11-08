@@ -1898,7 +1898,7 @@ class SDFG(OrderedDiGraph):
         applied = True
         while applied:
             applied = False
-            # Find and apply one of
+            # Find and apply one of the chosen transformations
             for match in opt.get_pattern_matches(strict=strict,
                                                  patterns=xforms,
                                                  states=states):
@@ -1912,6 +1912,10 @@ class SDFG(OrderedDiGraph):
 
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
+                print(', '.join([
+                    '%d %s' % (v, k)
+                    for k, v in applied_transformations.items()
+                ]))
                 if validate_all:
                     try:
                         self.validate()
