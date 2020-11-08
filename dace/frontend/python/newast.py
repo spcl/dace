@@ -3253,16 +3253,16 @@ class ProgramVisitor(ExtNodeVisitor):
                             if str(sym) != str(symvalue):
                                 sd.replace_properties(
                                     newarr, {
-                                        symbolic.symbol(sym):
-                                        symbolic.symbol('__dacesym_' + symvalue)
+                                        symbolic.symbol(str(sym)):
+                                        symbolic.symbol('__dacesym_' + str(sym))
                                     }, sym, '__dacesym_' + sym)
                         for sym, symvalue in mapping.items():
                             if str(sym) != str(symvalue):
                                 sd.replace_properties(
                                     newarr, {
-                                        symbolic.symbol('__dacesym_' + symvalue):
+                                        symbolic.symbol('__dacesym_' + str(sym)):
                                         symbolic.pystr_to_symbolic(symvalue)
-                                    }, '__dacesym_' + sym, symvalue)
+                                    }, '__dacesym_' + str(sym), symvalue)
 
                     new_arrname = self.sdfg.add_datadesc(new_arrname,
                                                          newarr,
