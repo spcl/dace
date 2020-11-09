@@ -143,8 +143,9 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
-                        if (isinstance(cb.code[0].value, ast.Call) and
-                            isinstance(cb.code[0].value.func, ast.Attribute)):
+                        if (isinstance(cb.code[0].value, ast.Call)
+                                and isinstance(cb.code[0].value.func,
+                                               ast.Attribute)):
                             candidates.remove(candidate)
                             continue
                     elif cb.language is dtypes.Language.CPP:
@@ -548,7 +549,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
             tasklet_inputs = [e.src for e in state.in_edges(input)]
             # Step 2.1
             new_state = xfh.state_fission(
-                sdfg, gr.SubgraphView(state, [input, node] + tasklet_inputs))
+                sdfg, gr.SubgraphView(state,
+                                      set([input, node] + tasklet_inputs)))
             new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
             # Step 2.2
             node: nodes.AccessNode = new_state.sink_nodes()[0]
