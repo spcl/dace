@@ -70,6 +70,12 @@ class AnnotateBranch(DetectBranch):
         if len(common_frontier) == 1:
             frontier_state = list(common_frontier)[0]
             guard.full_merge_state = frontier_state
+        elif self.expr_index == 1 and sdfg.out_degree(guard) == 2:
+            # If we matched the second case of branch detection, and have
+            # exactly two branches, we know that the second branch's state is a
+            # full merge state.
+            guard.full_merge_state = sdfg.node(
+                self.subgraph[DetectBranch._second_branch])
 
         # Mark this conditional branch construct as annotated, so it doesn't
         # get processed again when applied repeatedly.

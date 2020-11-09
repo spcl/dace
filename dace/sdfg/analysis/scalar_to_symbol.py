@@ -474,12 +474,16 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
 
                         # Descend recursively to remove scalar
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
+                        for ise in dst.sdfg.edges():
+                            ise.data.replace(e.dst_conn, tmp_symname)
+                            # Remove subscript occurrences as well
+                            ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[
-                            symname].dtype
+                            node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
@@ -555,7 +559,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 if input.language is dtypes.Language.Python:
                     newcode = astutils.unparse(input.code.code[0].value)
                 elif input.language is dtypes.Language.CPP:
-                    newcode = re.findall(r'.*=\s*(.*);',
+                    newcode = re.findall(r'.*?=\s*(.*);',
                                          input.code.as_string.strip())[0]
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):
