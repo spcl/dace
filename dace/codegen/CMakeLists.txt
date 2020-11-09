@@ -427,7 +427,7 @@ if(DACE_ENABLE_XILINX)
   else()
 
     # Since with Vitis only one kernel can be compiled at a time,
-    # for the general case we have first to compile each kernel
+    # for the general case we have to first compile each kernel
     # and then link together the generated .xo files
     set(DACE_VITIS_KERNELS_SW_EMU)
     set(DACE_VITIS_KERNELS_HW_EMU)
