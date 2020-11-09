@@ -1891,14 +1891,15 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.accesses[(name, scope_memlet.subset,
                                        'r')] = (vname, orng)
                         orig_shape = orng.size()
-                        shape = [d for d in orig_shape if d != 1]
+                        shape = [d for i, d in enumerate(orig_shape)
+                                 if d != 1 or i in inner_indices]
                         strides = [
                             i for j, i in enumerate(arr.strides)
                             if j not in outer_indices
                         ]
-                        strides = [
-                            s for d, s in zip(orig_shape, strides) if d != 1
-                        ]
+                        strides = [s for i, (d, s) in enumerate(zip(orig_shape,
+                                                                    strides))
+                                   if d != 1 or i in inner_indices]
                         if not shape:
                             shape = [1]
                             strides = [1]
@@ -2005,13 +2006,15 @@ class ProgramVisitor(ExtNodeVisitor):
                                        'w')] = (vname, orng)
                         orig_shape = orng.size()
                         shape = [d for d in orig_shape if d != 1]
+                        shape = [d for i, d in enumerate(orig_shape)
+                                 if d != 1 or i in inner_indices]
                         strides = [
                             i for j, i in enumerate(arr.strides)
                             if j not in outer_indices
                         ]
-                        strides = [
-                            s for d, s in zip(orig_shape, strides) if d != 1
-                        ]
+                        strides = [s for i, (d, s) in enumerate(zip(orig_shape,
+                                                                    strides))
+                                   if d != 1 or i in inner_indices]
                         if not shape:
                             shape = [1]
                             strides = [1]
