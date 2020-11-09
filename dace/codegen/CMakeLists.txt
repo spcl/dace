@@ -258,8 +258,8 @@ if(DACE_ENABLE_HIP)
       RESULT_VARIABLE _arch_res)
     if(_arch_res EQUAL 0)
       execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
-	OUTPUT_VARIABLE _arch_out
-	RESULT_VARIABLE _arch_runres)
+      OUTPUT_VARIABLE _arch_out
+      RESULT_VARIABLE _arch_runres)
     endif()
 
     if((_arch_res EQUAL 0) AND (_arch_runres EQUAL 0))
@@ -270,7 +270,7 @@ if(DACE_ENABLE_HIP)
       message(STATUS "Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
     else()
       if(_arch_res EQUAL 0)
-	set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
+        set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
       endif()
       message(STATUS "No local HIP-capable GPUs found")
     endif()
@@ -381,9 +381,9 @@ if(DACE_ENABLE_XILINX)
     # interfaces from codegen to CMake in order to do this.
     message(STATUS "Enabled debugging/profiling for Xilinx targets.")
     set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
-      --profile_kernel "data:all:all:all"
-      --profile_kernel "stall:all:all"
-      --profile_kernel "exec:all:all")
+        --profile_kernel "data:all:all:all"
+        --profile_kernel "stall:all:all"
+        --profile_kernel "exec:all:all")
   endif()
 
   if(Vitis_MAJOR_VERSION LESS 2018 AND Vitis_MINOR_VERSION LESS 3)
@@ -429,6 +429,9 @@ if(DACE_ENABLE_XILINX)
     # Since with Vitis only one kernel can be compiled at a time,
     # for the general case we have first to compile each kernel
     # and then link together the generated .xo files
+    set(DACE_VITIS_KERNELS_SW_EMU)
+    set(DACE_VITIS_KERNELS_HW_EMU)
+    set(DACE_VITIS_KERNELS_HW)
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
       # Compile .xo files
@@ -450,7 +453,6 @@ if(DACE_ENABLE_XILINX)
 
       set(DACE_VITIS_KERNELS_SW_EMU ${DACE_VITIS_KERNELS_SW_EMU} ${DACE_KERNEL_NAME}_sw_emu.xo)
 
-
       add_custom_command(
         OUTPUT ${DACE_KERNEL_NAME}_hw_emu.xo
         COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
@@ -464,7 +466,6 @@ if(DACE_ENABLE_XILINX)
 
       set(DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${DACE_KERNEL_NAME}_hw_emu.xo)
 
-
       add_custom_command(
         OUTPUT ${DACE_KERNEL_NAME}_hw.xo
         COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
@@ -476,25 +477,25 @@ if(DACE_ENABLE_XILINX)
         -o ${DACE_KERNEL_NAME}_hw.xo
         DEPENDS ${DACE_VITIS_KERNEL_FILES})
 
-      set(DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${DACE_KERNEL_NAME}_hw.xo)
+        set(DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${DACE_KERNEL_NAME}_hw.xo)
 
     endforeach()
 
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation
-                        DEPENDS ${DACE_VITIS_KERNELS_SW_EMU})
+                      DEPENDS ${DACE_VITIS_KERNELS_SW_EMU})
     add_custom_target(xilinx_compile_software_emulation DEPENDS
                       xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation)
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation
-                        DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
+                      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
     add_custom_target(xilinx_compile_hardware_emulation DEPENDS
                         xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation)
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_hardware DEPENDS
-                        ${DACE_VITIS_KERNELS_HW})
+                      ${DACE_VITIS_KERNELS_HW})
     add_custom_target(xilinx_compile_hardware DEPENDS
-                        xilinx_compile_${DACE_PROGRAM_NAME}_hardware)
+                      xilinx_compile_${DACE_PROGRAM_NAME}_hardware)
 
 
     # Linking
