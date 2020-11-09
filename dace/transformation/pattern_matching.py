@@ -52,21 +52,19 @@ def collapse_multigraph_to_nx(
     return result
 
 
-def type_match(node_a, node_b):
+def type_match(graph_node, pattern_node):
     """ Checks whether the node types of the inputs match.
-        :param node_a: First node.
-        :param node_b: Second node.
+        :param graph_node: First node (in matched graph).
+        :param pattern_node: Second node (in pattern subgraph).
         :return: True if the object types of the nodes match, False otherwise.
         :raise TypeError: When at least one of the inputs is not a dictionary
                           or does not have a 'node' attribute.
         :raise KeyError: When at least one of the inputs is a dictionary,
                          but does not have a 'node' key.
     """
-    if isinstance(node_b['node'], xf.PatternNode):
-        return isinstance(node_a['node'], node_b['node'].node)
-    # elif isinstance(node_a['node'], xf.PatternNode):
-    #     return isinstance(node_b['node'], node_a['node'].node)
-    return isinstance(node_a['node'], type(node_b['node']))
+    if isinstance(pattern_node['node'], xf.PatternNode):
+        return isinstance(graph_node['node'], pattern_node['node'].node)
+    return isinstance(graph_node['node'], type(pattern_node['node']))
 
 
 def type_or_class_match(node_a, node_b):
