@@ -62,9 +62,14 @@ def _assignments_to_consider(sdfg, edge):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
         as_symbolic = symbolic.pystr_to_symbolic(assign)
-        # Assignments cannot subscript a data container
-        if not symbolic.contains_sympy_functions(as_symbolic):
-            assignments_to_consider[var] = assign
+        # Assignments cannot access a data container
+        if not symbolic.contains_sympy_functions(as_symbolic):  # via subscript
+            # Assignments cannot use scalar values
+            for sym in as_symbolic.free_symbols:
+                if str(sym) in sdfg.arrays:
+                    break
+            else:
+                assignments_to_consider[var] = assign
     return assignments_to_consider
 
 

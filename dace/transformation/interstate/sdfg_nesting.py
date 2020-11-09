@@ -252,6 +252,15 @@ class InlineSDFG(transformation.Transformation):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace(symname, '__dacesym_' + symname)
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace('__dacesym_' + symname, symvalue)
+
         # All transients become transients of the parent (if data already
         # exists, find new name)
         # Mapping from nested transient name to top-level name
@@ -310,15 +319,6 @@ class InlineSDFG(transformation.Transformation):
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
-
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace(symname, '__dacesym_' + symname)
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace('__dacesym_' + symname, symvalue)
 
         # Replace data names with their top-level counterparts
         repldict = {}
