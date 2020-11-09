@@ -395,10 +395,9 @@ for(int i = 0; i < {veclen}; i++){{
 """
 
     CPP_MAIN_TEMPLATE = """\
-if(DEBUG){{
+if(DACE_VERILATOR_ENABLE_DEBUG){{
     std::cout << "SIM {name} START" << std::endl;
 }}
-
 vluint64_t main_time = 0;
 
 // instantiate model
@@ -441,7 +440,7 @@ while (out_ptr < num_elements) {{
     }} 
     // feed new element
     if(model->valid_i == 0 && in_ptr < num_elements){{
-        if(DEBUG){{
+        if(DACE_VERILATOR_ENABLE_DEBUG){{
             std::cout << "feed new element" << std::endl;
         }}
         {inputs}
@@ -450,7 +449,7 @@ while (out_ptr < num_elements) {{
 
     // export element
     if(model->valid_o == 1){{
-        if(DEBUG){{
+        if(DACE_VERILATOR_ENABLE_DEBUG){{
             std::cout << "export element" << std::endl;
         }}
         {outputs}
@@ -466,7 +465,7 @@ while (out_ptr < num_elements) {{
     model->eval();
 
     // report internal state
-    if(DEBUG){{
+    if(DACE_VERILATOR_ENABLE_DEBUG){{
         VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
         VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
         std::cout << std::flush;
@@ -476,7 +475,7 @@ while (out_ptr < num_elements) {{
     if (read_input_hs){{
         // remove valid_i flag
         model->valid_i = 0;
-        if(DEBUG){{
+        if(DACE_VERILATOR_ENABLE_DEBUG){{
             std::cout << "remove read_input_hs flag" << std::endl;
         }}
         read_input_hs = false;
@@ -486,7 +485,7 @@ while (out_ptr < num_elements) {{
     if (write_output_hs){{
         // remove ready_i flag
         model->ready_i = 0;
-        if(DEBUG){{
+        if(DACE_VERILATOR_ENABLE_DEBUG){{
             std::cout << "remove write_output_hs flag" << std::endl;
         }}
         write_output_hs = false;
@@ -498,7 +497,7 @@ while (out_ptr < num_elements) {{
 }}
 
 // report internal state
-if(DEBUG){{
+if(DACE_VERILATOR_ENABLE_DEBUG){{
     VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
     VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
     std::cout << std::flush;
@@ -511,7 +510,7 @@ model->final();
 delete model;
 model = NULL;
 
-if(DEBUG){{
+if(DACE_VERILATOR_ENABLE_DEBUG){{
     std::cout << "SIM {name} END" << std::endl;
 }}
 """

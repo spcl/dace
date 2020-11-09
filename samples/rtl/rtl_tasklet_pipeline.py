@@ -136,7 +136,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # set debugging output
-    sdfg.add_constant("DEBUG", 1 if args.debug else 0)
+    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", args.debug)
 
     # init data structures
     num_elements = dace.symbolic.evaluate(N, sdfg.constants)

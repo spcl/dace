@@ -76,7 +76,7 @@ def test_tasklet_scalar(debug=False):
     """
 
     # set debugging output
-    sdfg.add_constant("DEBUG", 1 if debug else 0)
+    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
 
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
@@ -162,7 +162,7 @@ def test_tasklet_parameter(debug=False):
         Execute    
     """
     # set debugging output
-    sdfg.add_constant("DEBUG", 1 if debug else 0)
+    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
 
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
@@ -252,7 +252,7 @@ def test_tasklet_vector(debug=False):
         Execute    
     """
     # set debugging output
-    sdfg.add_constant("DEBUG", 1 if debug else 0)
+    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
 
     # init data structures
     a = np.random.randint(0, 100, dace.symbolic.evaluate(
@@ -353,7 +353,7 @@ def test_multi_tasklet(debug=False):
     sdfg.validate()
     # Execute
     # set debugging output
-    sdfg.add_constant("DEBUG", 1 if debug else 0)
+    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
 
     # init data structures
     a = np.random.randint(0, 80, 1).astype(np.int32)
