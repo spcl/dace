@@ -44,20 +44,9 @@ class AnnotateLoop(DetectLoop):
         # Obtain loop information
         guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
         begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after_state: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride.
-        itervar, rng = find_for_loop(sdfg, guard, begin)
-
-        # Find the state prior to the loop
-        guard_inedges = sdfg.in_edges(guard)
-        if rng[0] == symbolic.pystr_to_symbolic(
-                guard_inedges[0].data.assignments[itervar]):
-            before_state: sd.SDFGState = guard_inedges[0].src
-            last_state: sd.SDFGState = guard_inedges[1].src
-        else:
-            before_state: sd.SDFGState = guard_inedges[1].src
-            last_state: sd.SDFGState = guard_inedges[0].src
+        itervar, rng, _ = find_for_loop(sdfg, guard, begin)
 
         # Make sure the range is flipped in a direction such that the stride
         # is positive (in order to match subsets.Range).
@@ -71,8 +60,6 @@ class AnnotateLoop(DetectLoop):
             sources=[begin],
             condition=lambda _, child: child != guard
         ))
-        first_id = loop_states.index(begin)
-        last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
         for v in loop_subgraph.nodes():
             v.ranges[itervar] = Range([rng])

@@ -48,7 +48,7 @@ class LoopToMap(DetectLoop):
         if not found:
             return False
 
-        itervar, (start, end, step) = found
+        itervar, (start, end, step), _ = found
 
         # We cannot handle symbols read from data containers unless they are
         # scalar
@@ -112,7 +112,7 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step) = find_for_loop(sdfg, guard, body)
+        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a
