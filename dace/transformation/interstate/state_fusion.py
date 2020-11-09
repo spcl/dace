@@ -457,8 +457,8 @@ class StateFusion(transformation.Transformation):
                             n = cand
                             break
                     else:
-                        raise ValueError('Ambiguous node to fuse for "%s"' %
-                                         node.data)
+                        # No node intersects, use topologically-last node
+                        n = candidates[0]
 
                 sdutil.change_edge_src(first_state, node, n)
                 first_state.remove_node(node)
