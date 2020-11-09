@@ -58,7 +58,7 @@ class DaCeCodeGenerator(object):
             else:
                 callsite_stream.write(
                     "constexpr %s %s = %s;\n" %
-                    (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
+                    (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
     def generate_fileheader(self,
                             sdfg: SDFG,
@@ -709,6 +709,13 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Generate code
         ###########################
+        
+        # Keep track of allocated variables
+        allocated = set()
+
+        # Add symbol mappings to allocated variables
+        if sdfg.parent_nsdfg_node is not None:
+            allocated |= sdfg.parent_nsdfg_node.symbol_mapping.keys()
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -717,7 +724,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
-        allocated = set()
         for state in sdfg.nodes():
             for node in state.data_nodes():
                 if (node.data in shared_transients

@@ -9,6 +9,7 @@ from dace.transformation import helpers as xfh
 
 import collections
 import numpy as np
+import pytest
 
 
 def test_find_promotable():
@@ -434,6 +435,61 @@ def test_promote_indirection_impossible():
     assert np.allclose(A, expected)
 
 
+@pytest.mark.parametrize('with_subscript', [False, True])
+def test_nested_promotion_connector(with_subscript):
+    # Construct SDFG
+    sdfg = dace.SDFG('testprog')
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_transient('scal', [1], dace.int32)
+    initstate = sdfg.add_state()
+    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'),
+                       'out', initstate.add_write('scal'), None,
+                       dace.Memlet('scal'))
+    state = sdfg.add_state_after(initstate)
+
+    nsdfg = dace.SDFG('nested')
+    nsdfg.add_array('a', [20, 20], dace.float64)
+    nsdfg.add_array('b', [1], dace.float64)
+    nsdfg.add_array('s', [1], dace.int32)
+    nsdfg.add_symbol('s2', dace.int32)
+    nstate1 = nsdfg.add_state()
+    nstate2 = nsdfg.add_state()
+    nsdfg.add_edge(
+        nstate1, nstate2,
+        dace.InterstateEdge(assignments=dict(
+            s2='s[0]' if with_subscript else 's')))
+    a = nstate2.add_read('a')
+    t = nstate2.add_tasklet('do', {'inp'}, {'out'}, 'out = inp')
+    b = nstate2.add_write('b')
+    nstate2.add_edge(a, None, t, 'inp', dace.Memlet('a[s2, s2 + 1]'))
+    nstate2.add_edge(t, 'out', b, None, dace.Memlet('b[0]'))
+
+    nnode = state.add_nested_sdfg(nsdfg, None, {'a', 's'}, {'b'})
+    aouter = state.add_read('A')
+    souter = state.add_read('scal')
+    bouter = state.add_write('B')
+    state.add_edge(aouter, None, nnode, 'a', dace.Memlet('A'))
+    state.add_edge(souter, None, nnode, 's', dace.Memlet('scal'))
+    state.add_edge(nnode, 'b', bouter, None, dace.Memlet('B'))
+    #######################################################
+
+    # Promotion
+    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'scal'}
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.apply_strict_transformations()
+
+    assert sdfg.number_of_nodes() == 1
+    assert sdfg.node(0).number_of_nodes() == 3
+    assert not any(isinstance(n, dace.nodes.NestedSDFG) for n in sdfg.node(0))
+
+    # Correctness
+    A = np.random.rand(20, 20)
+    B = np.random.rand(1)
+    sdfg(A=A, B=B)
+    assert B[0] == A[5, 6]
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -448,3 +504,5 @@ if __name__ == '__main__':
     test_promote_indirection_c()
     test_promote_output_indirection()
     test_promote_indirection_impossible()
+    test_nested_promotion_connector(False)
+    test_nested_promotion_connector(True)
