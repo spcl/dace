@@ -10,6 +10,7 @@ from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.dispatcher import TargetDispatcher
+from dace.codegen.targets.common import sym2cpp
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import StateSubgraphView
 from dace.sdfg import find_input_arraynode, find_output_arraynode
@@ -191,7 +192,7 @@ class RTLCodeGen(TargetCodeGenerator):
         else:
             return "#(\n{}\n)".format(" " + "\n".join([
                 "{} parameter {} = {}".format("," if i > 0 else "", key,
-                                              constants[key])
+                                              sym2cpp(constants[key]))
                 for i, key in enumerate(constants)
             ]))
 
