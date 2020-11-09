@@ -8,6 +8,7 @@ from dace.registry import autoregister
 from dace.sdfg import graph as gr, utils as sdutil
 from dace.subsets import Range
 
+
 @autoregister
 class AnnotateLoop(DetectLoop):
     """
@@ -19,7 +20,6 @@ class AnnotateLoop(DetectLoop):
     of the loop's iteration variable, and the attribute `condition_edge`, which
     points to the edge holding the condition leading in to the loop.
     """
-
     @staticmethod
     def annotates_memlets():
         # DO NOT REAPPLY MEMLET PROPAGATION!
@@ -27,7 +27,8 @@ class AnnotateLoop(DetectLoop):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict):
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, strict):
+        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
+                                         strict):
             return False
 
         # Ensure range was not yet given.
@@ -55,11 +56,10 @@ class AnnotateLoop(DetectLoop):
             rng = (stop, start, -stride)
 
         # Get loop states
-        loop_states = list(sdutil.dfs_conditional(
-            sdfg,
-            sources=[begin],
-            condition=lambda _, child: child != guard
-        ))
+        loop_states = list(
+            sdutil.dfs_conditional(sdfg,
+                                   sources=[begin],
+                                   condition=lambda _, child: child != guard))
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
         for v in loop_subgraph.nodes():
             v.ranges[itervar] = Range([rng])

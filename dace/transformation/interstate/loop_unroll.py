@@ -67,7 +67,6 @@ class LoopUnroll(DetectLoop):
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
-
         # Get loop states
         loop_states = list(
             sdutil.dfs_conditional(sdfg,
@@ -79,15 +78,14 @@ class LoopUnroll(DetectLoop):
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants)
-                              for r in rng)
+        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
 
         # Create states for loop subgraph
         unrolled_states = []
         for i in range(start, end + 1, stride):
             # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg, loop_states,
-                                               loop_subgraph, itervar, i)
+            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
+                                               itervar, i)
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
@@ -105,7 +103,7 @@ class LoopUnroll(DetectLoop):
             before_states = loop_struct[0]
             for before_state in before_states:
                 sdfg.add_edge(before_state, unrolled_states[0][0],
-                            sd.InterstateEdge())
+                              sd.InterstateEdge())
             sdfg.add_edge(unrolled_states[-1][1], after_state,
                           sd.InterstateEdge(assignments=after_assignments))
 
