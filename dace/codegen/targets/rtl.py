@@ -539,6 +539,6 @@ def check_issymbolic(iterator: iter, sdfg):
     for item in iterator:
         # catch symbolic (compile time variables)
         if symbolic.issymbolic(item, sdfg.constants):
-            raise RuntimeError(
-                "Please use sdfg.specialize to specialize the symbol in expression: {}"
-                .format(item))
+            raise ValueError(
+                "Please use sdfg.specialize to make the following symbol(s) constant: {}"
+                .format(", ".join([str(x) for x in item.free_symbols if str(x) not in sdfg.constants])))
