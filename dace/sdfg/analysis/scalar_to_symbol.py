@@ -139,6 +139,14 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                                 cb.code[0].targets[0]) != edge.src_conn):
                             candidates.remove(candidate)
                             continue
+                        # Ensure that the candidate is not assigned through
+                        # an "attribute" call, e.g., "dace.int64". These calls
+                        # are not supported currently by the SymPy-based
+                        # symbolic module.
+                        if (isinstance(cb.code[0].value, ast.Call) and
+                            isinstance(cb.code[0].value.func, ast.Attribute)):
+                            candidates.remove(candidate)
+                            continue
                     elif cb.language is dtypes.Language.CPP:
                         # Try to match a single C assignment
                         cstr = cb.as_string.strip()
