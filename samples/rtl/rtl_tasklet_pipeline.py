@@ -1,6 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    Pipelined, axi-handshake compliant example that increments b from a up to 100.
+    Pipelined, AXI-handshake compliant example that increments b from a up to 100.
 """
 
 import dace
@@ -38,7 +38,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
         -->| {inputs}                             reg {outputs} |-->
            |                                                    |
         <--| ready_o (ready for data)       (data avail) valid_o|-->
-        -->| valid_i (new data avail)    (data consumed) yumi_i |<--
+        -->| valid_i (new data avail)    (data consumed) ready_i |<--
            |----------------------------------------------------|
     */
 
