@@ -360,17 +360,28 @@ class StateFusion(transformation.Transformation):
                 if (len(fused_cc.first_output_nodes) > len(
                         fused_cc.first_outputs)):
                     for inpnode in fused_cc.second_input_nodes:
-                        found = False
+                        found = None
                         for outnode in fused_cc.first_output_nodes:
                             if outnode.data != inpnode.data:
                                 continue
                             if StateFusion.memlets_intersect(
                                     first_state, [outnode], False, second_state,
                                 [inpnode], True):
-                                # If found more than once, ambiguous
-                                if found:
-                                    return False
-                                found = True
+                                # If found more than once, either there is a
+                                # path from one to another or it is ambiguous
+                                if found is not None:
+                                    if nx.has_path(first_state.nx, outnode,
+                                                   found):
+                                        # Found is a descendant, continue
+                                        continue
+                                    elif nx.has_path(first_state.nx, found,
+                                                     outnode):
+                                        # New node is a descendant, set as found
+                                        found = outnode
+                                    else:
+                                        # No path: ambiguous match
+                                        return False
+                                found = outnode
 
         return True
 
