@@ -29,7 +29,7 @@ from .redundant_array import RedundantArray, RedundantSecondArray
 from .redundant_array_copying import (RedundantArrayCopying,
                                       RedundantArrayCopying2,
                                       RedundantArrayCopying3)
-from .merge_arrays import InMergeArrays, OutMergeArrays
+from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors
 
 # Device-related
