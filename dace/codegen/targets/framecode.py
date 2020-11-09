@@ -58,7 +58,7 @@ class DaCeCodeGenerator(object):
             else:
                 callsite_stream.write(
                     "constexpr %s %s = %s;\n" %
-                    (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
+                    (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
     def generate_fileheader(self,
                             sdfg: SDFG,
