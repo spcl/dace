@@ -351,9 +351,7 @@ def test_multi_tasklet(debug=False):
 
     # validate sdfg
     sdfg.validate()
-    """
-        Execute    
-    """
+    # Execute
     # set debugging output
     sdfg.add_constant("DEBUG", 1 if debug else 0)
 
