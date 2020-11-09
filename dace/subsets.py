@@ -615,8 +615,10 @@ class Range(Subset):
                 new_ranges.append(self.ranges[i])
                 new_tsizes.append(self.tile_sizes[i])
         if not new_ranges:
-            new_ranges = [self.ranges[-1]]
-            new_tsizes = [self.tile_sizes[-1]]
+            new_ranges = [(symbolic.pystr_to_symbolic(0),
+                           symbolic.pystr_to_symbolic(0),
+                           symbolic.pystr_to_symbolic(1))]
+            new_tsizes = [symbolic.pystr_to_symbolic(1)]
         self.ranges = new_ranges
         self.tile_sizes = new_tsizes
 
