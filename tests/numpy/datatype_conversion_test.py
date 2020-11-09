@@ -42,6 +42,18 @@ def test_simple_scalar_conversion():
     assert(B[0] == A)
 
 
+@dace.program
+def simple_constant_conversion():
+    return dace.float64(0)
+
+
+def test_simple_constant_conversion():
+    A = simple_constant_conversion()
+
+    assert(A.dtype == np.float64)
+    assert(A[0] == np.float64(0))
+
+
 N = dace.symbol('N', dtype=dace.int32)
 
 @dace.program
@@ -63,4 +75,5 @@ if __name__ == "__main__":
     test_simple_array_conversion()
     test_simple_array_conversion2()
     test_simple_scalar_conversion()
+    test_simple_constant_conversion()
     test_simple_symbol_conversion()
