@@ -366,7 +366,7 @@ for(int i = 0; i < {veclen}; i++){{
         internal_state_str, internal_state_var = self.generate_cpp_internal_state(
             tasklet)
 
-        # add header code do stream
+        # add header code to stream
         sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_HEADER_TEMPLATE.format(
             name=unique_name))
 
