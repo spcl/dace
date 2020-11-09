@@ -1051,7 +1051,7 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
-        elif lang.endswith("sv") or lang.endswith("SystemVerilog") or lang.endswith("RTL"):
+        elif lang.endswith("SystemVerilog"):
             lang = dace.dtypes.Language.SystemVerilog
 
         try:
