@@ -463,6 +463,11 @@ required:
                         default: true
                         title: Verilator Lint Warnings
                         description: Enable/Disable detailed SV lint checker output.
+                    verilator_enable_debug:
+                        type: bool
+                        default: false
+                        title: Verilator Enable Debug
+                        description: Enable/disable verbose internal state debug output.
 
             #############################################
             # MPI compiler

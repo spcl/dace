@@ -5,7 +5,7 @@ import dace
 import numpy as np
 
 
-def test_tasklet_scalar(debug=False):
+def test_tasklet_scalar():
     """
         Test the simple scalar execution sample.
     """
@@ -71,12 +71,8 @@ def test_tasklet_scalar(debug=False):
 
     # validate sdfg
     sdfg.validate()
-    """
-        Execute    
-    """
 
-    # set debugging output
-    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
+    # Execute
 
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
@@ -89,7 +85,7 @@ def test_tasklet_scalar(debug=False):
     assert b == 100
 
 
-def test_tasklet_parameter(debug=False):
+def test_tasklet_parameter():
     """
         Test the sv parameter support.
     """
@@ -158,11 +154,8 @@ def test_tasklet_parameter(debug=False):
 
     # validate sdfg
     sdfg.validate()
-    """
-        Execute    
-    """
-    # set debugging output
-    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
+
+    # execute
 
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
@@ -175,7 +168,7 @@ def test_tasklet_parameter(debug=False):
     assert b == sdfg.constants["MAX_VAL"]
 
 
-def test_tasklet_vector(debug=False):
+def test_tasklet_vector():
     """
         Test rtl tasklet vector support.
     """
@@ -248,11 +241,8 @@ def test_tasklet_vector(debug=False):
 
     # validate sdfg
     sdfg.validate()
-    """
-        Execute    
-    """
-    # set debugging output
-    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
+
+    # Execute
 
     # init data structures
     a = np.random.randint(0, 100, dace.symbolic.evaluate(
@@ -266,7 +256,7 @@ def test_tasklet_vector(debug=False):
     assert b == a[0] + a[1]
 
 
-def test_multi_tasklet(debug=False):
+def test_multi_tasklet():
     """
         Test multiple rtl tasklet support.
     """
@@ -351,9 +341,8 @@ def test_multi_tasklet(debug=False):
 
     # validate sdfg
     sdfg.validate()
+
     # Execute
-    # set debugging output
-    sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", debug)
 
     # init data structures
     a = np.random.randint(0, 80, 1).astype(np.int32)

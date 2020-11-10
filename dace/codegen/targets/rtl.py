@@ -25,9 +25,6 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.sdfg: sdfg.SDFG = sdfg
         # store reference to frame code generator
         self.frame: framecode.DaCeCodeGenerator = frame_codegen
-        # add debug constant if not existent
-        if "DACE_VERILATOR_ENABLE_DEBUG" not in sdfg.constants:
-            sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", False)
         # get dispatcher to register callbacks for allocation/nodes/.. code generators
         self.dispatcher: dispatcher.TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
@@ -45,6 +42,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 (isinstance(dest_node, nodes.Tasklet) and dest_node.language ==
                  dtypes.Language.SystemVerilog))
         # local variables
+        self.verilator_debug: bool = config.Config.get_bool("compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
 
@@ -376,7 +374,7 @@ for(int i = 0; i < {veclen}; i++){{
             sdfg.append_global_code(
                 cpp_code=RTLCodeGen.CPP_GENERAL_HEADER_TEMPLATE.format(
                     debug_include="// generic includes\n#include <iostream>"
-                    if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else ""))
+                    if self.verilator_debug else ""))
             self.cpp_general_header_added = True
         sdfg.append_global_code(
             cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
@@ -392,11 +390,11 @@ for(int i = 0; i < {veclen}; i++){{
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            if self.verilator_debug else "",
             debug_export_element="std::cout << \"export element\" << std::endl;"
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            if self.verilator_debug else "",
             debug_internal_state="""
 // report internal state 
 VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
@@ -404,15 +402,15 @@ VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
 """.format(internal_state_str=internal_state_str,
            internal_state_var=internal_state_var)
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            if self.verilator_debug else "",
             debug_read_input_hs=
             "std::cout << \"remove read_input_hs flag\" << std::endl;"
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            if self.verilator_debug else "",
             debug_output_hs=
             "std::cout << \"remove write_output_hs flag\" << std::endl;"
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            if self.verilator_debug else "",
             debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
-            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else ""),
+            if self.verilator_debug else ""),
                               sdfg=sdfg,
                               state_id=state_id,
                               node_id=node)
