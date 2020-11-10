@@ -942,7 +942,10 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         defined_symbols = state_dfg.symbols_defined_at(node)
 
         # This could be problematic for numeric constants that have no dtype
-        defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
