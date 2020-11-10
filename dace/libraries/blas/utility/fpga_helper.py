@@ -130,8 +130,7 @@ class StreamReadVector():
                  source,
                  mem_size,
                  dtype,
-                 buffer_size=config.Config.get("library", "blas", "fpga",
-                                               "default_stream_depth"),
+                 buffer_size=None,
                  veclen=1,
                  unroll=False,
                  unroll_width=1,
@@ -145,7 +144,8 @@ class StreamReadVector():
         self.mem_size = mem_size
         self.dtype = dtype
 
-        self.buffer_size = buffer_size
+        self.buffer_size = buffer_size or config.Config.get(
+            "library", "blas", "fpga", "default_stream_depth")
         self.veclen = veclen
         self.unroll = unroll
         self.unroll_width = unroll_width
@@ -297,8 +297,7 @@ class StreamWriteVector():
         destination,
         mem_size,
         dtype,
-        buffer_size=config.Config.get("library", "blas", "fpga",
-                                      "default_stream_depth"),
+        buffer_size=None,
         veclen=1,
         unroll=False,
         unroll_width=1,
@@ -312,7 +311,8 @@ class StreamWriteVector():
         self.mem_size = mem_size
         self.dtype = dtype
 
-        self.buffer_size = buffer_size
+        self.buffer_size = buffer_size or config.Config.get(
+            "library", "blas", "fpga", "default_stream_depth")
         self.veclen = veclen
         self.unroll = unroll
         self.unroll_width = unroll_width

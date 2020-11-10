@@ -86,7 +86,8 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, veclen, n, a, buffer_size):
+    def make_sdfg(dtype, veclen, n, a, buffer_size_x, buffer_size_y,
+                  buffer_size_res):
 
         # ---------- ----------
         # SETUP GRAPH
@@ -105,15 +106,15 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
 
         x_in = vec_add_state.add_stream('_x',
                                         vec_type,
-                                        buffer_size=buffer_size,
+                                        buffer_size=buffer_size_x,
                                         storage=dtypes.StorageType.FPGA_Local)
         y_in = vec_add_state.add_stream('_y',
                                         vec_type,
-                                        buffer_size=buffer_size,
+                                        buffer_size=buffer_size_y,
                                         storage=dtypes.StorageType.FPGA_Local)
         z_out = vec_add_state.add_stream('_res',
                                          vec_type,
-                                         buffer_size=buffer_size,
+                                         buffer_size=buffer_size_res,
                                          storage=dtypes.StorageType.FPGA_Local)
 
         # ---------- ----------
@@ -155,9 +156,17 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
+        for e in state.in_edges(node):
+            if e.dst_conn == "_x":
+                buffer_size_x = sdfg.arrays[e.data.data].buffer_size
+            elif e.dst_conn == "_y":
+                buffer_size_y = sdfg.arrays[e.data.data].buffer_size
+        for e in state.out_edges(node):
+            if e.src_conn == "_res":
+                buffer_size_res = sdfg.arrays[e.data.data].buffer_size
         return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a,
-                                                 node.buffer_size)
+                                                 node.n, node.a, buffer_size_x,
+                                                 buffer_size_y, buffer_size_res)
 
 
 @dace.library.node
@@ -184,19 +193,13 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
                                          default=dace.symbolic.symbol("n"))
     a = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("a"))
-    buffer_size = dace.properties.SymbolicProperty(
-        allow_none=False,
-        default=config.Config.get("library", "blas", "fpga",
-                                  "default_stream_depth"))
 
     def __init__(self,
                  name,
                  dtype=dace.float32,
                  veclen=1,
-                 n=dace.symbolic.symbol("n"),
-                 a=dace.symbolic.symbol("a"),
-                 buffer_size=config.Config.get("library", "blas", "fpga",
-                                               "default_stream_depth"),
+                 n=None,
+                 a=None,
                  *args,
                  **kwargs):
         super().__init__(name,
@@ -206,9 +209,8 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
                          **kwargs)
         self.dtype = dtype
         self.veclen = veclen
-        self.n = n
-        self.a = a
-        self.buffer_size = buffer_size
+        self.n = n or dace.symbolic.symbol("n")
+        self.a = a or dace.symbolic.symbol("a")
 
     def compare(self, other):
 
@@ -256,26 +258,18 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     def make_stream_reader(self):
         return {
-            "_x":
-            StreamReadVector('-',
-                             self.n,
-                             self.dtype,
-                             veclen=int(self.veclen),
-                             buffer_size=self.buffer_size),
-            "_y":
-            StreamReadVector('-',
-                             self.n,
-                             self.dtype,
-                             veclen=int(self.veclen),
-                             buffer_size=self.buffer_size)
+            "_x": StreamReadVector('-',
+                                   self.n,
+                                   self.dtype,
+                                   veclen=int(self.veclen)),
+            "_y": StreamReadVector('-',
+                                   self.n,
+                                   self.dtype,
+                                   veclen=int(self.veclen))
         }
 
     def make_stream_writer(self):
         return {
             "_res":
-            StreamWriteVector('-',
-                              self.n,
-                              self.dtype,
-                              veclen=int(self.veclen),
-                              buffer_size=self.buffer_size)
+            StreamWriteVector('-', self.n, self.dtype, veclen=int(self.veclen))
         }
