@@ -329,23 +329,6 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
-
-            #############################################
-            # Cross-vendor FPGA configuration options
-            fpga:
-                type: dict
-                title: FPGA
-                description: Cross-vendor FPGA configuration options
-                required:
-
-                    fpga_default_stream_depth:
-                        type: int
-                        default: 32
-                        title: Default FPGA stream depth
-                        description: >
-                            Default FPGA stream depth used in the BLAS library nodes and
-                            the corresponding streaming transformations
-
             #############################################
             # FPGA (Xilinx) compiler flags
             xilinx:
@@ -729,3 +712,16 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+                    fpga:
+                        type: dict
+                        title: FPGA 
+                        description: FPGA-specific BLAS options. 
+                        required:
+                            default_stream_depth:
+                                type: int
+                                default: 32
+                                title: Default FPGA stream depth
+                                description: >
+                                    Default FPGA stream depth used in the BLAS
+                                    library nodes and the corresponding
+                                    streaming transformations
