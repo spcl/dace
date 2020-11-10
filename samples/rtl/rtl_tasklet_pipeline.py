@@ -20,6 +20,9 @@ state = sdfg.add_state()
 # define compile-time constant
 sdfg.specialize(dict(N=4))
 
+# disable sv debugging output
+sdfg.add_constant("SYSTEMVERILOG_DEBUG", False)
+
 # add arrays
 sdfg.add_array('A', [N], dtype=dace.int32)
 sdfg.add_array('B', [N], dtype=dace.int32)
@@ -102,7 +105,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     *****/
     always@(posedge clk_i)
     begin
-        if(DEBUG)
+        if(SYSTEMVERILOG_DEBUG)
         begin
             case(state)
                 READY: $display("READY");
