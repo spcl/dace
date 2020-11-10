@@ -2150,8 +2150,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 warnings.warn("Two for-loops using the same symbol ({}) in the "
                               "same nested SDFG level. This is not officially "
                               "supported (yet).".format(sym_name))
+            else:
+                self.sdfg.add_symbol(sym_name, sym_obj.dtype)
 
             extra_syms = {sym_name: sym_obj}
+
             self.symbols[sym_name] = subsets.Range([(b, "({}) - 1".format(e), s)
                                                     for b, e, s in ranges])
 
@@ -3169,7 +3172,8 @@ class ProgramVisitor(ExtNodeVisitor):
             from dace.frontend.python.parser import infer_symbols_from_shapes
 
             # Map internal SDFG symbols by adding keyword arguments
-            symbols = set(sdfg.symbols.keys())
+            # symbols = set(sdfg.symbols.keys())
+            symbols = sdfg.free_symbols
             try:
                 mapping = infer_symbols_from_shapes(
                     sdfg, {
@@ -3215,6 +3219,24 @@ class ProgramVisitor(ExtNodeVisitor):
                     mapping[aname] = arg
             for arg in args_to_remove:
                 args.remove(arg)
+
+            # Change connector names
+            updated_args = []
+            for i, (conn, arg) in enumerate(args):
+                if (conn in self.scope_vars.keys() or
+                        conn in self.sdfg.arrays.keys() or
+                        conn in self.sdfg.symbols):
+                    if self.sdfg._temp_transients > sdfg._temp_transients:
+                        new_conn = self.sdfg.temp_data_name()
+                    else:
+                        new_conn = sdfg.temp_data_name()
+                    warnings.warn("Renaming nested SDFG connector {c} to "
+                                  "{n}".format(c=conn, n=new_conn))
+                    sdfg.replace(conn, new_conn)
+                    updated_args.append((new_conn, arg))
+                else:
+                    updated_args.append((conn, arg))
+            args = updated_args
 
             # Change transient names
             arrays_before = list(sdfg.arrays.items())
@@ -3275,6 +3297,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 k: v
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
+            # If an argument does not register as input nor as output,
+            # put it in the inputs.
+            # This may happen with input argument that are used to set
+            # a promoted scalar.
+            for k, v in argdict.items():
+                if k not in inputs.keys() and k not in outputs.keys():
+                    inputs[k] = v
             # Unset parent inputs/read accesses that
             # turn out to be outputs/write accesses.
             # TODO: Is there a case where some data is both input and output?
