@@ -3,6 +3,7 @@
 
 import collections
 import copy
+from dace.subsets import Range
 from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
                   symbolic)
 from dace.sdfg import nodes as nd
@@ -669,6 +670,19 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         choices=dtypes.InstrumentationType,
         desc="Measure execution statistics with given method",
         default=dtypes.InstrumentationType.No_Instrumentation)
+
+    executions = SymbolicProperty(default=0,
+                                  desc="The number of times this state gets "
+                                  "executed (0 stands for unbounded)")
+    dynamic_executions = Property(dtype=bool,
+                                  default=True,
+                                  desc="The number of executions of this state "
+                                  "is dynamic")
+
+    ranges = DictProperty(key_type=symbolic.symbol,
+                          value_type=Range,
+                          default={},
+                          desc='Variable ranges, typically within loops')
 
     location = DictProperty(
         key_type=str,
@@ -1545,6 +1559,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
 
         # Innermost edge memlet
         cur_memlet = memlet
+
+        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and
+                                   src_node.data == cur_memlet.data)
 
         # Verify that connectors exist
         if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors")

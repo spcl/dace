@@ -41,7 +41,7 @@ class LoopUnroll(DetectLoop):
         # If loop cannot be detected, fail
         if not found:
             return False
-        _, rng = found
+        _, rng, _ = found
 
         # If loop is not specialized or constant-sized, fail
         if any(symbolic.issymbolic(r, sdfg.constants) for r in rng):
@@ -56,8 +56,9 @@ class LoopUnroll(DetectLoop):
         after_state: sd.SDFGState = sdfg.node(
             self.subgraph[DetectLoop._exit_state])
 
-        # Obtain iteration variable, range, and stride
-        itervar, rng = find_for_loop(sdfg, guard, begin)
+        # Obtain iteration variable, range, and stride, together with the last
+        # state(s) before the loop and the last loop state.
+        itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
 
         # Loop must be unrollable
         if self.count == 0 and any(
@@ -66,35 +67,25 @@ class LoopUnroll(DetectLoop):
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
-        # Find the state prior to the loop
-        guard_inedges = sdfg.in_edges(guard)
-        if rng[0] == symbolic.pystr_to_symbolic(
-                guard_inedges[0].data.assignments[itervar]):
-            before_state: sd.SDFGState = guard_inedges[0].src
-            last_state: sd.SDFGState = guard_inedges[1].src
-        else:
-            before_state: sd.SDFGState = guard_inedges[1].src
-            last_state: sd.SDFGState = guard_inedges[0].src
-
         # Get loop states
         loop_states = list(
             sdutil.dfs_conditional(sdfg,
                                    sources=[begin],
                                    condition=lambda _, child: child != guard))
         first_id = loop_states.index(begin)
+        last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
         # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants)
-                              for r in rng)
+        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
 
         # Create states for loop subgraph
         unrolled_states = []
         for i in range(start, end + 1, stride):
             # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg, loop_states,
-                                               loop_subgraph, itervar, i)
+            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
+                                               itervar, i)
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
@@ -103,12 +94,18 @@ class LoopUnroll(DetectLoop):
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
+        # Get any assignments that might be on the edge to the after state
+        after_assignments = (sdfg.edges_between(
+            guard, after_state)[0].data.assignments)
+
         # Connect new states to before and after states without conditions
         if unrolled_states:
-            sdfg.add_edge(before_state, unrolled_states[0][0],
-                          sd.InterstateEdge())
+            before_states = loop_struct[0]
+            for before_state in before_states:
+                sdfg.add_edge(before_state, unrolled_states[0][0],
+                              sd.InterstateEdge())
             sdfg.add_edge(unrolled_states[-1][1], after_state,
-                          sd.InterstateEdge())
+                          sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)

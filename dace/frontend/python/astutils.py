@@ -4,6 +4,7 @@ import ast
 import astunparse
 from collections import OrderedDict
 import inspect
+import numbers
 import sympy
 from typing import Any, Dict, List, Tuple
 
@@ -63,7 +64,20 @@ def rname(node):
     if isinstance(node, ast.Call):  # form @dace.attr(...)
         if isinstance(node.func, ast.Name):
             return node.func.id
-        return node.func.value.id + '.' + node.func.attr
+        # Assuming isinstance(node.func, ast.Attribute) == True
+        name = node.func.attr
+        # Handle calls with submodules and methods, e.g. numpy.add.reduce
+        value = node.func.value
+        while isinstance(value, ast.Attribute):
+            name = value.attr + '.' + name
+            value = value.value
+        if isinstance(value, ast.Name):
+            name = value.id + '.' + name
+        else:
+            raise NotImplementedError("Unsupported AST {n} node nested inside "
+                                      "AST call node: {s}".format(
+                                          n=type(value), s=unparse(value)))
+        return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
         return node.name
     if isinstance(node, ast.keyword):
@@ -137,6 +151,15 @@ def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
         return None
+    # Support for SymPy expressions
+    if isinstance(node, sympy.Basic):
+        return sympy.printing.pycode(node)
+    # Support for numerical constants
+    if isinstance(node, numbers.Number):
+        return str(node)
+    # Suport for string
+    if isinstance(node, str):
+        return node
     return astunparse.unparse(node).strip()
 
 
@@ -221,6 +244,17 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 def negate_expr(node):
     """ Negates an AST expression by adding a `Not` AST node in front of it. 
     """
+
+    # Negation support for SymPy expressions
+    if isinstance(node, sympy.Basic):
+        return sympy.Not(node)
+     # Support for numerical constants
+    if isinstance(node, numbers.Number):
+        return str(not node)
+    # Negation support for strings (most likely dace.Data.Scalar names)
+    if isinstance(node, str):
+        return "not ({})".format(node)
+
     from dace.properties import CodeBlock  # Avoid import loop
     if isinstance(node, CodeBlock):
         node = node.code
