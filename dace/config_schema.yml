@@ -156,6 +156,7 @@ required:
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
                     generating code.
 
+
             autobuild_bitstreams:
                 type: bool
                 default: true
@@ -327,6 +328,23 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
+
+
+            #############################################
+            # Cross-vendor FPGA configuration options
+            fpga:
+                type: dict
+                title: FPGA
+                description: Cross-vendor FPGA configuration options
+                required:
+
+                    fpga_default_stream_depth:
+                        type: int
+                        default: 32
+                        title: Default FPGA stream depth
+                        description: >
+                            Default FPGA stream depth used in the BLAS library nodes and
+                            the corresponding streaming transformations
 
             #############################################
             # FPGA (Xilinx) compiler flags

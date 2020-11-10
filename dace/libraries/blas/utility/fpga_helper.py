@@ -10,6 +10,7 @@ Various helper functions and classes for streaming BLAS operators on the FPGA
 from dace import InterstateEdge, vector
 from dace.memlet import Memlet
 from dace import dtypes
+from dace import config
 
 from dace.libraries.blas.utility import memory_operations as memOps
 
@@ -129,7 +130,9 @@ class StreamReadVector():
                  source,
                  mem_size,
                  dtype,
-                 buffer_size=32,
+                 buffer_size=config.Config.get("compiler", 
+                                                    "fpga",
+                                                    "fpga_default_stream_depth"),
                  veclen=1,
                  unroll=False,
                  unroll_width=1,
@@ -295,7 +298,9 @@ class StreamWriteVector():
         destination,
         mem_size,
         dtype,
-        buffer_size=32,
+        buffer_size=config.Config.get("compiler", 
+                                            "fpga",
+                                            "fpga_default_stream_depth"),
         veclen=1,
         unroll=False,
         unroll_width=1,

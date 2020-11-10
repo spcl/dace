@@ -5,8 +5,10 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
 from dace import dtypes
+from dace import config
 
 from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
+
 
 
 @dace.library.expansion
@@ -183,7 +185,10 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
                                          default=dace.symbolic.symbol("n"))
     a = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("a"))
-    buffer_size = dace.properties.SymbolicProperty(allow_none=False, default=32)
+    buffer_size = dace.properties.SymbolicProperty(allow_none=False,
+                                                   default=config.Config.get("compiler", 
+                                                    "fpga",
+                                                    "fpga_default_stream_depth"))
 
     def __init__(self,
                  name,
@@ -191,7 +196,9 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
                  veclen=1,
                  n=dace.symbolic.symbol("n"),
                  a=dace.symbolic.symbol("a"),
-                 buffer_size=32,
+                 buffer_size=dace.config.Config.get("compiler", 
+                                                    "fpga",
+                                                    "fpga_default_stream_depth"),
                  *args,
                  **kwargs):
         super().__init__(name,
