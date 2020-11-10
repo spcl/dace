@@ -6,7 +6,7 @@ import copy
 import os
 import re
 import time
-from typing import Iterator
+from typing import Iterator, List, Type
 
 import dace
 from dace.config import Config
@@ -37,15 +37,20 @@ class Optimizer(object):
             self.sdfg = copy.deepcopy(sdfg)
 
         # Initialize patterns to search for
-        self.patterns = set(k for k, v in Transformation.extensions().items()
-                            if v.get('singlestate', False))
-        self.stateflow_patterns = set(
-            Transformation.extensions().keys()) - self.patterns
+        self.patterns = set(k for k, v in Transformation.extensions().items())
         self.applied_patterns = set()
+        self.transformation_metadata = None
 
     def optimize(self):
         # Should be implemented by subclass
         raise NotImplementedError
+
+    def set_transformation_metadata(self, patterns: List[Type[Transformation]]):
+        """ 
+        Caches transformation metadata for a certain set of patterns to match.
+        """
+        self.transformation_metadata = (
+            pattern_matching.get_transformation_metadata(patterns))
 
     def get_pattern_matches(self,
                             strict=False,
@@ -60,44 +65,20 @@ class Optimizer(object):
                            matching. If None, considers all.
             :param patterns: An iterable of transformation classes to consider
                              when matching. If None, considers all registered
-                             transformations in `Transformation`.
+                             transformations in ``Transformation``.
             :param sdfg: If not None, searches for patterns on given SDFG.
-            :return: List of matching `Transformation` objects.
-            @see: Transformation
+            :return: List of matching ``Transformation`` objects.
+            :see: Transformation.
         """
         sdfg = sdfg or self.sdfg
+        patterns = patterns or self.patterns
 
-        if states is None:
-            if patterns is None:
-                _patterns = self.stateflow_patterns
-            else:
-                _patterns = [
-                    p for p in patterns if p in self.stateflow_patterns
-                ]
-
-            for pattern in _patterns:
-                yield from pattern_matching.match_stateflow_pattern(
-                    sdfg, pattern, strict=strict)
-
-        state_enum = []
-        if states is None:
-            for state_id, state in enumerate(sdfg.nodes()):
-                state_enum.append((state_id, state))
-        else:
-            for state in states:
-                state_id = sdfg.nodes().index(state)
-                state_enum.append((state_id, state))
-
-        if patterns is None:
-            _patterns = self.patterns
-        else:
-            _patterns = [p for p in patterns if p in self.patterns]
-        for state_id, state in state_enum:
-            for pattern in _patterns:
-                yield from pattern_matching.match_pattern(state,
-                                                          pattern,
-                                                          sdfg,
-                                                          strict=strict)
+        yield from pattern_matching.match_patterns(
+            sdfg,
+            patterns,
+            metadata=self.transformation_metadata,
+            strict=strict,
+            states=states)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """

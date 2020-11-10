@@ -13,7 +13,7 @@ from dace.config import Config
 
 @registry.autoregister_params(strict=True)
 class EndStateElimination(transformation.Transformation):
-    """ 
+    """
     End-state elimination removes a redundant state that has one incoming edge
     and no contents.
     """
@@ -58,9 +58,24 @@ class EndStateElimination(transformation.Transformation):
         sdfg.remove_node(state)
 
 
+def _assignments_to_consider(sdfg, edge):
+    assignments_to_consider = {}
+    for var, assign in edge.data.assignments.items():
+        as_symbolic = symbolic.pystr_to_symbolic(assign)
+        # Assignments cannot access a data container
+        if not symbolic.contains_sympy_functions(as_symbolic):  # via subscript
+            # Assignments cannot use scalar values
+            for sym in as_symbolic.free_symbols:
+                if str(sym) in sdfg.arrays:
+                    break
+            else:
+                assignments_to_consider[var] = assign
+    return assignments_to_consider
+
+
 @registry.autoregister_params(strict=True)
 class StateAssignElimination(transformation.Transformation):
-    """ 
+    """
     State assign elimination removes all assignments into the final state
     and subsumes the assigned value into its contents.
     """
@@ -83,13 +98,7 @@ class StateAssignElimination(transformation.Transformation):
             return False
         edge = in_edges[0]
 
-        assignments_to_consider = copy.copy(edge.data.assignments)
-
-        # Assignments must not contain subscripts
-        for var, assign in edge.data.assignments.items():
-            if (symbolic.contains_sympy_functions(
-                    symbolic.pystr_to_symbolic(assign))):
-                del assignments_to_consider[var]
+        assignments_to_consider = _assignments_to_consider(sdfg, edge)
 
         # No assignments to eliminate
         if len(assignments_to_consider) == 0:
@@ -128,10 +137,8 @@ class StateAssignElimination(transformation.Transformation):
         # undefined behavior (e.g., {m: n, n: m}), we can replace each
         # assignment separately.
         keys_to_remove = set()
-        for varname, assignment in edge.data.assignments.items():
-            if (symbolic.contains_sympy_functions(
-                    symbolic.pystr_to_symbolic(assignment))):
-                continue
+        assignments_to_consider = _assignments_to_consider(sdfg, edge)
+        for varname, assignment in assignments_to_consider.items():
             state.replace(varname, assignment)
             keys_to_remove.add(varname)
 
@@ -140,7 +147,7 @@ class StateAssignElimination(transformation.Transformation):
             del edge.data.assignments[varname]
 
             for e in sdfg.edges():
-                if varname in edge.data.free_symbols:
+                if varname in e.data.free_symbols:
                     break
             else:
                 # If removed assignment does not appear in any other edge,

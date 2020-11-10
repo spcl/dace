@@ -766,40 +766,14 @@ def _makeunop(op, opcode):
             state: SDFGState,
             op1: 'symbol',
             op2=None):
+        if opcode in _pyop2symtype.keys():
+            try:
+                return _pyop2symtype[opcode](op1)
+            except TypeError:
+                pass
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
-
-
-# @oprepo.replaces_operator('int', 'USub', None)
-# @oprepo.replaces_operator('float', 'USub', None)
-# def _neg(visitor: 'ProgramVisitor',
-#          sdfg: SDFG,
-#          state: SDFGState,
-#          op1: Union[int, float],
-#          op2=None):
-#     return -op1
-
-
-# @oprepo.replaces_operator('symbol', 'Add', 'int')
-# @oprepo.replaces_operator('symbol', 'Add', 'float')
-# def _addsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-#             op1: symbolic.symbol, op2: Union[int, float]):
-#     return op1 + op2
-
-
-# @oprepo.replaces_operator('symbol', 'Gt', 'symbol')
-# def _gtsym(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-#            op1: symbolic.symbol, op2: Union[int, float]):
-#     return op1 > op2
-
-
-# def _is_scalar(sdfg: SDFG, arrname: str):
-#     """ Checks whether array is pseudo-scalar (shape=(1,)). """
-#     shape = sdfg.arrays[arrname].shape
-#     if len(shape) == 1 and shape[0] == 1:
-#         return True
-#     return False
 
 
 def _is_op_arithmetic(op: str):
@@ -1100,7 +1074,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         right_arr = None
         right_type = _sym_type(right_operand)
         right_shape = [1]
-        tasklet_args = ['__in1', str(right_operand)]
+        tasklet_args = ['__in1', astutils.unparse(right_operand)]
     else:
         left_arr = None
         left_type = _sym_type(left_operand)
@@ -1109,7 +1083,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         right_type = right_arr.dtype
         right_shape = right_arr.shape
         storage = right_arr.storage
-        tasklet_args = [str(left_operand), '__in2']
+        tasklet_args = [astutils.unparse(left_operand), '__in2']
 
     result_type, left_cast, right_cast = _convert_type(left_type, right_type,
                                                        operator)
@@ -1293,14 +1267,14 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         storage = left_scal.storage
         right_scal = None
         right_type = _sym_type(right_operand)
-        tasklet_args = ['__in1', str(right_operand)]
+        tasklet_args = ['__in1', astutils.unparse(right_operand)]
     else:
         left_scal = None
         left_type = _sym_type(left_operand)
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
-        tasklet_args = [str(left_operand), '__in2']
+        tasklet_args = [astutils.unparse(left_operand), '__in2']
 
     result_type, left_cast, right_cast = _convert_type(left_type, right_type,
                                                        operator)
@@ -1341,6 +1315,21 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
     return out_operand
 
 
+_pyop2symtype = {
+    # Boolean ops
+    "and": sp.And,
+    "or": sp.Or,
+    "not": sp.Not,
+    # Comparsion ops
+    "==": sp.Equality,
+    "!=": sp.Unequality,
+    ">=": sp.GreaterThan,
+    "<=": sp.LessThan,
+    ">": sp.StrictGreaterThan,
+    "<": sp.StrictLessThan
+}
+
+
 def _const_const_binop(visitor: 'ProgramVisitor',
                        sdfg: SDFG,
                        state: SDFGState,
@@ -1374,6 +1363,19 @@ def _const_const_binop(visitor: 'ProgramVisitor',
         right = right_cast(right_operand)
     else:
         right = right_operand
+
+    # Support for SymPy expressions
+    if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
+        if opcode in _pyop2symtype.keys():
+            try:
+                return _pyop2symtype[opcode](left, right)
+            except TypeError:
+                # This may happen in cases such as `False or (N + 1)`.
+                # (N + 1) is a symbolic expressions, but because it is not
+                # boolean, SymPy returns TypeError when trying to create
+                # `sympy.Or(False, N + 1)`. In such a case, we try again with
+                # the normal Python operator.
+                pass
 
     expr = 'l {o} r'.format(o=opcode)
     vars = {'l': left, 'r': right}
@@ -1519,7 +1521,8 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
                    ('LShift', '<<'), ('RShift', '>>'), ('BitOr', '|'),
                    ('BitXor', '^'), ('BitAnd', '&'), ('And', 'and'),
                    ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='), ('Lt', '<'),
-                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>=')]:
+                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>='),
+                   ('Is', 'is'), ('IsNot', 'is not')]:
     _makebinop(op, opcode)
 
 
@@ -1596,7 +1599,7 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
 # NumPy ufunc support #########################################################
 
-UfuncInput = Union[str, Number]
+UfuncInput = Union[str, Number, sp.Basic]
 UfuncOutput = Union[str, None]
 
 # TODO: Add all ufuncs in subsequent PR's.
@@ -1955,6 +1958,10 @@ def _broadcast(
     output_indices = to_string(output_indices)
     input_indices = [to_string(idx) for idx in input_indices]
 
+    if not out_shape:
+        out_shape = (1,)
+        output_indices = "0"
+
     return out_shape, map_indices, output_indices, input_indices
 
 
@@ -2032,9 +2039,9 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
     # Remove input connectors related to constants
     # and fix constants/symbols in the tasklet code
     for i, arg in reversed(list(enumerate(inputs))):
-        if isinstance(arg, (Number, sp.Symbol)):
+        if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
-            code = code.replace(inp_conn, str(arg))
+            code = code.replace(inp_conn, astutils.unparse(arg))
             inp_connectors.pop(i)
     
 
@@ -2888,4 +2895,60 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
                      input_indices, output_idx, out_shape, tasklet_params,
                      has_where=has_where, where=where)
 
-    return outputs    
+    return outputs
+
+
+# Datatype converter #########################################################
+
+def _make_datatype_converter(typeclass: str):
+    if typeclass in {"int", "float", "complex"}:
+        dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
+    else:
+        dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]
+    @oprepo.replaces(typeclass)
+    @oprepo.replaces("dace.{}".format(typeclass))
+    @oprepo.replaces("numpy.{}".format(typeclass))
+    def _converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput):
+        return _datatype_converter(sdfg, state, arg, dtype=dtype)
+
+
+for typeclass in dtypes.TYPECLASS_STRINGS:
+    _make_datatype_converter(typeclass)
+
+
+def _datatype_converter(sdfg: SDFG,
+                        state: SDFGState,
+                        arg: UfuncInput,
+                        dtype: dtypes.typeclass) -> UfuncOutput:
+    """ Out-of-place datatype conversion of the input argument.
+
+        :param sdfg: SDFG object
+        :param state: SDFG State object
+        :param arg: Input argument
+        :param dtype: Datatype to convert input argument into
+
+        :returns: dace.data.Array of same size as input or dace.data.Scalar
+    """
+
+    # Get shape and indices
+    (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
+         None, None, sdfg, None, [arg], [None])
+
+    # Create output data
+    outputs = _create_output(sdfg, [arg], [None], out_shape, dtype)
+
+    # Set tasklet parameters
+    impl = {
+        'name': "_convert_to_{}_".format(dtype.to_string()),
+        'inputs': ['__inp'],
+        'outputs': ['__out'],
+        'code': "__out = dace.{}(__inp)".format(dtype.to_string())
+    }
+    tasklet_params = _set_tasklet_params(impl, [arg])
+
+    # Visitor input only needed when `has_where == True`.
+    _create_subgraph(None, sdfg, state, [arg], outputs, map_indices,
+                     inp_indices, out_indices, out_shape, tasklet_params,
+                     has_where=False, where=None)
+    
+    return outputs

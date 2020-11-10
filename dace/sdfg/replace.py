@@ -5,7 +5,7 @@ from dace import dtypes, properties, symbolic
 from dace.frontend.python.astutils import ASTFindReplace
 import re
 import sympy as sp
-from typing import Any, Union
+from typing import Any, Dict, Union
 import warnings
 
 
@@ -33,34 +33,36 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str,
         :param name: Name to find.
         :param new_name: Name to replace.
     """
+    if str(name) == str(new_name):
+        return
+    symname = symbolic.symbol(name)
     symrepl = {
-        symbolic.symbol(name):
+        symname:
         symbolic.pystr_to_symbolic(new_name)
         if isinstance(new_name, str) else new_name
     }
 
     # Replace in node properties
     for node in subgraph.nodes():
-        replace_properties(node, name, new_name)
+        replace_properties(node, symrepl, name, new_name)
 
     # Replace in memlets
     for edge in subgraph.edges():
         if edge.data.data == name:
             edge.data.data = new_name
-        edge.data.subset = _replsym(edge.data.subset, symrepl)
-        edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        edge.data.num_accesses = _replsym(edge.data.num_accesses, symrepl)
+        if (edge.data.subset is not None
+                and name in edge.data.subset.free_symbols):
+            edge.data.subset = _replsym(edge.data.subset, symrepl)
+        if (edge.data.other_subset is not None
+                and name in edge.data.other_subset.free_symbols):
+            edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
+        if symname in edge.data.volume.free_symbols:
+            edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
-def replace_properties(node: Any, name: str, new_name: str):
-    if str(name) == str(new_name):
-        return
-    symrepl = {
-        symbolic.symbol(name):
-        symbolic.pystr_to_symbolic(new_name)
-        if isinstance(new_name, str) else new_name
-    }
-
+def replace_properties(node: Any, symrepl: Dict[symbolic.symbol,
+                                                symbolic.SymbolicType],
+                       name: str, new_name: str):
     for propclass, propval in node.properties():
         if propval is None:
             continue
@@ -96,4 +98,5 @@ def replace_properties(node: Any, name: str, new_name: str):
               and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
-                propval[symname] = sym_mapping.subs(symrepl)
+                propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(
+                    symrepl)

@@ -2,6 +2,7 @@
 import dace
 from dace.transformation.interstate import StateFusion
 import networkx as nx
+import numpy as np
 
 
 # Inter-state condition tests
@@ -272,6 +273,40 @@ def test_array_in_middle_overlap():
     assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 0
 
 
+def test_two_outputs_same_name():
+    """ 
+    First state writes to the same array twice, second state updates one value. 
+    Should be fused to the right node in the second state or a data race will
+    occur.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    sdfg.add_array('A', [2], dace.int32)
+    sdfg.add_scalar('scal', dace.int32)
+    state = sdfg.add_state()
+    r = state.add_read('scal')
+    t1 = state.add_tasklet('init_a1', {'s'}, {'a'}, 'a = 1 + s')
+    w1 = state.add_write('A')
+    t2 = state.add_tasklet('init_a2', {'s'}, {'a'}, 'a = 2 + s')
+    w2 = state.add_write('A')
+    state.add_edge(r, None, t1, 's', dace.Memlet('scal'))
+    state.add_edge(t1, 'a', w1, None, dace.Memlet('A[0]'))
+    state.add_edge(r, None, t2, 's', dace.Memlet('scal'))
+    state.add_edge(t2, 'a', w2, None, dace.Memlet('A[1]'))
+
+    state2 = sdfg.add_state_after(state)
+    r1 = state2.add_read('A')
+    t1 = state2.add_tasklet('update_a2', {'a'}, {'b'}, 'b = a + 2')
+    w1 = state2.add_write('A')
+    state2.add_edge(r1, None, t1, 'a', dace.Memlet('A[1]'))
+    state2.add_edge(t1, 'b', w1, None, dace.Memlet('A[1]'))
+
+    assert sdfg.apply_transformations_repeated(StateFusion, strict=True) == 1
+
+    A = np.zeros([2], dtype=np.int32)
+    sdfg(A=A, scal=np.int32(0))
+    assert A[0] == 1 and A[1] == 4
+
+
 if __name__ == '__main__':
     test_fuse_assignments()
     test_fuse_assignment_in_use()
@@ -284,3 +319,4 @@ if __name__ == '__main__':
     test_read_write_no_overlap()
     test_array_in_middle_no_overlap()
     test_array_in_middle_overlap()
+    test_two_outputs_same_name()

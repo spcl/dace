@@ -902,6 +902,11 @@ DTYPE_TO_TYPECLASS = {
 }
 
 TYPECLASS_STRINGS = [
+    "int",
+    "float",
+    "complex",
+    "bool",
+    "bool_",
     "int8",
     "int16",
     "int32",
