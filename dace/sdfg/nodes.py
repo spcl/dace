@@ -1139,9 +1139,11 @@ class LibraryNode(CodeNode):
                                                     context=context)
             return ret
 
-    def expand(self, sdfg, state, *args, **kwargs):
-        """Create and perform the expansion transformation for this library
-           node."""
+    def expand(self, sdfg, state, *args, **kwargs) -> str:
+        """ Create and perform the expansion transformation for this library
+            node.
+            :return: the name of the expanded implementation
+        """
         implementation = self.implementation
         library_name = type(self)._dace_library_name
         try:
@@ -1190,6 +1192,7 @@ class LibraryNode(CodeNode):
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
         transformation.apply(sdfg, *args, **kwargs)
+        return implementation
 
     @classmethod
     def register_implementation(cls, name, transformation_type):
