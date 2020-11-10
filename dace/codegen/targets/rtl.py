@@ -42,7 +42,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 (isinstance(dest_node, nodes.Tasklet) and dest_node.language ==
                  dtypes.Language.SystemVerilog))
         # local variables
-        self.verilator_debug: bool = config.Config.get_bool("compiler", "rtl", "verilator_enable_debug")
+        self.verilator_debug: bool = config.Config.get_bool(
+            "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
 
