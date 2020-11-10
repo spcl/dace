@@ -645,48 +645,120 @@ __kernel void \\
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
-    def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
-                             callsite_stream):
+    # def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
+    #                          callsite_stream):
+    #
+    #     self._dispatcher.defined_vars.enter_scope(sdfg)
+    #
+    #     state_dfg = sdfg.nodes()[state_id]
+    #
+    #     # Take care of nested SDFG I/O
+    #     for edge in state_dfg.in_edges(node):
+    #         src_node = find_input_arraynode(state_dfg, edge)
+    #         self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+    #                                        state_dfg, state_id, function_stream,
+    #                                        callsite_stream)
+    #     for edge in state_dfg.out_edges(node):
+    #         dst_node = find_output_arraynode(state_dfg, edge)
+    #         self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+    #                                        state_dfg, state_id, function_stream,
+    #                                        callsite_stream)
+    #
+    #     callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
+    #                           node)
+    #
+    #     sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
+    #
+    #     # Generate code for internal SDFG
+    #     global_code, local_code, used_targets, used_environments = \
+    #         self._frame.generate_code(node.sdfg, node.schedule, sdfg_label)
+    #
+    #     # Write generated code in the proper places (nested SDFG writes
+    #     # location info)
+    #     function_stream.write(global_code)
+    #     callsite_stream.write(local_code)
+    #
+    #     callsite_stream.write('    ///////////////////\n\n', sdfg, state_id,
+    #                           node)
+    #
+    #     # Process outgoing memlets with the internal SDFG
+    #     self.process_out_memlets(sdfg, state_id, node, state_dfg,
+    #                              self._dispatcher, callsite_stream, True,
+    #                              function_stream)
+    #
+    #     self._dispatcher.defined_vars.exit_scope(sdfg)
 
-        self._dispatcher.defined_vars.enter_scope(sdfg)
+    def generate_nsdfg_arguments(self, sdfg, state, node):
+        # Connectors that are both input and output share the same name
+        inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
-        state_dfg = sdfg.nodes()[state_id]
+        memlet_references = []
+        for _, _, _, vconn, in_memlet in state.in_edges(node):
+            if vconn in inout or in_memlet.data is None:
+                continue
+            desc = sdfg.arrays[in_memlet.data]
+            if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global:
+                # special case: in intel FPGA this must be handled properly
 
-        # Take care of nested SDFG I/O
-        for edge in state_dfg.in_edges(node):
-            src_node = find_input_arraynode(state_dfg, edge)
-            self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                           state_dfg, state_id, function_stream,
-                                           callsite_stream)
-        for edge in state_dfg.out_edges(node):
-            dst_node = find_output_arraynode(state_dfg, edge)
-            self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                           state_dfg, state_id, function_stream,
-                                           callsite_stream)
+                vec_type  = desc.dtype.ocltype
+                # print("__global volatile  {}* restrict {}".format(
+                #     vec_type, vconn))
+                offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
+                offset_expr = '[' + offset + ']'
+                defined_type, _ = self._dispatcher.defined_vars.get(in_memlet.data, 1)
+                expr = cpp.make_ptr_vector_cast(sdfg, in_memlet.data + offset_expr, in_memlet, node.in_connectors[vconn],
+                                            False, defined_type)
+                # A tuple of the form (type, name, value)
+                typedef = "__global volatile  {}* restrict".format(vec_type)
+                memlet_references.append((typedef, vconn, expr))
+                # get the defined type (as defined in the parent)
+                # Register defined variable
+                self._dispatcher.defined_vars.add(vconn,
+                                            defined_type,
+                                            typedef,
+                                            allow_shadowing=True)
+            else:
+                # print("need to generate data for ", vconn)
+                memlet_references.append(
+                    cpp.emit_memlet_reference(self._dispatcher,
+                                              sdfg,
+                                              in_memlet,
+                                              vconn,
+                                              conntype=node.in_connectors[vconn]))
 
-        callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
-                              node)
+        for _, uconn, _, _, out_memlet in state.out_edges(node):
+            if out_memlet.data is not None:
+                desc = sdfg.arrays[out_memlet.data]
+                if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global:
+                    # special case: in intel FPGA this must be handled properly
 
-        sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
-
-        # Generate code for internal SDFG
-        global_code, local_code, used_targets, used_environments = \
-            self._frame.generate_code(node.sdfg, node.schedule, sdfg_label)
-
-        # Write generated code in the proper places (nested SDFG writes
-        # location info)
-        function_stream.write(global_code)
-        callsite_stream.write(local_code)
-
-        callsite_stream.write('    ///////////////////\n\n', sdfg, state_id,
-                              node)
-
-        # Process outgoing memlets with the internal SDFG
-        self.process_out_memlets(sdfg, state_id, node, state_dfg,
-                                 self._dispatcher, callsite_stream, True,
-                                 function_stream)
-
-        self._dispatcher.defined_vars.exit_scope(sdfg)
+                    vec_type  = desc.dtype.ocltype
+                    # print("__global volatile  {}* restrict {}".format(
+                    #     vec_type, uconn))
+                    offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
+                    offset_expr = '[' + offset + ']'
+                    defined_type, _ = self._dispatcher.defined_vars.get(out_memlet.data, 1)
+                    typedef = "__global volatile  {}* restrict".format(vec_type)
+                    expr = cpp.make_ptr_vector_cast(sdfg, out_memlet.data + offset_expr, out_memlet,
+                                                    node.out_connectors[uconn],
+                                                    False, defined_type)
+                    memlet_references.append((typedef, uconn, expr))
+                    # get the defined type (as defined in the parent)
+                    # Register defined variable
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      defined_type,
+                                                      typedef,
+                                                      allow_shadowing=True)
+                else:
+                    # print("need to generate data for ", uconn)
+                    memlet_references.append(
+                        cpp.emit_memlet_reference(
+                            self._dispatcher,
+                            sdfg,
+                            out_memlet,
+                            uconn,
+                            conntype=node.out_connectors[uconn]))
+        return memlet_references
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
                                    dst_node, edge, callsite_stream):
