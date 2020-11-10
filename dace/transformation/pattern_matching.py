@@ -153,13 +153,59 @@ def get_transformation_metadata(
         for i, expr in enumerate(pattern.expressions()):
             # Make a networkx-version of the match subgraph
             nxpattern = collapse_multigraph_to_nx(expr)
+            if len(nxpattern.nodes) == 1:
+                matcher = _node_matcher
+            elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 1:
+                matcher = _edge_matcher
+            else:
+                matcher = _subgraph_isomorphism_matcher
 
             if is_interstate:
-                interstate_transformations.append((pattern, i, nxpattern))
+                interstate_transformations.append(
+                    (pattern, i, nxpattern, matcher))
             else:
-                singlestate_transformations.append((pattern, i, nxpattern))
+                singlestate_transformations.append(
+                    (pattern, i, nxpattern, matcher))
 
     return interstate_transformations, singlestate_transformations
+
+
+def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match based on the VF2 algorithm for general SI. """
+    graph_matcher = iso.DiGraphMatcher(digraph,
+                                       nxpattern,
+                                       node_match=node_pred,
+                                       edge_match=edge_pred)
+    yield from graph_matcher.subgraph_isomorphisms_iter()
+
+
+def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match individual nodes. """
+    pnid = next(iter(nxpattern))
+    pnode = nxpattern.nodes[pnid]
+
+    for nid in digraph:
+        if node_pred(digraph.nodes[nid], pnode):
+            yield {nid: pnid}
+
+
+def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match individual edges. """
+    pedge = next(iter(nxpattern.edges))
+    pu = nxpattern.nodes[pedge[0]]
+    pv = nxpattern.nodes[pedge[1]]
+
+    if edge_pred is None:
+        for u, v in digraph.edges:
+            if (node_pred(digraph.nodes[u], pu)
+                    and node_pred(digraph.nodes[v], pv)):
+                yield {u: pedge[0], v: pedge[1]}
+    else:
+        for u, v in digraph.edges:
+            if (node_pred(digraph.nodes[u], pu)
+                    and node_pred(digraph.nodes[v], pv)
+                    and edge_pred(digraph.edges[u, v], nxpattern.edges[pedge])):
+                yield {u: pedge[0], v: pedge[1]}
 
 
 def match_patterns(sdfg: SDFG,
@@ -207,12 +253,8 @@ def match_patterns(sdfg: SDFG,
             # Collapse multigraph into directed graph in order to use VF2
             digraph = collapse_multigraph_to_nx(tsdfg)
 
-        for xform, expr_idx, nxpattern in interstate_transformations:
-            graph_matcher = iso.DiGraphMatcher(digraph,
-                                               nxpattern,
-                                               node_match=node_match,
-                                               edge_match=edge_match)
-            for subgraph in graph_matcher.subgraph_isomorphisms_iter():
+        for xform, expr_idx, nxpattern, matcher in interstate_transformations:
+            for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
                 match = _try_to_match_transformation(tsdfg, digraph, subgraph,
                                                      tsdfg, xform, expr_idx,
                                                      nxpattern, -1, strict)
@@ -230,12 +272,9 @@ def match_patterns(sdfg: SDFG,
             # Collapse multigraph into directed graph in order to use VF2
             digraph = collapse_multigraph_to_nx(state)
 
-            for xform, expr_idx, nxpattern in singlestate_transformations:
-                graph_matcher = iso.DiGraphMatcher(digraph,
-                                                   nxpattern,
-                                                   node_match=node_match,
-                                                   edge_match=edge_match)
-                for subgraph in graph_matcher.subgraph_isomorphisms_iter():
+            for xform, expr_idx, nxpattern, matcher in singlestate_transformations:
+                for subgraph in matcher(digraph, nxpattern, node_match,
+                                        edge_match):
                     match = _try_to_match_transformation(
                         state, digraph, subgraph, tsdfg, xform, expr_idx,
                         nxpattern, state_id, strict)
