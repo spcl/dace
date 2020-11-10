@@ -12,7 +12,7 @@ from dace.memlet import Memlet
 from dace import dtypes
 from dace import config
 
-from dace.libraries.blas.utility import memory_operations as memOps
+from dace.libraries.blas.utility import memory_operations as mem_ops
 
 # ---------- ---------- ---------- ----------
 # UTILITY
@@ -54,7 +54,7 @@ def fpga_setup_connect_streamers(sdfg,
     for i, stream, libCon in zip(range(len(lib_node_in_cons)), input_streams,
                                  lib_node_in_cons):
 
-        stream.copy_to_FPGA(sdfg,
+        stream.copy_to_fpga(sdfg,
                             pre_state,
                             bank=(None if input_memory_banks is None else
                                   input_memory_banks[i]))
@@ -64,7 +64,7 @@ def fpga_setup_connect_streamers(sdfg,
     for i, stream, libCon in zip(range(len(lib_node_out_cons)), output_streams,
                                  lib_node_out_cons):
 
-        stream.copy_to_CPU(sdfg,
+        stream.copy_to_cpu(sdfg,
                            post_state,
                            bank=(None if output_memory_banks is None else
                                  output_memory_banks[i]))
@@ -96,7 +96,7 @@ def fpga_setup_ConnectStreamersMultiNode(sdfg,
                                              input_streams, lib_node_in_cons,
                                              lib_nodeIns):
 
-        stream.copy_to_FPGA(sdfg,
+        stream.copy_to_fpga(sdfg,
                             pre_state,
                             bank=(None if input_memory_banks is None else
                                   input_memory_banks[i]))
@@ -107,7 +107,7 @@ def fpga_setup_ConnectStreamersMultiNode(sdfg,
                                               output_streams, lib_node_out_cons,
                                               lib_nodeOuts):
 
-        stream.copy_to_CPU(sdfg,
+        stream.copy_to_cpu(sdfg,
                            post_state,
                            bank=(None if output_memory_banks is None else
                                  output_memory_banks[i]))
@@ -165,9 +165,9 @@ class StreamReadVector():
         else:
             return False
 
-    def copy_to_FPGA(self, sdfg, pre_state, bank=None):
+    def copy_to_fpga(self, sdfg, pre_state, bank=None):
 
-        fpga_inputs, fpgaIn_names = memOps.fpga_copy_CPU_to_global(
+        fpga_inputs, fpgaIn_names = mem_ops.fpga_copy_cpu_to_global(
             sdfg,
             pre_state, [self.source], [self.mem_size], [self.dtype],
             bank=bank,
@@ -321,9 +321,9 @@ class StreamWriteVector():
         self.fpga_dataName = None
         self.fpga_stream = None
 
-    def copy_to_CPU(self, sdfg, post_state, bank=None):
+    def copy_to_cpu(self, sdfg, post_state, bank=None):
 
-        fpga_outputs, fpgaOut_names = memOps.fpga_copy_global_to_CPU(
+        fpga_outputs, fpgaOut_names = mem_ops.fpga_copy_global_to_cpu(
             sdfg,
             post_state, [self.destination], [self.mem_size], [self.dtype],
             bank=bank,

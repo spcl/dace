@@ -10,13 +10,10 @@ from dace.memlet import Memlet
 from dace import dtypes
 
 
-
-
-
 # ---------- ----------
 # SDFG
 # ---------- ----------
-def fpga_copy_CPU_to_global(sdfg,
+def fpga_copy_cpu_to_global(sdfg,
                             state,
                             sources,
                             sizes,
@@ -62,7 +59,7 @@ def fpga_copy_CPU_to_global(sdfg,
     return (outputs, names)
 
 
-def fpga_copy_global_to_CPU(sdfg,
+def fpga_copy_global_to_cpu(sdfg,
                             state,
                             destinations,
                             sizes,
