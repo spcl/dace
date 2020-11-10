@@ -19,11 +19,15 @@ class RTLCodeGen(target.TargetCodeGenerator):
     target_name = 'rtl'
     languages = [dtypes.Language.SystemVerilog]
 
-    def __init__(self, frame_codegen: framecode.DaCeCodeGenerator, sdfg: sdfg.SDFG):
+    def __init__(self, frame_codegen: framecode.DaCeCodeGenerator,
+                 sdfg: sdfg.SDFG):
         # store reference to sdfg
         self.sdfg: sdfg.SDFG = sdfg
         # store reference to frame code generator
         self.frame: framecode.DaCeCodeGenerator = frame_codegen
+        # add debug constant if not existent
+        if "DACE_VERILATOR_ENABLE_DEBUG" not in sdfg.constants:
+            sdfg.add_constant("DACE_VERILATOR_ENABLE_DEBUG", False)
         # get dispatcher to register callbacks for allocation/nodes/.. code generators
         self.dispatcher: dispatcher.TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
@@ -44,8 +48,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
 
-    def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int,
-                      node: nodes.Node, function_stream: prettycode.CodeIOStream,
+    def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
+                      state_id: int, node: nodes.Node,
+                      function_stream: prettycode.CodeIOStream,
                       callsite_stream: prettycode.CodeIOStream):
         # check instance type
         if isinstance(node, nodes.Tasklet):
@@ -79,9 +84,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 "Only tasklets are handled here, not {}. This should have been filtered by the predicate"
                 .format(type(node)))
 
-    def copy_memory(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int,
-                    src_node: nodes.Node, dst_node: nodes.Node,
-                    edge: graph.MultiConnectorEdge, function_stream: prettycode.CodeIOStream,
+    def copy_memory(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
+                    state_id: int, src_node: nodes.Node, dst_node: nodes.Node,
+                    edge: graph.MultiConnectorEdge,
+                    function_stream: prettycode.CodeIOStream,
                     callsite_stream: prettycode.CodeIOStream):
         """
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
@@ -167,9 +173,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
         """
         # get flags from config
         verbose = config.Config.get_bool("compiler", "rtl", "verbose")
-        verilator_flags = config.Config.get("compiler", "rtl", "verilator_flags")
-        verilator_lint_warnings = config.Config.get_bool("compiler", "rtl",
-                                                  "verilator_lint_warnings")
+        verilator_flags = config.Config.get("compiler", "rtl",
+                                            "verilator_flags")
+        verilator_lint_warnings = config.Config.get_bool(
+            "compiler", "rtl", "verilator_lint_warnings")
         # create options list
         options = [
             "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
@@ -263,8 +270,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
             b[0] = (int)model->b;
         """
         input_read_string = "\n".join([
-            "model->{name} = {name}[in_ptr++];".format(name=var_name)
-            if isinstance(tasklet.in_connectors[var_name], dtypes.pointer) else """\
+            "model->{name} = {name}[in_ptr++];".format(
+                name=var_name) if isinstance(tasklet.in_connectors[var_name],
+                                             dtypes.pointer) else """\
  for(int i = 0; i < {veclen}; i++){{
    model->{name}[i] = {name}[i];
  }}\
@@ -275,8 +283,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
         ])
 
         output_read_string = "\n".join([
-            "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
-            if isinstance(tasklet.out_connectors[var_name], dtypes.pointer) else """\
+            "{name}[out_ptr++] = (int)model->{name};".format(
+                name=var_name) if isinstance(tasklet.out_connectors[var_name],
+                                             dtypes.pointer) else """\
 for(int i = 0; i < {veclen}; i++){{
   {name}[i] = (int)model->{name}[i];
 }}\
@@ -295,8 +304,8 @@ for(int i = 0; i < {veclen}; i++){{
          model->{name}[i] = 0;
         }}\
         """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
-            if isinstance(tasklet.in_connectors[var_name], dtypes.vector) else ""
-            for var_name in tasklet.in_connectors
+            if isinstance(tasklet.in_connectors[var_name], dtypes.vector) else
+            "" for var_name in tasklet.in_connectors
         ])
         return "// initialize vector\n" if len(
             init_vector_string) > 0 else "" + init_vector_string
@@ -320,8 +329,9 @@ for(int i = 0; i < {veclen}; i++){{
         ])
         return internal_state_str, internal_state_var
 
-    def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int,
-                        node: nodes.Node, function_stream: prettycode.CodeIOStream,
+    def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
+                        state_id: int, node: nodes.Node,
+                        function_stream: prettycode.CodeIOStream,
                         callsite_stream: prettycode.CodeIOStream):
 
         # extract data
@@ -363,10 +373,14 @@ for(int i = 0; i < {veclen}; i++){{
 
         # add header code to stream
         if not self.cpp_general_header_added:
-            sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_GENERAL_HEADER_TEMPLATE)
+            sdfg.append_global_code(
+                cpp_code=RTLCodeGen.CPP_GENERAL_HEADER_TEMPLATE.format(
+                    debug_include="// generic includes\n#include <iostream>"
+                    if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else ""))
             self.cpp_general_header_added = True
-        sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
-            name=unique_name))
+        sdfg.append_global_code(
+            cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
+                name=unique_name))
 
         # add main cpp code to stream
         callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
@@ -376,15 +390,35 @@ for(int i = 0; i < {veclen}; i++){{
             num_elements=num_elements,
             vector_init=vector_init,
             internal_state_str=internal_state_str,
-            internal_state_var=internal_state_var),
+            internal_state_var=internal_state_var,
+            debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            debug_feed_element="std::cout << \"feed new element\" << std::endl;"
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            debug_export_element="std::cout << \"export element\" << std::endl;"
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            debug_internal_state="""
+// report internal state 
+VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
+VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
+std::cout << std::flush;
+""".format(internal_state_str=internal_state_str,
+           internal_state_var=internal_state_var)
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            debug_read_input_hs=
+            "std::cout << \"remove read_input_hs flag\" << std::endl;"
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            debug_output_hs=
+            "std::cout << \"remove write_output_hs flag\" << std::endl;"
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else "",
+            debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
+            if sdfg.constants["DACE_VERILATOR_ENABLE_DEBUG"] else ""),
                               sdfg=sdfg,
                               state_id=state_id,
                               node_id=node)
 
     CPP_GENERAL_HEADER_TEMPLATE = """\
-// generic includes
-#include <iostream>
-
+{debug_include}
 // verilator includes
 #include <verilated.h>
 """
@@ -395,9 +429,8 @@ for(int i = 0; i < {veclen}; i++){{
 """
 
     CPP_MAIN_TEMPLATE = """\
-if(DACE_VERILATOR_ENABLE_DEBUG){{
-    std::cout << "SIM {name} START" << std::endl;
-}}
+{debug_sim_start}
+
 vluint64_t main_time = 0;
 
 // instantiate model
@@ -440,18 +473,14 @@ while (out_ptr < num_elements) {{
     }} 
     // feed new element
     if(model->valid_i == 0 && in_ptr < num_elements){{
-        if(DACE_VERILATOR_ENABLE_DEBUG){{
-            std::cout << "feed new element" << std::endl;
-        }}
+        {debug_feed_element}
         {inputs}
         model->valid_i = 1;
     }}
 
     // export element
     if(model->valid_o == 1){{
-        if(DACE_VERILATOR_ENABLE_DEBUG){{
-            std::cout << "export element" << std::endl;
-        }}
+        {debug_export_element}
         {outputs}
         model->ready_i = 1;
     }}
@@ -464,20 +493,13 @@ while (out_ptr < num_elements) {{
     model->clk_i = !model->clk_i;
     model->eval();
 
-    // report internal state
-    if(DACE_VERILATOR_ENABLE_DEBUG){{
-        VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
-        VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
-        std::cout << std::flush;
-    }}
+    {debug_internal_state}
 
     // check if valid_i and ready_o have been asserted at the rising clock edge
     if (read_input_hs){{
         // remove valid_i flag
         model->valid_i = 0;
-        if(DACE_VERILATOR_ENABLE_DEBUG){{
-            std::cout << "remove read_input_hs flag" << std::endl;
-        }}
+        {debug_read_input_hs}
         read_input_hs = false;
     }}
 
@@ -485,9 +507,7 @@ while (out_ptr < num_elements) {{
     if (write_output_hs){{
         // remove ready_i flag
         model->ready_i = 0;
-        if(DACE_VERILATOR_ENABLE_DEBUG){{
-            std::cout << "remove write_output_hs flag" << std::endl;
-        }}
+        {debug_output_hs}
         write_output_hs = false;
     }}
 
@@ -496,12 +516,7 @@ while (out_ptr < num_elements) {{
     model->eval();
 }}
 
-// report internal state
-if(DACE_VERILATOR_ENABLE_DEBUG){{
-    VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
-    VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
-    std::cout << std::flush;
-}}
+{debug_internal_state}
 
 // final model cleanup
 model->final();
@@ -510,9 +525,7 @@ model->final();
 delete model;
 model = NULL;
 
-if(DACE_VERILATOR_ENABLE_DEBUG){{
-    std::cout << "SIM {name} END" << std::endl;
-}}
+{debug_sim_end}
 """
 
     RTL_HEADER = """\
@@ -540,4 +553,7 @@ def check_issymbolic(iterator: iter, sdfg):
         if symbolic.issymbolic(item, sdfg.constants):
             raise ValueError(
                 "Please use sdfg.specialize to make the following symbol(s) constant: {}"
-                .format(", ".join([str(x) for x in item.free_symbols if str(x) not in sdfg.constants])))
+                .format(", ".join([
+                    str(x) for x in item.free_symbols
+                    if str(x) not in sdfg.constants
+                ])))
