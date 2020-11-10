@@ -42,6 +42,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                  dtypes.Language.SystemVerilog))
         # local variables
         self.code_objects: List[codeobject.CodeObject] = list()
+        self.cpp_general_header_added: bool = False
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int,
                       node: nodes.Node, function_stream: prettycode.CodeIOStream,
@@ -361,7 +362,10 @@ for(int i = 0; i < {veclen}; i++){{
             tasklet)
 
         # add header code to stream
-        sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_HEADER_TEMPLATE.format(
+        if not self.cpp_general_header_added:
+            sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_GENERAL_HEADER_TEMPLATE)
+            self.cpp_general_header_added = True
+        sdfg.append_global_code(cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
             name=unique_name))
 
         # add main cpp code to stream
@@ -377,13 +381,15 @@ for(int i = 0; i < {veclen}; i++){{
                               state_id=state_id,
                               node_id=node)
 
-    CPP_HEADER_TEMPLATE = """\
+    CPP_GENERAL_HEADER_TEMPLATE = """\
 // generic includes
 #include <iostream>
 
 // verilator includes
 #include <verilated.h>
+"""
 
+    CPP_MODEL_HEADER_TEMPLATE = """\
 // include model header, generated from verilating the sv design
 #include "V{name}.h"
 """
