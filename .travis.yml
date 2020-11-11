@@ -1,4 +1,4 @@
-dist: bionic
+dist: focal
 language: python
 python:
   - "3.7"  
@@ -12,6 +12,8 @@ before_install:
   - sudo apt-get install libyaml-dev cmake
   # Instrumentation dependencies
   - sudo apt-get install libpapi-dev papi-tools
+  # rtl simulation dependencies
+  - sudo apt-get install verilator
 
 install:
   - pip install ".[testing]" .

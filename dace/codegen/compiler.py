@@ -10,7 +10,7 @@ import six
 import shutil
 import subprocess
 import re
-from typing import List
+from typing import Any, Dict, List
 
 import dace
 from dace.config import Config
@@ -35,10 +35,8 @@ def generate_program_folder(sdfg,
     """
 
     src_path = os.path.join(out_path, "src")
+    filelist = list()
 
-    os.makedirs(src_path, exist_ok=True)
-
-    filelist = []
     # Write each code object to a file
     for code_object in code_objects:
 
@@ -94,8 +92,7 @@ def generate_program_folder(sdfg,
     return out_path
 
 
-def configure_and_compile(program_folder,
-                          program_name=None,
+def configure_and_compile(program_folder, program_name=None,
                           output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
