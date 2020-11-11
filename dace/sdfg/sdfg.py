@@ -1935,9 +1935,13 @@ class SDFG(OrderedDiGraph):
             try:
                 self.validate()
             except InvalidSDFGError as err:
-                raise InvalidSDFGError(
-                    "Validation failed after applying {}.".format(
-                        match.print_match(sdfg)), sdfg, match.state_id) from err
+                if applied:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".format(
+                            match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+                else:
+                    raise err
 
         if (len(applied_transformations) > 0
                 and (print_report or
