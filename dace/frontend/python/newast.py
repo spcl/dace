@@ -3629,19 +3629,22 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.variables:
             return self.variables[name]
 
+        # TODO: Why if the following code-block is moved after the code-block
+        # looking for `name` in `self.sdfg.symbols`, a lot of tests break?
+        # If an allowed global, use directly
+        if name in self.globals:
+            result = inner_eval_ast(self.globals, node)
+            # If a symbol, add to symbols
+            if (isinstance(result, symbolic.symbol) and
+                    name not in self.sdfg.symbols.keys()):
+                self.sdfg.add_symbol(result.name, result.dtype)
+            return result
+
         if name in self.sdfg.arrays:
             return name
 
         if name in self.sdfg.symbols:
             return name
-
-        # If an allowed global, use directly
-        if name in self.globals:
-            result = inner_eval_ast(self.globals, node)
-            # If a symbol, add to symbols
-            if isinstance(result, symbolic.symbol):
-                self.sdfg.add_symbol(result.name, result.dtype)
-            return result
 
         if name not in self.scope_vars:
             raise DaceSyntaxError(self, node,
