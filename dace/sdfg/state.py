@@ -455,8 +455,7 @@ class StateGraphView(object):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data is read and written in this subgraph. Writes
-        with conflict resolution are included as both reads and writes.
+        Determines what data is read and written in this subgraph.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
@@ -466,10 +465,6 @@ class StateGraphView(object):
             in_edges = self.in_edges(n)
             if len(in_edges) > 0:
                 write_set.add(n.data)
-            for e in in_edges:
-                if e.data.wcr is not None:
-                    read_set.add(n.data)
-                    break
             if len(self.out_edges(n)) > 0:
                 read_set.add(n.data)
         return read_set, write_set

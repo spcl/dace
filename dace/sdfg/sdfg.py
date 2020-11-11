@@ -916,7 +916,6 @@ class SDFG(OrderedDiGraph):
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
         Determines what data containers are read and written in this SDFG.
-        Writes with conflict resolution are included as both reads and writes.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
