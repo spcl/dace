@@ -35,6 +35,7 @@ set(DACE_ENABLE_CUDA OFF)
 set(DACE_ENABLE_HIP OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
+set(DACE_ENABLE_RTL OFF)
 
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
@@ -78,6 +79,13 @@ foreach(DACE_FILE ${DACE_FILES})
   elseif(${DACE_FILE_TARGET} STREQUAL "mpi")
     set(DACE_ENABLE_MPI ON)
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
+  elseif(${DACE_FILE_TARGET} STREQUAL "rtl")
+    set(DACE_ENABLE_RTL ON)
+    if(DACE_FILE_EXT MATCHES ".v" OR DACE_FILE_EXT MATCHES ".sv")
+      set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
+      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+    endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
@@ -247,12 +255,13 @@ if(DACE_ENABLE_CUDA)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_CUDA_OBJECTS})
 endif() # DACE_ENABLE_CUDA
 
+
 # Create HIP object files
 if(DACE_ENABLE_HIP)
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
     # Compile and run a test program
-    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o 
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
       "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
       OUTPUT_VARIABLE _arch_compout
       RESULT_VARIABLE _arch_res)
@@ -286,7 +295,7 @@ if(DACE_ENABLE_HIP)
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
-  
+
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
@@ -511,6 +520,62 @@ if(DACE_ENABLE_XILINX)
   endif()
 
 endif() # DACE_ENABLE_XILINX
+
+# create verilator RTL simulation objects
+if(DACE_ENABLE_RTL)
+
+  # find verilator installation
+  find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
+  if (NOT verilator_FOUND)
+    message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
+  endif()
+
+  # check minimal version requirements
+  set(VERILATOR_MIN_VERSION "4.028")
+  if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
+    message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
+  endif()
+
+  # get verilator flags from dace.conf
+  set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
+
+  # add lint verilator flags
+  if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
+    # -Wall: Enable all style warnings
+    # -Wno-fatal: Disable fatal exit on warnings
+    set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
+  endif()
+
+  # add verilated.cpp source
+  set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
+
+  foreach(RTL_FILE ${DACE_RTL_FILES})
+
+    # extract design name
+    get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
+
+    # add verilated .cpp files
+    set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
+    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
+    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
+
+    # add verilated design
+    add_library("${RTL_FILE_NAME}" OBJECT)
+
+    # include verilator
+    set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir")
+    include_directories(${VERILATOR_INCLUDE})
+
+    # verilate design
+    verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
+
+    # add object library for linking
+    set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
+
+  endforeach()
+
+endif() # DACE_ENABLE_RTL
+
 
 # Create Intel FPGA object files
 if(DACE_ENABLE_INTELFPGA)
