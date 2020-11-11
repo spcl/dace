@@ -1333,7 +1333,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
                               sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
@@ -1356,7 +1356,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ])
         return f'{sdfg_label}({args});'
 
-    def generate_nsdfg_arguments(self, sdfg, state, node):
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
@@ -1391,7 +1391,8 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ):
-        self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=False)
+        # Intel FPGA needs to access to variables defined also in parent sdfg (i.e., streams)
+        self._dispatcher.defined_vars.enter_scope(sdfg)
         state_dfg = sdfg.nodes()[state_id]
 
         # Emit nested SDFG as a separate function
@@ -1420,11 +1421,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # Arguments are input connectors, output connectors, and symbols
         codegen = self.calling_codegen
         memlet_references = codegen.generate_nsdfg_arguments(
-            sdfg, state_dfg, node)
-
+            sdfg, dfg,  state_dfg, node)
+        # print(sdfg.label)
+        # print(memlet_references)
+        # import pdb
+        # pdb.set_trace()
         if not unique_functions or not code_already_generated:
             nested_stream.write(
-                codegen.generate_nsdfg_header(sdfg, state_dfg, node,
+                codegen.generate_nsdfg_header(sdfg, state_dfg, state_id, node,
                                               memlet_references, sdfg_label),
                 sdfg, state_id, node)
 
@@ -1447,7 +1451,7 @@ class CPUCodeGen(TargetCodeGenerator):
             nested_stream.write(local_code)
 
             # Process outgoing memlets with the internal SDFG
-            self.process_out_memlets(sdfg,
+            codegen.process_out_memlets(sdfg,
                                      state_id,
                                      node,
                                      state_dfg,

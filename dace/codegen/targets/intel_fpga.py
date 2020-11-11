@@ -688,28 +688,64 @@ __kernel void \\
     #
     #     self._dispatcher.defined_vars.exit_scope(sdfg)
 
-    def generate_nsdfg_arguments(self, sdfg, state, node):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
+                              sdfg_label):
+        # Intel FPGA needs to deal with streams
+        arguments = [
+            f'{atype} {aname}' for atype, aname, _ in memlet_references
+        ]
+        arguments += [
+            f'{node.sdfg.symbols[aname].as_arg(aname)}'
+            for aname in sorted(node.symbol_mapping.keys())
+            if aname not in sdfg.constants
+        ]
+        arguments = ', '.join(arguments)
+        function_header = f'void {sdfg_label}({arguments}) {{'
+        nested_stream = CodeIOStream()
+        #generate Stream defines if needed
+        for edge in state.in_edges(node):
+            desc = sdfg.arrays[edge.data.data]
+            if isinstance(desc, dace.data.Stream):
+                src_node = find_input_arraynode(state, edge)
+                self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+                                               state, state_id, None,
+                                               nested_stream)
+        for edge in state.out_edges(node):
+            desc = sdfg.arrays[edge.data.data]
+            if isinstance(desc, dace.data.Stream):
+                dst_node = find_output_arraynode(state, edge)
+                self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+                                               state, state_id, None,
+                                               nested_stream)
+        return function_header + "\n" + nested_stream.getvalue()
+
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
-
         memlet_references = []
+
+
         for _, _, _, vconn, in_memlet in state.in_edges(node):
             if vconn in inout or in_memlet.data is None:
                 continue
             desc = sdfg.arrays[in_memlet.data]
-            if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global:
-                # special case: in intel FPGA this must be handled properly
+            defined_type, defined_ctype = self._dispatcher.defined_vars.get(in_memlet.data, 1)
+            if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global or desc.storage== dtypes.StorageType.FPGA_Local:
+                # special case: in intel FPGA this must be handled properly to guarantee OpenCL compatibility
 
                 vec_type  = desc.dtype.ocltype
                 # print("__global volatile  {}* restrict {}".format(
                 #     vec_type, vconn))
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']'
-                defined_type, _ = self._dispatcher.defined_vars.get(in_memlet.data, 1)
+
                 expr = cpp.make_ptr_vector_cast(sdfg, in_memlet.data + offset_expr, in_memlet, node.in_connectors[vconn],
                                             False, defined_type)
+                if desc.storage == dtypes.StorageType.FPGA_Global:
+                    typedef = "__global volatile  {}* restrict".format(vec_type)
+                else:
+                    typedef = "{} *".format(vec_type)
                 # A tuple of the form (type, name, value)
-                typedef = "__global volatile  {}* restrict".format(vec_type)
                 memlet_references.append((typedef, vconn, expr))
                 # get the defined type (as defined in the parent)
                 # Register defined variable
@@ -717,7 +753,25 @@ __kernel void \\
                                             defined_type,
                                             typedef,
                                             allow_shadowing=True)
+            elif isinstance(desc, dace.data.Stream):
+                # streams are defined as global variables
+                continue
+                typedef = desc.dtype.ocltype
+                self._dispatcher.defined_vars.add(vconn,
+                                                  defined_type,
+                                                  typedef,
+                                                  allow_shadowing=False)
+            elif isinstance(desc, dace.data.Scalar) :#and  defined_type == DefinedType.Scalar:
+                # if this is a scalar and the argument passed is also a scalar
+                # then we have to pass it by value, as references do not exist in C99
+                typedef = defined_ctype
+                memlet_references.append((typedef, vconn, in_memlet.data))
+                self._dispatcher.defined_vars.add(vconn,
+                                                  defined_type,
+                                                  typedef,
+                                                  allow_shadowing=True)
             else:
+                # all the other cases
                 # print("need to generate data for ", vconn)
                 memlet_references.append(
                     cpp.emit_memlet_reference(self._dispatcher,
@@ -729,22 +783,43 @@ __kernel void \\
         for _, uconn, _, _, out_memlet in state.out_edges(node):
             if out_memlet.data is not None:
                 desc = sdfg.arrays[out_memlet.data]
-                if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global:
+                defined_type, defined_ctype = self._dispatcher.defined_vars.get(out_memlet.data, 1)
+
+                if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global or desc.storage== dtypes.StorageType.FPGA_Local:
                     # special case: in intel FPGA this must be handled properly
 
                     vec_type  = desc.dtype.ocltype
                     # print("__global volatile  {}* restrict {}".format(
                     #     vec_type, uconn))
-                    offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
+                    offset = cpp.cpp_offset_expr(desc, out_memlet.subset, None)
                     offset_expr = '[' + offset + ']'
-                    defined_type, _ = self._dispatcher.defined_vars.get(out_memlet.data, 1)
-                    typedef = "__global volatile  {}* restrict".format(vec_type)
+                    if  desc.storage == dtypes.StorageType.FPGA_Global:
+                        typedef = "__global volatile  {}* restrict".format(vec_type)
+                    else:
+                        typedef = "{}*".format(vec_type)
                     expr = cpp.make_ptr_vector_cast(sdfg, out_memlet.data + offset_expr, out_memlet,
                                                     node.out_connectors[uconn],
                                                     False, defined_type)
                     memlet_references.append((typedef, uconn, expr))
                     # get the defined type (as defined in the parent)
                     # Register defined variable
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      defined_type,
+                                                      typedef,
+                                                      allow_shadowing=True)
+                elif isinstance(desc, dace.data.Stream):
+                    # streams are defined as global variables
+                    continue
+                    typedef = desc.dtype.ocltype
+                    self._dispatcher.defined_vars.add(uconn,
+                                                      defined_type,
+                                                      typedef,
+                                                      allow_shadowing=True)
+                elif isinstance(desc, dace.data.Scalar) :#and  defined_type == DefinedType.Scalar:
+                    # if this is a scalar and the argument passed is also a scalar
+                    # then we have to pass it by value, as references do not exist in C99
+                    typedef = defined_ctype
+                    memlet_references.append((typedef, uconn, out_memlet.data))
                     self._dispatcher.defined_vars.add(uconn,
                                                       defined_type,
                                                       typedef,
@@ -758,6 +833,22 @@ __kernel void \\
                             out_memlet,
                             uconn,
                             conntype=node.out_connectors[uconn]))
+
+        # Special case for Intel FPGA: this comes out from the unrolling processing elements:
+        # if there first scope of the subgraph is an unrolled map, generate a processing element for each iteration
+        # we need to pass to this function also the id of the PE (the top scope parameter)
+        scope_children = dfg.scope_children()
+        top_scopes = [
+            n for n in scope_children[None]
+            if isinstance(n, dace.sdfg.nodes.EntryNode)
+        ]
+        if len(top_scopes) == 1:
+            scope = top_scopes[0]
+            if scope.unroll:
+                # Unrolled processing elements
+                typedef = "const int"
+                for p in scope.params:
+                    memlet_references.append((typedef, p, p))
         return memlet_references
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
@@ -889,7 +980,6 @@ __kernel void \\
                 # Here we create a macro which take the proper channel
                 channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                   memlet.subset)
-
                 if sdfg.parent is None:
                     result += "#define {} {}[{}] ".format(
                         connector, data_name, channel_idx)

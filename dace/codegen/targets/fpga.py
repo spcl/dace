@@ -1189,9 +1189,9 @@ class FPGACodeGen(TargetCodeGenerator):
                 subgraph_parameters[subgraph] + scalar_parameters,
                 symbol_parameters, module_stream, entry_stream, host_stream)
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
                               sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, node,
+        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, state_id, node,
                                                        memlet_references,
                                                        sdfg_label)
 
@@ -1201,8 +1201,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                      memlet_references,
                                                      sdfg_label)
 
-    def generate_nsdfg_arguments(self, sdfg, state, node):
-        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
+        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
 
     def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
                                            parameters, symbol_parameters,
