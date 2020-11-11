@@ -2244,8 +2244,12 @@ class ProgramVisitor(ExtNodeVisitor):
         return cond, cond_else
 
     def visit_While(self, node: ast.While):
-        # Add an initial loop state with a None last_state (so as to not
-        # create an interstate edge)
+        # Get loop condition expression
+        begin_guard = self._add_state("while_guard")
+        loop_cond, _ = self._visit_test(node.test)
+        end_guard = self.last_state
+        
+        # Parse body
         self.loop_idx += 1
         self.continue_states.append([])
         self.break_states.append([])
@@ -2253,10 +2257,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
-        # Get loop condition expression
-        begin_guard = self._add_state("while_guard")
-        loop_cond, _ = self._visit_test(node.test)
-        end_guard = self.last_state
+        assert(laststate == end_guard)
 
         # Add symbols from test as necessary
         symcond = pystr_to_symbolic(loop_cond)
@@ -2281,10 +2282,13 @@ class ProgramVisitor(ExtNodeVisitor):
                                                      last_loop_state)
 
         # Connect the correct while-guard state
-        for e in list(self.sdfg.in_edges(begin_guard)):
-            self.sdfg.remove_edge(e)
+        # Current state:
+        # begin_guard -> ... -> end_guard/laststate -> loop_guard -> first_loop
+        # Desired state:
+        # begin_guard -> ... -> end_guard/laststate -> first_loop
         for e in list(self.sdfg.in_edges(loop_guard)):
-            self.sdfg.add_edge(e.src, begin_guard, e.data)
+            if e.src != laststate:
+                self.sdfg.add_edge(e.src, begin_guard, e.data)
             self.sdfg.remove_edge(e)
         for e in list(self.sdfg.out_edges(loop_guard)):
             self.sdfg.add_edge(end_guard, e.dst, e.data)
@@ -2297,7 +2301,7 @@ class ProgramVisitor(ExtNodeVisitor):
             out_edges = self.sdfg.out_edges(next_state)
             for e in out_edges:
                 self.sdfg.remove_edge(e)
-            self.sdfg.add_edge(next_state, loop_guard, dace.InterstateEdge())
+            self.sdfg.add_edge(next_state, begin_guard, dace.InterstateEdge())
         break_states = self.break_states.pop()
         while break_states:
             next_state = break_states.pop()
@@ -3625,15 +3629,19 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.variables:
             return self.variables[name]
 
-        # If an allowed global, use directly
-        if name in self.globals:
-            return inner_eval_ast(self.globals, node)
-
         if name in self.sdfg.arrays:
             return name
 
         if name in self.sdfg.symbols:
             return name
+
+        # If an allowed global, use directly
+        if name in self.globals:
+            result = inner_eval_ast(self.globals, node)
+            # If a symbol, add to symbols
+            if isinstance(result, symbolic.symbol):
+                self.sdfg.add_symbol(result.name, result.dtype)
+            return result
 
         if name not in self.scope_vars:
             raise DaceSyntaxError(self, node,
@@ -3768,6 +3776,17 @@ class ProgramVisitor(ExtNodeVisitor):
             result = func(self, self.sdfg, self.last_state, operand1, operand2)
         except SyntaxError as ex:
             raise DaceSyntaxError(self, node, str(ex))
+        if not isinstance(result, (list, tuple)):
+            results = [result]
+        else:
+            results = result
+        for r in results:
+            if isinstance(r, str) and r in self.sdfg.arrays.keys():
+                if r in self.variables.keys():
+                    raise DaceSyntaxError(
+                        self, node,
+                        "Variable {v} has been already defined".format(v=r))
+                self.variables[r] = r
 
         self.last_state.set_default_lineinfo(None)
 
