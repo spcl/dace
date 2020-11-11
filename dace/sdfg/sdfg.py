@@ -434,6 +434,10 @@ class SDFG(OrderedDiGraph):
             :param name: Symbol name.
         """
         del self.symbols[name]
+        # Clean up from symbol mapping if this SDFG is nested
+        nsdfg = self.parent_nsdfg_node
+        if nsdfg is not None and name in nsdfg.symbol_mapping:
+            del nsdfg.symbol_mapping[name]
 
     @property
     def start_state(self):
