@@ -1090,6 +1090,8 @@ def deduplicate(iterable):
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
+    if name in {'True', 'False', 'None'}:
+        return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
