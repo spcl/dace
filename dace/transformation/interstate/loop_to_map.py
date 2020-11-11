@@ -195,10 +195,7 @@ class LoopToMap(DetectLoop):
             body, after,
             sd.InterstateEdge(assignments=after_edge.data.assignments))
 
-        # Unless this is a symbol passed from outside, remove it from the SDFG
-        nsdfg = sdfg.parent_nsdfg_node
-        if nsdfg is not None and itervar in nsdfg.symbol_mapping:
-            pass
-        else:
-            if itervar in sdfg.symbols:
-                sdfg.remove_symbol(itervar)
+        # If this had made the iteration variable a free symbol, we can remove
+        # it from the SDFG symbols
+        if itervar in sdfg.free_symbols:
+            sdfg.remove_symbol(itervar)
