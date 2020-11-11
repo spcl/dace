@@ -1,5 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformations to convert subgraphs to write-conflict resolutions. """
+import re
 from dace import registry, nodes, dtypes
 from dace.transformation import transformation
 from dace.sdfg import utils as sdutil
@@ -8,8 +9,8 @@ from dace import SDFG, SDFGState
 
 @registry.autoregister_params(singlestate=True)
 class AugAssignToWCR(transformation.Transformation):
-    """ 
-    Converts a augmented assignment ("a += b", "a = a + b") into a tasklet 
+    """
+    Converts a augmented assignment ("a += b", "a = a + b") into a tasklet
     with a write-conflict resolution.
     """
     input = transformation.PatternNode(nodes.AccessNode)
@@ -93,8 +94,8 @@ class AugAssignToWCR(transformation.Transformation):
                 r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
                 (re.escape(outconn), re.escape(inconn), ops),
                 tasklet.code.as_string.strip())
-            op = match.groups(0)[0]
-            expr = match.groups(1)[0]
+            op = match.group(1)
+            expr = match.group(2)
             tasklet.code.code = '%s = %s;' % (outconn, expr)
         else:
             op = ''

@@ -481,14 +481,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # If scope(dst) contains scope(src), then dst must be a data node
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Memlet creates an "
-                    "invalid path (sink node %s should "
-                    "be a data node)" % str(dst_node),
-                    sdfg,
-                    state_id,
-                    eid,
-                )
+                pass
+                # raise InvalidSDFGEdgeError(
+                #     "Memlet creates an "
+                #     "invalid path (sink node %s should "
+                #     "be a data node)" % str(dst_node),
+                #     sdfg,
+                #     state_id,
+                #     eid,
+                # )
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes",
