@@ -61,8 +61,8 @@ def test_call_if():
 @dace.program
 def call_if2(A: dace.int32[10]):
     A[0] = 0
-    i = 1
-    fib = 1 
+    i = np.int32(1)
+    fib = np.int32(1) 
     while True:
         if simple_condition2(fib, 50, i, 10):
             A[i] = fib
@@ -106,8 +106,8 @@ def test_simple_while():
 @dace.program
 def call_while(A: dace.int32[10]):
     A[0] = 0
-    i = 1
-    fib = 1 
+    i = np.int32(1)
+    fib = np.int32(1) 
     while simple_condition2(fib, 50, i, 10):
         A[i] = fib
         fib += A[i]
