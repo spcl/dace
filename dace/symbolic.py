@@ -453,7 +453,12 @@ def contains_sympy_functions(expr):
     return False
 
 
-def free_symbols_and_functions(expr: SymbolicType) -> Set[str]:
+def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    if isinstance(expr, str):
+        if dtypes.validate_name(expr):
+            return {expr}
+        expr = pystr_to_symbolic(expr)
+
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
         if (is_sympy_userfunction(atom)
