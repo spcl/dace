@@ -2212,6 +2212,37 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(
                 self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
+    def _visit_test(self, node: ast.Expr):
+        # Fix for scalar promotion tests
+        # TODO: Maybe those tests should use the SDFG API instead of the
+        # Python frontend which can change how it handles conditions.
+        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+        is_test_simple = isinstance(node, simple_ast_nodes)
+        if not is_test_simple:
+            if isinstance(node, ast.Compare):
+                is_left_simple = isinstance(node.left, simple_ast_nodes)
+                is_right_simple = (
+                    len(node.comparators) == 1 and isinstance(
+                        node.comparators[0], simple_ast_nodes))
+                if is_left_simple and is_right_simple:
+                    is_test_simple = True
+        
+        # Visit test-condition
+        if not is_test_simple:
+            parsed_node = self.visit(node)
+            if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
+                datadesc = self.sdfg.arrays[parsed_node]
+                if isinstance(datadesc, data.Array):
+                    parsed_node += '[0]'
+        else:
+            parsed_node = astutils.unparse(node)
+        
+        # Generate conditions
+        cond = astutils.unparse(parsed_node)
+        cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
+
+        return cond, cond_else
+
     def visit_While(self, node: ast.While):
         # Add an initial loop state with a None last_state (so as to not
         # create an interstate edge)
@@ -2223,20 +2254,24 @@ class ProgramVisitor(ExtNodeVisitor):
         end_loop_state = self.last_state
 
         # Get loop condition expression
-        loop_cond = astutils.unparse(node.test)
+        begin_guard = self._add_state("while_guard")
+        loop_cond, _ = self._visit_test(node.test)
+        end_guard = self.last_state
 
         # Add symbols from test as necessary
         symcond = pystr_to_symbolic(loop_cond)
-        for atom in symcond.free_symbols:
-            if symbolic.issymbolic(atom, self.sdfg.constants):
-                astr = str(atom)
-                # Check for undefined variables
-                if astr not in self.defined:
-                    raise DaceSyntaxError(self, node,
-                                          'Undefined variable "%s"' % atom)
-                # Add to global SDFG symbols if not a scalar
-                if astr not in self.sdfg.symbols and astr not in self.variables:
-                    self.sdfg.add_symbol(astr, atom.dtype)
+        if symbolic.issymbolic(symcond):
+            for atom in symcond.free_symbols:
+                if symbolic.issymbolic(atom, self.sdfg.constants):
+                    astr = str(atom)
+                    # Check for undefined variables
+                    if astr not in self.defined:
+                        raise DaceSyntaxError(self, node,
+                                            'Undefined variable "%s"' % atom)
+                    # Add to global SDFG symbols if not a scalar
+                    if (astr not in self.sdfg.symbols and
+                            astr not in self.variables):
+                        self.sdfg.add_symbol(astr, atom.dtype)
 
         # Add loop to SDFG
         _, loop_guard, loop_end = self.sdfg.add_loop(laststate,
@@ -2244,6 +2279,17 @@ class ProgramVisitor(ExtNodeVisitor):
                                                      end_loop_state, None, None,
                                                      loop_cond, None,
                                                      last_loop_state)
+
+        # Connect the correct while-guard state
+        for e in list(self.sdfg.in_edges(begin_guard)):
+            self.sdfg.remove_edge(e)
+        for e in list(self.sdfg.in_edges(loop_guard)):
+            self.sdfg.add_edge(e.src, begin_guard, e.data)
+            self.sdfg.remove_edge(e)
+        for e in list(self.sdfg.out_edges(loop_guard)):
+            self.sdfg.add_edge(end_guard, e.dst, e.data)
+            self.sdfg.remove_edge(e)
+        self.sdfg.remove_node(loop_guard)
 
         continue_states = self.continue_states.pop()
         while continue_states:
@@ -2286,33 +2332,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add a guard state
         self._add_state('if_guard')
 
-        # Fix for scalar promotion tests
-        # TODO: Maybe those tests should use the SDFG API instead of the
-        # Python frontend which can change how it handles conditions.
-        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-        is_test_simple = isinstance(node.test, simple_ast_nodes)
-        if not is_test_simple:
-            if isinstance(node.test, ast.Compare):
-                is_left_simple = isinstance(node.test.left, simple_ast_nodes)
-                is_right_simple = (
-                    len(node.test.comparators) == 1 and isinstance(
-                        node.test.comparators[0], simple_ast_nodes))
-                if is_left_simple and is_right_simple:
-                    is_test_simple = True
-        
-        # Visit if-condition
-        if not is_test_simple:
-            parsed_node = self.visit(node.test)
-            if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
-                datadesc = self.sdfg.arrays[parsed_node]
-                if isinstance(datadesc, data.Array):
-                    parsed_node += '[0]'
-        else:
-            parsed_node = astutils.unparse(node.test)
-        
         # Generate conditions
-        cond = astutils.unparse(parsed_node)
-        cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
+        cond, cond_else = self._visit_test(node.test)
 
         # Visit recursively
         laststate, first_if_state, last_if_state = \
