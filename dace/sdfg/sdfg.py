@@ -145,8 +145,11 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         """
         _replace_dict(self.assignments, name, new_name)
+        sym_name = symbolic.pystr_to_symbolic(name)
+        sym_new_name = symbolic.pystr_to_symbolic(new_name)
         for k, v in self.assignments.items():
-            self.assignments[k] = v.replace(name, new_name)
+            self.assignments[k] = symbolic.symstr(
+                symbolic.pystr_to_symbolic(v).replace(sym_name, sym_new_name))
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
