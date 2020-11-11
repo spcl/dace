@@ -1986,9 +1986,9 @@ class SDFG(OrderedDiGraph):
                 if isinstance(node, nd.NestedSDFG):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
-                    node.expand(self, state)
-                    print("Automatically expanded library node \"" + str(node) +
-                          "\".")
+                    impl_name = node.expand(self, state)
+                    print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(str(node),
+                                                                                                          impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
