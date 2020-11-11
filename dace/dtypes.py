@@ -96,6 +96,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    SystemVerilog = ()
 
 
 class AccessType(aenum.AutoNumberEnum):
