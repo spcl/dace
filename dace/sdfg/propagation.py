@@ -895,8 +895,9 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                     use_dst = False
                     if direction == 'out':
                         use_dst = True
+                    array = sdfg.arrays[node.label]
                     subset = propagate_subset(memlets,
-                                              sdfg.arrays[node.label],
+                                              array,
                                               params,
                                               subsets.Range(ranges),
                                               use_dst=use_dst).subset
@@ -909,6 +910,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                                              'of unequal dimension!')
                         else:
                             memlet.subset = subsets.union(memlet.subset, subset)
+                            if memlet.subset is None:
+                                memlet.subset = subsets.Range.from_array(array)
                     else:
                         memlet.subset = subset
 
@@ -919,6 +922,20 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             border_memlet = border_memlets[direction][connector]
             if border_memlet is not None:
                 border_memlet.replace(nsdfg_node.symbol_mapping)
+
+                # Also make sure that there's no symbol in the border memlet's
+                # range that only exists inside the nested SDFG. If that's the
+                # case, use the entire range.
+                if border_memlet.src_subset is not None and any(
+                        s not in parent_sdfg.symbols
+                        for s in border_memlet.src_subset.free_symbols):
+                    border_memlet.src_subset = subsets.Range.from_array(
+                        sdfg.arrays[border_memlet.data])
+                if border_memlet.dst_subset is not None and any(
+                        s not in parent_sdfg.symbols
+                        for s in border_memlet.dst_subset.free_symbols):
+                    border_memlet.dst_subset = subsets.Range.from_array(
+                        sdfg.arrays[border_memlet.data])
 
     # Propagate the inside 'border' memlets outside the SDFG by
     # offsetting, and unsqueezing if necessary.
