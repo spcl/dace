@@ -628,7 +628,8 @@ def propagate_states(sdfg) -> None:
     # annotated with the loop variable ranges, and otherwise it is left as a
     # dynamically unbounded loop.
     unannotated_cycle_states = []
-    for cycle in sdfg.find_cycles():
+    graph_cycles = list(sdfg.find_cycles())
+    for cycle in graph_cycles:
         # In each cycle, try to identify a valid loop guard state.
         guard = None
         begin = None
@@ -669,7 +670,8 @@ def propagate_states(sdfg) -> None:
             # we're looking at the guard for a nested cycle, which we ignore for
             # this cycle.
             increment_edge = in_edges[0]
-            if pystr_to_symbolic(itvar) in pystr_to_symbolic(in_edges[1].data.assignments[itvar]).free_symbols:
+            if pystr_to_symbolic(itvar) in pystr_to_symbolic(
+                    in_edges[1].data.assignments[itvar]).free_symbols:
                 increment_edge = in_edges[1]
             if increment_edge.src not in cycle:
                 continue
@@ -717,8 +719,11 @@ def propagate_states(sdfg) -> None:
                 if (stride < 0) == True:
                     rng = (stop, start, -stride)
 
-                loop_states = list(sdutils.dfs_conditional(sdfg,
-                    sources=[begin], condition=lambda _, child: child != guard))
+                loop_states = list(
+                    sdutils.dfs_conditional(
+                        sdfg,
+                        sources=[begin],
+                        condition=lambda _, child: child != guard))
                 loop_subgraph = gr.SubgraphView(sdfg, loop_states)
                 for v in loop_subgraph.nodes():
                     v.ranges[itervar] = subsets.Range([rng])
@@ -898,25 +903,44 @@ def propagate_states(sdfg) -> None:
                         if not state.dynamic_executions:
                             if len(common_frontier) == 1:
                                 full_merge_states.add(list(common_frontier)[0])
-                            '''
                             else:
-                                # TODO: Check whether this might be a fully
-                                # merged branch statement inside a loop! This is
-                                # also a valid merge, but doesn't give us a nice
-                                # dominance frontier.
-                            elif out_degree == 2:
-                                # This is a special case where we have two
-                                # branches merging together again, but one of
-                                # them is empty.
-                                l_oedges = sdfg.out_edges(out_edges[0].dst)
-                                r_oedges = sdfg.out_edges(out_edges[1].dst)
-                                if (len(l_oedges) == 1 and
-                                    l_oedges[0].dst == out_edges[1].dst):
-                                    full_merge_states.add(out_edges[1].dst)
-                                elif (len(r_oedges) == 1 and
-                                      r_oedges[0].dst == out_edges[0].dst):
-                                    full_merge_states.add(out_edges[0].dst)
-                            '''
+                                # Check whether this might be a fully merged
+                                # branch statement inside a loop. This is also a
+                                # valid merge, but doesn't give us a nice
+                                # dominance frontier when starting from the
+                                # start state, so we use the frontier as
+                                # computed starting from this state.
+                                in_loop = False
+                                for cycle in graph_cycles:
+                                    if state in cycle:
+                                        in_loop = True
+                                        break
+                                if in_loop:
+                                    # If we're in a loop, we need to make sure
+                                    # it's broken so a proper dominance frontier
+                                    # can be found. Remove the state's input
+                                    # edges and replace them after finding the
+                                    # frontier.
+                                    in_edges = sdfg.in_edges(state)
+                                    for iedge in in_edges:
+                                        sdfg.remove_edge(iedge)
+                                    reduced_domf = nx.dominance_frontiers(
+                                        sdfg.nx, state)
+                                    for iedge in in_edges:
+                                        sdfg.add_edge(iedge.src, iedge.dst,
+                                            iedge.data)
+
+                                    # Compute the common frontier like before.
+                                    common_frontier = set()
+                                    for oedge in out_edges:
+                                        frontier = reduced_domf[oedge.dst]
+                                        if not frontier:
+                                            frontier = {oedge.dst}
+                                        common_frontier |= frontier
+
+                                    if len(common_frontier) == 1:
+                                        full_merge_states.add(
+                                            list(common_frontier)[0])
 
     # If we had to create a temporary exit state, we remove it again here.
     if temp_exit_state is not None:
