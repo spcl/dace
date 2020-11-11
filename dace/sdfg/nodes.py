@@ -525,7 +525,8 @@ class NestedSDFG(CodeNode):
                              (missing_symbols))
         extra_symbols = self.symbol_mapping.keys() - symbols
         if len(extra_symbols) > 0:
-            raise ValueError(f"Mapping to unused symbol: {extra_symbols}")
+            # TODO: Elevate to an error?
+            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
