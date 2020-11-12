@@ -655,7 +655,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return symbol(expr)
 
     symbol_map = symbol_map or {}
-    locals = {'min': sympy.Min, 'max': sympy.Max}
+    locals = {'min': sympy.Min, 'max': sympy.Max,
+              'True': sympy.true, 'False': sympy.false}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
