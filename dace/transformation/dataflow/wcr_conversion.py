@@ -10,7 +10,7 @@ from dace import SDFG, SDFGState
 @registry.autoregister_params(singlestate=True)
 class AugAssignToWCR(transformation.Transformation):
     """
-    Converts a augmented assignment ("a += b", "a = a + b") into a tasklet
+    Converts an augmented assignment ("a += b", "a = a + b") into a tasklet
     with a write-conflict resolution.
     """
     input = transformation.PatternNode(nodes.AccessNode)
