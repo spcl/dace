@@ -814,7 +814,7 @@ def _np_result_type(nptypes):
     # Fix for np.result_type returning platform-dependent types,
     # e.g. np.longlong
     restype = np.result_type(*nptypes)
-    if not restype.type in dtypes.DTYPE_TO_TYPECLASS.keys():
+    if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
         restype = np.dtype(restype)
     return dtypes.DTYPE_TO_TYPECLASS[restype.type]
 
