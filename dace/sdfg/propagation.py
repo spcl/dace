@@ -644,9 +644,9 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
             res = find_for_loop(sdfg, guard, begin)
             if res is None:
+                # No range detected, mark as unbounded.
                 unannotated_cycle_states.extend(cycle)
             else:
-                # No range detected, mark as unbounded.
                 itervar, rng, _ = res
 
                 # Make sure the range is flipped in a direction such that the
@@ -657,13 +657,9 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                 if (stride < 0) == True:
                     rng = (stop, start, -stride)
 
-                loop_states = list(
-                    sdutils.dfs_conditional(
-                        sdfg,
-                        sources=[begin],
-                        condition=lambda _, child: child != guard))
-                loop_subgraph = gr.SubgraphView(sdfg, loop_states)
-                for v in loop_subgraph.nodes():
+                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin],
+                    condition=lambda _, child: child != guard)
+                for v in loop_states:
                     v.ranges[itervar] = subsets.Range([rng])
                 guard.ranges[itervar] = subsets.Range([rng])
                 guard.condition_edge = sdfg.edges_between(guard, begin)[0]
@@ -677,37 +673,34 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
 def _acyclic_dominance_frontier(sdfg):
     '''
-    Find the dominance frontier for an SDFG without any back edges.
+    Find the dominance frontier for an SDFG while ignoring any back edges.
 
-    Temporarily removes any back edges in the SDFG, then computes the dominance
-    frontier, before adding them back to the graph.
+    This is a modified version of the dominance frontiers algorithm as
+    implemented by networkx.
+
     :param sdfg: The SDFG for which to compute the acyclic dominance frontier.
     :returns: A dictionary keyed by states, containing the dominance frontier
               for each SDFG state.
     '''
-    # Identify any non-tree edges in a DFS.
-    labelle_edges = nx.dfs_labeled_edges(sdfg.nx, sdfg.start_state)
-    nontree_edges = [e for e in labelle_edges if e[2] == 'nontree']
-    back_edges = []
+    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
 
-    # Given all non-tree edges, which are either forward, cross-edges, or back-
-    # edges, identify all back-edges.
-    for nontree_edge in nontree_edges:
-        edge = sdfg.edges_between(nontree_edge[0], nontree_edge[1])[0]
-        if (nx.has_path(sdfg.nx, edge.dst, edge.src)):
-            # A non-tree edge is a back edge if there is a path from the edge's
-            # destination to it's source. We temporarily remove this.
-            sdfg.remove_edge(edge)
-            back_edges.append(edge)
+    dom_frontiers = {state: set() for state in sdfg.nodes()}
+    for u in idom:
+        if len(sdfg.nx.pred[u]) >= 2:
+            for v in sdfg.nx.pred[u]:
+                if v in idom:
+                    df_candidates = set()
+                    while v != idom[u]:
+                        if v == u:
+                            df_candidates = None
+                            break
+                        df_candidates.add(v)
+                        v = idom[v]
+                    if df_candidates is not None:
+                        for candidate in df_candidates:
+                            dom_frontiers[candidate].add(u)
 
-    # Compute the dominance frontiers, now that there's no back edge left.
-    dom_frontier = nx.dominance_frontiers(sdfg.nx, sdfg.start_state)
-
-    # Add back all the back edges.
-    for backedge in back_edges:
-        sdfg.add_edge(backedge.src, backedge.dst, backedge.data)
-
-    return dom_frontier
+    return dom_frontiers
 
 
 def propagate_states(sdfg) -> None:
@@ -930,7 +923,7 @@ def propagate_states(sdfg) -> None:
 
                         # Get the dominance frontier for each child state and
                         # merge them into one common frontier, representing the
-                        # branch's dominance frontier. If a state has no
+                        # branch's immediate post-dominator. If a state has no
                         # dominance frontier, add the state itself to the
                         # frontier. This takes care of the case where a branch
                         # is fully merged, but one branch contains no states.
@@ -945,7 +938,7 @@ def propagate_states(sdfg) -> None:
                             traversal_q.append((oedge.dst, proposed_executions,
                                                 proposed_dynamic, itvar_stack))
 
-                        # If the whole branch isn't dynamic anyway, and the
+                        # If the whole branch is not dynamic, and the
                         # common frontier is exactly one state, we know that
                         # the branch merges again at that state.
                         if not state.dynamic_executions and len(
