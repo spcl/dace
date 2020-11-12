@@ -815,8 +815,19 @@ def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
         return expr.dtype
     representative_value = expr.subs([(s, _representative_num(s.dtype))
                                       for s in expr.free_symbols])
-    nptype = np.result_type(eval(astutils.unparse(representative_value)))
-    return dtypes.DTYPE_TO_TYPECLASS[np.result_type(nptype).type]
+    pyval = eval(astutils.unparse(representative_value))
+    # Overflow check
+    if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max or
+                                  pyval < np.iinfo(np.int64).min):
+        nptype = np.int64
+    else:
+        nptype = np.result_type(pyval)
+    # Fix for np.result_type returning platform-dependent types,
+    # e.g. np.longlong
+    restype = np.result_type(nptype)
+    if not restype.type in dtypes.DTYPE_TO_TYPECLASS.keys():
+        restype = np.dtype(restype)
+    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
 
 
 def _result_type(
@@ -1688,16 +1699,19 @@ UfuncOutput = Union[str, None]
 ufuncs = dict(
     add = dict(
         name="_numpy_add_",
+        operator="Add",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 + __in2",
         reduce="lambda a, b: a + b", initial=np.add.identity),
     subtract = dict(
         name="_numpy_subtract_",
+        operator="Sub",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 - __in2",
         reduce="lambda a, b: a - b", initial=np.subtract.identity),
     multiply = dict(
         name="_numpy_multipy_",
+        operator="Mul",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 * __in2",
         reduce="lambda a, b: a * b", initial=np.multiply.identity),
@@ -1707,9 +1721,13 @@ ufuncs = dict(
     #     inputs=["__in1", "__in2"],
     #     outputs=["__out"], code="__out = __in1 / __in2",
     #     reduce="lambda a, b: a / b", initial=np.divide.identity),
-    minimum = dict(name="_numpy_min_", inputs=["__in1", "__in2"],
-                   outputs=["__out"], code="__out = min(__in1, __in2)",
-                   reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
+    minimum = dict(
+        name="_numpy_min_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"],
+        code="__out = min(__in1, __in2)",
+        reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
 )
 
 
@@ -2101,8 +2119,11 @@ def _create_output(sdfg: SDFG,
     return outputs
 
 
-def _set_tasklet_params(ufunc_impl: Dict[str, Any],
-                        inputs: List[UfuncInput]) -> Dict[str, Any]:
+def _set_tasklet_params(
+    ufunc_impl: Dict[str, Any],
+    inputs: List[UfuncInput],
+    casting: List[dtypes.typeclass] = None
+) -> Dict[str, Any]:
     """ Sets the tasklet parameters for a NumPy ufunc call.
 
         :param ufunc_impl: Information on how the ufunc must be implemented
@@ -2121,6 +2142,11 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
     # Remove input connectors related to constants
     # and fix constants/symbols in the tasklet code
     for i, arg in reversed(list(enumerate(inputs))):
+        inp_conn = inp_connectors[i]
+        if casting and casting[i]:
+            repl = "{c}({o})".format(c=str(casting[i]).replace('::', '.'),
+                                     o=inp_conn)
+            code = code.replace(inp_conn, repl)
         if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
             code = code.replace(inp_conn, astutils.unparse(arg))
@@ -2384,18 +2410,11 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
          visitor, ast_node, sdfg, ufunc_name, inp_shapes, outputs)
     
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # Infer result type
+    result_type, casting = _result_type(
+        [sdfg.arrays[arg]
+        if isinstance(arg, str) and arg in sdfg.arrays else arg
+        for arg in inputs], ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
         if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
@@ -2405,7 +2424,7 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
-    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
 
     # Create subgraph
     _create_subgraph(visitor, sdfg, state, inputs, outputs, map_indices,
@@ -2949,18 +2968,11 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     else:
         input_indices.append(None)
     
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # Infer result type
+    result_type, casting = _result_type(
+        [sdfg.arrays[arg]
+        if isinstance(arg, str) and arg in sdfg.arrays else arg
+        for arg in inputs], ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
         if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
@@ -2970,7 +2982,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
-    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
 
     # Create subgraph
     _create_subgraph(visitor, sdfg, state, inputs, outputs, map_range,
