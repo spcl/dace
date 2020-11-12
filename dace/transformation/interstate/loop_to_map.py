@@ -61,7 +61,24 @@ class LoopToMap(DetectLoop):
         # If the same container is both read and written, only match if it
         # read and written exactly one place, at exactly the same index
         if len(overlap) > 0:
-            return False
+            code_nodes = [
+                n for n in begin.nodes() if isinstance(n, nodes.CodeNode)
+            ]
+            subsets = {}
+            for data in overlap:
+                for cn in code_nodes:
+                    for e in begin.all_edges(cn):
+                        if e.data.data == data:
+                            subset = e.data.subset
+                            if e.data.dynamic or subset.num_elements() != 1:
+                                # If pointers are involved, give up
+                                return False
+                            if data not in subsets:
+                                subsets[data] = subset
+                            else:
+                                if subsets[data] != subset:
+                                    # All subsets to this data must be identical
+                                    return False
 
         # Check that the iteration variable is not used on other edges or states
         # before it is reassigned
