@@ -31,6 +31,7 @@ from .redundant_array_copying import (RedundantArrayCopying,
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors
+from .wcr_conversion import AugAssignToWCR
 
 # Device-related
 from .copy_to_device import CopyToDevice
