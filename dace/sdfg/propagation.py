@@ -554,82 +554,20 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def propagate_states(sdfg) -> None:
-    """
-    Annotate the states of an SDFG with the number of executions.
+def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
+    '''
+    Annotate each valid for loop construct with its loop variable ranges.
 
-    Algorithm:
-    1. Clean up the state machine by splitting condition and assignment edges
-       into separate edes with a dummy state in between.
-    2. Detect and annotate any for-loop constructs with their corresponding loop
-       variable ranges.
-    3. Start traversing the state machine from the start state (start state
-       gets executed once by default). At every state, check the following:
-        a) The state was already visited -> in this case it can either be the
-           guard of a loop we're returning to - in which case the number of
-           executions is additively combined - or it is a state that can be
-           reached through multiple paths (e.g. if/else branches), in which case
-           the number of executions is equal to the maximum number of executions
-           for each incoming path (in case this fully merges a previously
-           branched out tree again, the number of executions isn't dynamic
-           anymore). In both cases we override the calculated number of
-           executions if we're propagating dynamic unbounded. This DFS traversal
-           is complete and we continue with the next unvisited state.
-        b) We're propagating dynamic unbounded -> this overrides every
-           calculated number of executions, so this gets unconditionally
-           propagated to all child states.
-        c) None of the above, the next regular traversal step is executed:
-            3.1: If there is no further outgoing edge, this DFS traversal is
-                 done and we continue with the next unvisited state.
-            3.2: If there is one outgoing edge, we continue propagating the
-                 same number of executions to the child state. If the transition
-                 to the child state is conditional, the current state might be
-                 an implicit exit state, in which case we mark the next state as
-                 dynamic to signal that it's an upper bound.
-            3.3: If there is more than one outgoing edge we:
-                3.3.1: Check if it's an annotated loop guard with a range. If
-                       so, we calculate the number of executions for the loop
-                       and propagate this down the loop.
-                3.3.2: Check if it's a loop that hasn't been unannotated, which
-                       means it's unbounded. In this case we propagate dynamic
-                       unbounded down the loop.
-                3.3.3: Otherwise this must be a conditional branch, so this
-                       state's number of executions is given to all child states
-                       as an upper bound.
-    4. The traversal ends when all reachable states have been visited at least
-       once.
-
-    :param sdfg: The SDFG to annotate.
-    :note: This operates on the SDFG in-place.
-    """
+    :param sdfg: The SDFG in which to look.
+    :param unannotated_cycle_states: List of states in cycles without valid
+                                     for loop ranges.
+    '''
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
-    from dace.sdfg import InterstateEdge, utils as sdutils
-    from dace.transformation.helpers import split_interstate_edges
+    from dace.sdfg import utils as sdutils
 
-    # Clean up the state machine by separating combined condition and assignment
-    # edges.
-    split_interstate_edges(sdfg)
-
-    # To enable branch annotation, we add a temporary exit state that connects
-    # to all child-less states. With this, we can use the dominance frontier
-    # to determine a full-merge state for branches.
-    temp_exit_state = None
-    for s in sdfg.nodes():
-        if sdfg.out_degree(s) == 0:
-            if temp_exit_state is None:
-                temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
-            sdfg.add_edge(s, temp_exit_state, InterstateEdge())
-
-    dom_frontier = nx.dominance_frontiers(sdfg.nx, sdfg.start_state)
-
-    # For each cycle, try to see if it's a valid for loop. If so it gets
-    # annotated with the loop variable ranges, and otherwise it is left as a
-    # dynamically unbounded loop.
-    unannotated_cycle_states = []
-    graph_cycles = list(sdfg.find_cycles())
-    for cycle in graph_cycles:
+    for cycle in sdfg.find_cycles():
         # In each cycle, try to identify a valid loop guard state.
         guard = None
         begin = None
@@ -735,6 +673,116 @@ def propagate_states(sdfg) -> None:
             # There's no guard state, so this cycle marks all states in it as
             # dynamically unbounded.
             unannotated_cycle_states.extend(cycle)
+
+
+def _acyclic_dominance_frontier(sdfg):
+    '''
+    Find the dominance frontier for an SDFG without any back edges.
+
+    Temporarily removes any back edges in the SDFG, then computes the dominance
+    frontier, before adding them back to the graph.
+    :param sdfg: The SDFG for which to compute the acyclic dominance frontier.
+    :returns: A dictionary keyed by states, containing the dominance frontier
+              for each SDFG state.
+    '''
+    # Identify any non-tree edges in a DFS.
+    labelle_edges = nx.dfs_labeled_edges(sdfg.nx, sdfg.start_state)
+    nontree_edges = [e for e in labelle_edges if e[2] == 'nontree']
+    back_edges = []
+
+    # Given all non-tree edges, which are either forward, cross-edges, or back-
+    # edges, identify all back-edges.
+    for nontree_edge in nontree_edges:
+        edge = sdfg.edges_between(nontree_edge[0], nontree_edge[1])[0]
+        if (nx.has_path(sdfg.nx, edge.dst, edge.src)):
+            # A non-tree edge is a back edge if there is a path from the edge's
+            # destination to it's source. We temporarily remove this.
+            sdfg.remove_edge(edge)
+            back_edges.append(edge)
+
+    # Compute the dominance frontiers, now that there's no back edge left.
+    dom_frontier = nx.dominance_frontiers(sdfg.nx, sdfg.start_state)
+
+    # Add back all the back edges.
+    for backedge in back_edges:
+        sdfg.add_edge(backedge.src, backedge.dst, backedge.data)
+
+    return dom_frontier
+
+
+def propagate_states(sdfg) -> None:
+    """
+    Annotate the states of an SDFG with the number of executions.
+
+    Algorithm:
+    1. Clean up the state machine by splitting condition and assignment edges
+       into separate edes with a dummy state in between.
+    2. Detect and annotate any for-loop constructs with their corresponding loop
+       variable ranges.
+    3. Start traversing the state machine from the start state (start state
+       gets executed once by default). At every state, check the following:
+        a) The state was already visited -> in this case it can either be the
+           guard of a loop we're returning to - in which case the number of
+           executions is additively combined - or it is a state that can be
+           reached through multiple paths (e.g. if/else branches), in which case
+           the number of executions is equal to the maximum number of executions
+           for each incoming path (in case this fully merges a previously
+           branched out tree again, the number of executions isn't dynamic
+           anymore). In both cases we override the calculated number of
+           executions if we're propagating dynamic unbounded. This DFS traversal
+           is complete and we continue with the next unvisited state.
+        b) We're propagating dynamic unbounded -> this overrides every
+           calculated number of executions, so this gets unconditionally
+           propagated to all child states.
+        c) None of the above, the next regular traversal step is executed:
+            3.1: If there is no further outgoing edge, this DFS traversal is
+                 done and we continue with the next unvisited state.
+            3.2: If there is one outgoing edge, we continue propagating the
+                 same number of executions to the child state. If the transition
+                 to the child state is conditional, the current state might be
+                 an implicit exit state, in which case we mark the next state as
+                 dynamic to signal that it's an upper bound.
+            3.3: If there is more than one outgoing edge we:
+                3.3.1: Check if it's an annotated loop guard with a range. If
+                       so, we calculate the number of executions for the loop
+                       and propagate this down the loop.
+                3.3.2: Check if it's a loop that hasn't been unannotated, which
+                       means it's unbounded. In this case we propagate dynamic
+                       unbounded down the loop.
+                3.3.3: Otherwise this must be a conditional branch, so this
+                       state's number of executions is given to all child states
+                       as an upper bound.
+    4. The traversal ends when all reachable states have been visited at least
+       once.
+
+    :param sdfg: The SDFG to annotate.
+    :note: This operates on the SDFG in-place.
+    """
+
+    # We import here to avoid cyclic imports.
+    from dace.sdfg import InterstateEdge
+    from dace.transformation.helpers import split_interstate_edges
+
+    # Clean up the state machine by separating combined condition and assignment
+    # edges.
+    split_interstate_edges(sdfg)
+
+    # To enable branch annotation, we add a temporary exit state that connects
+    # to all child-less states. With this, we can use the dominance frontier
+    # to determine a full-merge state for branches.
+    temp_exit_state = None
+    for s in sdfg.nodes():
+        if sdfg.out_degree(s) == 0:
+            if temp_exit_state is None:
+                temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
+            sdfg.add_edge(s, temp_exit_state, InterstateEdge())
+
+    dom_frontier = _acyclic_dominance_frontier(sdfg)
+
+    # Find any valid for loop constructs and annotate the loop ranges. Any other
+    # cycle should be marked as unannotated.
+    unannotated_cycle_states = []
+    _annotate_loop_ranges(sdfg, unannotated_cycle_states)
 
     # Keep track of states that fully merge a previous conditional split. We do
     # this so we can remove the dynamic executions flag for those states.
@@ -900,47 +948,9 @@ def propagate_states(sdfg) -> None:
                         # If the whole branch isn't dynamic anyway, and the
                         # common frontier is exactly one state, we know that
                         # the branch merges again at that state.
-                        if not state.dynamic_executions:
-                            if len(common_frontier) == 1:
-                                full_merge_states.add(list(common_frontier)[0])
-                            else:
-                                # Check whether this might be a fully merged
-                                # branch statement inside a loop. This is also a
-                                # valid merge, but doesn't give us a nice
-                                # dominance frontier when starting from the
-                                # start state, so we use the frontier as
-                                # computed starting from this state.
-                                in_loop = False
-                                for cycle in graph_cycles:
-                                    if state in cycle:
-                                        in_loop = True
-                                        break
-                                if in_loop:
-                                    # If we're in a loop, we need to make sure
-                                    # it's broken so a proper dominance frontier
-                                    # can be found. Remove the state's input
-                                    # edges and replace them after finding the
-                                    # frontier.
-                                    in_edges = sdfg.in_edges(state)
-                                    for iedge in in_edges:
-                                        sdfg.remove_edge(iedge)
-                                    reduced_domf = nx.dominance_frontiers(
-                                        sdfg.nx, state)
-                                    for iedge in in_edges:
-                                        sdfg.add_edge(iedge.src, iedge.dst,
-                                            iedge.data)
-
-                                    # Compute the common frontier like before.
-                                    common_frontier = set()
-                                    for oedge in out_edges:
-                                        frontier = reduced_domf[oedge.dst]
-                                        if not frontier:
-                                            frontier = {oedge.dst}
-                                        common_frontier |= frontier
-
-                                    if len(common_frontier) == 1:
-                                        full_merge_states.add(
-                                            list(common_frontier)[0])
+                        if not state.dynamic_executions and len(
+                                common_frontier) == 1:
+                            full_merge_states.add(list(common_frontier)[0])
 
     # If we had to create a temporary exit state, we remove it again here.
     if temp_exit_state is not None:
