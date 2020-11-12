@@ -469,14 +469,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # If scope(src) contains scope(dst), then src must be a data node,
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, src_node, dst_node):
-            if not isinstance(src_node, nd.AccessNode):
-                if e.data.is_empty() and isinstance(src_node, nd.EntryNode):
-                    pass
-                else:
-                    raise InvalidSDFGEdgeError(
-                        "Memlet creates an invalid path (source node "
-                        f"{src_node} should be a data node)", sdfg, state_id,
-                        eid)
+            pass
         # If scope(dst) contains scope(src), then dst must be a data node,
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
