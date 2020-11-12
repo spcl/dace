@@ -65,9 +65,9 @@ class InlineSDFG(transformation.Transformation):
     def _check_strides(inner_strides: List[symbolic.SymbolicType],
                        outer_strides: List[symbolic.SymbolicType],
                        memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
-        """ 
+        """
         Returns True if the strides of the inner array can be matched
-        to the strides of the outer array upon inlining. Takes into 
+        to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.

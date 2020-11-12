@@ -936,33 +936,20 @@ class SDFG(OrderedDiGraph):
         """
         Determines what data containers are read and written in this SDFG. Does
         not include reads to subsets of containers that have previously been
-        written in the SDFG.
+        written within the same state.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
         read_set = set()
-        write_set = collections.defaultdict(list)
-        from dace.sdfg import utils  # Avoid cyclic import
-        for state in utils.dfs_topological_sort(self):
+        write_set = set()
+        for state in self.states():
             for edge in self.in_edges(state):
-                for sym in edge.data.free_symbols & self.arrays.keys():
-                    # Assume that this reads the full data container
-                    as_subset = sbs.Range.from_array(self.arrays[sym])
-                    if not any(sb.covers(as_subset) for sb in write_set[sym]):
-                        read_set.add(sym)
+                read_set |= edge.data.free_symbols & self.arrays.keys()
             # Get dictionaries of subsets read and written from each state
             rs, ws = state._read_and_write_sets()
-            for data, read_subsets in rs.items():
-                for r_sb in read_subsets:
-                    # Don't add this to the read set if any previously
-                    # occurring write subset fully covers this subset
-                    if not any(w_sb.covers(r_sb) for w_sb in write_set[data]):
-                        read_set.add(data)
-                        break
-            # Log all writes for the following states
-            for data, accesses in ws.items():
-                write_set[data] += accesses
-        return read_set, set(write_set.keys())
+            read_set |= rs.keys()
+            write_set |= ws.keys()
+        return read_set, write_set
 
     def arglist(self) -> Dict[str, dt.Data]:
         """

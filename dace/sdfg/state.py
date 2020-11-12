@@ -469,7 +469,7 @@ class StateGraphView(object):
             ws = collections.defaultdict(list)
             # Traverse in topological order, so data that is written before it
             # is read is not counted in the read set
-            for n in utils.dfs_topological_sort(sg):
+            for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
                 if isinstance(n, nd.AccessNode):
                     for e in sg.in_edges(n):
                         # Store all subsets that have been written
