@@ -402,7 +402,8 @@ class Graph(object):
                 continue  # We've reached the end node
             if n in seen:
                 continue  # We've already visited this node
-            seen.add(n)
+			if n != begin:
+                seen.add(n)
             # Keep chasing all paths to reach the end node
             node_out_edges = self.out_edges(n)
             if len(node_out_edges) == 0:
