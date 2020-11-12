@@ -441,11 +441,31 @@ class Memlet(object):
             return self.subset if self._is_data_src else self.other_subset
         return self.subset
 
+    @src_subset.setter
+    def src_subset(self, new_src_subset):
+        if self._is_data_src is not None:
+            if self._is_data_src:
+                self.subset = new_src_subset
+            else:
+                self.other_subset = new_src_subset
+        else:
+            self.subset = new_src_subset
+
     @property
     def dst_subset(self):
         if self._is_data_src is not None:
             return self.other_subset if self._is_data_src else self.subset
         return self.other_subset
+
+    @dst_subset.setter
+    def dst_subset(self, new_dst_subset):
+        if self._is_data_src is not None:
+            if self._is_data_src:
+                self.other_subset = new_dst_subset
+            else:
+                self.subset = new_dst_subset
+        else:
+            self.other_subset = new_dst_subset
 
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:

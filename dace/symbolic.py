@@ -453,7 +453,12 @@ def contains_sympy_functions(expr):
     return False
 
 
-def free_symbols_and_functions(expr: SymbolicType) -> Set[str]:
+def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    if isinstance(expr, str):
+        if dtypes.validate_name(expr):
+            return {expr}
+        expr = pystr_to_symbolic(expr)
+
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
         if (is_sympy_userfunction(atom)
@@ -650,7 +655,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return symbol(expr)
 
     symbol_map = symbol_map or {}
-    locals = {'min': sympy.Min, 'max': sympy.Max}
+    locals = {'min': sympy.Min, 'max': sympy.Max,
+              'True': sympy.true, 'False': sympy.false}
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
