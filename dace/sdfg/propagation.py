@@ -11,10 +11,11 @@ import sympy
 from sympy import ceiling
 from sympy.concrete.summations import Sum
 import warnings
+import networkx as nx
 
 from dace import registry, subsets, symbolic, dtypes, data
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from typing import List, Set
 
 
@@ -553,6 +554,155 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
+def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
+    '''
+    Annotate each valid for loop construct with its loop variable ranges.
+
+    :param sdfg: The SDFG in which to look.
+    :param unannotated_cycle_states: List of states in cycles without valid
+                                     for loop ranges.
+    '''
+
+    # We import here to avoid cyclic imports.
+    from dace.transformation.interstate.loop_detection import find_for_loop
+    from dace.sdfg import utils as sdutils
+
+    for cycle in sdfg.find_cycles():
+        # In each cycle, try to identify a valid loop guard state.
+        guard = None
+        begin = None
+        for v in cycle:
+            # Try to identify a valid for-loop guard.
+            in_edges = sdfg.in_edges(v)
+            out_edges = sdfg.out_edges(v)
+
+            # A for-loop guard has two or more incoming edges (1 increment and
+            # n init, all identical), and exactly two outgoing edges (loop and
+            # exit loop).
+            if len(in_edges) < 2 or len(out_edges) != 2:
+                continue
+
+            # All incoming guard edges must set exactly one variable and it must
+            # be the same for all of them.
+            itvar = None
+            for iedge in in_edges:
+                if len(iedge.data.assignments) == 1:
+                    if itvar is None:
+                        itvar = list(iedge.data.assignments.keys())[0]
+                    elif itvar not in iedge.data.assignments:
+                        itvar = None
+                        break
+                else:
+                    itvar = None
+                    break
+            if itvar is None:
+                continue
+
+            # The outgoing edges must be negations of one another.
+            if out_edges[0].data.condition_sympy() != (sympy.Not(
+                    out_edges[1].data.condition_sympy())):
+                continue
+
+            # Make sure the last state of the loop (i.e. the state leading back
+            # to the guard via 'increment' edge) is part of this cycle. If not,
+            # we're looking at the guard for a nested cycle, which we ignore for
+            # this cycle.
+            increment_edge = in_edges[0]
+            if pystr_to_symbolic(itvar) in pystr_to_symbolic(
+                    in_edges[1].data.assignments[itvar]).free_symbols:
+                increment_edge = in_edges[1]
+            if increment_edge.src not in cycle:
+                continue
+
+            # One of the child states must be in the loop (loop begin), and the
+            # other one must be outside the cycle (loop exit).
+            loop_state = None
+            exit_state = None
+            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
+                loop_state = out_edges[0].dst
+                exit_state = out_edges[1].dst
+            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
+                loop_state = out_edges[1].dst
+                exit_state = out_edges[0].dst
+            if loop_state is None or exit_state is None:
+                continue
+
+            # This is a valid guard state candidate.
+            guard = v
+            begin = loop_state
+            break
+
+        if guard is not None and begin is not None:
+            # A guard state was identified, see if it has valid for-loop ranges
+            # and annotate the loop as such.
+
+            # Ensure that this guard's loop wasn't annotated yet.
+            guard_inedges = sdfg.in_edges(guard)
+            itervar = list(guard_inedges[0].data.assignments.keys())[0]
+            if itervar in begin.ranges:
+                continue
+
+            res = find_for_loop(sdfg, guard, begin)
+            if res is None:
+                # No range detected, mark as unbounded.
+                unannotated_cycle_states.extend(cycle)
+            else:
+                itervar, rng, _ = res
+
+                # Make sure the range is flipped in a direction such that the
+                # stride is positive (in order to match subsets.Range).
+                start, stop, stride = rng
+                # This inequality needs to be checked exactly like this due to
+                # constraints in sympy/symbolic expressions, do not simplify!!!
+                if (stride < 0) == True:
+                    rng = (stop, start, -stride)
+
+                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin],
+                    condition=lambda _, child: child != guard)
+                for v in loop_states:
+                    v.ranges[itervar] = subsets.Range([rng])
+                guard.ranges[itervar] = subsets.Range([rng])
+                guard.condition_edge = sdfg.edges_between(guard, begin)[0]
+                guard.is_loop_guard = True
+                guard.itvar = itervar
+        else:
+            # There's no guard state, so this cycle marks all states in it as
+            # dynamically unbounded.
+            unannotated_cycle_states.extend(cycle)
+
+
+def _acyclic_dominance_frontier(sdfg):
+    '''
+    Find the dominance frontier for an SDFG while ignoring any back edges.
+
+    This is a modified version of the dominance frontiers algorithm as
+    implemented by networkx.
+
+    :param sdfg: The SDFG for which to compute the acyclic dominance frontier.
+    :returns: A dictionary keyed by states, containing the dominance frontier
+              for each SDFG state.
+    '''
+    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+
+    dom_frontiers = {state: set() for state in sdfg.nodes()}
+    for u in idom:
+        if len(sdfg.nx.pred[u]) >= 2:
+            for v in sdfg.nx.pred[u]:
+                if v in idom:
+                    df_candidates = set()
+                    while v != idom[u]:
+                        if v == u:
+                            df_candidates = None
+                            break
+                        df_candidates.add(v)
+                        v = idom[v]
+                    if df_candidates is not None:
+                        for candidate in df_candidates:
+                            dom_frontiers[candidate].add(u)
+
+    return dom_frontiers
+
+
 def propagate_states(sdfg) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
@@ -560,9 +710,8 @@ def propagate_states(sdfg) -> None:
     Algorithm:
     1. Clean up the state machine by splitting condition and assignment edges
        into separate edes with a dummy state in between.
-    2. Apply two transformations (AnnotateLoop, AnnotateBranch) to annotate
-       any for-loop constructs with their corresponding loop variable ranges,
-       and any fully merged branch statements with the state where they merge.
+    2. Detect and annotate any for-loop constructs with their corresponding loop
+       variable ranges.
     3. Start traversing the state machine from the start state (start state
        gets executed once by default). At every state, check the following:
         a) The state was already visited -> in this case it can either be the
@@ -604,8 +753,6 @@ def propagate_states(sdfg) -> None:
     """
 
     # We import here to avoid cyclic imports.
-    from dace.transformation.interstate.branch_annotation import AnnotateBranch
-    from dace.transformation.interstate.loop_annotation import AnnotateLoop
     from dace.sdfg import InterstateEdge
     from dace.transformation.helpers import split_interstate_edges
 
@@ -623,28 +770,12 @@ def propagate_states(sdfg) -> None:
                 temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
             sdfg.add_edge(s, temp_exit_state, InterstateEdge())
 
-    # Annotate for-loops with ranges and find loop guards, and annotate any
-    # branch constructs that fully merge together at some point again.
-    sdfg.apply_transformations_repeated([AnnotateLoop, AnnotateBranch],
-                                        print_report=False)
+    dom_frontier = _acyclic_dominance_frontier(sdfg)
 
-    # If we had to create a temporary exit state, we remove it again here.
-    if temp_exit_state is not None:
-        sdfg.remove_node(temp_exit_state)
-
-    # Identify and annotate any un-annotated loops (e.g. while loops).
+    # Find any valid for loop constructs and annotate the loop ranges. Any other
+    # cycle should be marked as unannotated.
     unannotated_cycle_states = []
-    for cycle in sdfg.find_cycles():
-        has_loop_guard = False
-        no_unannotated_states = True
-        for v in cycle:
-            if not v.ranges:
-                no_unannotated_states = False
-            if getattr(v, 'is_loop_guard', False):
-                has_loop_guard = True
-        if not (has_loop_guard and no_unannotated_states):
-            # This loop is no fully annotated for loop.
-            unannotated_cycle_states.extend(cycle)
+    _annotate_loop_ranges(sdfg, unannotated_cycle_states)
 
     # Keep track of states that fully merge a previous conditional split. We do
     # this so we can remove the dynamic executions flag for those states.
@@ -674,7 +805,7 @@ def propagate_states(sdfg) -> None:
                 # we've finished traversing a loop and can remove that loop's
                 # iteration variable from the stack. We additively merge the
                 # number of executions.
-                if state.executions != 0 and not state.dynamic_executions:
+                if not (state.executions == 0 and state.dynamic_executions):
                     state.executions += proposed_executions
             else:
                 # If we have already visited this state, but it is NOT a loop
@@ -789,12 +920,34 @@ def propagate_states(sdfg) -> None:
                         # Traverse as a conditional split.
                         proposed_executions = state.executions
                         proposed_dynamic = True
-                        if (getattr(state, 'full_merge_state', None) is not None
-                                and not state.dynamic_executions):
-                            full_merge_states.add(state.full_merge_state)
+
+                        # Get the dominance frontier for each child state and
+                        # merge them into one common frontier, representing the
+                        # branch's immediate post-dominator. If a state has no
+                        # dominance frontier, add the state itself to the
+                        # frontier. This takes care of the case where a branch
+                        # is fully merged, but one branch contains no states.
+                        common_frontier = set()
                         for oedge in out_edges:
+                            frontier = dom_frontier[oedge.dst]
+                            if not frontier:
+                                frontier = {oedge.dst}
+                            common_frontier |= frontier
+
+                            # Continue traversal for each child.
                             traversal_q.append((oedge.dst, proposed_executions,
                                                 proposed_dynamic, itvar_stack))
+
+                        # If the whole branch is not dynamic, and the
+                        # common frontier is exactly one state, we know that
+                        # the branch merges again at that state.
+                        if not state.dynamic_executions and len(
+                                common_frontier) == 1:
+                            full_merge_states.add(list(common_frontier)[0])
+
+    # If we had to create a temporary exit state, we remove it again here.
+    if temp_exit_state is not None:
+        sdfg.remove_node(temp_exit_state)
 
 
 def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
