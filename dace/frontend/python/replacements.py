@@ -810,6 +810,15 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         return nptype(np.finfo(nptype).resolution)
 
 
+def _np_result_type(nptypes):
+    # Fix for np.result_type returning platform-dependent types,
+    # e.g. np.longlong
+    restype = np.result_type(*nptypes)
+    if not restype.type in dtypes.DTYPE_TO_TYPECLASS.keys():
+        restype = np.dtype(restype)
+    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+
+
 def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
     if isinstance(expr, symbolic.symbol):
         return expr.dtype
@@ -822,12 +831,7 @@ def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
         nptype = np.int64
     else:
         nptype = np.result_type(pyval)
-    # Fix for np.result_type returning platform-dependent types,
-    # e.g. np.longlong
-    restype = np.result_type(nptype)
-    if not restype.type in dtypes.DTYPE_TO_TYPECLASS.keys():
-        restype = np.dtype(restype)
-    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+    return _np_result_type([nptype])
 
 
 def _result_type(
@@ -928,8 +932,7 @@ def _result_type(
                 right_cast = dace.float64
             # All other arithmetic operators and cases of the above operators
             else:
-                result_type = dace.DTYPE_TO_TYPECLASS[
-                    np.result_type(*dtypes_for_result).type]
+                result_type = _np_result_type(dtypes_for_result)
                 if max(type1, type2) == 3:
                     if type1 < 3:
                         left_cast = dtype2
@@ -963,8 +966,7 @@ def _result_type(
             result_type = dace.bool_
         
         else:  # Other binary operators
-            result_type = dace.DTYPE_TO_TYPECLASS[
-                np.result_type(*dtypes_for_result).type]
+            result_type = _np_result_type(dtypes_for_result)
             if max(type1, type2) == 3:
                 if type1 < 3:
                     left_cast = dtype2
@@ -974,8 +976,7 @@ def _result_type(
         casting = [left_cast, right_cast]
 
     else:  # Operators with 3 or more arguments
-        result_type = dace.DTYPE_TO_TYPECLASS[
-            np.result_type(*dtypes_for_result).type]
+        result_type = _np_result_type(dtypes_for_result)
         for i, t in enumerate(coarse_types):
             if t != result_type:
                 casting[i] = t
