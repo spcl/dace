@@ -105,7 +105,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
-    :return: A generator of edges in the lastvisit depth-first-search.
+    :return: A generator of nodes in the lastvisit depth-first-search.
 
     @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
@@ -207,11 +207,11 @@ def change_edge_dest(graph: gr.OrderedDiGraph,
         The function finds all edges in the graph that have node A as their
         destination. It then creates a new edge for each one found,
         using the same source nodes and data, but node B as the destination.
-        Afterwards, it deletes the edges found and inserts the new ones into 
+        Afterwards, it deletes the edges found and inserts the new ones into
         the graph.
 
         :param graph: The graph upon which the edge transformations will be
-                      applied.  
+                      applied.
         :param node_a: The original destination of the edges.
         :param node_b: The new destination of the edges to be transformed.
     """
@@ -234,9 +234,9 @@ def change_edge_src(graph: gr.OrderedDiGraph,
                     node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph]):
     """ Changes the sources of edges from node A to node B.
 
-        The function finds all edges in the graph that have node A as their 
-        source. It then creates a new edge for each one found, using the same 
-        destination nodes and data, but node B as the source. Afterwards, it 
+        The function finds all edges in the graph that have node A as their
+        source. It then creates a new edge for each one found, using the same
+        destination nodes and data, but node B as the source. Afterwards, it
         deletes the edges
         found and inserts the new ones into the graph.
 
@@ -262,7 +262,7 @@ def change_edge_src(graph: gr.OrderedDiGraph,
 def find_source_nodes(graph):
     """ Finds the source nodes of a graph.
 
-        The function finds the source nodes of a graph, i.e. the nodes with 
+        The function finds the source nodes of a graph, i.e. the nodes with
         zero in-degree.
 
         :param graph: The graph whose source nodes are being searched for.
@@ -767,7 +767,7 @@ def local_transients(sdfg, dfg, entry_node):
 
 
 def trace_nested_access(node, state, sdfg):
-    """ 
+    """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
 

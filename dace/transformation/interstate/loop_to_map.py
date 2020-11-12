@@ -105,6 +105,15 @@ class LoopToMap(DetectLoop):
 
         return True
 
+    @staticmethod
+    def match_to_str(graph, candidate):
+        guard = graph.node(candidate[DetectLoop._loop_guard])
+        begin = graph.node(candidate[DetectLoop._loop_begin])
+        sexit = graph.node(candidate[DetectLoop._exit_state])
+
+        return (' -> '.join(state.label for state in [guard, begin, sexit]) +
+                ' (for loop)')
+
     def apply(self, sdfg):
         # Obtain loop information
         guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
@@ -186,6 +195,7 @@ class LoopToMap(DetectLoop):
             body, after,
             sd.InterstateEdge(assignments=after_edge.data.assignments))
 
-        # Remove symbol from SDFG
-        if itervar in sdfg.symbols:
+        # If this had made the iteration variable a free symbol, we can remove
+        # it from the SDFG symbols
+        if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
