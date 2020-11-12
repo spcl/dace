@@ -2150,8 +2150,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 warnings.warn("Two for-loops using the same symbol ({}) in the "
                               "same nested SDFG level. This is not officially "
                               "supported (yet).".format(sym_name))
+            else:
+                self.sdfg.add_symbol(sym_name, sym_obj.dtype)
 
             extra_syms = {sym_name: sym_obj}
+
             self.symbols[sym_name] = subsets.Range([(b, "({}) - 1".format(e), s)
                                                     for b, e, s in ranges])
 
@@ -2209,9 +2212,44 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(
                 self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
+    def _visit_test(self, node: ast.Expr):
+        # Fix for scalar promotion tests
+        # TODO: Maybe those tests should use the SDFG API instead of the
+        # Python frontend which can change how it handles conditions.
+        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+        is_test_simple = isinstance(node, simple_ast_nodes)
+        if not is_test_simple:
+            if isinstance(node, ast.Compare):
+                is_left_simple = isinstance(node.left, simple_ast_nodes)
+                is_right_simple = (
+                    len(node.comparators) == 1 and isinstance(
+                        node.comparators[0], simple_ast_nodes))
+                if is_left_simple and is_right_simple:
+                    is_test_simple = True
+        
+        # Visit test-condition
+        if not is_test_simple:
+            parsed_node = self.visit(node)
+            if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
+                datadesc = self.sdfg.arrays[parsed_node]
+                if isinstance(datadesc, data.Array):
+                    parsed_node += '[0]'
+        else:
+            parsed_node = astutils.unparse(node)
+        
+        # Generate conditions
+        cond = astutils.unparse(parsed_node)
+        cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
+
+        return cond, cond_else
+
     def visit_While(self, node: ast.While):
-        # Add an initial loop state with a None last_state (so as to not
-        # create an interstate edge)
+        # Get loop condition expression
+        begin_guard = self._add_state("while_guard")
+        loop_cond, _ = self._visit_test(node.test)
+        end_guard = self.last_state
+        
+        # Parse body
         self.loop_idx += 1
         self.continue_states.append([])
         self.break_states.append([])
@@ -2219,21 +2257,22 @@ class ProgramVisitor(ExtNodeVisitor):
             self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
-        # Get loop condition expression
-        loop_cond = astutils.unparse(node.test)
+        assert(laststate == end_guard)
 
         # Add symbols from test as necessary
         symcond = pystr_to_symbolic(loop_cond)
-        for atom in symcond.free_symbols:
-            if symbolic.issymbolic(atom, self.sdfg.constants):
-                astr = str(atom)
-                # Check for undefined variables
-                if astr not in self.defined:
-                    raise DaceSyntaxError(self, node,
-                                          'Undefined variable "%s"' % atom)
-                # Add to global SDFG symbols if not a scalar
-                if astr not in self.sdfg.symbols and astr not in self.variables:
-                    self.sdfg.add_symbol(astr, atom.dtype)
+        if symbolic.issymbolic(symcond):
+            for atom in symcond.free_symbols:
+                if symbolic.issymbolic(atom, self.sdfg.constants):
+                    astr = str(atom)
+                    # Check for undefined variables
+                    if astr not in self.defined:
+                        raise DaceSyntaxError(self, node,
+                                            'Undefined variable "%s"' % atom)
+                    # Add to global SDFG symbols if not a scalar
+                    if (astr not in self.sdfg.symbols and
+                            astr not in self.variables):
+                        self.sdfg.add_symbol(astr, atom.dtype)
 
         # Add loop to SDFG
         _, loop_guard, loop_end = self.sdfg.add_loop(laststate,
@@ -2242,13 +2281,27 @@ class ProgramVisitor(ExtNodeVisitor):
                                                      loop_cond, None,
                                                      last_loop_state)
 
+        # Connect the correct while-guard state
+        # Current state:
+        # begin_guard -> ... -> end_guard/laststate -> loop_guard -> first_loop
+        # Desired state:
+        # begin_guard -> ... -> end_guard/laststate -> first_loop
+        for e in list(self.sdfg.in_edges(loop_guard)):
+            if e.src != laststate:
+                self.sdfg.add_edge(e.src, begin_guard, e.data)
+            self.sdfg.remove_edge(e)
+        for e in list(self.sdfg.out_edges(loop_guard)):
+            self.sdfg.add_edge(end_guard, e.dst, e.data)
+            self.sdfg.remove_edge(e)
+        self.sdfg.remove_node(loop_guard)
+
         continue_states = self.continue_states.pop()
         while continue_states:
             next_state = continue_states.pop()
             out_edges = self.sdfg.out_edges(next_state)
             for e in out_edges:
                 self.sdfg.remove_edge(e)
-            self.sdfg.add_edge(next_state, loop_guard, dace.InterstateEdge())
+            self.sdfg.add_edge(next_state, begin_guard, dace.InterstateEdge())
         break_states = self.break_states.pop()
         while break_states:
             next_state = break_states.pop()
@@ -2283,33 +2336,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add a guard state
         self._add_state('if_guard')
 
-        # Fix for scalar promotion tests
-        # TODO: Maybe those tests should use the SDFG API instead of the
-        # Python frontend which can change how it handles conditions.
-        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-        is_test_simple = isinstance(node.test, simple_ast_nodes)
-        if not is_test_simple:
-            if isinstance(node.test, ast.Compare):
-                is_left_simple = isinstance(node.test.left, simple_ast_nodes)
-                is_right_simple = (
-                    len(node.test.comparators) == 1 and isinstance(
-                        node.test.comparators[0], simple_ast_nodes))
-                if is_left_simple and is_right_simple:
-                    is_test_simple = True
-        
-        # Visit if-condition
-        if not is_test_simple:
-            parsed_node = self.visit(node.test)
-            if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
-                datadesc = self.sdfg.arrays[parsed_node]
-                if isinstance(datadesc, data.Array):
-                    parsed_node += '[0]'
-        else:
-            parsed_node = astutils.unparse(node.test)
-        
         # Generate conditions
-        cond = astutils.unparse(parsed_node)
-        cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
+        cond, cond_else = self._visit_test(node.test)
 
         # Visit recursively
         laststate, first_if_state, last_if_state = \
@@ -3169,7 +3197,8 @@ class ProgramVisitor(ExtNodeVisitor):
             from dace.frontend.python.parser import infer_symbols_from_shapes
 
             # Map internal SDFG symbols by adding keyword arguments
-            symbols = set(sdfg.symbols.keys())
+            # symbols = set(sdfg.symbols.keys())
+            symbols = sdfg.free_symbols
             try:
                 mapping = infer_symbols_from_shapes(
                     sdfg, {
@@ -3215,6 +3244,24 @@ class ProgramVisitor(ExtNodeVisitor):
                     mapping[aname] = arg
             for arg in args_to_remove:
                 args.remove(arg)
+
+            # Change connector names
+            updated_args = []
+            for i, (conn, arg) in enumerate(args):
+                if (conn in self.scope_vars.keys() or
+                        conn in self.sdfg.arrays.keys() or
+                        conn in self.sdfg.symbols):
+                    if self.sdfg._temp_transients > sdfg._temp_transients:
+                        new_conn = self.sdfg.temp_data_name()
+                    else:
+                        new_conn = sdfg.temp_data_name()
+                    warnings.warn("Renaming nested SDFG connector {c} to "
+                                  "{n}".format(c=conn, n=new_conn))
+                    sdfg.replace(conn, new_conn)
+                    updated_args.append((new_conn, arg))
+                else:
+                    updated_args.append((conn, arg))
+            args = updated_args
 
             # Change transient names
             arrays_before = list(sdfg.arrays.items())
@@ -3275,6 +3322,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 k: v
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
+            # If an argument does not register as input nor as output,
+            # put it in the inputs.
+            # This may happen with input argument that are used to set
+            # a promoted scalar.
+            for k, v in argdict.items():
+                if k not in inputs.keys() and k not in outputs.keys():
+                    inputs[k] = v
             # Unset parent inputs/read accesses that
             # turn out to be outputs/write accesses.
             # TODO: Is there a case where some data is both input and output?
@@ -3575,9 +3629,16 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.variables:
             return self.variables[name]
 
+        # TODO: Why if the following code-block is moved after the code-block
+        # looking for `name` in `self.sdfg.symbols`, a lot of tests break?
         # If an allowed global, use directly
         if name in self.globals:
-            return inner_eval_ast(self.globals, node)
+            result = inner_eval_ast(self.globals, node)
+            # If a symbol, add to symbols
+            if (isinstance(result, symbolic.symbol) and
+                    name not in self.sdfg.symbols.keys()):
+                self.sdfg.add_symbol(result.name, result.dtype)
+            return result
 
         if name in self.sdfg.arrays:
             return name
@@ -3718,6 +3779,17 @@ class ProgramVisitor(ExtNodeVisitor):
             result = func(self, self.sdfg, self.last_state, operand1, operand2)
         except SyntaxError as ex:
             raise DaceSyntaxError(self, node, str(ex))
+        if not isinstance(result, (list, tuple)):
+            results = [result]
+        else:
+            results = result
+        for r in results:
+            if isinstance(r, str) and r in self.sdfg.arrays.keys():
+                if r in self.variables.keys():
+                    raise DaceSyntaxError(
+                        self, node,
+                        "Variable {v} has been already defined".format(v=r))
+                self.variables[r] = r
 
         self.last_state.set_default_lineinfo(None)
 

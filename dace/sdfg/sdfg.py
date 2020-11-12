@@ -133,8 +133,7 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(
-                symbolic.pystr_to_symbolic(assign))
+            result |= symbolic.free_symbols_and_functions(assign)
 
         return result - set(self.assignments.keys())
 
@@ -145,8 +144,28 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         """
         _replace_dict(self.assignments, name, new_name)
+
         for k, v in self.assignments.items():
-            self.assignments[k] = v.replace(name, new_name)
+            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
+            if subscript_matches:
+                sym_v = symbolic.pystr_to_symbolic(v)
+                for subscript in subscript_matches:
+                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                        n=name, s=subscript))
+                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                        n=new_name, s=subscript))
+                    sym_v = sym_v.replace(sym_name, sym_new_name)
+                str_v = symbolic.symstr(sym_v)
+                for subscript in subscript_matches:
+                    str_v = str_v.replace("({})".format(subscript),
+                                          "[{}]".format(subscript))
+                self.assignments[k] = str_v
+            else:
+                sym_name = symbolic.pystr_to_symbolic(name)
+                sym_new_name = symbolic.pystr_to_symbolic(new_name)
+                self.assignments[k] = symbolic.symstr(
+                    symbolic.pystr_to_symbolic(v).replace(
+                        sym_name, sym_new_name))
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
@@ -1939,9 +1958,13 @@ class SDFG(OrderedDiGraph):
             try:
                 self.validate()
             except InvalidSDFGError as err:
-                raise InvalidSDFGError(
-                    "Validation failed after applying {}.".format(
-                        match.print_match(sdfg)), sdfg, match.state_id) from err
+                if applied:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".format(
+                            match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+                else:
+                    raise err
 
         if (len(applied_transformations) > 0
                 and (print_report or
