@@ -791,7 +791,7 @@ def _is_op_bitwise(op: str):
 
 
 def _is_op_boolean(op: str):
-    if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'
+    if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE',
               'Is', 'NotIs'}:
         return True
     return False
@@ -819,7 +819,7 @@ def _np_result_type(nptypes):
             if k == restype:
                 restype = k
                 break
-    if restype in {int, float, complex}:
+    if restype in (int, float, complex):
         return dtypes.DTYPE_TO_TYPECLASS[restype]
     else:
         return dtypes.DTYPE_TO_TYPECLASS[restype.type]
@@ -888,7 +888,7 @@ def _result_type(
     if len(arguments) == 1:  # Unary operators
 
         if operator == 'USub' and coarse_types[0] == 0:
-            result_type = eval('dace.int{}'.format(4 * datatypes[0].bytes))
+            result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
         elif _is_op_boolean(operator):
             result_type = dace.bool_
         else:
