@@ -282,6 +282,122 @@ def test_for_with_nested_full_merge_branch():
     state_check_executions(state, 20)
 
 
+def test_for_inside_branch():
+    sdfg = dace.SDFG('for_in_branch')
+
+    state_init = sdfg.add_state('init')
+    branch_guard = sdfg.add_state('branch_guard')
+    loop_guard = sdfg.add_state('loop_guard')
+    loop_state = sdfg.add_state('loop_state')
+    branch_merge = sdfg.add_state('branch_merge')
+
+    sdfg.add_edge(state_init, branch_guard, InterstateEdge(
+        assignments={
+            'i': '0',
+        }
+    ))
+    sdfg.add_edge(branch_guard, branch_merge, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'i < 10',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(branch_guard, loop_guard, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'not (i < 10)',
+            language=Language.Python
+        ),
+        assignments={
+            'j': '0',
+        }
+    ))
+    sdfg.add_edge(loop_guard, loop_state, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'j < 10',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(loop_guard, branch_merge, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'not (j < 10)',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(loop_state, loop_guard, InterstateEdge(
+        assignments={
+            'j': 'j + 1',
+        }
+    ))
+
+    propagate_states(sdfg)
+
+    state_check_executions(branch_guard, 1, False)
+    state_check_executions(loop_guard, 11, True)
+    state_check_executions(loop_state, 10, True)
+    state_check_executions(branch_merge, 1, False)
+
+
+def test_full_merge_inside_loop():
+    sdfg = dace.SDFG('full_merge_inside_loop')
+
+    state_init = sdfg.add_state('init')
+    intermittent = sdfg.add_state('intermittent')
+    loop_guard = sdfg.add_state('loop_guard')
+    branch_guard = sdfg.add_state('branch_guard')
+    branch_state = sdfg.add_state('branch_state')
+    branch_merge = sdfg.add_state('branch_merge')
+    loop_end = sdfg.add_state('loop_end')
+
+    sdfg.add_edge(state_init, intermittent, InterstateEdge(
+        assignments={
+            'j': '0',
+        }
+    ))
+    sdfg.add_edge(intermittent, loop_guard, InterstateEdge(
+        assignments={
+            'i': '0',
+        }
+    ))
+    sdfg.add_edge(loop_guard, branch_guard, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'i < 10',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(loop_guard, loop_end, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'not (i < 10)',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(branch_guard, branch_state, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'j < 10',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(branch_guard, branch_merge, InterstateEdge(
+        condition=CodeProperty.from_string(
+            'not (j < 10)',
+            language=Language.Python
+        )
+    ))
+    sdfg.add_edge(branch_state, branch_merge, InterstateEdge())
+    sdfg.add_edge(branch_merge, loop_guard, InterstateEdge(
+        assignments={
+            'i': 'i + 1',
+        }
+    ))
+
+    propagate_states(sdfg)
+
+    state_check_executions(loop_guard, 11, False)
+    state_check_executions(branch_guard, 10, False)
+    state_check_executions(branch_state, 10, True)
+    state_check_executions(branch_merge, 10, False)
+    state_check_executions(loop_end, 1, False)
+
+
 def test_while_with_nested_full_merge_branch():
     @dace.program(dace.int32)
     def while_with_nested_full_merge_branch(a):
@@ -536,6 +652,8 @@ if __name__ == "__main__":
     test_3_fold_nested_loop_with_symbolic_bounds()
     test_while_with_nested_full_merge_branch()
     test_for_with_nested_full_merge_branch()
+    test_for_inside_branch()
     test_while_inside_for()
     test_conditional_full_merge()
     test_conditional_fake_merge()
+    test_full_merge_inside_loop()

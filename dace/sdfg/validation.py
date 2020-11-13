@@ -466,29 +466,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # If scope(src) == scope(dst): OK
         if scope[src_node] == scope[dst_node] or src_node == scope[dst_node]:
             pass
-        # If scope(src) contains scope(dst), then src must be a data node
+        # If scope(src) contains scope(dst), then src must be a data node,
+        # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, src_node, dst_node):
-            if not isinstance(src_node, nd.AccessNode):
-                pass
-                # raise InvalidSDFGEdgeError(
-                #     "Memlet creates an "
-                #     "invalid path (source node %s should "
-                #     "be a data node)" % str(src_node),
-                #     sdfg,
-                #     state_id,
-                #     eid,
-                # )
-        # If scope(dst) contains scope(src), then dst must be a data node
+            pass
+        # If scope(dst) contains scope(src), then dst must be a data node,
+        # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Memlet creates an "
-                    "invalid path (sink node %s should "
-                    "be a data node)" % str(dst_node),
-                    sdfg,
-                    state_id,
-                    eid,
-                )
+                if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
+                    pass
+                else:
+                    raise InvalidSDFGEdgeError(
+                        f"Memlet creates an invalid path (sink node {dst_node}"
+                        " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes",

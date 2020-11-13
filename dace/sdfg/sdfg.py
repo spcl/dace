@@ -133,8 +133,7 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(
-                symbolic.pystr_to_symbolic(assign))
+            result |= symbolic.free_symbols_and_functions(assign)
 
         return result - set(self.assignments.keys())
 
@@ -145,8 +144,28 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         """
         _replace_dict(self.assignments, name, new_name)
+
         for k, v in self.assignments.items():
-            self.assignments[k] = v.replace(name, new_name)
+            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
+            if subscript_matches:
+                sym_v = symbolic.pystr_to_symbolic(v)
+                for subscript in subscript_matches:
+                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                        n=name, s=subscript))
+                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                        n=new_name, s=subscript))
+                    sym_v = sym_v.replace(sym_name, sym_new_name)
+                str_v = symbolic.symstr(sym_v)
+                for subscript in subscript_matches:
+                    str_v = str_v.replace("({})".format(subscript),
+                                          "[{}]".format(subscript))
+                self.assignments[k] = str_v
+            else:
+                sym_name = symbolic.pystr_to_symbolic(name)
+                sym_new_name = symbolic.pystr_to_symbolic(new_name)
+                self.assignments[k] = symbolic.symstr(
+                    symbolic.pystr_to_symbolic(v).replace(
+                        sym_name, sym_new_name))
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
@@ -434,6 +453,10 @@ class SDFG(OrderedDiGraph):
             :param name: Symbol name.
         """
         del self.symbols[name]
+        # Clean up from symbol mapping if this SDFG is nested
+        nsdfg = self.parent_nsdfg_node
+        if nsdfg is not None and name in nsdfg.symbol_mapping:
+            del nsdfg.symbol_mapping[name]
 
     @property
     def start_state(self):
@@ -911,19 +934,21 @@ class SDFG(OrderedDiGraph):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data containers are read and written in this SDFG.
-        Writes with conflict resolution are included as both reads and writes.
+        Determines what data containers are read and written in this SDFG. Does
+        not include reads to subsets of containers that have previously been
+        written within the same state.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
         read_set = set()
         write_set = set()
         for state in self.states():
-            rs, ws = state.read_and_write_sets()
-            read_set |= rs
-            write_set |= ws
-        for edge in self.edges():
-            read_set |= edge.data.free_symbols & self.arrays.keys()
+            for edge in self.in_edges(state):
+                read_set |= edge.data.free_symbols & self.arrays.keys()
+            # Get dictionaries of subsets read and written from each state
+            rs, ws = state._read_and_write_sets()
+            read_set |= rs.keys()
+            write_set |= ws.keys()
         return read_set, write_set
 
     def arglist(self) -> Dict[str, dt.Data]:
@@ -1936,9 +1961,13 @@ class SDFG(OrderedDiGraph):
             try:
                 self.validate()
             except InvalidSDFGError as err:
-                raise InvalidSDFGError(
-                    "Validation failed after applying {}.".format(
-                        match.print_match(sdfg)), sdfg, match.state_id) from err
+                if applied:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".format(
+                            match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+                else:
+                    raise err
 
         if (len(applied_transformations) > 0
                 and (print_report or
