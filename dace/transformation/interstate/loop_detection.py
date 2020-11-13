@@ -126,7 +126,10 @@ class DetectLoop(transformation.Transformation):
 
 
 def find_for_loop(
-    sdfg: sd.SDFG, guard: sd.SDFGState, entry: sd.SDFGState
+    sdfg: sd.SDFG,
+    guard: sd.SDFGState,
+    entry: sd.SDFGState,
+    itervar: Optional[str] = None
 ) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType,
                                   symbolic.SymbolicType], Tuple[
                                       List[sd.SDFGState], sd.SDFGState]]]:
@@ -143,7 +146,8 @@ def find_for_loop(
     # Extract state transition edge information
     guard_inedges = sdfg.in_edges(guard)
     condition_edge = sdfg.edges_between(guard, entry)[0]
-    itervar = list(guard_inedges[0].data.assignments.keys())[0]
+    if itervar is None:
+        itervar = list(guard_inedges[0].data.assignments.keys())[0]
     condition = condition_edge.data.condition_sympy()
 
     # Find the stride edge. All in-edges to the guard except for the stride edge
