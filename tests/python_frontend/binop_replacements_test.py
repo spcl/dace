@@ -394,7 +394,7 @@ def test_sym_sym():
 
 @dace.program
 def mixed(A: dace.int64[M, N], B:dace.int64):
-    return 5j + M + A[0, 0] + 32 + A[0, 1] + B + 2 + M + N
+    return 5j + dace.complex64(M) + A[0, 0] + 32 + A[0, 1] + B + 2 + M + N
 
 
 def test_mixed():
@@ -439,4 +439,4 @@ if __name__ == "__main__":
     test_bool_symexpr()
     test_symexpr_bool()
     test_sym_sym()
-    # test_mixed()
+    test_mixed()
