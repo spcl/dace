@@ -881,6 +881,10 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 
+# Platform-dependent types for systems where NumPy returns them
+# in np.result_type
+longlong = typeclass(numpy.longlong)
+
 DTYPE_TO_TYPECLASS = {
     int: typeclass(int),
     float: typeclass(float),
@@ -899,7 +903,8 @@ DTYPE_TO_TYPECLASS = {
     numpy.float32: float32,
     numpy.float64: float64,
     numpy.complex64: complex64,
-    numpy.complex128: complex128
+    numpy.complex128: complex128,
+    numpy.longlong: longlong
 }
 
 TYPECLASS_STRINGS = [
@@ -921,6 +926,7 @@ TYPECLASS_STRINGS = [
     "float64",
     "complex64",
     "complex128",
+    "longlong"
 ]
 
 INTEGER_TYPES = [
@@ -934,6 +940,7 @@ INTEGER_TYPES = [
     uint16,
     uint32,
     uint64,
+    longlong
 ]
 
 #######################################################
