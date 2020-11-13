@@ -815,7 +815,10 @@ def _np_result_type(nptypes):
     # e.g. np.longlong
     restype = np.result_type(*nptypes)
     if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
-        restype = np.dtype(restype)
+        for k in dtypes.DTYPE_TO_TYPECLASS.keys():
+            if k == restype:
+                restype = k
+                break
     return dtypes.DTYPE_TO_TYPECLASS[restype.type]
 
 
