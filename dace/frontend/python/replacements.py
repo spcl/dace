@@ -816,13 +816,10 @@ def _np_result_type(nptypes):
     restype = np.result_type(*nptypes)
     if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
         for k in dtypes.DTYPE_TO_TYPECLASS.keys():
-            if k == restype:
+            if k == restype.type:
                 restype = k
-                break
-    if restype in (int, float, complex):
-        return dtypes.DTYPE_TO_TYPECLASS[restype]
-    else:
-        return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+                return dtypes.DTYPE_TO_TYPECLASS[restype]
+    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
 
 
 def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
