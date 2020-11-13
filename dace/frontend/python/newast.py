@@ -3471,7 +3471,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     method_name = None
                 func = oprepo.Replacements.get_ufunc(method_name)
-                if func:
+                if ufunc_name in replacements.ufuncs.keys() and func:
                     found_ufunc = True
 
         # Otherwise, try to find a default implementation for the SDFG

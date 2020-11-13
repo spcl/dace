@@ -899,7 +899,10 @@ DTYPE_TO_TYPECLASS = {
     numpy.float32: float32,
     numpy.float64: float64,
     numpy.complex64: complex64,
-    numpy.complex128: complex128
+    numpy.complex128: complex128,
+    # FIXME
+    numpy.longlong: int64,
+    numpy.ulonglong: uint64
 }
 
 TYPECLASS_STRINGS = [
@@ -920,7 +923,7 @@ TYPECLASS_STRINGS = [
     "float32",
     "float64",
     "complex64",
-    "complex128",
+    "complex128"
 ]
 
 INTEGER_TYPES = [
@@ -933,7 +936,7 @@ INTEGER_TYPES = [
     uint8,
     uint16,
     uint32,
-    uint64,
+    uint64
 ]
 
 #######################################################
