@@ -453,6 +453,10 @@ class SDFG(OrderedDiGraph):
             :param name: Symbol name.
         """
         del self.symbols[name]
+        # Clean up from symbol mapping if this SDFG is nested
+        nsdfg = self.parent_nsdfg_node
+        if nsdfg is not None and name in nsdfg.symbol_mapping:
+            del nsdfg.symbol_mapping[name]
 
     @property
     def start_state(self):
@@ -930,19 +934,21 @@ class SDFG(OrderedDiGraph):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data containers are read and written in this SDFG.
-        Writes with conflict resolution are included as both reads and writes.
+        Determines what data containers are read and written in this SDFG. Does
+        not include reads to subsets of containers that have previously been
+        written within the same state.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
         read_set = set()
         write_set = set()
         for state in self.states():
-            rs, ws = state.read_and_write_sets()
-            read_set |= rs
-            write_set |= ws
-        for edge in self.edges():
-            read_set |= edge.data.free_symbols & self.arrays.keys()
+            for edge in self.in_edges(state):
+                read_set |= edge.data.free_symbols & self.arrays.keys()
+            # Get dictionaries of subsets read and written from each state
+            rs, ws = state._read_and_write_sets()
+            read_set |= rs.keys()
+            write_set |= ws.keys()
         return read_set, write_set
 
     def arglist(self) -> Dict[str, dt.Data]:
