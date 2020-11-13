@@ -118,6 +118,10 @@ run_all() {
 
     #Unique nested sdfg
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd "\n"
+
+    ## BLAS
+    run_sample blas/nodes/axpy_test blas_axpy_test "\n" --target intel_fpga
+    
 }
 
 # Check if aoc is vailable
