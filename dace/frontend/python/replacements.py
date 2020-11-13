@@ -819,7 +819,10 @@ def _np_result_type(nptypes):
             if k == restype:
                 restype = k
                 break
-    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+    if restype in {int, float, complex}:
+        return dtypes.DTYPE_TO_TYPECLASS[restype]
+    else:
+        return dtypes.DTYPE_TO_TYPECLASS[restype.type]
 
 
 def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
