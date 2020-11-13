@@ -14,12 +14,12 @@ also address any questions you have to alziogas@inf.ethz.ch
 The DaCe framework officially supports Python 3 up to version 3.7.
 The Python-Frontend also works with version 3.8. However, the module SymPy
 must be updated to version 1.6.2 or newer. Please note that there are some
-issues between DaCe and SymPy 1.6.2 (see #367).  
+issues between DaCe and SymPy 1.6.2 (see [#367](https://github.com/spcl/dace/pull/367)).  
 
 **Neither the DaCe framework nor the Python-Frontend have been tested with
 Python version 3.9**
 
-### Main Limitations
+## Main Limitations
 
 - Classes are not supported.
 - Lists, sets, and dictionaries are not supported as data. There is limited support for other uses, e.g., as arguments to some methods.
@@ -65,6 +65,6 @@ automatically may result in invalid SDFGs. Currently known issues include:
 - When accessing inside a Map an Array multiple times with different but overlapping
 ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate them.
 - When there are sequential dependencies between statements due to updating a loop variable,
-StateFusion may erroneously lead to concurrent execution of those statements (see #315).
+StateFusion may erroneously lead to concurrent execution of those statements (see [#315](https://github.com/spcl/dace/issues/315)).
   
 Temporary workaround: Disable the automatic strict transformations flag in the configuration file `.dace.conf`.
