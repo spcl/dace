@@ -817,8 +817,7 @@ def _np_result_type(nptypes):
     if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
         for k in dtypes.DTYPE_TO_TYPECLASS.keys():
             if k == restype.type:
-                restype = k
-                return dtypes.DTYPE_TO_TYPECLASS[restype]
+                return dtypes.DTYPE_TO_TYPECLASS[k]
     return dtypes.DTYPE_TO_TYPECLASS[restype.type]
 
 
