@@ -571,6 +571,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
         # In each cycle, try to identify a valid loop guard state.
         guard = None
         begin = None
+        itvar = None
         for v in cycle:
             # Try to identify a valid for-loop guard.
             in_edges = sdfg.in_edges(v)
@@ -584,19 +585,20 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
             # All incoming guard edges must set exactly one variable and it must
             # be the same for all of them.
-            itvar = None
+            itvars = set()
             for iedge in in_edges:
-                if len(iedge.data.assignments) == 1:
-                    if itvar is None:
-                        itvar = list(iedge.data.assignments.keys())[0]
-                    elif itvar not in iedge.data.assignments:
-                        itvar = None
-                        break
+                if len(iedge.data.assignments) > 0:
+                    if not itvars:
+                        itvars = set(iedge.data.assignments.keys())
+                    else:
+                        itvars &= set(iedge.data.assignments.keys())
                 else:
-                    itvar = None
+                    itvars = None
                     break
-            if itvar is None:
+            if not itvars or len(itvars) > 1:
                 continue
+            itvar = next(iter(itvars))
+            itvarsym = pystr_to_symbolic(itvar)
 
             # The outgoing edges must be negations of one another.
             if out_edges[0].data.condition_sympy() != (sympy.Not(
@@ -607,10 +609,12 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # to the guard via 'increment' edge) is part of this cycle. If not,
             # we're looking at the guard for a nested cycle, which we ignore for
             # this cycle.
-            increment_edge = in_edges[0]
-            if pystr_to_symbolic(itvar) in pystr_to_symbolic(
-                    in_edges[1].data.assignments[itvar]).free_symbols:
-                increment_edge = in_edges[1]
+            increment_edge = None
+            for iedge in in_edges:
+                if itvarsym in pystr_to_symbolic(
+                        iedge.data.assignments[itvar]).free_symbols:
+                    increment_edge = iedge
+                    break
             if increment_edge.src not in cycle:
                 continue
 
@@ -632,17 +636,15 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             begin = loop_state
             break
 
-        if guard is not None and begin is not None:
+        if guard is not None and begin is not None and itvar is not None:
             # A guard state was identified, see if it has valid for-loop ranges
             # and annotate the loop as such.
 
             # Ensure that this guard's loop wasn't annotated yet.
-            guard_inedges = sdfg.in_edges(guard)
-            itervar = list(guard_inedges[0].data.assignments.keys())[0]
-            if itervar in begin.ranges:
+            if itvar in begin.ranges:
                 continue
 
-            res = find_for_loop(sdfg, guard, begin)
+            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
             if res is None:
                 # No range detected, mark as unbounded.
                 unannotated_cycle_states.extend(cycle)

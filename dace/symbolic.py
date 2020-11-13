@@ -437,7 +437,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq',
-    'NotEq'
+    'NotEq', 'Ne'
 }
 
 
@@ -655,8 +655,12 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return symbol(expr)
 
     symbol_map = symbol_map or {}
-    locals = {'min': sympy.Min, 'max': sympy.Max,
-              'True': sympy.true, 'False': sympy.false}
+    locals = {
+        'min': sympy.Min,
+        'max': sympy.Max,
+        'True': sympy.true,
+        'False': sympy.false
+    }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
@@ -696,6 +700,17 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(
             expr.args[0]), self._print(expr.args[1]))
+
+    def _print_Equality(self, expr):
+        return '((%s) == (%s))' % (self._print(
+            expr.args[0]), self._print(expr.args[1]))
+
+    def _print_Unequality(self, expr):
+        return '((%s) != (%s))' % (self._print(
+            expr.args[0]), self._print(expr.args[1]))
+
+    def _print_Not(self, expr):
+        return '(not (%s))' % self._print(expr.args[0])
 
 
 def symstr(sym):
