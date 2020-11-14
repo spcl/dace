@@ -475,9 +475,9 @@ class StateGraphView(object):
                         # Store all subsets that have been written
                         ws[n.data].append(e.data.subset)
                     for e in sg.out_edges(n):
-                        if n.data in ws:
-                            if any(s.covers(e.data.subset) for s in ws[n.data]):
-                                continue
+                        # if n.data in ws:
+                        #     if any(s.covers(e.data.subset) for s in ws[n.data]):
+                        #         continue
                         rs[n.data].append(e.data.subset)
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
