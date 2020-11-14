@@ -654,6 +654,8 @@ class Range(Subset):
             #       a special boolean type!
             if cond1 == False or cond2 == False:
                 return False
+            if not (cond1 and cond2):
+                return False
 
         return True
 

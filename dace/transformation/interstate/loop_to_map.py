@@ -122,7 +122,7 @@ class LoopToMap(DetectLoop):
                                                   sdfg.arrays[data], [itervar],
                                                   subsets.Range([(start, end,
                                                                   step)]))
-                        if not pread.subset.intersects(pwrite.subset):
+                        if not subsets.intersects(pread.subset, pwrite.subset):
                             break
                         return False
 
