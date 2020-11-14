@@ -38,18 +38,17 @@ class AugAssignToWCR(transformation.Transformation):
         if graph.entry_node(tasklet) is not None:
             return False
 
-        if graph.degree(inarr) != 1:
+        inedges = graph.edges_between(inarr, tasklet)
+
+        if graph.in_degree(inarr) > 0 and len(inedges) == 1:
+            return False
+        if len(graph.edges_between(tasklet, outarr)) > 1:
             return False
 
-        inedge = graph.edges_between(inarr, tasklet)[0]
+        
         outedge = graph.edges_between(tasklet, outarr)[0]
 
-        # Same memlet
-        if inedge.data.subset != outedge.data.subset:
-            return False
-
-        # Get relevant input/output connectors
-        inconn = inedge.dst_conn
+        # Get relevant output connector
         outconn = outedge.src_conn
 
         ops = '[%s]' % ''.join(
@@ -59,17 +58,24 @@ class AugAssignToWCR(transformation.Transformation):
             # Expect ast.Assign(ast.Expr())
             return False
         elif tasklet.language is dtypes.Language.CPP:
-            # Try to match a single C assignment that can be converted to WCR
             cstr = tasklet.code.as_string.strip()
-            if re.match(
-                    r'^\s*%s\s*=\s*%s\s*%s.*;$' %
-                (re.escape(outconn), re.escape(inconn), ops), cstr) is None:
-                return False
+            for edge in inedges:
+                # Try to match a single C assignment that can be converted to WCR
+                inconn = edge.dst_conn
+                if re.match(
+                        r'^\s*%s\s*=\s*%s\s*%s.*;$' %
+                    (re.escape(outconn), re.escape(inconn), ops), cstr) is None:
+                    continue
+                # Same memlet
+                if edge.data.subset != outedge.data.subset:
+                    continue
+
+                return True
         else:
             # Only Python/C++ tasklets supported
             return False
 
-        return True
+        return False
 
     def apply(self, sdfg: SDFG):
         input: nodes.AccessNode = self.input(sdfg)
@@ -77,10 +83,9 @@ class AugAssignToWCR(transformation.Transformation):
         output: nodes.AccessNode = self.output(sdfg)
         state: SDFGState = sdfg.node(self.state_id)
 
-        inedge = state.edges_between(input, tasklet)[0]
+        inedges = state.edges_between(input, tasklet)
         outedge = state.edges_between(tasklet, output)[0]
-        # Get relevant input/output connectors
-        inconn = inedge.dst_conn
+        # Get relevant output connector
         outconn = outedge.src_conn
 
         ops = '[%s]' % ''.join(
@@ -90,13 +95,23 @@ class AugAssignToWCR(transformation.Transformation):
         if tasklet.language is dtypes.Language.Python:
             raise NotImplementedError
         elif tasklet.language is dtypes.Language.CPP:
-            match = re.match(
-                r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
-                (re.escape(outconn), re.escape(inconn), ops),
-                tasklet.code.as_string.strip())
-            op = match.group(1)
-            expr = match.group(2)
-            tasklet.code.code = '%s = %s;' % (outconn, expr)
+            cstr = tasklet.code.as_string.strip()
+            for edge in inedges:
+                inconn = edge.dst_conn
+                match = re.match(
+                    r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
+                    (re.escape(outconn), re.escape(inconn), ops),
+                    cstr)
+                if match is None:
+                    continue
+                if edge.data.subset != outedge.data.subset:
+                    continue
+
+                op = match.group(1)
+                expr = match.group(2)
+                tasklet.code.code = '%s = %s;' % (outconn, expr)
+                inedge = edge
+                break
         else:
             op = ''
 
@@ -105,4 +120,5 @@ class AugAssignToWCR(transformation.Transformation):
 
         # Remove input node and connector
         state.remove_edge_and_connectors(inedge)
-        state.remove_node(input)
+        if state.degree(input) == 0:
+            state.remove_node(input)
