@@ -721,9 +721,10 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             :param sdfg: A reference to the parent SDFG.
             :param debuginfo: Source code locator for debugging.
         """
+        from dace.sdfg.sdfg import SDFG  # Avoid import loop
         super(SDFGState, self).__init__()
         self._label = label
-        self._parent = sdfg
+        self._parent: SDFG = sdfg
         self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
