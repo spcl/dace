@@ -12,7 +12,7 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple
 
 
 def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
