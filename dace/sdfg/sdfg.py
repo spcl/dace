@@ -1884,7 +1884,8 @@ class SDFG(OrderedDiGraph):
             validate_all: bool = False,
             strict: bool = False,
             states: Optional[List[Any]] = None,
-            print_report: Optional[bool] = None) -> int:
+            print_report: Optional[bool] = None,
+            order_by_transformation: bool = True) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -1897,7 +1898,9 @@ class SDFG(OrderedDiGraph):
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
                                  the DaCe config option 'debugprint' should
-                                 apply)
+                                 apply).
+            :param order_by_transformation: Try to apply transformations ordered
+                                            by class rather than SDFG.
             :return: Number of transformations applied.
 
             Examples::
@@ -1926,36 +1929,56 @@ class SDFG(OrderedDiGraph):
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
-        # Cache transformations as metadata for faster application
-        opt.set_transformation_metadata(xforms)
+        params_by_xform = {x: o for x, o in zip(xforms, options)}
 
-        applied = True
-        while applied:
-            applied = False
-            # Find and apply one of the chosen transformations
-            for match in opt.get_pattern_matches(strict=strict,
-                                                 patterns=xforms,
-                                                 states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
+        # Helper function for applying and validating a transformation
+        def _apply_and_validate(match):
+            sdfg = self.sdfg_list[match.sdfg_id]
 
-                # Set transformation properties
-                opts = next(o for x, o in zip(xforms, options)
-                            if type(match) is x)
-                for prop_name, prop_val in opts.items():
-                    setattr(match, prop_name, prop_val)
+            # Set transformation properties
+            opts = params_by_xform[type(match)]
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
 
-                match.apply(sdfg)
-                applied_transformations[type(match).__name__] += 1
-                if validate_all:
-                    try:
-                        self.validate()
-                    except InvalidSDFGError as err:
-                        raise InvalidSDFGError(
-                            "Validation failed after applying {}.".format(
-                                match.print_match(sdfg)), sdfg,
-                            match.state_id) from err
-                applied = True
-                break
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                try:
+                    self.validate()
+                except InvalidSDFGError as err:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".
+                        format(match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+
+        if order_by_transformation:
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    applied = True
+                    while applied:
+                        applied = False
+                        for match in opt.get_pattern_matches(strict=strict,
+                                                             patterns=[xform],
+                                                             states=states):
+                            _apply_and_validate(match)
+                            applied = True
+                            applied_anything = True
+                            break
+        else:
+            # Cache transformations as metadata for faster application
+            opt.set_transformation_metadata(xforms)
+            applied = True
+            while applied:
+                applied = False
+                # Find and apply one of the chosen transformations
+                for match in opt.get_pattern_matches(strict=strict,
+                                                     patterns=xforms,
+                                                     states=states):
+                    _apply_and_validate(match)
+                    applied = True
+                    break
 
         if validate:
             try:
@@ -2016,8 +2039,9 @@ class SDFG(OrderedDiGraph):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(str(node),
-                                                                                                          impl_name))
+                    print(
+                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
+                        .format(str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
