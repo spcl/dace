@@ -504,7 +504,8 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
             [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
 
-def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
+def promote_scalars_to_symbols(sdfg: sd.SDFG,
+                               ignore: Optional[Set[str]] = None) -> Set[str]:
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
@@ -513,6 +514,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     optimization.
 
     :param sdfg: The SDFG to run the pass on.
+    :param ignore: An optional set of strings of scalars to ignore.
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
@@ -529,8 +531,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     # 5. Remove data descriptors and add symbols to SDFG
     # 6. Replace subscripts in all interstate conditions and assignments
     # 7. Make indirections with symbols a single memlet
-
     to_promote = find_promotable_scalars(sdfg)
+    if ignore:
+        to_promote -= ignore
     if len(to_promote) == 0:
         return to_promote
 
