@@ -128,8 +128,12 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        first_state = graph.nodes()[candidate[StateFusion.first_state]]
-        second_state = graph.nodes()[candidate[StateFusion.second_state]]
+        if isinstance(candidate[StateFusion.first_state], SDFGState):
+            first_state = candidate[StateFusion.first_state]
+            second_state = candidate[StateFusion.second_state]
+        else:
+            first_state = graph.node(candidate[StateFusion.first_state])
+            second_state = graph.node(candidate[StateFusion.second_state])
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -387,8 +391,12 @@ class StateFusion(transformation.Transformation):
         return " -> ".join(state.label for state in [first_state, second_state])
 
     def apply(self, sdfg):
-        first_state = sdfg.nodes()[self.subgraph[StateFusion.first_state]]
-        second_state = sdfg.nodes()[self.subgraph[StateFusion.second_state]]
+        if isinstance(self.subgraph[StateFusion.first_state], SDFGState):
+            first_state = self.subgraph[StateFusion.first_state]
+            second_state = self.subgraph[StateFusion.second_state]
+        else:
+            first_state = sdfg.node(self.subgraph[StateFusion.first_state])
+            second_state = sdfg.node(self.subgraph[StateFusion.second_state])
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)
@@ -458,7 +466,7 @@ class StateFusion(transformation.Transformation):
                     for cand in candidates:
                         if StateFusion.memlets_intersect(
                                 first_state, [cand], False, second_state,
-                                [node], True):
+                            [node], True):
                             n = cand
                             break
                     else:

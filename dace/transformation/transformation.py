@@ -123,7 +123,8 @@ class Transformation(object):
         return str(list(candidate.values()))
 
     def __init__(self, sdfg_id: int, state_id: int,
-                 subgraph: Dict['PatternNode', int], expr_index: int) -> None:
+                 subgraph: Dict['PatternNode', int], expr_index: int,
+                 override=False) -> None:
         """ Initializes an instance of Transformation match.
             :param sdfg_id: A unique ID of the SDFG.
             :param state_id: The node ID of the SDFG state, if applicable. If
@@ -143,15 +144,18 @@ class Transformation(object):
 
         self.sdfg_id = sdfg_id
         self.state_id = state_id
-        for value in subgraph.values():
-            if not isinstance(value, int):
-                raise TypeError('All values of '
-                                'subgraph'
-                                ' dictionary must be '
-                                'instances of int.')
-        # Serializable subgraph with node IDs as keys
         expr = self.expressions()[expr_index]
-        self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
+        if not override:
+            for value in subgraph.values():
+                if not isinstance(value, int):
+                    raise TypeError('All values of '
+                                    'subgraph'
+                                    ' dictionary must be '
+                                    'instances of int.')
+            self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
+        else:
+            self._subgraph = {-1: -1}
+        # Serializable subgraph with node IDs as keys
         self._subgraph_user = copy.copy(subgraph)
         self.expr_index = expr_index
 
