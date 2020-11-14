@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop to map transformation """
 
+from collections import defaultdict
 import copy
 import itertools
 import sympy as sp
@@ -56,29 +57,74 @@ class LoopToMap(DetectLoop):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
-        read_set, write_set = begin.read_and_write_sets()
-        overlap = read_set & write_set
-        # If the same container is both read and written, only match if it
-        # read and written exactly one place, at exactly the same index
-        if len(overlap) > 0:
-            code_nodes = [
-                n for n in begin.nodes() if isinstance(n, nodes.CodeNode)
-            ]
-            subsets = {}
-            for data in overlap:
-                for cn in code_nodes:
-                    for e in begin.all_edges(cn):
-                        if e.data.data == data:
-                            subset = e.data.subset
-                            if e.data.dynamic or subset.num_elements() != 1:
-                                # If pointers are involved, give up
-                                return False
-                            if data not in subsets:
-                                subsets[data] = subset
-                            else:
-                                if subsets[data] != subset:
-                                    # All subsets to this data must be identical
-                                    return False
+        _, write_set = begin.read_and_write_sets()
+        code_nodes = [n for n in begin.nodes() if isinstance(n, nodes.CodeNode)]
+
+        write_memlets = defaultdict(list)
+
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild('a', exclude=[itersym])
+        b = sp.Wild('b', exclude=[itersym])
+
+        for cn in code_nodes:
+            # Take all writes that are not conflicted into consideration
+            for e in begin.out_edges(cn):
+                data = e.data.data
+                subset = e.data.subset
+                if data in write_set:
+                    if e.data.dynamic or subset.num_elements() != 1:
+                        # If pointers are involved, give up
+                        return False
+                    # To be sure that the value is only written at unique
+                    # indices per loop iteration, we want to match symbols
+                    # of the form "a*i+b" where a >= 1, and i is the iteration
+                    # variable. The iteration variable must be used.
+                    if e.data.wcr is None:
+                        found = False
+                        for rb, re, rs in e.data.subset.ndrange():
+                            if rb != re:
+                                continue
+                            m = rb.match(a * itersym + b)
+                            if m is None:
+                                continue
+                            if (m[a] >= 1) != True:
+                                continue
+                            found = True
+                        if not found:
+                            return False
+                    # End of check
+
+                    write_memlets[data].append(e.data)
+
+        # After looping over relevant writes, consider reads that may overlap
+        for cn in code_nodes:
+            for e in begin.in_edges(cn):
+                data = e.data.data
+                subset = e.data.subset
+                from dace.sdfg.propagation import propagate_subset
+                # If the same container is both read and written, only match if
+                # it read and written at locations that will not create data races
+                if data in write_memlets:
+                    if e.data.dynamic or subset.num_elements() != 1:
+                        # If pointers are involved, give up
+                        return False
+
+                    pread = propagate_subset([e.data], sdfg.arrays[data],
+                                             [itervar],
+                                             subsets.Range([(start, end, step)
+                                                            ]))
+                    for candidate in write_memlets[data]:
+                        # Simple case: read and write are in the same subset
+                        if e.data.subset == candidate.subset:
+                            break
+                        # Propagated read does not overlap with propagated write
+                        pwrite = propagate_subset([candidate],
+                                                  sdfg.arrays[data], [itervar],
+                                                  subsets.Range([(start, end,
+                                                                  step)]))
+                        if not pread.subset.intersects(pwrite.subset):
+                            break
+                        return False
 
         # Check that the iteration variable is not used on other edges or states
         # before it is reassigned
@@ -111,8 +157,8 @@ class LoopToMap(DetectLoop):
         begin = graph.node(candidate[DetectLoop._loop_begin])
         sexit = graph.node(candidate[DetectLoop._exit_state])
 
-        return (' -> '.join(state.label for state in [guard, begin, sexit]) +
-                ' (for loop)')
+        return (' -> '.join(state.label
+                            for state in [guard, begin, sexit]) + ' (for loop)')
 
     def apply(self, sdfg):
         # Obtain loop information
