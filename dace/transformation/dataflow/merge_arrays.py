@@ -6,7 +6,7 @@ from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 
 
-@registry.autoregister_params(singlestate=True)
+@registry.autoregister_params(singlestate=True, strict=True)
 class InMergeArrays(transformation.Transformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
