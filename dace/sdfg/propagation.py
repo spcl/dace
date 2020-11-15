@@ -673,37 +673,6 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             unannotated_cycle_states.extend(cycle)
 
 
-def _acyclic_dominance_frontier(sdfg):
-    '''
-    Find the dominance frontier for an SDFG while ignoring any back edges.
-
-    This is a modified version of the dominance frontiers algorithm as
-    implemented by networkx.
-
-    :param sdfg: The SDFG for which to compute the acyclic dominance frontier.
-    :returns: A dictionary keyed by states, containing the dominance frontier
-              for each SDFG state.
-    '''
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-
-    dom_frontiers = {state: set() for state in sdfg.nodes()}
-    for u in idom:
-        if len(sdfg.nx.pred[u]) >= 2:
-            for v in sdfg.nx.pred[u]:
-                if v in idom:
-                    df_candidates = set()
-                    while v != idom[u]:
-                        if v == u:
-                            df_candidates = None
-                            break
-                        df_candidates.add(v)
-                        v = idom[v]
-                    if df_candidates is not None:
-                        for candidate in df_candidates:
-                            dom_frontiers[candidate].add(u)
-
-    return dom_frontiers
-
 
 def propagate_states(sdfg) -> None:
     """
@@ -757,6 +726,7 @@ def propagate_states(sdfg) -> None:
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
     from dace.transformation.helpers import split_interstate_edges
+    from dace.sdfg.analysis import cfg
 
     # Clean up the state machine by separating combined condition and assignment
     # edges.
@@ -772,7 +742,7 @@ def propagate_states(sdfg) -> None:
                 temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
             sdfg.add_edge(s, temp_exit_state, InterstateEdge())
 
-    dom_frontier = _acyclic_dominance_frontier(sdfg)
+    dom_frontier = cfg.acyclic_dominance_frontier(sdfg)
 
     # Find any valid for loop constructs and annotate the loop ranges. Any other
     # cycle should be marked as unannotated.
