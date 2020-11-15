@@ -1,10 +1,12 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+from os import stat
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
-import itertools
+import re
 
-from dace import memlet, registry, SDFG, SDFGState
+from dace import dtypes, registry, SDFG, SDFGState, symbolic
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
+from dace.sdfg.analysis import cfg
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -21,7 +23,7 @@ class PruneConnectors(pm.Transformation):
 
     @staticmethod
     def can_be_applied(graph: Union[SDFG, SDFGState],
-                       candidate: Dict['PatternNode', int],
+                       candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
                        strict: bool = False) -> bool:
@@ -63,3 +65,101 @@ class PruneConnectors(pm.Transformation):
                 if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                     # If the data is now unused, we can purge it from the SDFG
                     nsdfg.sdfg.remove_data(conn)
+
+
+@registry.autoregister_params(singlestate=True, strict=True)
+class PruneSymbols(pm.Transformation):
+    """ 
+    Removes unused symbol mappings from nested SDFGs, as well as internal
+    symbols if necessary.
+    """
+
+    nsdfg = pm.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def expressions():
+        return [utils.node_path_graph(PruneSymbols.nsdfg)]
+
+    @staticmethod
+    def _candidates(nsdfg: nodes.NestedSDFG) -> Set[str]:
+        candidates = set(nsdfg.symbol_mapping.keys())
+        if len(candidates) == 0:
+            return set()
+
+        for desc in nsdfg.sdfg.arrays.values():
+            candidates -= set(map(str, desc.free_symbols))
+
+        ignore = set()
+        for nstate in cfg.stateorder_topological_sort(nsdfg.sdfg):
+            state_syms = nstate.free_symbols
+
+            # Try to be conservative with C++ tasklets
+            for node in nstate.nodes():
+                if (isinstance(node, nodes.Tasklet)
+                        and node.language is dtypes.Language.CPP):
+                    for candidate in candidates:
+                        if re.findall(r'\b%s\b' % re.escape(candidate),
+                                      node.code.as_string):
+                            state_syms.add(candidate)
+
+            # Any symbol used in this state is considered used
+            candidates -= (state_syms - ignore)
+            if len(candidates) == 0:
+                return set()
+
+            # Any symbol that is set in all outgoing edges is ignored from
+            # this point
+            local_ignore = None
+            for e in nsdfg.sdfg.out_edges(nstate):
+                # Look for symbols in condition
+                candidates -= (set(
+                    map(str, symbolic.symbols_in_ast(e.data.condition.code[0])))
+                               - ignore)
+
+                for assign in e.data.assignments.values():
+                    candidates -= (symbolic.free_symbols_and_functions(assign) -
+                                   ignore)
+
+                if local_ignore is None:
+                    local_ignore = set(e.data.assignments.keys())
+                else:
+                    local_ignore &= e.data.assignments.keys()
+            if local_ignore is not None:
+                ignore |= local_ignore
+
+        return candidates
+
+    @staticmethod
+    def can_be_applied(graph: Union[SDFG, SDFGState],
+                       candidate: Dict[pm.PatternNode, int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False) -> bool:
+
+        nsdfg: nodes.NestedSDFG = graph.node(candidate[PruneSymbols.nsdfg])
+
+        if len(PruneSymbols._candidates(nsdfg)) > 0:
+            return True
+
+        return False
+
+    def apply(self, sdfg: SDFG) -> Union[Any, None]:
+        nsdfg = self.nsdfg(sdfg)
+
+        candidates = PruneSymbols._candidates(nsdfg)
+        for candidate in candidates:
+            del nsdfg.symbol_mapping[candidate]
+
+            # If not used in SDFG, remove from symbols as well
+            found = False
+            for nstate in nsdfg.sdfg.nodes():
+                if candidate in nstate.free_symbols:
+                    found = True
+                    break
+            if not found:
+                for e in nsdfg.sdfg.edges():
+                    if candidate in e.data.free_symbols:
+                        found = True
+                        break
+            if not found:
+                nsdfg.sdfg.remove_symbol(candidate)
