@@ -137,35 +137,25 @@ class InterstateEdge(object):
 
         return result - set(self.assignments.keys())
 
-    def replace(self, name: str, new_name: str) -> None:
+    def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
         :param name: The source name.
         :param new_name: The replacement name.
+        :param replace_keys: If False, skips replacing assignment keys.
         """
-        _replace_dict(self.assignments, name, new_name)
+        # Avoid import loops
+        from dace.frontend.python import astutils
+
+        if replace_keys:
+            _replace_dict(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
-            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
-            if subscript_matches:
-                sym_v = symbolic.pystr_to_symbolic(v)
-                for subscript in subscript_matches:
-                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=name, s=subscript))
-                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=new_name, s=subscript))
-                    sym_v = sym_v.replace(sym_name, sym_new_name)
-                str_v = symbolic.symstr(sym_v)
-                for subscript in subscript_matches:
-                    str_v = str_v.replace("({})".format(subscript),
-                                          "[{}]".format(subscript))
-                self.assignments[k] = str_v
-            else:
-                sym_name = symbolic.pystr_to_symbolic(name)
-                sym_new_name = symbolic.pystr_to_symbolic(new_name)
-                self.assignments[k] = symbolic.symstr(
-                    symbolic.pystr_to_symbolic(v).replace(
-                        sym_name, sym_new_name))
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplace({name: new_name}).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
