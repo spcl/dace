@@ -712,6 +712,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         value_type=symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
 
+    def __repr__(self) -> str:
+        return f"SDFGState ({self.label})"
+
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
             :param label: Name for the state (optional).
