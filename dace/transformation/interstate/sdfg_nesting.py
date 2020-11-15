@@ -7,7 +7,7 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic
+from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -46,7 +46,6 @@ class InlineSDFG(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        # Matches anything
         return [sdutil.node_path_graph(InlineSDFG._nested_sdfg)]
 
     @staticmethod
@@ -450,6 +449,144 @@ class InlineSDFG(transformation.Transformation):
                     traverse(child)
 
         return result
+
+
+@registry.autoregister_params(singlestate=True)
+@make_properties
+class InlineTransients(transformation.Transformation):
+    """ 
+    Inlines all transient arrays that are not used anywhere else into a 
+    nested SDFG.
+    """
+
+    nsdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def annotates_memlets():
+        return True
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(InlineTransients.nsdfg)]
+
+    @staticmethod
+    def _candidates(sdfg: SDFG, graph: SDFGState,
+                    nsdfg: nodes.NestedSDFG) -> Dict[str, str]:
+        candidates = {}
+        for e in graph.all_edges(nsdfg):
+            if e.data.is_empty():
+                continue
+            conn = (e.src_conn if e.src is nsdfg else e.dst_conn)
+            desc = sdfg.arrays[e.data.data]
+            # Needs to be transient
+            if not desc.transient:
+                continue
+            # Needs to be allocated in "Scope" lifetime
+            if desc.lifetime is not dtypes.AllocationLifetime.Scope:
+                continue
+            # If same transient is connected with multiple connectors, bail
+            # for now
+            if e.data.data in candidates and candidates[e.data.data] != conn:
+                del candidates[e.data.data]
+                continue
+            # (for now) needs to use entire data descriptor (skipped due to
+            # above check for multiple connectors)
+            # if desc.shape != e.data.subset.size():
+            #     continue
+            candidates[e.data.data] = conn
+
+        if not candidates:
+            return candidates
+
+        # Check for uses in other states
+        for state in sdfg.nodes():
+            if state is graph:
+                continue
+            for node in state.data_nodes():
+                if node.data in candidates:
+                    del candidates[node.data]
+
+        if not candidates:
+            return candidates
+
+        # Check for uses in state
+        access_nodes = set()
+        for e in graph.in_edges(nsdfg):
+            src = graph.memlet_path(e)[0].src
+            if isinstance(src, nodes.AccessNode) and graph.in_degree(src) == 0:
+                access_nodes.add(src)
+        for e in graph.out_edges(nsdfg):
+            dst = graph.memlet_path(e)[-1].dst
+            if isinstance(dst, nodes.AccessNode) and graph.out_degree(dst) == 0:
+                access_nodes.add(dst)
+        for node in graph.data_nodes():
+            if node.data in candidates and node not in access_nodes:
+                del candidates[node.data]
+
+        return candidates
+
+
+    @staticmethod
+    def can_be_applied(graph: SDFGState,
+                       candidate: Dict[transformation.PatternNode, int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False):
+        nsdfg = graph.node(candidate[InlineTransients.nsdfg])
+
+        # Not every schedule is supported
+        if strict:
+            if nsdfg.schedule not in (dtypes.ScheduleType.Default,
+                                      dtypes.ScheduleType.Sequential,
+                                      dtypes.ScheduleType.CPU_Multicore,
+                                      dtypes.ScheduleType.GPU_Device):
+                return False
+
+        candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
+        return len(candidates) > 0
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        return graph.label
+
+    def apply(self, sdfg):
+        state: SDFGState = sdfg.nodes()[self.state_id]
+        nsdfg_node: nodes.NestedSDFG = self.nsdfg(sdfg)
+        nsdfg: SDFG = nsdfg_node.sdfg
+        toremove = InlineTransients._candidates(sdfg, state, nsdfg_node)
+
+        for dname, cname in toremove.items():
+            # Make nested SDFG data descriptors transient
+            nsdfg.arrays[cname].transient = True
+
+            # Remove connectors from node
+            nsdfg_node.remove_in_connector(cname)
+            nsdfg_node.remove_out_connector(cname)
+
+            # Remove data descriptor from outer SDFG
+            del sdfg.arrays[dname]
+
+        # Remove edges from outer SDFG
+        for e in state.in_edges(nsdfg_node):
+            if e.data.data not in toremove:
+                continue
+            tree = state.memlet_tree(e)
+            for te in tree:
+                state.remove_edge_and_connectors(te)
+            # Remove newly isolated node
+            state.remove_node(tree.root().edge.src)
+
+        for e in state.out_edges(nsdfg_node):
+            if e.data.data not in toremove:
+                continue
+            tree = state.memlet_tree(e)
+            for te in tree:
+                state.remove_edge_and_connectors(te)
+            # Remove newly isolated node
+            state.remove_node(tree.root().edge.dst)
+
+
+
 
 
 @registry.autoregister
