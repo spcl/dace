@@ -6,17 +6,19 @@ import copy
 import itertools
 import sympy as sp
 import networkx as nx
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, nodes
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop,
                                                            find_for_loop)
 import dace.transformation.helpers as helpers
+from dace.transformation import transformation as xf
 
 
 @registry.autoregister
@@ -156,7 +158,7 @@ class LoopToMap(DetectLoop):
         return (' -> '.join(state.label
                             for state in [guard, begin, sexit]) + ' (for loop)')
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: sd.SDFG):
         # Obtain loop information
         guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
         body: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
@@ -169,6 +171,39 @@ class LoopToMap(DetectLoop):
             # If step is negative, we have to flip start and end to produce a
             # correct map with a positive increment
             start, end, step = end, start, -step
+
+        # If necessary, make a nested SDFG with assignments
+        isedge = sdfg.edges_between(guard, body)[0]
+        symbols_to_remove = set()
+        if len(isedge.data.assignments) > 0:
+            nsdfg = helpers.nest_state_subgraph(sdfg, body,
+                                                gr.SubgraphView(body, body.nodes()))
+            for sym in isedge.data.free_symbols:
+                if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
+                    continue
+                if sym in sdfg.symbols:
+                    nsdfg.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
+                    nsdfg.sdfg.add_symbol(sym, sdfg.symbols[sym])
+                elif sym in sdfg.arrays:
+                    if sym in nsdfg.sdfg.arrays:
+                        raise NotImplementedError
+                    rnode = body.add_read(sym)
+                    nsdfg.add_in_connector(sym)
+                    desc = copy.deepcopy(sdfg.arrays[sym])
+                    desc.transient = False
+                    nsdfg.sdfg.add_datadesc(sym, desc)
+                    body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
+
+            nstate = nsdfg.sdfg.node(0)
+            init_state = nsdfg.sdfg.add_state_before(nstate)
+            nisedge = nsdfg.sdfg.edges_between(init_state, nstate)[0]
+            nisedge.data.assignments = isedge.data.assignments
+            symbols_to_remove = set(nisedge.data.assignments.keys())
+            for k in nisedge.data.assignments.keys():
+                if k in nsdfg.symbol_mapping:
+                    del nsdfg.symbol_mapping[k]
+            isedge.data.assignments = {}
+
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
@@ -241,3 +276,5 @@ class LoopToMap(DetectLoop):
         # it from the SDFG symbols
         if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
+        for sym in symbols_to_remove:
+            helpers.remove_symbol_if_unused(sdfg, sym)
