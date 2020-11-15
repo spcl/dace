@@ -12,6 +12,7 @@ from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis import cfg
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop,
                                                            find_for_loop)
@@ -128,26 +129,21 @@ class LoopToMap(DetectLoop):
 
         # Check that the iteration variable is not used on other edges or states
         # before it is reassigned
-        states = set()
-        stack = [guard]
-        while len(stack) > 0:
-            s = stack.pop()
-            states.add(s)
-            if s is not begin and itervar in s.free_symbols:
-                # The final iterator value is used in this dataflow state
+        prior_states = True
+        for state in cfg.stateorder_topological_sort(sdfg):
+            # Skip all states up to guard
+            if prior_states:
+                if state is begin:
+                    prior_states = False
+                continue
+            if itervar in state.free_symbols:
                 return False
-            for e in graph.out_edges(s):
-                if e.dst == begin:
-                    continue
-                if itervar in e.data.assignments:
-                    # Don't continue in this direction, as the variable has
-                    # now been reassigned
-                    states.add(e.dst)
-                elif e.src is not guard and itervar in e.data.free_symbols:
-                    # The final iterator value is used on this edge
-                    return False
-                elif e.dst not in states:
-                    stack.append(e.dst)
+            # Don't continue in this direction, as the variable has
+            # now been reassigned
+            # TODO: Handle case of subset of out_edges
+            if all(itervar in e.data.assignments
+                   for e in sdfg.out_edges(state)):
+                break
 
         return True
 
