@@ -45,7 +45,6 @@ class AugAssignToWCR(transformation.Transformation):
         if len(graph.edges_between(tasklet, outarr)) > 1:
             return False
 
-        
         outedge = graph.edges_between(tasklet, outarr)[0]
 
         # Get relevant output connector
@@ -100,8 +99,7 @@ class AugAssignToWCR(transformation.Transformation):
                 inconn = edge.dst_conn
                 match = re.match(
                     r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
-                    (re.escape(outconn), re.escape(inconn), ops),
-                    cstr)
+                    (re.escape(outconn), re.escape(inconn), ops), cstr)
                 if match is None:
                     continue
                 if edge.data.subset != outedge.data.subset:
@@ -113,7 +111,7 @@ class AugAssignToWCR(transformation.Transformation):
                 inedge = edge
                 break
         else:
-            op = ''
+            raise NotImplementedError
 
         # Change output edge
         outedge.data.wcr = f'lambda a,b: a {op} b'
@@ -122,3 +120,17 @@ class AugAssignToWCR(transformation.Transformation):
         state.remove_edge_and_connectors(inedge)
         if state.degree(input) == 0:
             state.remove_node(input)
+
+        # If outedge leads to non-transient, and this is a nested SDFG,
+        # propagate outwards
+        sd = sdfg
+        while (not sd.arrays[outedge.dst.data].transient
+               and sd.parent_nsdfg_node is not None):
+            nsdfg = sd.parent_nsdfg_node
+            nstate = sd.parent
+            sd = sd.parent_sdfg
+            outedge = next(iter(nstate.out_edges_by_connector(nsdfg, outedge.dst.data)))
+            for outedge in nstate.memlet_path(outedge):
+                outedge.data.wcr = f'lambda a,b: a {op} b'
+            # At this point we are leading to an access node again and can
+            # traverse further up

@@ -151,15 +151,4 @@ class PruneSymbols(pm.Transformation):
             del nsdfg.symbol_mapping[candidate]
 
             # If not used in SDFG, remove from symbols as well
-            found = False
-            for nstate in nsdfg.sdfg.nodes():
-                if candidate in nstate.free_symbols:
-                    found = True
-                    break
-            if not found:
-                for e in nsdfg.sdfg.edges():
-                    if candidate in e.data.free_symbols:
-                        found = True
-                        break
-            if not found:
-                nsdfg.sdfg.remove_symbol(candidate)
+            helpers.remove_symbol_if_unused(nsdfg.sdfg, candidate)

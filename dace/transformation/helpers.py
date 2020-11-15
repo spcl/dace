@@ -59,8 +59,7 @@ def nest_state_subgraph(sdfg: SDFG,
         scope_node = scope_dict[node]
         if scope_node not in subgraph.nodes():
             if top_scopenode != -1 and top_scopenode != scope_node:
-                raise ValueError(
-                    'Subgraph is contained in more than one scope')
+                raise ValueError('Subgraph is contained in more than one scope')
             top_scopenode = scope_node
 
     scope = scope_tree[top_scopenode]
@@ -201,16 +200,16 @@ def nest_state_subgraph(sdfg: SDFG,
         node = nstate.add_read(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge,
-                                nstate.add_edge(node, None, edge.dst,
-                                                edge.dst_conn, new_edge)))
+        edges_to_offset.append(
+            (edge, nstate.add_edge(node, None, edge.dst, edge.dst_conn,
+                                   new_edge)))
     for name, edge in zip(output_names, outputs):
         node = nstate.add_write(name)
         new_edge = copy.deepcopy(edge.data)
         new_edge.data = name
-        edges_to_offset.append((edge,
-                                nstate.add_edge(edge.src, edge.src_conn, node,
-                                                None, new_edge)))
+        edges_to_offset.append(
+            (edge, nstate.add_edge(edge.src, edge.src_conn, node, None,
+                                   new_edge)))
 
     # Offset memlet paths inside nested SDFG according to subsets
     for original_edge, new_edge in edges_to_offset:
@@ -249,6 +248,7 @@ def nest_state_subgraph(sdfg: SDFG,
         else:
             data = copy.deepcopy(edge.data)
             data.subset = global_subsets[edge.data.data][1]
+        data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out.add(name)
 
@@ -321,7 +321,8 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     return newstate
 
 
-def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet,
+def unsqueeze_memlet(internal_memlet: Memlet,
+                     external_memlet: Memlet,
                      preserve_minima: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
@@ -341,8 +342,7 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet,
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
-        if (len(internal_memlet.subset) == 1
-                and ones == list(range(len(shape)))
+        if (len(internal_memlet.subset) == 1 and ones == list(range(len(shape)))
                 and (internal_memlet.subset[0] == (0, 0, 1)
                      or internal_memlet.subset[0] == 0)):
             to_unsqueeze = ones[1:]
@@ -354,10 +354,10 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet,
         # Try to squeeze internal memlet
         result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
-            raise ValueError(
-                'Unexpected extra dimensions in internal memlet '
-                'while un-squeezing memlet.\nExternal memlet: %s\n'
-                'Internal memlet: %s' % (external_memlet, internal_memlet))
+            raise ValueError('Unexpected extra dimensions in internal memlet '
+                             'while un-squeezing memlet.\nExternal memlet: %s\n'
+                             'Internal memlet: %s' %
+                             (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
 
@@ -435,3 +435,26 @@ def split_interstate_edges(sdfg: SDFG) -> None:
             sdfg.add_edge(tmpstate, e.dst,
                           InterstateEdge(assignments=e.data.assignments))
             sdfg.remove_edge(e)
+
+
+def remove_symbol_if_unused(sdfg: SDFG, sym: str) -> bool:
+    """
+    Checks for uses of symbol in an SDFG, and if there are none removes said
+    symbol.
+    :param sdfg: The SDFG to search.
+    :param sym: The symbol to remove.
+    :return: True if the symbol was removed, False otherwise.
+    """
+    for desc in sdfg.arrays.values():
+        if sym in map(str, desc.free_symbols):
+            return False
+    for state in sdfg.nodes():
+        if sym in state.free_symbols:
+            return False
+    for e in sdfg.edges():
+        if sym in e.data.free_symbols:
+            return False
+
+    # Not found, remove symbol
+    sdfg.remove_symbol(sym)
+    return True
