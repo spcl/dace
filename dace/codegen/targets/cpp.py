@@ -266,17 +266,20 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
 
     if desc.storage == dace.StorageType.FPGA_Global:
         # This is a device buffer.
-        # Can not be accessed with offset different than zero
-        if int(offset) != 0:
-            raise TypeError("Can not offset device buffers from host code ({}, offset {})".format(datadef, offset))
+        # Can not be accessed with offset different than zero. Check this if we can:
+        if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
+                offset, str) and offset.isnumeric() and int(offset) != 0):
+            raise TypeError(
+                "Can not offset device buffers from host code ({}, offset {})".
+                format(datadef, offset))
 
         # Device buffers are passed by reference
         expr = datadef
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
-                                is_scalar, defined_type)
+        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet,
+                                    conntype, is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
