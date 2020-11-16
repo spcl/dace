@@ -612,8 +612,7 @@ class RefineNestedAccess(transformation.Transformation):
     ) -> Tuple[Dict[str, Memlet], Dict[str, Memlet]]:
         in_candidates: Dict[str, Tuple[Memlet, SDFGState]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState]] = {}
-        ignore_in = set()
-        ignore_out = set()
+        ignore = set()
         for nstate in nsdfg.sdfg.nodes():
             for dnode in nstate.data_nodes():
                 if nsdfg.sdfg.arrays[dnode.data].transient:
@@ -626,21 +625,27 @@ class RefineNestedAccess(transformation.Transformation):
                         # candidates
                         if (e.data.data in out_candidates and
                                 e.data.subset != out_candidates[e.data.data][0].subset):
-                            ignore_out.add(e.data.data)
+                            ignore.add(e.data.data)
                             continue
                         out_candidates[e.data.data] = (e.data, nstate)
+                    else:
+                        ignore.add(e.data.data)
+                        continue
                 for e in nstate.out_edges(dnode):
                     if e.data.subset.num_elements() == 1:
                         # If more than one unique element detected, remove from
                         # candidates
                         if (e.data.data in in_candidates and
                                 e.data.subset != in_candidates[e.data.data][0].subset):
-                            ignore_in.add(e.data.data)
+                            ignore.add(e.data.data)
                             continue
                         in_candidates[e.data.data] = (e.data, nstate)
+                    else:
+                        ignore.add(e.data.data)
+                        continue
 
         # Ensure minimum elements of candidates do not begin with zero
-        def _check_cand(candidates, ignore, outer_edges):
+        def _check_cand(candidates, outer_edges):
             for cname, (cand, nstate) in candidates.items():
                 if all(me == 0 for me in cand.subset.min_element()):
                     ignore.add(cname)
@@ -685,16 +690,16 @@ class RefineNestedAccess(transformation.Transformation):
                     ignore.add(cname)
                     continue
 
-        _check_cand(in_candidates, ignore_in, state.in_edges_by_connector)
-        _check_cand(out_candidates, ignore_out, state.out_edges_by_connector)
+        _check_cand(in_candidates, state.in_edges_by_connector)
+        _check_cand(out_candidates, state.out_edges_by_connector)
 
         # Return result, filtering out the states
         return ({
             k: dc(v)
-            for k, (v, _) in in_candidates.items() if k not in ignore_in
+            for k, (v, _) in in_candidates.items() if k not in ignore
         }, {
             k: dc(v)
-            for k, (v, _) in out_candidates.items() if k not in ignore_out
+            for k, (v, _) in out_candidates.items() if k not in ignore
         })
 
     @staticmethod
