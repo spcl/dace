@@ -2,8 +2,8 @@
 """ Transformations to convert subgraphs to write-conflict resolutions. """
 import re
 from dace import registry, nodes, dtypes
-from dace.transformation import transformation
-from dace.sdfg import utils as sdutil
+from dace.transformation import transformation, helpers as xfh
+from dace.sdfg import graph as gr, utils as sdutil
 from dace import SDFG, SDFGState
 
 
@@ -39,10 +39,14 @@ class AugAssignToWCR(transformation.Transformation):
             return False
 
         inedges = graph.edges_between(inarr, tasklet)
-
-        if graph.in_degree(inarr) > 0 and len(inedges) == 1:
-            return False
         if len(graph.edges_between(tasklet, outarr)) > 1:
+            return False
+
+        # Make sure augmented assignment can be fissioned as necessary
+        if any(not isinstance(e.src, nodes.AccessNode)
+               for e in graph.in_edges(tasklet)):
+            return False
+        if graph.in_degree(inarr) > 0 and graph.out_degree(outarr) > 0:
             return False
 
         outedge = graph.edges_between(tasklet, outarr)[0]
@@ -81,6 +85,42 @@ class AugAssignToWCR(transformation.Transformation):
         tasklet: nodes.Tasklet = self.tasklet(sdfg)
         output: nodes.AccessNode = self.output(sdfg)
         state: SDFGState = sdfg.node(self.state_id)
+
+        # If state fission is necessary to keep semantics, do it first
+        if state.in_degree(input) > 0 and state.out_degree(output) == 0:
+            newstate = sdfg.add_state_after(state)
+            newstate.add_node(tasklet)
+            new_input, new_output = None, None
+
+            # Keep old edges for after we remove tasklet from the original state
+            in_edges = list(state.in_edges(tasklet))
+            out_edges = list(state.out_edges(tasklet))
+
+            for e in in_edges:
+                r = newstate.add_read(e.src.data)
+                newstate.add_edge(r, e.src_conn, e.dst, e.dst_conn, e.data)
+                if e.src is input:
+                    new_input = r
+            for e in out_edges:
+                w = newstate.add_write(e.dst.data)
+                newstate.add_edge(e.src, e.src_conn, w, e.dst_conn, e.data)
+                if e.dst is output:
+                    new_output = w
+
+            # Remove tasklet and resulting isolated nodes
+            state.remove_node(tasklet)
+            for e in in_edges:
+                if state.degree(e.src) == 0:
+                    state.remove_node(e.src)
+            for e in out_edges:
+                if state.degree(e.dst) == 0:
+                    state.remove_node(e.dst)
+
+            # Reset state and nodes for rest of transformation
+            input = new_input
+            output = new_output
+            state = newstate
+        # End of state fission
 
         inedges = state.edges_between(input, tasklet)
         outedge = state.edges_between(tasklet, output)[0]
@@ -129,7 +169,8 @@ class AugAssignToWCR(transformation.Transformation):
             nsdfg = sd.parent_nsdfg_node
             nstate = sd.parent
             sd = sd.parent_sdfg
-            outedge = next(iter(nstate.out_edges_by_connector(nsdfg, outedge.dst.data)))
+            outedge = next(
+                iter(nstate.out_edges_by_connector(nsdfg, outedge.dst.data)))
             for outedge in nstate.memlet_path(outedge):
                 outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can
