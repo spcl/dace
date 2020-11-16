@@ -1718,12 +1718,26 @@ ufuncs = dict(
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 * __in2",
         reduce="lambda a, b: a * b", initial=np.multiply.identity),
-    # TODO: Will be enabled when proper casting is implemented.
-    # divide = dict(
-    #     name="_numpy_divide_",
-    #     inputs=["__in1", "__in2"],
-    #     outputs=["__out"], code="__out = __in1 / __in2",
-    #     reduce="lambda a, b: a / b", initial=np.divide.identity),
+    divide = dict(
+        name="_numpy_divide_",
+        operator="Div",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 / __in2",
+        reduce="lambda a, b: a / b", initial=np.divide.identity),
+    logaddexp = dict(
+        name="_numpy_logaddexp_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = log( exp(__in1) + exp(__in2) )",
+        reduce="lambda a, b: log( exp(a) + exp(b) )",
+        initial=np.logaddexp.identity),
+    logaddexp2 = dict(
+        name="_numpy_logaddexp2_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = log2( exp2(__in1) + exp2(__in2) )",
+        reduce="lambda a, b: log( exp2(a) + exp2(b) )",
+        initial=np.logaddexp2.identity),
     minimum = dict(
         name="_numpy_min_",
         operator=None,
