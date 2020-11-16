@@ -622,29 +622,21 @@ class RefineNestedAccess(transformation.Transformation):
 
                 # For now we only detect one element
                 for e in nstate.in_edges(dnode):
-                    if e.data.subset.num_elements() == 1:
-                        # If more than one unique element detected, remove from
-                        # candidates
-                        if (e.data.data in out_candidates and e.data.subset !=
-                                out_candidates[e.data.data][0].subset):
-                            ignore.add(e.data.data)
-                            continue
-                        out_candidates[e.data.data] = (e.data, nstate)
-                    else:
+                    # If more than one unique element detected, remove from
+                    # candidates
+                    if (e.data.data in out_candidates and e.data.subset !=
+                            out_candidates[e.data.data][0].subset):
                         ignore.add(e.data.data)
                         continue
+                    out_candidates[e.data.data] = (e.data, nstate)
                 for e in nstate.out_edges(dnode):
-                    if e.data.subset.num_elements() == 1:
-                        # If more than one unique element detected, remove from
-                        # candidates
-                        if (e.data.data in in_candidates and e.data.subset !=
-                                in_candidates[e.data.data][0].subset):
-                            ignore.add(e.data.data)
-                            continue
-                        in_candidates[e.data.data] = (e.data, nstate)
-                    else:
+                    # If more than one unique element detected, remove from
+                    # candidates
+                    if (e.data.data in in_candidates and e.data.subset !=
+                            in_candidates[e.data.data][0].subset):
                         ignore.add(e.data.data)
                         continue
+                    in_candidates[e.data.data] = (e.data, nstate)
 
         # Ensure minimum elements of candidates do not begin with zero
         def _check_cand(candidates, outer_edges):
