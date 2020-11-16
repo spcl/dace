@@ -63,6 +63,17 @@ class LoopToMap(DetectLoop):
         _, write_set = begin.read_and_write_sets()
         code_nodes = [n for n in begin.nodes() if isinstance(n, nodes.CodeNode)]
 
+        # Get access nodes from other states to isolate local loop variables
+        other_access_nodes = set()
+        for state in sdfg.nodes():
+            if state is begin:
+                continue
+            other_access_nodes |= set(n.data for n in state.data_nodes()
+                                      if sdfg.arrays[n.data].transient)
+        # Add non-transient nodes from loop state
+        other_access_nodes |= set(n.data for n in begin.data_nodes()
+                                  if not sdfg.arrays[n.data].transient)
+
         write_memlets = defaultdict(list)
 
         itersym = symbolic.pystr_to_symbolic(itervar)
@@ -73,6 +84,8 @@ class LoopToMap(DetectLoop):
             # Take all writes that are not conflicted into consideration
             for e in begin.out_edges(cn):
                 data = e.data.data
+                if data not in other_access_nodes:
+                    continue
                 subset = e.data.subset
                 if data in write_set:
                     if e.data.dynamic:
