@@ -224,7 +224,7 @@ class StateGraphView(object):
 
     def in_edges_by_connector(
             self, node: nd.Node,
-            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering the given connector of the
             given node.
             :param node: Destination node of edges.
@@ -234,7 +234,7 @@ class StateGraphView(object):
 
     def out_edges_by_connector(
             self, node: nd.Node,
-            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges exiting the given connector of the
             given node.
             :param node: Source node of edges.
@@ -242,8 +242,9 @@ class StateGraphView(object):
         """
         return (e for e in self.out_edges(node) if e.src_conn == connector)
 
-    def edges_by_connector(self, node: nd.Node,
-                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+    def edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering or exiting the given
             connector of the given node.
             :param node: Source/destination node of edges.
