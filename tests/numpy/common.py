@@ -7,18 +7,20 @@ import dace
 import numpy as np
 
 
-def compare_numpy_output(non_zero=False, positive=False):
-    """Check that the `dace.program` func works identically to the python version (including errors).
+def compare_numpy_output(non_zero=False, positive=False, check_dtype=False):
+    """ Check that the `dace.program` func works identically to the python version (including errors).
 
-       `func` will be run once as a dace program, and once using python. The inputs to the function
-       will be randomly intialized arrays with shapes and dtypes according to the argument
-       annotations.
+        `func` will be run once as a dace program, and once using python. The inputs to the function
+        will be randomly intialized arrays with shapes and dtypes according to the argument
+        annotations.
 
-       Note that this should be used *instead* of the `@dace.program` annotation, not along with it!
+        Note that this should be used *instead* of the `@dace.program` annotation, not along with it!
 
-       :param non_zero: if `True`, replace `0` inputs with `1`.
-       :param positive: if `False`, floats sample from [-10.0, 10.0], and ints sample from
-                        [-3, 3). Else, floats sample from [0, 10.0], and ints sample from [0, 3).
+        :param non_zero: if `True`, replace `0` inputs with `1`.
+        :param positive: if `False`, floats sample from [-10.0, 10.0], and ints sample from
+                         [-3, 3). Else, floats sample from [0, 10.0], and ints sample from [0, 3).
+        :param check_dtype: if `True`, asserts that the dtype of the result is
+                            consistent between NumPy and DaCe.
     """
     def decorator(func):
         def test():
@@ -44,6 +46,13 @@ def compare_numpy_output(non_zero=False, positive=False):
                     res = np.random.randint(0 if positive else -3,
                                             3,
                                             size=ddesc.shape)
+                    res = res.astype(getattr(np, ddesc.dtype.to_string()))
+                    if non_zero:
+                        res[res == 0] = 1
+                elif ddesc.dtype in [
+                    dace.uint8, dace.uint16, dace.uint32, dace.uint64
+                ]:
+                    res = np.random.randint(0, 3, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
@@ -84,6 +93,8 @@ def compare_numpy_output(non_zero=False, positive=False):
                     numpy_thrown)
             else:
                 assert np.allclose(reference_result, dace_result)
+                if check_dtype:
+                    assert(reference_result.dtype == dace_result.dtype)
 
         return test
 
