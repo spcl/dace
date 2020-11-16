@@ -216,7 +216,7 @@ class InterstateEdge(object):
 
 
 @make_properties
-class SDFG(OrderedDiGraph):
+class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     """ The main intermediate representation of code in DaCe.
 
         A Stateful DataFlow multiGraph (SDFG) is a directed graph of directed
@@ -818,12 +818,6 @@ class SDFG(OrderedDiGraph):
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
-
-    def nodes(self) -> List[SDFGState]:
-        return super().nodes()
-
-    def node(self, id) -> SDFGState:
-        return super().node(id)
 
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
