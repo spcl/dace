@@ -75,7 +75,7 @@ class LoopToMap(DetectLoop):
                 data = e.data.data
                 subset = e.data.subset
                 if data in write_set:
-                    if e.data.dynamic or subset.num_elements() != 1:
+                    if e.data.dynamic:
                         # If pointers are involved, give up
                         return False
                     # To be sure that the value is only written at unique
@@ -125,7 +125,8 @@ class LoopToMap(DetectLoop):
                                                   sdfg.arrays[data], [itervar],
                                                   subsets.Range([(start, end,
                                                                   step)]))
-                        if not subsets.intersects(pread.subset, pwrite.subset):
+                        if subsets.intersects(pread.subset,
+                                              pwrite.subset) is False:
                             break
                         return False
 
@@ -176,8 +177,8 @@ class LoopToMap(DetectLoop):
         isedge = sdfg.edges_between(guard, body)[0]
         symbols_to_remove = set()
         if len(isedge.data.assignments) > 0:
-            nsdfg = helpers.nest_state_subgraph(sdfg, body,
-                                                gr.SubgraphView(body, body.nodes()))
+            nsdfg = helpers.nest_state_subgraph(
+                sdfg, body, gr.SubgraphView(body, body.nodes()))
             for sym in isedge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
                     continue
@@ -203,7 +204,6 @@ class LoopToMap(DetectLoop):
                 if k in nsdfg.symbol_mapping:
                     del nsdfg.symbol_mapping[k]
             isedge.data.assignments = {}
-
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
