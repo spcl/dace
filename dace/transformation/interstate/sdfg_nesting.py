@@ -638,6 +638,11 @@ class RefineNestedAccess(transformation.Transformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate)
 
+        # Check in/out candidates
+        for cand in in_candidates.keys() & out_candidates.keys():
+            if in_candidates[cand][0].subset != out_candidates[cand][0].subset:
+                ignore.add(cand)
+
         # Ensure minimum elements of candidates do not begin with zero
         def _check_cand(candidates, outer_edges):
             for cname, (cand, nstate) in candidates.items():
