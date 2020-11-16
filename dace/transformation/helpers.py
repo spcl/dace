@@ -99,14 +99,14 @@ def nest_state_subgraph(sdfg: SDFG,
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = set()
-    output_arrays = set()
+    output_arrays = {}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode)
                 and node.data not in subgraph_transients):
             if state.out_degree(node) > 0:
                 input_arrays.add(node.data)
             if state.in_degree(node) > 0:
-                output_arrays.add(node.data)
+                output_arrays[node.data] = state.in_edges(node)[0].data.wcr
 
     # Create the nested SDFG
     nsdfg = SDFG(name or 'nested_' + state.label)
@@ -117,7 +117,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in (input_arrays | output_arrays):
+    for name in (input_arrays | output_arrays.keys()):
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
@@ -220,9 +220,10 @@ def nest_state_subgraph(sdfg: SDFG,
                     global_subsets[original_edge.data.data][1], True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
-                                        set(input_names) | input_arrays,
-                                        set(output_names) | output_arrays)
+    nested_sdfg = state.add_nested_sdfg(
+        nsdfg, None,
+        set(input_names) | input_arrays,
+        set(output_names) | output_arrays.keys())
 
     # Reconnect memlets to nested SDFG
     reconnected_in = set()
@@ -261,12 +262,12 @@ def nest_state_subgraph(sdfg: SDFG,
             state.add_nedge(entry, node, Memlet())
         state.add_edge(node, None, nested_sdfg, name,
                        Memlet.from_array(name, sdfg.arrays[name]))
-    for name in output_arrays:
+    for name, wcr in output_arrays.items():
         node = state.add_write(name)
         if exit is not None:
             state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None,
-                       Memlet.from_array(name, sdfg.arrays[name]))
+                       Memlet(data=name, wcr=wcr))
 
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())
