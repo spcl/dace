@@ -98,13 +98,22 @@ class LoopToMap(DetectLoop):
                     if e.data.wcr is None:
                         found = False
                         for rb, re, rs in e.data.subset.ndrange():
-                            if rb != re:
-                                continue
                             m = rb.match(a * itersym + b)
                             if m is None:
                                 continue
                             if (m[a] >= 1) != True:
                                 continue
+                            if re != rb:
+                                # If False or indeterminate, the range may
+                                # overlap across iterations
+                                if ((re - rb) > m[a]) != False:
+                                    continue
+
+                                m = re.match(a * itersym + b)
+                                if m is None:
+                                    continue
+                                if (m[a] >= 1) != True:
+                                    continue
                             found = True
                         if not found:
                             return False
