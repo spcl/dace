@@ -435,6 +435,12 @@ class NestedSDFG(CodeNode):
                           desc="Measure execution statistics with given method",
                           default=dtypes.InstrumentationType.No_Instrumentation)
 
+    no_inline = Property(
+        dtype=bool,
+        desc="If True, hints that this nested SDFG should not be "
+        "inlined (disallows inlining through the InlineSDFG transformation",
+        default=False)
+
     def __init__(self,
                  label,
                  sdfg,
@@ -527,7 +533,8 @@ class NestedSDFG(CodeNode):
         extra_symbols = self.symbol_mapping.keys() - symbols
         if len(extra_symbols) > 0:
             # TODO: Elevate to an error?
-            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
+            warnings.warn(
+                f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
         self.sdfg.validate()

@@ -102,6 +102,8 @@ class InlineSDFG(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
+        if nested_sdfg.no_inline:
+            return False
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
 
@@ -623,8 +625,8 @@ class RefineNestedAccess(transformation.Transformation):
                     if e.data.subset.num_elements() == 1:
                         # If more than one unique element detected, remove from
                         # candidates
-                        if (e.data.data in out_candidates and
-                                e.data.subset != out_candidates[e.data.data][0].subset):
+                        if (e.data.data in out_candidates and e.data.subset !=
+                                out_candidates[e.data.data][0].subset):
                             ignore.add(e.data.data)
                             continue
                         out_candidates[e.data.data] = (e.data, nstate)
@@ -635,8 +637,8 @@ class RefineNestedAccess(transformation.Transformation):
                     if e.data.subset.num_elements() == 1:
                         # If more than one unique element detected, remove from
                         # candidates
-                        if (e.data.data in in_candidates and
-                                e.data.subset != in_candidates[e.data.data][0].subset):
+                        if (e.data.data in in_candidates and e.data.subset !=
+                                in_candidates[e.data.data][0].subset):
                             ignore.add(e.data.data)
                             continue
                         in_candidates[e.data.data] = (e.data, nstate)
@@ -685,7 +687,7 @@ class RefineNestedAccess(transformation.Transformation):
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
                 missing_symbols = (memlet.free_symbols -
-                                    set(nsdfg.symbol_mapping.keys()))
+                                   set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
