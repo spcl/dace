@@ -1,14 +1,16 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
+from collections import defaultdict
 from copy import deepcopy as dc
+from dace.frontend.python.ndloop import ndrange
 import itertools
 import networkx as nx
-from typing import Dict, List, Set, Optional
+from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes
-from dace.sdfg import nodes
+from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
@@ -525,7 +527,6 @@ class InlineTransients(transformation.Transformation):
 
         return candidates
 
-
     @staticmethod
     def can_be_applied(graph: SDFGState,
                        candidate: Dict[transformation.PatternNode, int],
@@ -586,7 +587,161 @@ class InlineTransients(transformation.Transformation):
             state.remove_node(tree.root().edge.dst)
 
 
+@registry.autoregister_params(singlestate=True)
+@make_properties
+class RefineNestedAccess(transformation.Transformation):
+    """ 
+    Modifies memlets of a nested SDFG such that the outer subsets are smallest
+    and the inner subsets are offsetted to zero. This helps with subsequent
+    transformations on the outer SDFGs.
+    """
 
+    nsdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def annotates_memlets():
+        return True
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(RefineNestedAccess.nsdfg)]
+
+    @staticmethod
+    def _candidates(
+        state: SDFGState, nsdfg: nodes.NestedSDFG
+    ) -> Tuple[Dict[str, Memlet], Dict[str, Memlet]]:
+        in_candidates: Dict[str, Tuple[Memlet, SDFGState]] = {}
+        out_candidates: Dict[str, Tuple[Memlet, SDFGState]] = {}
+        ignore_in = set()
+        ignore_out = set()
+        for nstate in nsdfg.sdfg.nodes():
+            for dnode in nstate.data_nodes():
+                if nsdfg.sdfg.arrays[dnode.data].transient:
+                    continue
+
+                # For now we only detect one element
+                for e in nstate.in_edges(dnode):
+                    if e.data.subset.num_elements() == 1:
+                        # If more than one unique element detected, remove from
+                        # candidates
+                        if (e.data.data in out_candidates and
+                                e.data.subset != out_candidates[e.data.data][0].subset):
+                            ignore_out.add(e.data.data)
+                            continue
+                        out_candidates[e.data.data] = (e.data, nstate)
+                for e in nstate.out_edges(dnode):
+                    if e.data.subset.num_elements() == 1:
+                        # If more than one unique element detected, remove from
+                        # candidates
+                        if (e.data.data in in_candidates and
+                                e.data.subset != in_candidates[e.data.data][0].subset):
+                            ignore_in.add(e.data.data)
+                            continue
+                        in_candidates[e.data.data] = (e.data, nstate)
+
+        # Ensure minimum elements of candidates do not begin with zero
+        def _check_cand(candidates, ignore, outer_edges):
+            for cname, (cand, nstate) in candidates.items():
+                if all(me == 0 for me in cand.subset.min_element()):
+                    ignore.add(cname)
+                    continue
+
+                # Ensure outer memlets begin with 0
+                outer_edge = next(iter(outer_edges(nsdfg, cname)))
+                if any(me != 0 for me in outer_edge.data.subset.min_element()):
+                    ignore.add(cname)
+                    continue
+
+                # Check w.r.t. loops
+                if len(nstate.ranges) > 0:
+                    # Re-annotate loop ranges, in case someone changed them
+                    # TODO: Move out of here!
+                    nstate.ranges = {}
+                    from dace.sdfg.propagation import _annotate_loop_ranges
+                    _annotate_loop_ranges(nsdfg.sdfg, [])
+                    #propagation.propagate_states(nsdfg.sdfg)
+
+                    memlet = propagation.propagate_subset(
+                        [cand], nsdfg.sdfg.arrays[cname],
+                        sorted(nstate.ranges.keys()),
+                        subsets.Range([
+                            v.ndrange()[0]
+                            for _, v in sorted(nstate.ranges.items())
+                        ]))
+                    if all(me == 0 for me in memlet.subset.min_element()):
+                        ignore.add(cname)
+                        continue
+
+                    # Modify memlet to propagated one
+                    candidates[cname] = (memlet, nstate)
+                else:
+                    memlet = cand
+
+                # If there are any symbols here that are not defined
+                # in "defined_symbols"
+                missing_symbols = (memlet.free_symbols -
+                                    set(nsdfg.symbol_mapping.keys()))
+                if missing_symbols:
+                    ignore.add(cname)
+                    continue
+
+        _check_cand(in_candidates, ignore_in, state.in_edges_by_connector)
+        _check_cand(out_candidates, ignore_out, state.out_edges_by_connector)
+
+        # Return result, filtering out the states
+        return ({
+            k: dc(v)
+            for k, (v, _) in in_candidates.items() if k not in ignore_in
+        }, {
+            k: dc(v)
+            for k, (v, _) in out_candidates.items() if k not in ignore_out
+        })
+
+    @staticmethod
+    def can_be_applied(graph: SDFGState,
+                       candidate: Dict[transformation.PatternNode, int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False):
+        nsdfg = graph.node(candidate[RefineNestedAccess.nsdfg])
+        ic, oc = RefineNestedAccess._candidates(graph, nsdfg)
+        return (len(ic) + len(oc)) > 0
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        return graph.label
+
+    def apply(self, sdfg):
+        state: SDFGState = sdfg.nodes()[self.state_id]
+        nsdfg_node: nodes.NestedSDFG = self.nsdfg(sdfg)
+        nsdfg: SDFG = nsdfg_node.sdfg
+        torefine_in, torefine_out = RefineNestedAccess._candidates(
+            state, nsdfg_node)
+
+        refined = set()
+
+        def _offset_refine(
+            torefine: Dict[str, Memlet],
+            outer_edges: Callable[[nodes.NestedSDFG, str],
+                                  Iterable[MultiConnectorEdge[Memlet]]]):
+            # Offset memlets inside negatively by "refine", modify outer
+            # memlets to be "refine"
+            for aname, refine in torefine.items():
+                if aname in refined:
+                    continue
+                outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
+                new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
+                #outer_edge.data.subset.offset(new_memlet.subset, False)
+                outer_edge.data.subset = new_memlet.subset
+                for nstate in nsdfg.nodes():
+                    for e in nstate.edges():
+                        if e.data.data == aname:
+                            e.data.subset.offset(refine.subset, True)
+                refined.add(aname)
+
+        # Proceed symmetrically on incoming and outgoing edges
+        _offset_refine(torefine_in, state.in_edges_by_connector)
+        _offset_refine(torefine_out, state.out_edges_by_connector)
 
 
 @registry.autoregister
