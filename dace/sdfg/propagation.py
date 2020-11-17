@@ -951,6 +951,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
         border_memlets['out'][connector] = None
 
     sdfg = nsdfg_node.sdfg
+    outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
+
 
     # For each state, go through all access nodes corresponding to any in- or
     # out-connectors to and from this SDFG. Given those access nodes, collect
@@ -1063,12 +1065,12 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
                 if border_memlet.src_subset is not None and any(
-                        s not in parent_sdfg.symbols
+                        s not in outer_symbols
                         for s in border_memlet.src_subset.free_symbols):
                     border_memlet.src_subset = subsets.Range.from_array(
                         sdfg.arrays[border_memlet.data])
                 if border_memlet.dst_subset is not None and any(
-                        s not in parent_sdfg.symbols
+                        s not in outer_symbols
                         for s in border_memlet.dst_subset.free_symbols):
                     border_memlet.dst_subset = subsets.Range.from_array(
                         sdfg.arrays[border_memlet.data])
