@@ -35,11 +35,11 @@ def make_sdfg (dtype = dace.float32):
 
     copy_in_state.add_memlet_path(
         in_host_a, in_device_a,
-        memlet=Memlet.simple(in_host_a, "0")
+        memlet=Memlet(f"{in_host_a}[0]")
     )
     copy_in_state.add_memlet_path(
         in_host_c, in_device_c,
-        memlet=Memlet.simple(in_host_c, "0")
+        memlet=Memlet(f"{in_host_c}[0]")
     )
 
     ###########################################################################
@@ -51,7 +51,7 @@ def make_sdfg (dtype = dace.float32):
 
     copy_out_state.add_memlet_path(
         device_c, host_c,
-        memlet=Memlet.simple(host_c, "0")
+        memlet=Memlet(f"{host_c}[0]")
     )
 
 
@@ -77,13 +77,13 @@ def make_sdfg (dtype = dace.float32):
     fpga_state_0.add_memlet_path(
         a_in, state_0_tasklet,
         dst_conn='inCon',
-        memlet=dace.Memlet.simple(a_in.data, '0')
+        memlet=dace.Memlet(f"{a_in}[0]")
     )
 
     fpga_state_0.add_memlet_path(
         state_0_tasklet, b_stream_out,
         src_conn='outCon',
-        memlet=dace.Memlet.simple(b_stream_out, '0', num_accesses=-1)
+        memlet=dace.Memlet(f"{b_stream_out}[0]",dynamic=True)
     )
 
     ########################################################################
@@ -104,13 +104,13 @@ def make_sdfg (dtype = dace.float32):
     fpga_state_1.add_memlet_path(
         b_stream_in, state_1_tasklet,
         dst_conn='inCon',
-        memlet=dace.Memlet.simple(b_stream_in, '0', num_accesses=-1)
+        memlet=dace.Memlet(f"{b_stream_in}[0]", dynamic=True)
     )
 
     fpga_state_1.add_memlet_path(
         state_1_tasklet, c_out,
         src_conn='outCon',
-        memlet=dace.Memlet.simple(c_out.data, '0')
+        memlet=dace.Memlet(f"{c_out.data}[0]")
     )
 
 
@@ -126,7 +126,6 @@ def make_sdfg (dtype = dace.float32):
     #########
     # Validate
     sdfg.fill_scope_connectors()
-    sdfg.save('/tmp/out.sdfg')
     sdfg.validate()
     return sdfg
 
