@@ -17,7 +17,11 @@ class AugAssignToWCR(transformation.Transformation):
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
 
-    _EXPRESSIONS = ['+', '-', '*', '/', '^', '%']
+    _EXPRESSIONS = ['+', '-', '*', '^', '%', '/']
+    _EXPR_MAP = {
+        '-': ('+', '-({expr})'),
+        '/': ('*', '((decltype({expr}))1)/({expr})')
+    }
 
     @staticmethod
     def expressions():
@@ -147,6 +151,12 @@ class AugAssignToWCR(transformation.Transformation):
 
                 op = match.group(1)
                 expr = match.group(2)
+
+                # Map asymmetric WCRs to symmetric ones if possible
+                if op in AugAssignToWCR._EXPR_MAP:
+                    op, newexpr = AugAssignToWCR._EXPR_MAP[op]
+                    expr = newexpr.format(expr=expr)
+
                 tasklet.code.code = '%s = %s;' % (outconn, expr)
                 inedge = edge
                 break
