@@ -21,6 +21,30 @@ import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 
 
+def _check_range(subset, a, itersym, b):
+    found = False
+    for rb, re, _ in subset.ndrange():
+        m = rb.match(a * itersym + b)
+        if m is None:
+            continue
+        if (m[a] >= 1) != True:
+            continue
+        if re != rb:
+            # If False or indeterminate, the range may
+            # overlap across iterations
+            if ((re - rb) > m[a]) != False:
+                continue
+
+            m = re.match(a * itersym + b)
+            if m is None:
+                continue
+            if (m[a] >= 1) != True:
+                continue
+        found = True
+        break
+    return found
+
+
 @registry.autoregister
 class LoopToMap(DetectLoop):
     """Convert a control flow loop into a dataflow map. Currently only supports
@@ -96,26 +120,7 @@ class LoopToMap(DetectLoop):
                     # of the form "a*i+b" where a >= 1, and i is the iteration
                     # variable. The iteration variable must be used.
                     if e.data.wcr is None:
-                        found = False
-                        for rb, re, rs in e.data.subset.ndrange():
-                            m = rb.match(a * itersym + b)
-                            if m is None:
-                                continue
-                            if (m[a] >= 1) != True:
-                                continue
-                            if re != rb:
-                                # If False or indeterminate, the range may
-                                # overlap across iterations
-                                if ((re - rb) > m[a]) != False:
-                                    continue
-
-                                m = re.match(a * itersym + b)
-                                if m is None:
-                                    continue
-                                if (m[a] >= 1) != True:
-                                    continue
-                            found = True
-                        if not found:
+                        if not _check_range(e.data.subset, a, itersym, b):
                             return False
                     # End of check
 
@@ -132,6 +137,8 @@ class LoopToMap(DetectLoop):
                 if data in write_memlets:
                     if e.data.dynamic and subset.num_elements() != 1:
                         # If pointers are involved, give up
+                        return False
+                    if not _check_range(e.data.subset, a, itersym, b):
                         return False
 
                     pread = propagate_subset([e.data], sdfg.arrays[data],
