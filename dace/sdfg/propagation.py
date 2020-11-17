@@ -953,7 +953,6 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
     sdfg = nsdfg_node.sdfg
     outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
 
-
     # For each state, go through all access nodes corresponding to any in- or
     # out-connectors to and from this SDFG. Given those access nodes, collect
     # the corresponding memlets and use them to calculate the memlet volume and
@@ -1083,6 +1082,12 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+            # If no appropriate memlet found, use array dimension
+            for i, (rng, s) in enumerate(
+                    zip(internal_memlet.subset,
+                        parent_sdfg.arrays[iedge.data.data].shape)):
+                if rng[1] + 1 == s:
+                    iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1, 1)
             if symbolic.issymbolic(iedge.data.volume):
                 if any(
                         str(s) not in outer_symbols
@@ -1095,6 +1100,12 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+            # If no appropriate memlet found, use array dimension
+            for i, (rng, s) in enumerate(
+                    zip(internal_memlet.subset,
+                        parent_sdfg.arrays[oedge.data.data].shape)):
+                if rng[1] + 1 == s:
+                    oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1, 1)
             if symbolic.issymbolic(oedge.data.volume):
                 if any(
                         str(s) not in outer_symbols
@@ -1202,6 +1213,8 @@ def _propagate_node(dfg_state, node):
             e for e in dfg_state.in_edges(node)
             if e.dst_conn and e.dst_conn.startswith('IN_')
         ]
+        geticonn = lambda e: e.src_conn[4:]
+        geteconn = lambda e: e.dst_conn[3:]
     else:
         internal_edges = [
             e for e in dfg_state.in_edges(node)
@@ -1211,15 +1224,20 @@ def _propagate_node(dfg_state, node):
             e for e in dfg_state.out_edges(node)
             if e.src_conn and e.src_conn.startswith('OUT_')
         ]
+        geticonn = lambda e: e.dst_conn[3:]
+        geteconn = lambda e: e.src_conn[4:]
 
     for edge in external_edges:
         if edge.data.is_empty():
             new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges
-                                 if e.data.data == edge.data.data)
-            new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
-                                          True)
+                                 if geticonn(e) == geteconn(edge))
+            new_memlet = propagate_memlet(dfg_state,
+                                          internal_edge.data,
+                                          node,
+                                          True,
+                                          connector=geteconn(edge))
         edge.data = new_memlet
 
 
@@ -1228,7 +1246,8 @@ def propagate_memlet(dfg_state,
                      memlet: Memlet,
                      scope_node: nodes.EntryNode,
                      union_inner_edges: bool,
-                     arr=None):
+                     arr=None,
+                     connector=None):
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
@@ -1244,10 +1263,20 @@ def propagate_memlet(dfg_state,
         use_dst = False
         entry_node = scope_node
         neighboring_edges = dfg_state.out_edges(scope_node)
+        if connector is not None:
+            neighboring_edges = [
+                e for e in neighboring_edges
+                if e.src_conn and e.src_conn[4:] == connector
+            ]
     elif isinstance(scope_node, nodes.ExitNode):
         use_dst = True
         entry_node = dfg_state.entry_node(scope_node)
         neighboring_edges = dfg_state.in_edges(scope_node)
+        if connector is not None:
+            neighboring_edges = [
+                e for e in neighboring_edges
+                if e.dst_conn and e.dst_conn[3:] == connector
+            ]
     else:
         raise TypeError('Trying to propagate through a non-scope node')
     if memlet.is_empty():
