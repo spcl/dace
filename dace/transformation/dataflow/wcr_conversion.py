@@ -102,7 +102,7 @@ class AugAssignToWCR(transformation.Transformation):
                                                      re.escape(inconn), ops)
                 rhs = r'^\s*%s\s*=\s*.*%s\s*%s;$' % (re.escape(outconn), ops,
                                                      re.escape(inconn))
-                if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
+                if re.match(lhs, cstr) is None:# and re.match(rhs, cstr) is None:
                     continue
                 # Same memlet
                 if edge.data.subset != outedge.data.subset:
@@ -192,13 +192,13 @@ class AugAssignToWCR(transformation.Transformation):
                     r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
                     (re.escape(outconn), re.escape(inconn), ops), cstr)
                 if match is None:
-                    match = re.match(
-                        r'^\s*%s\s*=\s*(.*)\s*(%s)\s*%s;$' %
-                        (re.escape(outconn), ops, re.escape(inconn)), cstr)
-                    if match is None:
-                        continue
-                    op = match.group(2)
-                    expr = match.group(1)
+                    # match = re.match(
+                    #     r'^\s*%s\s*=\s*(.*)\s*(%s)\s*%s;$' %
+                    #     (re.escape(outconn), ops, re.escape(inconn)), cstr)
+                    # if match is None:
+                    continue
+                    # op = match.group(2)
+                    # expr = match.group(1)
                 else:
                     op = match.group(1)
                     expr = match.group(2)
