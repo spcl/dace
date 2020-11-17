@@ -89,7 +89,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._dispatcher.register_state_dispatcher(
             self,
             predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and
-            ("is_FPGA_kernel" in state.location and state.
+            ("is_FPGA_kernel" not in state.location or state.
              location["is_FPGA_kernel"] is True) and all([
                  n.desc(sdfg).storage in [
                      dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
