@@ -17,7 +17,7 @@ class AugAssignToWCR(transformation.Transformation):
     tasklet = transformation.PatternNode(nodes.Tasklet)
     output = transformation.PatternNode(nodes.AccessNode)
 
-    _EXPRESSIONS = ['+', '-', '*', '^', '%', '/']
+    _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
     _EXPR_MAP = {
         '-': ('+', '-({expr})'),
         '/': ('*', '((decltype({expr}))1)/({expr})')
