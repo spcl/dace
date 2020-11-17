@@ -1085,7 +1085,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
             if symbolic.issymbolic(iedge.data.volume):
                 if any(
-                        str(s) not in parent_sdfg.symbols
+                        str(s) not in outer_symbols
                         for s in iedge.data.volume.free_symbols):
                     iedge.data.volume = 0
                     iedge.data.dynamic = True
@@ -1097,7 +1097,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
             if symbolic.issymbolic(oedge.data.volume):
                 if any(
-                        str(s) not in parent_sdfg.symbols
+                        str(s) not in outer_symbols
                         for s in oedge.data.volume.free_symbols):
                     oedge.data.volume = 0
                     oedge.data.dynamic = True
