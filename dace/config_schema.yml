@@ -203,6 +203,15 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    openmp_sections:
+                        type: bool
+                        default: true
+                        title: Use OpenMP sections
+                        description: >
+                            If set to true, multiple connected components will
+                            generate "#pragma omp parallel sections" code around
+                            them.
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:
