@@ -731,8 +731,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
-        # By default, FPGA states are inferred as FPGA kernels
-        self.location["is_FPGA_kernel"] = True
 
     @property
     def parent(self):

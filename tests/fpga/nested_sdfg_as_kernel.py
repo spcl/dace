@@ -16,15 +16,15 @@ import subprocess
 from dace.memlet import Memlet
 
 
-def make_vecAdd_sdfg(dtype=dace.float32):
+def make_vec_add_sdfg(dtype=dace.float32):
 
     # Vector addition SDFG
 
     vecWidth = 4
     n = dace.symbol("size")
-    vecAdd_sdfg = dace.SDFG("vecAdd")
+    vecAdd_sdfg = dace.SDFG("vec_add")
     vecType = dace.vector(dtype, vecWidth)
-    fpga_state = vecAdd_sdfg.add_state("vecAdd_state")
+    fpga_state = vecAdd_sdfg.add_state("vec_add_state")
 
     vecAdd_sdfg.add_array('_device_x',
                           shape=[n / vecWidth],
@@ -51,26 +51,26 @@ def make_vecAdd_sdfg(dtype=dace.float32):
         dict(i='0:{0}/{1}'.format(n, vecWidth)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-    vecAdd_tasklet = fpga_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'],
+    vecAdd_tasklet = fpga_state.add_tasklet('vec_add_task', ['x_con', 'y_con'],
                                             ['z_con'], 'z_con = x_con + y_con')
 
     fpga_state.add_memlet_path(x,
                                vecMap_entry,
                                vecAdd_tasklet,
                                dst_conn='x_con',
-                               memlet=dace.Memlet.simple(x.data, "i"))
+                               memlet=dace.Memlet(f"{x.data}[i]"))
 
     fpga_state.add_memlet_path(y,
                                vecMap_entry,
                                vecAdd_tasklet,
                                dst_conn='y_con',
-                               memlet=dace.Memlet.simple(y.data, 'i'))
+                               memlet=dace.Memlet(f"{y.data}[i]"))
 
     fpga_state.add_memlet_path(vecAdd_tasklet,
                                vecMap_exit,
                                z,
                                src_conn='z_con',
-                               memlet=dace.Memlet.simple(z.data, 'i'))
+                               memlet=dace.Memlet(f"{z.data}[i]"))
 
     #########
     # Validate
@@ -79,14 +79,14 @@ def make_vecAdd_sdfg(dtype=dace.float32):
     return vecAdd_sdfg
 
 
-def make_vecMul_sdfg(dtype=dace.float32):
+def make_vec_mul_sdfg(dtype=dace.float32):
     # Vector multiplication SDFG
 
     vecWidth = 4
     n = dace.symbol("size")
-    vecMul_sdfg = dace.SDFG("vecMul")
+    vecMul_sdfg = dace.SDFG("vec_mul")
     vecType = dace.vector(dtype, vecWidth)
-    fpga_state = vecMul_sdfg.add_state("vecMul_state")
+    fpga_state = vecMul_sdfg.add_state("vec_mul_state")
 
     vecMul_sdfg.add_array('_device_x',
                           shape=[n / vecWidth],
@@ -120,19 +120,19 @@ def make_vecMul_sdfg(dtype=dace.float32):
                                vecMap_entry,
                                vecMul_tasklet,
                                dst_conn='x_con',
-                               memlet=dace.Memlet.simple(x.data, "i"))
+                               memlet=dace.Memlet(f"{x.data}[i]"))
 
     fpga_state.add_memlet_path(y,
                                vecMap_entry,
                                vecMul_tasklet,
                                dst_conn='y_con',
-                               memlet=dace.Memlet.simple(y.data, 'i'))
+                               memlet=dace.Memlet(f"{y.data}[i]"))
 
     fpga_state.add_memlet_path(vecMul_tasklet,
                                vecMap_exit,
                                z,
                                src_conn='z_con',
-                               memlet=dace.Memlet.simple(z.data, 'i'))
+                               memlet=dace.Memlet(f"{z.data}[i]"))
 
     #########
     # Validate
@@ -188,19 +188,19 @@ def make_fpga_sdfg():
 
     in_device_v = copy_in_state.add_write("device_v")
 
-    copy_in_state.add_memlet_path(in_host_x,
-                                  in_device_x,
-                                  memlet=Memlet.simple(
-                                      in_host_x, "0:{}/{}".format(n, vecWidth)))
-    copy_in_state.add_memlet_path(in_host_y,
-                                  in_device_y,
-                                  memlet=Memlet.simple(
-                                      in_host_y, "0:{}/{}".format(n, vecWidth)))
+    copy_in_state.add_memlet_path(
+        in_host_x,
+        in_device_x,
+        memlet=dace.Memlet(f"{in_host_x.data}[0:{n}/{vecWidth}]"))
+    copy_in_state.add_memlet_path(
+        in_host_y,
+        in_device_y,
+        memlet=dace.Memlet(f"{in_host_y.data}[0:{n}/{vecWidth}]"))
 
-    copy_in_state.add_memlet_path(in_host_v,
-                                  in_device_v,
-                                  memlet=Memlet.simple(
-                                      in_host_v, "0:{}/{}".format(n, vecWidth)))
+    copy_in_state.add_memlet_path(
+        in_host_v,
+        in_device_v,
+        memlet=dace.Memlet(f"{in_host_v.data}[0:{n}/{vecWidth}]"))
 
     ###########################################################################
     # Copy data from FPGA
@@ -227,16 +227,14 @@ def make_fpga_sdfg():
     out_device_u = copy_out_state.add_read("device_u")
     out_host_u = copy_out_state.add_write("u")
 
-    copy_out_state.add_memlet_path(out_device_z,
-                                   out_host_z,
-                                   memlet=Memlet.simple(
-                                       out_host_z,
-                                       "0:{}/{}".format(n, vecWidth)))
-    copy_out_state.add_memlet_path(out_device_u,
-                                   out_host_u,
-                                   memlet=Memlet.simple(
-                                       out_host_u,
-                                       "0:{}/{}".format(n, vecWidth)))
+    copy_out_state.add_memlet_path(
+        out_device_z,
+        out_host_z,
+        memlet=dace.Memlet(f"{out_host_z.data}[0:{n}/{vecWidth}]"))
+    copy_out_state.add_memlet_path(
+        out_device_u,
+        out_host_u,
+        memlet=dace.Memlet(f"{out_host_u.data}[0:{n}/{vecWidth}]"))
     ###########################################################################
     # State that must not become an FPGA kernel
 
@@ -244,57 +242,51 @@ def make_fpga_sdfg():
     non_fpga_state.location["is_FPGA_kernel"] = False
     # Build the vec addition SDFG and nest it
 
-    to_nest = make_vecAdd_sdfg()
+    to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
     nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg,
                                                  {"_device_x", "_device_y"},
                                                  {"_device_z"}, {"size": "n"})
 
-    non_fpga_state.add_memlet_path(in_device_x,
-                                   nested_sdfg,
-                                   dst_conn="_device_x",
-                                   memlet=Memlet.simple(
-                                       in_device_x,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(in_device_y,
-                                   nested_sdfg,
-                                   dst_conn="_device_y",
-                                   memlet=Memlet.simple(
-                                       in_device_y,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(nested_sdfg,
-                                   out_device_z,
-                                   src_conn="_device_z",
-                                   memlet=Memlet.simple(
-                                       out_device_z,
-                                       "0:{}/{}".format(n, vecWidth)))
+    non_fpga_state.add_memlet_path(
+        in_device_x,
+        nested_sdfg,
+        dst_conn="_device_x",
+        memlet=dace.Memlet(f"{in_device_x.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        in_device_y,
+        nested_sdfg,
+        dst_conn="_device_y",
+        memlet=dace.Memlet(f"{in_device_y.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        nested_sdfg,
+        out_device_z,
+        src_conn="_device_z",
+        memlet=dace.Memlet(f"{out_device_z.data}[0:{n}/{vecWidth}]"))
 
     # Build the second vec addition SDFG and nest it
 
-    to_nest = make_vecAdd_sdfg()
+    to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
     nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg,
                                                  {"_device_x", "_device_y"},
                                                  {"_device_z"}, {"size": "n"})
 
-    non_fpga_state.add_memlet_path(out_device_z,
-                                   nested_sdfg,
-                                   dst_conn="_device_x",
-                                   memlet=Memlet.simple(
-                                       out_device_z,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(in_device_v,
-                                   nested_sdfg,
-                                   dst_conn="_device_y",
-                                   memlet=Memlet.simple(
-                                       in_device_v,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(nested_sdfg,
-                                   out_device_u,
-                                   src_conn="_device_z",
-                                   memlet=Memlet.simple(
-                                       out_device_u,
-                                       "0:{}/{}".format(n, vecWidth)))
+    non_fpga_state.add_memlet_path(
+        out_device_z,
+        nested_sdfg,
+        dst_conn="_device_x",
+        memlet=dace.Memlet(f"{out_device_z.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        in_device_v,
+        nested_sdfg,
+        dst_conn="_device_y",
+        memlet=dace.Memlet(f"{in_device_v.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        nested_sdfg,
+        out_device_u,
+        src_conn="_device_z",
+        memlet=dace.Memlet(f"{out_device_u.data}[0:{n}/{vecWidth}]"))
 
     ######################################
     # Interstate edges
@@ -363,23 +355,23 @@ def make_fpga_sdfg_independent():
     in_device_v = copy_in_state.add_write("device_v")
     in_device_w = copy_in_state.add_write("device_w")
 
-    copy_in_state.add_memlet_path(in_host_x,
-                                  in_device_x,
-                                  memlet=Memlet.simple(
-                                      in_host_x, "0:{}/{}".format(n, vecWidth)))
-    copy_in_state.add_memlet_path(in_host_y,
-                                  in_device_y,
-                                  memlet=Memlet.simple(
-                                      in_host_y, "0:{}/{}".format(n, vecWidth)))
+    copy_in_state.add_memlet_path(
+        in_host_x,
+        in_device_x,
+        memlet=dace.Memlet(f"{in_host_x.data}[0:{n}/{vecWidth}]"))
+    copy_in_state.add_memlet_path(
+        in_host_y,
+        in_device_y,
+        memlet=dace.Memlet(f"{in_host_y.data}[0:{n}/{vecWidth}]"))
 
-    copy_in_state.add_memlet_path(in_host_v,
-                                  in_device_v,
-                                  memlet=Memlet.simple(
-                                      in_host_v, "0:{}/{}".format(n, vecWidth)))
-    copy_in_state.add_memlet_path(in_host_w,
-                                  in_device_w,
-                                  memlet=Memlet.simple(
-                                      in_host_w, "0:{}/{}".format(n, vecWidth)))
+    copy_in_state.add_memlet_path(
+        in_host_v,
+        in_device_v,
+        memlet=dace.Memlet(f"{in_host_v.data}[0:{n}/{vecWidth}]"))
+    copy_in_state.add_memlet_path(
+        in_host_w,
+        in_device_w,
+        memlet=dace.Memlet(f"{in_host_w.data}[0:{n}/{vecWidth}]"))
 
     ###########################################################################
     # Copy data from FPGA
@@ -406,16 +398,14 @@ def make_fpga_sdfg_independent():
     out_device_u = copy_out_state.add_read("device_u")
     out_host_u = copy_out_state.add_write("u")
 
-    copy_out_state.add_memlet_path(out_device_z,
-                                   out_host_z,
-                                   memlet=Memlet.simple(
-                                       out_host_z,
-                                       "0:{}/{}".format(n, vecWidth)))
-    copy_out_state.add_memlet_path(out_device_u,
-                                   out_host_u,
-                                   memlet=Memlet.simple(
-                                       out_host_u,
-                                       "0:{}/{}".format(n, vecWidth)))
+    copy_out_state.add_memlet_path(
+        out_device_z,
+        out_host_z,
+        memlet=dace.Memlet(f"{out_host_z.data}[0:{n}/{vecWidth}]"))
+    copy_out_state.add_memlet_path(
+        out_device_u,
+        out_host_u,
+        memlet=dace.Memlet(f"{out_host_u.data}[0:{n}/{vecWidth}]"))
     ###########################################################################
     # Non-FPGA state
 
@@ -424,57 +414,51 @@ def make_fpga_sdfg_independent():
 
     # Build the vec addition SDFG and nest it
 
-    to_nest = make_vecAdd_sdfg()
+    to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
     nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg,
                                                  {"_device_x", "_device_y"},
                                                  {"_device_z"}, {"size": "n"})
 
-    non_fpga_state.add_memlet_path(in_device_x,
-                                   nested_sdfg,
-                                   dst_conn="_device_x",
-                                   memlet=Memlet.simple(
-                                       in_device_x,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(in_device_y,
-                                   nested_sdfg,
-                                   dst_conn="_device_y",
-                                   memlet=Memlet.simple(
-                                       in_device_y,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(nested_sdfg,
-                                   out_device_z,
-                                   src_conn="_device_z",
-                                   memlet=Memlet.simple(
-                                       out_device_z,
-                                       "0:{}/{}".format(n, vecWidth)))
+    non_fpga_state.add_memlet_path(
+        in_device_x,
+        nested_sdfg,
+        dst_conn="_device_x",
+        memlet=dace.Memlet(f"{in_device_x.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        in_device_y,
+        nested_sdfg,
+        dst_conn="_device_y",
+        memlet=dace.Memlet(f"{in_device_y.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        nested_sdfg,
+        out_device_z,
+        src_conn="_device_z",
+        memlet=dace.Memlet(f"{out_device_z.data}[0:{n}/{vecWidth}]"))
 
     # Build the vec multiplication SDFG and nest it
 
-    to_nest = make_vecMul_sdfg()
+    to_nest = make_vec_mul_sdfg()
     # add nested sdfg with symbol mapping
     nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg,
                                                  {"_device_x", "_device_y"},
                                                  {"_device_z"}, {"size": "n"})
 
-    non_fpga_state.add_memlet_path(in_device_v,
-                                   nested_sdfg,
-                                   dst_conn="_device_x",
-                                   memlet=Memlet.simple(
-                                       in_device_v,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(in_device_w,
-                                   nested_sdfg,
-                                   dst_conn="_device_y",
-                                   memlet=Memlet.simple(
-                                       in_device_w,
-                                       "0:{}/{}".format(n, vecWidth)))
-    non_fpga_state.add_memlet_path(nested_sdfg,
-                                   out_device_u,
-                                   src_conn="_device_z",
-                                   memlet=Memlet.simple(
-                                       out_device_u,
-                                       "0:{}/{}".format(n, vecWidth)))
+    non_fpga_state.add_memlet_path(
+        in_device_v,
+        nested_sdfg,
+        dst_conn="_device_x",
+        memlet=dace.Memlet(f"{in_device_v.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        in_device_w,
+        nested_sdfg,
+        dst_conn="_device_y",
+        memlet=dace.Memlet(f"{in_device_w.data}[0:{n}/{vecWidth}]"))
+    non_fpga_state.add_memlet_path(
+        nested_sdfg,
+        out_device_u,
+        src_conn="_device_z",
+        memlet=dace.Memlet(f"{out_device_u.data}[0:{n}/{vecWidth}]"))
 
     ######################################
     # Interstate edges
