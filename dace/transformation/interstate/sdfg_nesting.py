@@ -731,12 +731,12 @@ class RefineNestedAccess(transformation.Transformation):
             # Offset memlets inside negatively by "refine", modify outer
             # memlets to be "refine"
             for aname, refine in torefine.items():
-                if aname in refined:
-                    continue
                 outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
                 new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
-                #outer_edge.data.subset.offset(new_memlet.subset, False)
                 outer_edge.data.subset = new_memlet.subset
+                if aname in refined:
+                    continue
+                # Refine internal memlets
                 for nstate in nsdfg.nodes():
                     for e in nstate.edges():
                         if e.data.data == aname:

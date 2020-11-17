@@ -88,7 +88,7 @@ class LoopToMap(DetectLoop):
                     continue
                 subset = e.data.subset
                 if data in write_set:
-                    if e.data.dynamic:
+                    if e.data.dynamic and e.data.wcr is None:
                         # If pointers are involved, give up
                         return False
                     # To be sure that the value is only written at unique
@@ -130,7 +130,7 @@ class LoopToMap(DetectLoop):
                 # If the same container is both read and written, only match if
                 # it read and written at locations that will not create data races
                 if data in write_memlets:
-                    if e.data.dynamic or subset.num_elements() != 1:
+                    if e.data.dynamic and subset.num_elements() != 1:
                         # If pointers are involved, give up
                         return False
 
