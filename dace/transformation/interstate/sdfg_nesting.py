@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
+import ast
 from collections import defaultdict
 from copy import deepcopy as dc
 from dace.frontend.python.ndloop import ndrange
@@ -10,6 +11,7 @@ from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple
 import warnings
 
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
@@ -589,6 +591,26 @@ class InlineTransients(transformation.Transformation):
             state.remove_node(tree.root().edge.dst)
 
 
+class ASTRefiner(ast.NodeTransformer):
+    def __init__(self, to_refine: str, refine_subset: subsets.Subset,
+                 sdfg: SDFG) -> None:
+        self.to_refine = to_refine
+        self.subset = refine_subset
+        self.sdfg = sdfg
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
+        if astutils.rname(node.value) == self.to_refine:
+            rng = subsets.Range(
+                astutils.subscript_to_slice(node,
+                                            self.sdfg.arrays,
+                                            without_array=True))
+            rng.offset(self.subset, True)
+            return ast.copy_location(
+                astutils.slice_to_subscript(self.to_refine, rng), node)
+
+        return self.generic_visit(node)
+
+
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class RefineNestedAccess(transformation.Transformation):
@@ -741,6 +763,18 @@ class RefineNestedAccess(transformation.Transformation):
                     for e in nstate.edges():
                         if e.data.data == aname:
                             e.data.subset.offset(refine.subset, True)
+                # Refine accesses in interstate edges
+                refiner = ASTRefiner(aname, refine.subset, nsdfg)
+                for isedge in nsdfg.edges():
+                    for k, v in isedge.data.assignments.items():
+                        vast = ast.parse(v)
+                        refiner.visit(vast)
+                        isedge.data.assignments[k] = astutils.unparse(vast)
+                    if isedge.data.condition.language is dtypes.Language.Python:
+                        for i, stmt in enumerate(isedge.data.condition.code):
+                            isedge.data.condition.code[i] = refiner.visit(stmt)
+                    else:
+                        raise NotImplementedError
                 refined.add(aname)
 
         # Proceed symmetrically on incoming and outgoing edges
