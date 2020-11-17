@@ -182,6 +182,9 @@ def subscript_to_slice(node, arrays, without_array=False):
     else:
         return name, rng
 
+def slice_to_subscript(arrname, range):
+    """ Converts a name and subset to a Python AST Subscript object. """
+    return ast.parse(f'{arrname}[{range}]').body[0].value
 
 def astrange_to_symrange(astrange, arrays, arrname=None):
     """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math 
