@@ -34,6 +34,14 @@ class PruneConnectors(pm.Transformation):
         prune_in = nsdfg.in_connectors.keys() - read_set
         prune_out = nsdfg.out_connectors.keys() - write_set
 
+        # Add WCR outputs to "do not prune" input list
+        for e in graph.out_edges(nsdfg):
+            if e.data.wcr is not None and e.src_conn in prune_in:
+                if (graph.in_degree(
+                        next(
+                            iter(graph.in_edges_by_connector(
+                                nsdfg, e.src_conn))).src) > 0):
+                    prune_in.remove(e.src_conn)
         if len(prune_in) > 0 or len(prune_out) > 0:
             return True
 
@@ -51,6 +59,15 @@ class PruneConnectors(pm.Transformation):
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
         all_data_used = read_set | write_set
+
+        # Add WCR outputs to "do not prune" input list
+        for e in state.out_edges(nsdfg):
+            if e.data.wcr is not None and e.src_conn in prune_in:
+                if (state.in_degree(
+                        next(
+                            iter(state.in_edges_by_connector(
+                                nsdfg, e.src_conn))).src) > 0):
+                    prune_in.remove(e.src_conn)
 
         for conn in prune_in:
             for e in state.in_edges_by_connector(nsdfg, conn):

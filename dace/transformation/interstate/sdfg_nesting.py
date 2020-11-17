@@ -592,8 +592,11 @@ class InlineTransients(transformation.Transformation):
 
 
 class ASTRefiner(ast.NodeTransformer):
-    def __init__(self, to_refine: str, refine_subset: subsets.Subset,
-                 sdfg: SDFG, indices: Set[int] = None) -> None:
+    def __init__(self,
+                 to_refine: str,
+                 refine_subset: subsets.Subset,
+                 sdfg: SDFG,
+                 indices: Set[int] = None) -> None:
         self.to_refine = to_refine
         self.subset = refine_subset
         self.sdfg = sdfg
@@ -654,7 +657,7 @@ class RefineNestedAccess(transformation.Transformation):
                         # and remove them from list
                         for i, (s1, s2) in enumerate(
                                 zip(e.data.subset, memlet.subset)):
-                            if s1 != s2:
+                            if s1 != s2 and i in indices:
                                 indices.remove(i)
                         if len(indices) == 0:
                             ignore.add(e.data.data)
@@ -672,7 +675,7 @@ class RefineNestedAccess(transformation.Transformation):
                         # and remove them from list
                         for i, (s1, s2) in enumerate(
                                 zip(e.data.subset, memlet.subset)):
-                            if s1 != s2:
+                            if s1 != s2 and i in indices:
                                 indices.remove(i)
                         if len(indices) == 0:
                             ignore.add(e.data.data)
@@ -697,7 +700,8 @@ class RefineNestedAccess(transformation.Transformation):
         # Ensure minimum elements of candidates do not begin with zero
         def _check_cand(candidates, outer_edges):
             for cname, (cand, nstate, indices) in candidates.items():
-                if all(me == 0 for me in cand.subset.min_element()):
+                if all(me == 0 for i, me in enumerate(cand.subset.min_element())
+                       if i in indices):
                     ignore.add(cname)
                     continue
 
