@@ -318,13 +318,6 @@ class GPUTransformSDFG(transformation.Transformation):
                     if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
                         node.schedule = dtypes.ScheduleType.Sequential
 
-                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
-                    if sdict[node] is None:
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, (nodes.EntryNode, nodes.LibraryNode))
-                          and self.sequential_innermaps):
-                        node.schedule = dtypes.ScheduleType.Sequential
-
         #######################################################
         # Step 7: Introduce copy-out if data used in outgoing interstate edges
 
