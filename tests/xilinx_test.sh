@@ -55,6 +55,7 @@ run_sample() {
 }
 
 run_all() {
+
     # Args:
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test 0
@@ -62,7 +63,7 @@ run_all() {
     run_sample fpga/veclen_copy_conversion veclen_copy_conversion 1
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 0 24
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream 0 64 64 640
-    run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize 
+    run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize
     run_sample ../samples/fpga/filter_fpga_vectorized filter_fpga_vectorized_4 1 8192 4 0.25
     # run_sample jacobi_fpga_systolic jacobi_fpga_systolic_4_Hx128xT 1 128 128 8 4
     # TODO: this doesn't pipeline. Should it? Why doesn't it?
@@ -75,7 +76,16 @@ run_all() {
       run_sample ../samples/fpga/filter_fpga filter_fpga 1 8192 0.5
       run_sample ../samples/fpga/jacobi_fpga_stream jacobi_fpga_stream_Hx128xT 1 128 128 8
     fi
+
+    run_sample fpga/multiple_kernels multiple_kernels 0
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
+
+    ## BLAS
+    run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
+
+
+    #Nested SDFGs generated as FPGA kernels
+    run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
 }
 
 # Check if xocc is vailable

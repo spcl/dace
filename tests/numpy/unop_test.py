@@ -14,7 +14,7 @@ def usubtest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 
 @dace.program
-def nottest(A: dace.bool[5, 5], B: dace.bool[5, 5]):
+def nottest(A: dace.bool_[5, 5], B: dace.bool_[5, 5]):
     B[:] = not A
 
 
@@ -24,10 +24,10 @@ def inverttest(A: dace.int64[5, 5], B: dace.int64[5, 5]):
 
 
 if __name__ == '__main__':
-    A = np.random.randint(1, 10, size=(5, 5))
-    Ab = np.random.randint(0, 2, size=(5, 5)).astype(bool)
+    A = np.random.randint(1, 10, size=(5, 5), dtype=np.int64)
+    Ab = np.random.randint(0, 2, size=(5, 5)).astype(np.bool_)
     B = np.zeros((5, 5), dtype=np.int64)
-    Bb = np.zeros((5, 5), dtype=np.int64).astype(bool)
+    Bb = np.zeros((5, 5), dtype=np.int64).astype(np.bool_)
 
     failed_tests = set()
 

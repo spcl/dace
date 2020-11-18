@@ -320,7 +320,7 @@ def _cpp_indirection_promoter(
     repl: Dict[Tuple[int, int], str] = {}
 
     # Find all occurrences of "aname[subexpr]"
-    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*)\[(.*?)\]', code):
+    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]', code):
         node_name = m.group(1)
         subexpr = m.group(2)
         if node_name in (set(in_edges.keys()) | set(out_edges.keys())):

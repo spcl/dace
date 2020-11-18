@@ -92,8 +92,10 @@ def call_multiple_sdfgs():
         if isinstance(n, dace.sdfg.nodes.AccessNode):
             assert(n.data in {'out_tmp', 'tmp_sum', 'output'})
         elif isinstance(n, dace.sdfg.nodes.CodeNode):
-            assert(set(n.in_connectors.keys()) == {'out_tmp', 'tmp_sum'})
-            assert(set(n.out_connectors.keys()) == {'output'})
+            for src, _, _, _, _ in state.in_edges(n):
+                assert(src.data in {'out_tmp', 'tmp_sum'})
+            for _, _, dst, _, _ in state.out_edges(n):
+                assert(dst.data in {'output'})
 
 
 if __name__ == "__main__":

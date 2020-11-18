@@ -692,7 +692,7 @@ class SubgraphTransformation(object):
         return ret
 
 
-def strict_transformations() -> List[Transformation]:
+def strict_transformations() -> List[Type[Transformation]]:
     """ :return: List of all registered strict transformations.
     """
     return [
