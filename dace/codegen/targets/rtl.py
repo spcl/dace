@@ -44,6 +44,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
         # local variables
         self.verilator_debug: bool = config.Config.get_bool(
             "compiler", "rtl", "verilator_enable_debug")
+        self.verilator_trace = config.Config.get_bool("compiler", "rtl",
+                                                      "verilator_enable_trace")
+        self.verilator_coverage = config.Config.get_bool(
+            "compiler", "rtl", "verilator_enable_coverage")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
 
@@ -171,18 +175,37 @@ class RTLCodeGen(target.TargetCodeGenerator):
             Process variables to be exposed to the CMakeList.txt script.
         """
         # get flags from config
-        verbose = config.Config.get_bool("compiler", "rtl", "verbose")
         verilator_flags = config.Config.get("compiler", "rtl",
                                             "verilator_flags")
         verilator_lint_warnings = config.Config.get_bool(
             "compiler", "rtl", "verilator_lint_warnings")
+        verilator_debug = config.Config.get_bool("compiler", "rtl",
+                                                 "verilator_enable_debug")
+        verilator_trace = config.Config.get_bool("compiler", "rtl",
+                                                 "verilator_enable_trace")
+        verilator_coverage = config.Config.get_bool(
+            "compiler", "rtl", "verilator_enable_coverage")
+
         # create options list
         options = [
-            "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
             "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags),
             "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(
-                verilator_lint_warnings)
+                verilator_lint_warnings),
+            "-DDACE_RTL_VERILATOR_DEBUG=\"{}\"".format(verilator_debug),
+            "-DDACE_RTL_VERILATOR_TRACE=\"{}\"".format(verilator_trace),
+            "-DDACE_RTL_VERILATOR_COVERAGE=\"{}\"".format(verilator_coverage)
         ]
+
+        # add optional gcc flags for trace and coverage
+        gcc_flags = list()
+        if verilator_trace:
+            gcc_flags.append("-DVM_TRACE")
+        if verilator_coverage:
+            gcc_flags.append("-DVM_COVERAGE")
+        if len(gcc_flags) > 0:
+            options.append("-DCMAKE_CXX_FLAGS=\"{}\"".format(
+                " ".join(gcc_flags)))
+
         return options
 
     def generate_rtl_parameters(self, constants):
@@ -354,7 +377,12 @@ for(int i = 0; i < {veclen}; i++){{
                                                   parameters=parameter_string,
                                                   inputs="\n".join(inputs),
                                                   outputs="\n".join(outputs)) +
-                tasklet.code.code + RTLCodeGen.RTL_FOOTER,
+                tasklet.code.code + RTLCodeGen.RTL_FOOTER.format(trace="""\
+initial begin
+    $dumpfile("{}.vcd");
+    $dumpvars();
+end""".format("_".join([sdfg.name, unique_name, "trace"])
+              ) if self.verilator_trace else ""),
                 language="sv",
                 target=RTLCodeGen,
                 title="rtl",
@@ -396,7 +424,7 @@ for(int i = 0; i < {veclen}; i++){{
             if self.verilator_debug else "",
             debug_export_element="std::cout << \"export element\" << std::endl;"
             if self.verilator_debug else "",
-            debug_internal_state="""
+            debug_internal_state="""\
 // report internal state 
 VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
@@ -411,16 +439,27 @@ std::cout << std::flush;
             "std::cout << \"remove write_output_hs flag\" << std::endl;"
             if self.verilator_debug else "",
             debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
-            if self.verilator_debug else ""),
+            if self.verilator_debug else "",
+            coverage="VerilatedCov::write(\"{}.dat\");".format("_".join([
+                sdfg.name, unique_name, "coverage"
+            ])) if self.verilator_coverage else "",
+            trace="""\
+// Verilator must compute traced signals
+Verilated::traceEverOn(true);""" if self.verilator_trace else ""),
                               sdfg=sdfg,
                               state_id=state_id,
                               node_id=node)
 
     CPP_GENERAL_HEADER_TEMPLATE = """\
 {debug_include}
+
 // verilator includes
 #include <verilated.h>
-"""
+
+vluint64_t main_time = 0;
+double sc_time_stamp() {{
+    return main_time;  // Note does conversion to real, to match SystemC
+}}"""
 
     CPP_MODEL_HEADER_TEMPLATE = """\
 // include model header, generated from verilating the sv design
@@ -430,7 +469,7 @@ std::cout << std::flush;
     CPP_MAIN_TEMPLATE = """\
 {debug_sim_start}
 
-vluint64_t main_time = 0;
+{trace}
 
 // instantiate model
 V{name}* model = new V{name};
@@ -442,17 +481,22 @@ model->valid_i = 0; // not valid
 model->ready_i = 0; // not ready 
 model->eval();
 
+main_time++;
+
 {vector_init}
 
 // reset design
 model->rst_i = 1;
 model->clk_i = 1; // rising
 model->eval();
+main_time++;
 model->clk_i = 0; // falling
 model->eval();
+main_time++;
 model->rst_i = 0;
 model->clk_i = 1; // rising
 model->eval();
+main_time++;
 model->clk_i = 0; // falling
 model->eval();
 
@@ -492,6 +536,9 @@ while (out_ptr < num_elements) {{
     model->clk_i = !model->clk_i;
     model->eval();
 
+    // increment time
+    main_time++;
+
     {debug_internal_state}
 
     // check if valid_i and ready_o have been asserted at the rising clock edge
@@ -520,6 +567,8 @@ while (out_ptr < num_elements) {{
 // final model cleanup
 model->final();
 
+{coverage}
+
 // clean up resources
 delete model;
 model = NULL;
@@ -542,6 +591,7 @@ module {name}
 """
 
     RTL_FOOTER = """\
+{trace}
 endmodule
 """
 
