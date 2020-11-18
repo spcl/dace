@@ -121,7 +121,10 @@ run_all() {
 
     ## BLAS
     run_sample blas/nodes/axpy_test blas_axpy_test "\n" --target intel_fpga
-    
+
+
+    #Nested SDFGs generated as FPGA kernels
+    run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"
 }
 
 # Check if aoc is vailable
