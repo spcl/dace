@@ -53,7 +53,7 @@ def main():
 
     # Copying header file to optional path
     if outpath is not None:
-        source = os.path.join(sdfg.build_folder, 'src', 'cpu', sdfg.name + '.h')
+        source = os.path.join(sdfg.build_folder, 'include', sdfg.name + '.h')
         if os.path.isdir(outpath):
             outpath = os.path.join(outpath, sdfg.name + '.h')
         else:
