@@ -261,6 +261,12 @@ value3=5000000000"""
         # in any case, value3 needs uint64
         self.assertEqual(inf_symbols["value3"], dtypes.typeclass(np.uint64))
 
+    def testMalformedPython(self):
+        code_str = "i = 3 * *y"
+        inf_symbols = type_inference.infer_types(code_str)
+        # This should return an empty dictionary
+        self.assertEqual(bool(inf_symbols), False)
+
 
 if __name__ == "__main__":
     unittest.main()

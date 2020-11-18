@@ -27,7 +27,12 @@ def infer_types(code, symbols=None):
     symbols = symbols or {}
     inferred_symbols = {}
     if isinstance(code, str):
-        _dispatch(ast.parse(code), symbols, inferred_symbols)
+        try:
+            parsed_ast = ast.parse(str(code))
+        except SyntaxError:
+            # the input code is not valid Python
+            return inferred_symbols
+        _dispatch(parsed_ast, symbols, inferred_symbols)
     elif isinstance(code, ast.AST):
         _dispatch(code, symbols, inferred_symbols)
     elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
@@ -53,7 +58,11 @@ def infer_expr_type(code, symbols=None):
     symbols = symbols or {}
     inferred_symbols = {}
     if isinstance(code, (str, float, int, complex)):
-        parsed_ast = ast.parse(str(code))
+        try:
+            parsed_ast = ast.parse(str(code))
+        except SyntaxError:
+            # the input code is not valid Python
+            return inferred_symbols
     elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         parsed_ast = ast.parse(symstr(code))
 
@@ -222,8 +231,7 @@ def _If(t, symbols, inferred_symbols):
     _dispatch(t.test, symbols, inferred_symbols)
     _dispatch(t.body, symbols, inferred_symbols)
 
-    while (t.orelse and len(t.orelse) == 1
-           and isinstance(t.orelse[0], ast.If)):
+    while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
         t = t.orelse[0]
         _dispatch(t.test, symbols, inferred_symbols)
         _dispatch(t.body, symbols, inferred_symbols)
@@ -297,9 +305,8 @@ def _Constant(t, symbols, inferred_symbols):
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
-    return dtypes.result_type_of(
-        dtypes.typeclass(type(t.n)),
-        dtypes.typeclass(np.min_scalar_type(t.n).name))
+    return dtypes.result_type_of(dtypes.typeclass(type(t.n)),
+                                 dtypes.typeclass(np.min_scalar_type(t.n).name))
 
 
 def _IfExp(t, symbols, inferred_symbols):
@@ -331,14 +338,13 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n
-                and t.right.n >= 0):
+        if (isinstance(t.right, (ast.Num, ast.Constant))
+                and int(t.right.n) == t.right.n and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left,
-                                         dtypes.typeclass(np.uint32))
+            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
         else:
             type_left = _dispatch(t.left, symbols, inferred_symbols)
             type_right = _dispatch(t.right, symbols, inferred_symbols)

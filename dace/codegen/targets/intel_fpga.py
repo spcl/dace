@@ -1149,7 +1149,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)
-        elif defined_type == DefinedType.Pointer and memlet.num_accesses != 1:
+        elif defined_type == DefinedType.Pointer and memlet.dynamic:
             # if this has a variable number of access, it has been declared
             # as a pointer. We need to deference it
             if isinstance(node.id, ast.Subscript):
