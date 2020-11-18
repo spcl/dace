@@ -556,7 +556,7 @@ if(DACE_ENABLE_RTL)
     message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
   endif()
 
-  # check minimal version requirements
+  # check general minimal version requirements
   set(VERILATOR_MIN_VERSION "4.028")
   if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
     message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
@@ -575,6 +575,11 @@ if(DACE_ENABLE_RTL)
   # add verilated sources and compiler flags
   set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
   if("${DACE_RTL_VERILATOR_TRACE}")
+    # check minimal version requirements for trace functionality
+    set(VERILATOR_MIN_VERSION_TRACE "4.030")
+    if("${verilator_VERSION}" VERSION_LESS "VERILATOR_MIN_VERSION_TRACE")
+      message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION_TRACE} to use the trace functionality.")
+    endif()
     set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated_vcd_c.cpp")
   endif()
   if("${DACE_RTL_VERILATOR_COVERAGE}")
