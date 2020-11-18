@@ -309,6 +309,15 @@ class GPUTransformSDFG(transformation.Transformation):
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Persistent
+                    elif isinstance(node, nodes.EntryNode):
+                        node.schedule = dtypes.ScheduleType.GPU_Device
+                else:
+                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
+                        node.schedule = dtypes.ScheduleType.Sequential
+
                 if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                     if sdict[node] is None:
                         node.schedule = dtypes.ScheduleType.GPU_Device
