@@ -1121,13 +1121,13 @@ def can_access(schedule: ScheduleType, storage: StorageType):
 
     if schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
-            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Default,
     ]:
         return storage in [
             StorageType.GPU_Global, StorageType.GPU_Shared,
             StorageType.CPU_Pinned
         ]
-    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Default]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
             StorageType.CPU_ThreadLocal
@@ -1162,7 +1162,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI
+            ScheduleType.MPI, ScheduleType.CPU_Default
         ]
 
     # FPGA-local memory
@@ -1176,6 +1176,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_Default
         ]
 
     # The rest (Registers) can be allocated everywhere
