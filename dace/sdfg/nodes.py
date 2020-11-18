@@ -444,10 +444,11 @@ class NestedSDFG(CodeNode):
                  schedule=dtypes.ScheduleType.Default,
                  location=None,
                  debuginfo=None):
+        from dace.sdfg import SDFG
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg = sdfg
+        self.sdfg: SDFG = sdfg
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
