@@ -311,7 +311,7 @@ class GPUTransformSDFG(transformation.Transformation):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Persistent
+                        node.schedule = dtypes.ScheduleType.GPU_Default
                     elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
                 else:
