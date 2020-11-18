@@ -39,8 +39,13 @@ class ScheduleType(aenum.AutoNumberEnum):
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
+
+    #: Default scope schedule for CPU code. Specializes to schedule CPU_Multicore and CPU_Heap during inference.
+    CPU_Default = ()
     CPU_Multicore = ()  #: OpenMP
-    GPU_Default = ()  #: Default schedule for GPU code. Specializes to GPU_Device and GPU_Global during inference.
+
+    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
+    GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
@@ -50,6 +55,7 @@ class ScheduleType(aenum.AutoNumberEnum):
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
+    ScheduleType.GPU_Default,
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
@@ -125,6 +131,7 @@ SCOPEDEFAULT_STORAGE = {
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
+    ScheduleType.CPU_Default: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
@@ -139,6 +146,7 @@ SCOPEDEFAULT_SCHEDULE = {
     None: ScheduleType.CPU_Multicore,
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
+    ScheduleType.CPU_Default: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
