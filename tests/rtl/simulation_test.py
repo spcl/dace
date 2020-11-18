@@ -358,29 +358,7 @@ def test_multi_tasklet():
 
 
 if __name__ == '__main__':
-
-    MP = True
-
-    if MP:
-        import multiprocessing as mp
-
-        proc0 = mp.Process(target=test_tasklet_scalar)
-        proc1 = mp.Process(target=test_tasklet_parameter)
-        proc2 = mp.Process(target=test_tasklet_vector)
-
-        proc0.start()
-        proc1.start()
-        proc2.start()
-
-        proc0.join()
-        proc1.join()
-        proc2.join()
-    else:
-
-        test_tasklet_scalar()
-        test_tasklet_parameter()
-        test_tasklet_vector()
-
-
-
-    #test_multi_tasklet()
+    test_tasklet_scalar()
+    test_tasklet_parameter()
+    test_tasklet_vector()
+    test_multi_tasklet()
