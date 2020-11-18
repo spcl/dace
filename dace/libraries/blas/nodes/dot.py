@@ -6,6 +6,11 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
+from dace import dtypes
+
+from dace.libraries.blas.utility.initialization import fpga_init_array
+from dace.libraries.blas.utility.reductions import fpga_binary_compute_partial_reduction, fpga_linear_result_reduction
+from dace.libraries.blas.utility.memory_operations import fpga_map_singleton_to_stream
 
 
 @dace.library.expansion
@@ -155,6 +160,126 @@ class ExpandDotCuBLAS(ExpandTransformation):
         return tasklet
 
 
+
+
+@dace.library.expansion
+class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
+
+    environments = []
+
+    @staticmethod
+    def make_sdfg(dtype, partial_width, veclen, n, buffer_size_x, buffer_size_y):
+
+        # --------------------------
+        # Setup
+        # --------------------------
+        vec_type = dace.vector(dtype, veclen)
+
+        dot_sdfg = dace.SDFG('dot_linearReduction')
+
+        init_state = dot_sdfg.add_state('init_state')
+        compute_state = dot_sdfg.add_state('compute_state')
+        red_state = dot_sdfg.add_state('reduction_state')
+        final_state = dot_sdfg.add_state('final_state')
+
+        # --------------------------
+        # Memory
+        # --------------------------
+        dot_sdfg.add_array(
+            'red_buf',
+            shape=[(max(partial_width, 2))],
+            dtype=dtype,
+            transient=True,
+            storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers
+        )
+
+        dot_sdfg.add_array(
+            'res_buf',
+            shape=[1],
+            dtype=dtype,
+            transient=True,
+            storage=dtypes.StorageType.FPGA_Registers
+        )
+
+        # --------------------------
+        # Init State
+        # --------------------------
+        fpga_init_array(init_state, 'red_buf', partial_width, 0)
+        fpga_init_array(init_state, 'res_buf', 1, 0)
+
+        # --------------------------
+        # Compute State
+        # --------------------------
+        fpga_binary_compute_partial_reduction(
+            dot_sdfg,
+            compute_state,
+            '_x',
+            '_y',
+            'red_buf',
+            dtype,
+            n,
+            veclen,
+            partial_width,
+            'outCon = inCon1 * inCon2',
+            vec_type=vec_type
+        )
+
+        # --------------------------
+        # Reduction State
+        # --------------------------
+        fpga_linear_result_reduction(
+            red_state,
+            'red_buf',
+            'res_buf',
+            dtype,
+            partial_width,
+            toMem=True
+        )
+
+        fpga_map_singleton_to_stream(
+            final_state,
+            'res_buf',
+            '_result',
+            dtype
+        )
+
+        # --------------------------
+        # Connect States
+        # --------------------------
+        dot_sdfg.add_edge(init_state, compute_state, dace.InterstateEdge())
+        dot_sdfg.add_edge(compute_state, red_state, dace.InterstateEdge())
+        dot_sdfg.add_edge(red_state, final_state, dace.InterstateEdge())
+
+
+        dot_sdfg.fill_scope_connectors()
+
+        return  dot_sdfg
+
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) + ".")
+
+        for e in state.in_edges(node):
+            if e.dst_conn == "_x":
+                buffer_size_x = sdfg.arrays[e.data.data].buffer_size
+            elif e.dst_conn == "_y":
+                buffer_size_y = sdfg.arrays[e.data.data].buffer_size
+
+        return ExpandDOTFPGAStreamingLinearReduction.make_sdfg(
+            node.dtype,
+            node.partial_width,
+            int(node.veclen),
+            node.n,
+            buffer_size_x,
+            buffer_size_y
+        )
+
+
+
+
 @dace.library.node
 class Dot(dace.sdfg.nodes.LibraryNode):
 
@@ -164,19 +289,36 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "fpga_stream": ExpandDOTFPGAStreamingLinearReduction
     }
     default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
-    def __init__(self, name, dtype=None, *args, **kwargs):
+    partial_width = dace.properties.SymbolicProperty(allow_none=False, default=2)
+    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
+
+    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
+
+    def __init__(self,
+                name,
+                dtype=None,
+                partial_width=2,
+                veclen=1,
+                n=None,
+                *args,
+                **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
                          outputs={"_result"},
                          **kwargs)
         self.dtype = dtype
+        self.veclen = veclen
+        self.partial_width = partial_width
+        self.n = n or dace.symbolic.symbol("n")
+
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
@@ -198,3 +340,54 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):
             raise ValueError("WCR on dot product memlets not supported")
+
+
+    def compare(self, other):
+
+        if (self.dtype == other.dtype and self.vecWidth == other.vecWidth
+            and self.implementation == other.implementation):
+
+            return True
+        else:
+            return False
+
+
+    def streamProductionLatency(self):
+
+        return self.n
+
+    def streamConsumptionLatency(self):
+
+        return {
+            "_x": 0,
+            "_y": 0
+        }
+
+
+
+    def getStreamReader(self):
+        
+        return {
+            "_x" : streamReadVector(
+                '-',
+                self.n,
+                self.dtype,
+                vecWidth=int(self.vecWidth)
+            ),
+            "_y" : streamReadVector(
+                '-',
+                self.n,
+                self.dtype,
+                vecWidth=int(self.vecWidth)
+            )
+        }
+
+    def getStreamWriter(self):
+        
+        return {
+            "_res" : streamWriteVector(
+                '-',
+                1,
+                self.dtype
+            )
+        }

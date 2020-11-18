@@ -8,6 +8,7 @@ import numpy as np
 from dace import vector
 from dace.memlet import Memlet
 from dace import dtypes
+from dace import config
 
 
 # ---------- ----------
@@ -103,3 +104,47 @@ def fpga_copy_global_to_cpu(sdfg,
         names.append(src)
 
     return (outputs, names)
+
+
+
+
+
+def fpga_map_singleton_to_stream(
+        state,
+        src,
+        dest,
+        dtype,
+        mapTasklet='outCon = inCon'
+    ):
+    """
+    Copy single element from a source memory location
+    into a stream
+    """
+
+    buf_in = state.add_read(src)
+    result = state.add_stream(
+        dest,
+        dtype,
+        buffer_size=config.Config.get(
+            "library", "blas", "fpga", "default_stream_depth"),
+        storage=dtypes.StorageType.FPGA_Local
+    )
+
+    root_tasklet = state.add_tasklet(
+        'mapToStream_task',
+        ['inCon'],
+        ['outCon'],
+        mapTasklet
+    )
+
+    state.add_memlet_path(
+        buf_in, root_tasklet,
+        dst_conn='inCon',
+        memlet=Memlet.simple(buf_in.data, '0')
+    )
+
+    state.add_memlet_path(
+        root_tasklet, result,
+        src_conn='outCon',
+        memlet=Memlet.simple(result.data, '0', num_accesses=-1)
+    )

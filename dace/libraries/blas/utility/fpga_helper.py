@@ -339,8 +339,9 @@ class StreamWriteVector():
                        lib_connector,
                        access=False):
 
-        vec_type = vector(self.dtype, self.veclen)
 
+        vec_type = vector(self.dtype, self.veclen)
+        
         out_mem, out_name = self.stream(sdfg,
                                         state,
                                         self.fpga_data.data,
