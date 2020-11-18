@@ -466,12 +466,12 @@ required:
                         description: Enable/disable verbose internal state debug output.
                     verilator_enable_trace:
                         type: bool
-                        default: false
+                        default: true
                         title: Verilator Enable Trace
                         description: Enable/disable signal trace file (.vcd) generation.
                     verilator_enable_coverage:
                         type: bool
-                        default: false
+                        default: true
                         title: Verilator Enable Coverage
                         description: Enable/disable coverage report generation.
             #############################################

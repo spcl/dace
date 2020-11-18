@@ -361,4 +361,4 @@ if __name__ == '__main__':
     test_tasklet_scalar()
     test_tasklet_parameter()
     test_tasklet_vector()
-    test_multi_tasklet()
+    #test_multi_tasklet()
