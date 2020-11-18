@@ -947,12 +947,14 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
+                left_nodes.add(left) # left also belong to scope
+
                 right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                all_nodes = left_nodes | right_nodes
-
+                right_nodes.add(right) # right also belong to scope
+                
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:
                     continue
