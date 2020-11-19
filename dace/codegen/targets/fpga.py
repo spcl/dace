@@ -992,6 +992,28 @@ class FPGACodeGen(TargetCodeGenerator):
                     self.generate_pipeline_loop_pre(result, sdfg, state_id,
                                                     node)
 
+            # Being this a map (each iteration is independent), we can add pragmas to ignore dependencies on data
+            # that is read/written inside this map
+            map_exit_node = dfg.exit_node(node)
+            state = sdfg.nodes()[state_id]
+            candidates_in = set()
+            candidates_out = set()
+            # get data that is read/written
+            for _, _, _, _, memlet in state.in_edges(node):
+                if memlet.data is not None:
+                    candidates_in.add(memlet.data)
+
+            for _, _, _, _, memlet in state.out_edges(map_exit_node):
+                if memlet.data is not None:
+                    candidates_out.add(memlet.data)
+            in_out_data = candidates_in.intersection(candidates_out)
+
+            # add pragmas
+            if not node.map.unroll:
+                for candidate in in_out_data:
+                    self.generate_no_dependence_pre(candidate, result, sdfg,
+                                                    state_id, node)
+
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
@@ -1074,6 +1096,11 @@ class FPGACodeGen(TargetCodeGenerator):
                                                      node)
                     self.generate_flatten_loop_post(result, sdfg, state_id,
                                                     node)
+                if not node.map.unroll:
+                    # add pragmas for data read/written inside this map
+                    for candidate in in_out_data:
+                        self.generate_no_dependence_post(
+                            candidate, result, sdfg, state_id, node)
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
