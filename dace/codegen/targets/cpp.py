@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
@@ -531,7 +532,9 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
                     and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
                 if check_map(e.dst.map, e):
                     # This map is parallel w.r.t. WCR
+                    print('PAR: Continuing from map')
                     continue
+                print('SEQ: Map is conflicted')
                 return True
             # Should never happen (no such thing as write-conflicting reads)
             if (isinstance(e.src, nodes.EntryNode)
@@ -557,11 +560,13 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
         else:
             # Memlet path ends here, transient. We can thus safely write here
             edge = None
+            print('PAR: Reached transient')
             return False
         
     # If SDFG schedule is not None (top-level) or not sequential
     if (sdfg_schedule is not None
         and sdfg_schedule != dtypes.ScheduleType.Sequential):
+        print('SEQ: Toplevel schedule is parallel')
         return True
 
     return False
