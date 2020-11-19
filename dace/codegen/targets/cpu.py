@@ -1500,10 +1500,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Define all input connectors of this map entry
         for e in dynamic_map_inputs(state_dfg, node):
-            callsite_stream.write(
-                self.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                       e.dst.in_connectors[e.dst_conn]), sdfg,
-                state_id, node)
+            if e.data.data != e.dst_conn:
+                callsite_stream.write(
+                    self.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                           e.dst.in_connectors[e.dst_conn]), sdfg,
+                    state_id, node)
 
         inner_stream = CodeIOStream()
         self.generate_scope_preamble(sdfg, dfg, state_id, function_stream,
