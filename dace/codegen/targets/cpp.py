@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
@@ -510,19 +511,62 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     # If no conflicts will occur, write without atomics
     # (e.g., if the array has been defined in a non-parallel schedule context)
     # TODO: This is not perfect (need to take indices into consideration)
-    path = dfg.memlet_path(edge)
-    for e in path:
-        if (isinstance(e.dst, nodes.ExitNode)
-                and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
-            return True
-        # Should never happen (no such thing as write-conflicting reads)
-        if (isinstance(e.src, nodes.EntryNode)
-                and e.src.map.schedule != dtypes.ScheduleType.Sequential):
+    
+    # TODO: REFACTOR
+    def check_map(map, edge):
+        from dace.transformation.interstate.loop_to_map import _check_range
+        import sympy as sp
+        for itervar in map.params:
+            itersym = symbolic.pystr_to_symbolic(itervar)
+            a = sp.Wild('a', exclude=[itersym])
+            b = sp.Wild('b', exclude=[itersym])
+            if not _check_range(edge.data.subset, a, itersym, b):
+                return False
+        # If matches all map params, good to go
+        return True
+    
+    while edge is not None:
+        path = dfg.memlet_path(edge)
+        for e in path:
+            if (isinstance(e.dst, nodes.ExitNode)
+                    and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
+                if check_map(e.dst.map, e):
+                    # This map is parallel w.r.t. WCR
+                    print('PAR: Continuing from map')
+                    continue
+                print('SEQ: Map is conflicted')
+                return True
+            # Should never happen (no such thing as write-conflicting reads)
+            if (isinstance(e.src, nodes.EntryNode)
+                    and e.src.map.schedule != dtypes.ScheduleType.Sequential):
+                warnings.warn('Unexpected WCR path to have write-conflicting reads')
+                return True
+
+        sdfg = dfg.parent
+        dst = path[-1].dst
+        # Unexpected case
+        if not isinstance(dst, nodes.AccessNode):
+            warnings.warn('Unexpected WCR path to not end in access node')
             return True
 
+        # If this is a nested SDFG and the access leads outside
+        if not sdfg.arrays[dst.data].transient:
+            if sdfg.parent_nsdfg_node is not None:
+                dfg = sdfg.parent
+                nsdfg = sdfg.parent_nsdfg_node
+                edge = next(iter(dfg.out_edges_by_connector(nsdfg, dst.data)))
+            else:
+                break
+        else:
+            # Memlet path ends here, transient. We can thus safely write here
+            edge = None
+            print('PAR: Reached transient')
+            return False
+        
     # If SDFG schedule is not None (top-level) or not sequential
     if (sdfg_schedule is not None
-            and sdfg_schedule != dtypes.ScheduleType.Sequential):
+        and sdfg_schedule != dtypes.ScheduleType.Sequential):
+        print('SEQ: Toplevel schedule is parallel')
         return True
 
     return False
