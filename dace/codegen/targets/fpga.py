@@ -1001,11 +1001,15 @@ class FPGACodeGen(TargetCodeGenerator):
             # get data that is read/written
             for _, _, _, _, memlet in state.in_edges(node):
                 if memlet.data is not None:
-                    candidates_in.add(memlet.data)
+                    desc = sdfg.arrays[memlet.data]
+                    if desc.storage == dace.dtypes.StorageType.FPGA_Global or desc.storage == dace.dtypes.StorageType.FPGA_Local:
+                        candidates_in.add(memlet.data)
 
             for _, _, _, _, memlet in state.out_edges(map_exit_node):
                 if memlet.data is not None:
-                    candidates_out.add(memlet.data)
+                    desc = sdfg.arrays[memlet.data]
+                    if desc.storage == dace.dtypes.StorageType.FPGA_Global or desc.storage == dace.dtypes.StorageType.FPGA_Local:
+                        candidates_out.add(memlet.data)
             in_out_data = candidates_in.intersection(candidates_out)
 
             # add pragmas
