@@ -88,14 +88,15 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._dispatcher.register_state_dispatcher(
             self,
-            predicate=lambda sdfg, state: len(state.data_nodes(
-            )) > 0 and state.location["is_FPGA_kernel"] and all([
-                n.desc(sdfg).storage in [
-                    dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType
-                    .FPGA_Local, dace.dtypes.StorageType.FPGA_Registers, dace.
-                    dtypes.StorageType.FPGA_ShiftRegister
-                ] for n in state.data_nodes()
-            ]))
+            predicate=lambda sdfg, state: len(state.data_nodes()) > 0 and
+            ("is_FPGA_kernel" not in state.location or state.
+             location["is_FPGA_kernel"] is True) and all([
+                 n.desc(sdfg).storage in [
+                     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.
+                     StorageType.FPGA_Local, dace.dtypes.StorageType.
+                     FPGA_Registers, dace.dtypes.StorageType.FPGA_ShiftRegister
+                 ] for n in state.data_nodes()
+             ]))
 
         self._dispatcher.register_node_dispatcher(
             self, predicate=lambda *_: self._in_device_code)

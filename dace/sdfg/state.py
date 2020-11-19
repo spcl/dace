@@ -3,7 +3,7 @@
 
 import collections
 import copy
-from dace.subsets import Range
+from dace.subsets import Range, Subset
 from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
                   symbolic)
 from dace.sdfg import nodes as nd
@@ -453,26 +453,49 @@ class StateGraphView(object):
 
         return defined_syms
 
+    def _read_and_write_sets(
+            self
+    ) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
+        """
+        Determines what data is read and written in this subgraph, returning
+        dictionaries from data containers to all subsets that are read/written.
+        """
+        read_set = collections.defaultdict(list)
+        write_set = collections.defaultdict(list)
+        from dace.sdfg import utils  # Avoid cyclic import
+        subgraphs = utils.concurrent_subgraphs(self)
+        for sg in subgraphs:
+            rs = collections.defaultdict(list)
+            ws = collections.defaultdict(list)
+            # Traverse in topological order, so data that is written before it
+            # is read is not counted in the read set
+            for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
+                if isinstance(n, nd.AccessNode):
+                    for e in sg.in_edges(n):
+                        # Store all subsets that have been written
+                        ws[n.data].append(e.data.subset)
+                    for e in sg.out_edges(n):
+                        if n.data in ws:
+                            if any(s.covers(e.data.subset) for s in ws[n.data]):
+                                continue
+                        rs[n.data].append(e.data.subset)
+            # Union all subgraphs, so an array that was excluded from the read
+            # set because it was written first is still included if it is read
+            # in another subgraph
+            for data, accesses in rs.items():
+                read_set[data] += accesses
+            for data, accesses in ws.items():
+                write_set[data] += accesses
+        return read_set, write_set
+
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data is read and written in this subgraph. Writes
-        with conflict resolution are included as both reads and writes.
+        Determines what data is read and written in this subgraph.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
-        read_set = set()
-        write_set = set()
-        for n in self.data_nodes():
-            in_edges = self.in_edges(n)
-            if len(in_edges) > 0:
-                write_set.add(n.data)
-            for e in in_edges:
-                if e.data.wcr is not None:
-                    read_set.add(n.data)
-                    break
-            if len(self.out_edges(n)) > 0:
-                read_set.add(n.data)
-        return read_set, write_set
+        read_set, write_set = self._read_and_write_sets()
+        return set(read_set.keys()), set(write_set.keys())
 
     def arglist(self) -> Dict[str, dt.Data]:
         """
@@ -654,7 +677,7 @@ class StateGraphView(object):
 
 
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
+class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -689,6 +712,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         value_type=symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
 
+    def __repr__(self) -> str:
+        return f"SDFGState ({self.label})"
+
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
             :param label: Name for the state (optional).
@@ -705,9 +731,6 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
-
-        # TODO: where this should be initialized
-        self.location["is_FPGA_kernel"] = True
 
     @property
     def parent(self):

@@ -35,6 +35,7 @@ set(DACE_ENABLE_CUDA OFF)
 set(DACE_ENABLE_HIP OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
+set(DACE_ENABLE_RTL OFF)
 
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
@@ -78,6 +79,13 @@ foreach(DACE_FILE ${DACE_FILES})
   elseif(${DACE_FILE_TARGET} STREQUAL "mpi")
     set(DACE_ENABLE_MPI ON)
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
+  elseif(${DACE_FILE_TARGET} STREQUAL "rtl")
+    set(DACE_ENABLE_RTL ON)
+    if(DACE_FILE_EXT MATCHES ".v" OR DACE_FILE_EXT MATCHES ".sv")
+      set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
+      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+    endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
@@ -247,19 +255,20 @@ if(DACE_ENABLE_CUDA)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_CUDA_OBJECTS})
 endif() # DACE_ENABLE_CUDA
 
+
 # Create HIP object files
 if(DACE_ENABLE_HIP)
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
     # Compile and run a test program
-    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o 
+    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
       "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
       OUTPUT_VARIABLE _arch_compout
       RESULT_VARIABLE _arch_res)
     if(_arch_res EQUAL 0)
       execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
-	OUTPUT_VARIABLE _arch_out
-	RESULT_VARIABLE _arch_runres)
+      OUTPUT_VARIABLE _arch_out
+      RESULT_VARIABLE _arch_runres)
     endif()
 
     if((_arch_res EQUAL 0) AND (_arch_runres EQUAL 0))
@@ -270,7 +279,7 @@ if(DACE_ENABLE_HIP)
       message(STATUS "Local AMD HIP architectures detected: ${LOCAL_HIP_ARCHITECTURES}")
     else()
       if(_arch_res EQUAL 0)
-	set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
+        set(LOCAL_HIP_ARCHITECTURES "" CACHE STRING "Detected local AMD GPUs for compilation")
       endif()
       message(STATUS "No local HIP-capable GPUs found")
     endif()
@@ -286,7 +295,7 @@ if(DACE_ENABLE_HIP)
 
   # Add include directories for other files
   set(DACE_LIBS ${DACE_LIBS} hip::host)
-  
+
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
@@ -336,14 +345,13 @@ if(DACE_ENABLE_XILINX)
 
   # Add synthesis and build commands
   set(DACE_SYNTHESIS_TARGETS)
+
   foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
     get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
     get_filename_component(DACE_KERNEL_DIRECTORY ${DACE_KERNEL_FILE} DIRECTORY)
     string(REGEX REPLACE "(.+).cpp" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
     string(REPLACE " " ";" DACE_XILINX_SYNTHESIS_FLAGS_INTERNAL ${DACE_XILINX_SYNTHESIS_FLAGS})
     set(DACE_VITIS_KERNEL_FILES ${DACE_VITIS_KERNEL_FILES} ${DACE_KERNEL_FILE})
-    set(DACE_VITIS_KERNELS ${DACE_VITIS_KERNELS} --kernel ${DACE_KERNEL_NAME})
-
     configure_file(${CMAKE_SOURCE_DIR}/Xilinx_HLS.tcl.in Synthesize_${DACE_KERNEL_NAME}.tcl)
     add_custom_target(xilinx_synthesis_${DACE_KERNEL_NAME} COMMAND ${Vitis_HLS} -f Synthesize_${DACE_KERNEL_NAME}.tcl) 
     set(DACE_SYNTHESIS_TARGETS ${DACE_SYNTHESIS_TARGETS} xilinx_synthesis_${DACE_KERNEL_NAME})
@@ -370,7 +378,6 @@ if(DACE_ENABLE_XILINX)
     endforeach()
 
   endforeach()
-  set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} "${DACE_VITIS_KERNELS}")
 
   add_custom_target(xilinx_synthesis DEPENDS ${DACE_SYNTHESIS_TARGETS})
 
@@ -383,9 +390,9 @@ if(DACE_ENABLE_XILINX)
     # interfaces from codegen to CMake in order to do this.
     message(STATUS "Enabled debugging/profiling for Xilinx targets.")
     set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
-      --profile_kernel "data:all:all:all"
-      --profile_kernel "stall:all:all"
-      --profile_kernel "exec:all:all")
+        --profile_kernel "data:all:all:all"
+        --profile_kernel "stall:all:all"
+        --profile_kernel "exec:all:all")
   endif()
 
   if(Vitis_MAJOR_VERSION LESS 2018 AND Vitis_MINOR_VERSION LESS 3)
@@ -428,58 +435,86 @@ if(DACE_ENABLE_XILINX)
 
   else()
 
-    add_custom_command(
-      OUTPUT ${DACE_PROGRAM_NAME}_sw_emu.xo
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
-      ${VITIS_BUILD_FLAGS}
-      -c
-      -t sw_emu
-      ${DACE_VITIS_KERNEL_FILES}
-      -o ${DACE_PROGRAM_NAME}_sw_emu.xo
-      DEPENDS ${DACE_VITIS_KERNEL_FILES})
+    # Since with Vitis only one kernel can be compiled at a time,
+    # for the general case we have to first compile each kernel
+    # and then link together the generated .xo files
+    set(DACE_VITIS_KERNELS_SW_EMU)
+    set(DACE_VITIS_KERNELS_HW_EMU)
+    set(DACE_VITIS_KERNELS_HW)
+
+    foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
+      # Compile .xo files
+
+      # The kernel name is given by the file name
+      get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME_WE)
+      set(DACE_VITIS_KERNELS ${DACE_VITIS_KERNELS} ${DACE_KERNEL_NAME})
+
+      add_custom_command(
+        OUTPUT ${DACE_KERNEL_NAME}_sw_emu.xo
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+        ${VITIS_BUILD_FLAGS}
+        -c
+        -t sw_emu
+        ${DACE_KERNEL_FILE}
+        --kernel ${DACE_KERNEL_NAME}
+        -o ${DACE_KERNEL_NAME}_sw_emu.xo
+        DEPENDS ${DACE_VITIS_KERNEL_FILES})
+
+      set(DACE_VITIS_KERNELS_SW_EMU ${DACE_VITIS_KERNELS_SW_EMU} ${DACE_KERNEL_NAME}_sw_emu.xo)
+
+      add_custom_command(
+        OUTPUT ${DACE_KERNEL_NAME}_hw_emu.xo
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+        ${VITIS_BUILD_FLAGS}
+        -c
+        -t hw_emu
+        ${DACE_KERNEL_FILE}
+        --kernel ${DACE_KERNEL_NAME}
+        -o ${DACE_KERNEL_NAME}_hw_emu.xo
+        DEPENDS ${DACE_VITIS_KERNEL_FILES})
+
+      set(DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${DACE_KERNEL_NAME}_hw_emu.xo)
+
+      add_custom_command(
+        OUTPUT ${DACE_KERNEL_NAME}_hw.xo
+        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
+        ${VITIS_BUILD_FLAGS}
+        -c
+        -t hw
+        ${DACE_KERNEL_FILE}
+        --kernel ${DACE_KERNEL_NAME}
+        -o ${DACE_KERNEL_NAME}_hw.xo
+        DEPENDS ${DACE_VITIS_KERNEL_FILES})
+
+        set(DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${DACE_KERNEL_NAME}_hw.xo)
+
+    endforeach()
+
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation
-                      DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
+                      DEPENDS ${DACE_VITIS_KERNELS_SW_EMU})
     add_custom_target(xilinx_compile_software_emulation DEPENDS
                       xilinx_compile_${DACE_PROGRAM_NAME}_software_emulation)
 
-    add_custom_command(
-      OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xo
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
-      ${VITIS_BUILD_FLAGS}
-      -c
-      -t hw_emu
-      ${DACE_VITIS_KERNEL_FILES}
-      -o ${DACE_PROGRAM_NAME}_hw_emu.xo
-      DEPENDS ${DACE_VITIS_KERNEL_FILES})
-
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation
-                      DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
+                      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
     add_custom_target(xilinx_compile_hardware_emulation DEPENDS
-                      xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation)
-
-    add_custom_command(
-      OUTPUT ${DACE_PROGRAM_NAME}_hw.xo
-      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
-      ${VITIS_BUILD_FLAGS}
-      -c
-      -t hw
-      ${DACE_VITIS_KERNEL_FILES}
-      -o ${DACE_PROGRAM_NAME}_hw.xo
-      DEPENDS ${DACE_VITIS_KERNEL_FILES})
+                        xilinx_compile_${DACE_PROGRAM_NAME}_hardware_emulation)
 
     add_custom_target(xilinx_compile_${DACE_PROGRAM_NAME}_hardware DEPENDS
-                      ${DACE_PROGRAM_NAME}_hw.xo)
+                      ${DACE_VITIS_KERNELS_HW})
     add_custom_target(xilinx_compile_hardware DEPENDS
                       xilinx_compile_${DACE_PROGRAM_NAME}_hardware)
 
+
+    # Linking
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
       -l
       -t sw_emu
-      ${DACE_PROGRAM_NAME}_sw_emu.xo
+      "${DACE_VITIS_KERNELS_SW_EMU}"
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
 
@@ -489,7 +524,7 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t hw_emu
-      ${DACE_PROGRAM_NAME}_hw_emu.xo
+      "${DACE_VITIS_KERNELS_HW_EMU}"
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
                      
@@ -504,13 +539,73 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t hw
-      ${DACE_PROGRAM_NAME}_hw.xo
+      "${DACE_VITIS_KERNELS_HW}"
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
 
   endif()
 
 endif() # DACE_ENABLE_XILINX
+
+# create verilator RTL simulation objects
+if(DACE_ENABLE_RTL)
+
+  # find verilator installation
+  find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
+  if (NOT verilator_FOUND)
+    message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
+  endif()
+
+  # check minimal version requirements
+  set(VERILATOR_MIN_VERSION "4.028")
+  if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
+    message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
+  endif()
+
+  # get verilator flags from dace.conf
+  set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
+
+  # add lint verilator flags
+  if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
+    # -Wall: Enable all style warnings
+    # -Wno-fatal: Disable fatal exit on warnings
+    set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
+  endif()
+
+  # add verilated.cpp source
+  set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
+
+  foreach(RTL_FILE ${DACE_RTL_FILES})
+
+    # extract design name
+    get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
+
+    # add verilated .cpp files to the dace cpp source file var
+    set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
+    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
+    # add file generated by verilator >v4.1xx
+    if("${verilator_VERSION}" VERSION_GREATER_EQUAL "4.036")
+        set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Slow.cpp")
+    endif()
+    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
+
+    # add verilated design
+    add_library("${RTL_FILE_NAME}" OBJECT)
+
+    # include verilator
+    set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir")
+    include_directories(${VERILATOR_INCLUDE})
+
+    # verilate design
+    verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
+
+    # add object library for linking
+    set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
+
+  endforeach()
+
+endif() # DACE_ENABLE_RTL
+
 
 # Create Intel FPGA object files
 if(DACE_ENABLE_INTELFPGA)

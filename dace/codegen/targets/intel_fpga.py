@@ -1104,7 +1104,10 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         defined_symbols = state_dfg.symbols_defined_at(node)
 
         # This could be problematic for numeric constants that have no dtype
-        defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
@@ -1204,7 +1207,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                       expr_semicolon=False)
 
         veclen_lhs = self.sdfg.data(memlet.data).veclen
-        dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+        try:
+            dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+        except SyntaxError:
+            # non-valid python
+            dtype_rhs = None
+
         if dtype_rhs is None:
             # If we don't understand the vector length of the RHS, assume no
             # conversion is needed
@@ -1308,7 +1316,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)
-        elif defined_type == DefinedType.Pointer and memlet.num_accesses != 1:
+        elif defined_type == DefinedType.Pointer and memlet.dynamic:
             # if this has a variable number of access, it has been declared
             # as a pointer. We need to deference it
             if isinstance(node.id, ast.Subscript):

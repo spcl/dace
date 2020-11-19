@@ -96,6 +96,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    SystemVerilog = ()
 
 
 class AccessType(aenum.AutoNumberEnum):
@@ -898,7 +899,10 @@ DTYPE_TO_TYPECLASS = {
     numpy.float32: float32,
     numpy.float64: float64,
     numpy.complex64: complex64,
-    numpy.complex128: complex128
+    numpy.complex128: complex128,
+    # FIXME
+    numpy.longlong: int64,
+    numpy.ulonglong: uint64
 }
 
 TYPECLASS_STRINGS = [
@@ -919,7 +923,7 @@ TYPECLASS_STRINGS = [
     "float32",
     "float64",
     "complex64",
-    "complex128",
+    "complex128"
 ]
 
 INTEGER_TYPES = [
@@ -932,7 +936,7 @@ INTEGER_TYPES = [
     uint8,
     uint16,
     uint32,
-    uint64,
+    uint64
 ]
 
 #######################################################
@@ -1089,6 +1093,8 @@ def deduplicate(iterable):
 
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
+        return False
+    if name in {'True', 'False', 'None'}:
         return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
