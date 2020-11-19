@@ -7,20 +7,28 @@ import dace
 import numpy as np
 
 
-def compare_numpy_output(non_zero=False, positive=False, check_dtype=False):
-    """ Check that the `dace.program` func works identically to the python version (including errors).
+def compare_numpy_output(non_zero=False,
+                         positive=False,
+                         check_dtype=False,
+                         validation_func=None):
+    """ Check that the `dace.program` func works identically to python
+        (including errors).
 
-        `func` will be run once as a dace program, and once using python. The inputs to the function
-        will be randomly intialized arrays with shapes and dtypes according to the argument
-        annotations.
+        `func` will be run once as a dace program, and once using python.
+        The inputs to the function will be randomly intialized arrays with
+        shapes and dtypes according to the argument annotations.
 
-        Note that this should be used *instead* of the `@dace.program` annotation, not along with it!
+        Note that this should be used *instead* of the `@dace.program`
+        annotation, not along with it!
 
         :param non_zero: if `True`, replace `0` inputs with `1`.
-        :param positive: if `False`, floats sample from [-10.0, 10.0], and ints sample from
-                         [-3, 3). Else, floats sample from [0, 10.0], and ints sample from [0, 3).
+        :param positive: if `False`, floats sample from [-10.0, 10.0], and ints
+                         sample from [-3, 3). Else, floats sample from
+                         [0, 10.0], and ints sample from [0, 3).
         :param check_dtype: if `True`, asserts that the dtype of the result is
                             consistent between NumPy and DaCe.
+        :param validation_func: If set, then it is used to validates the
+                                results per element
     """
     def decorator(func):
         def test():
@@ -39,12 +47,24 @@ def compare_numpy_output(non_zero=False, positive=False, check_dtype=False):
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
+                elif ddesc.dtype in [dace.complex64, dace.complex128]:
+                    res = (
+                        np.random.rand(*ddesc.shape).astype(
+                            getattr(np, ddesc.dtype.to_string()))
+                        + 1j * np.random.rand(*ddesc.shape).astype(
+                            getattr(np, ddesc.dtype.to_string()))
+                    )
+                    b = 0 if positive else -10
+                    a = 10
+                    res = (b - a) * res + a
+                    if non_zero:
+                        res[res == 0] = 1
                 elif ddesc.dtype in [
                         dace.int8, dace.int16, dace.int32, dace.int64,
                         dace.bool
                 ]:
-                    res = np.random.randint(0 if positive else -3,
-                                            3,
+                    res = np.random.randint(0 if positive else -99,
+                                            100,
                                             size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
@@ -52,7 +72,7 @@ def compare_numpy_output(non_zero=False, positive=False, check_dtype=False):
                 elif ddesc.dtype in [
                     dace.uint8, dace.uint16, dace.uint32, dace.uint64
                 ]:
-                    res = np.random.randint(0, 3, size=ddesc.shape)
+                    res = np.random.randint(0, 100, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
@@ -78,7 +98,14 @@ def compare_numpy_output(non_zero=False, positive=False, check_dtype=False):
             dace_thrown, numpy_thrown = None, None
 
             try:
-                reference_result = func(**reference_input)
+                if validation_func:
+                    # Works only with 1D inputs of the same size!
+                    reference_result = []
+                    reference_input = [arr.tolist() for arr in inputs.values()]
+                    for inp_args in zip(*reference_input):
+                        reference_result.append(validation_func(*inp_args))
+                else:
+                    reference_result = func(**reference_input)
             except Exception as e:
                 numpy_thrown = e
 
@@ -92,9 +119,13 @@ def compare_numpy_output(non_zero=False, positive=False, check_dtype=False):
                     type(dace_thrown), dace_thrown, type(numpy_thrown),
                     numpy_thrown)
             else:
-                assert np.allclose(reference_result, dace_result)
-                if check_dtype:
-                    assert(reference_result.dtype == dace_result.dtype)
+                if not isinstance(reference_result, (tuple, list)):
+                    reference_result = [reference_result]
+                    dace_result = [dace_result]
+                    for ref, val in zip(reference_result, dace_result):
+                        assert np.allclose(ref, val, equal_nan=True)
+                        if check_dtype and not validation_func:
+                            assert(ref.dtype == val.dtype)
 
         return test
 

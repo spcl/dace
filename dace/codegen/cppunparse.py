@@ -930,7 +930,11 @@ class CPPUnparser:
         if (isinstance(t.value, (ast.Num, ast.Constant))
                 and isinstance(t.value.n, int)):
             self.write(" ")
-        self.write(".")
+        if (isinstance(t.value, ast.Name) and
+                t.value.id in ("dace::math", "dace::cmath")):
+            self.write("::")
+        else:
+            self.write(".")
         self.write(t.attr)
 
     def _Call(self, t):

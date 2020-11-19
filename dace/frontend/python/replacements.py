@@ -779,7 +779,8 @@ def _makeunop(op, opcode):
 
 
 def _is_op_arithmetic(op: str):
-    if op in {'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod'}:
+    if op in {'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod',
+              'FloatPow', 'Heaviside'}:
         return True
     return False
 
@@ -836,10 +837,15 @@ def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
     return _np_result_type([nptype])
 
 
+
+def _cast_str(dtype: dtypes.typeclass) -> str:
+    return dtypes.TYPECLASS_TO_STRING[dtype]
+
+
 def _result_type(
     arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
     operator: str = None
-) -> Tuple[dtypes.typeclass, ...]:
+) -> Tuple[Union[dtypes.typeclass, str], ...]:
 
     datatypes = []
     dtypes_for_result = []
@@ -871,11 +877,11 @@ def _result_type(
     coarse_types = []
     for dtype in datatypes:
         if dtype in complex_types:
-            coarse_types.append(3) # complex
+            coarse_types.append(3)  # complex
         elif dtype in float_types:
             coarse_types.append(2)  # float
         elif dtype in signed_types:
-            coarse_types.append(1) # signed integer, bool
+            coarse_types.append(1)  # signed integer, bool
         else:
             coarse_types.append(0)  # unsigned integer
     
@@ -883,8 +889,18 @@ def _result_type(
 
     if len(arguments) == 1:  # Unary operators
 
-        if operator == 'USub' and coarse_types[0] == 0:
+        if not operator:
+            result_type = datatypes[0]
+        elif operator == 'USub' and coarse_types[0] == 0:
             result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
+        elif operator == 'Abs' and coarse_types[0] == 3:
+            result_type = eval('dace.float{}'.format(4 * datatypes[0].bytes))
+        elif operator in ('Fabs') and coarse_types[0] == 3:
+            raise TypeError("ufunc '{}' not supported for complex input".format(
+                operator))
+        elif operator == ('Fabs', 'Rint') and coarse_types[0] < 2:
+            result_type = dace.float64
+            casting[0] = _cast_str(result_type)
         elif _is_op_boolean(operator):
             result_type = dace.bool_
         else:
@@ -896,6 +912,7 @@ def _result_type(
         type2 = coarse_types[1]
         dtype1 = datatypes[0]
         dtype2 = datatypes[1]
+        max_bytes = max(dtype1.bytes, dtype2.bytes)
         left_cast = None
         right_cast = None
 
@@ -904,34 +921,44 @@ def _result_type(
             # Float/True division between integers
             if operator == 'Div' and max(type1, type2) < 2:
                 # TODO: Leaving this here in case we implement a C/C++ flag
-                # max_bytes = max(dtype1.bytes, dtype2.bytes)
                 # if type1 == type2 and type1 == 0:  # Unsigned integers
                 #     result_type = eval('dace.uint{}'.format(8 * max_bytes))
                 # else:
                 #     result_type = eval('dace.int{}'.format(8 * max_bytes))
                 result_type = dace.float64
-                left_cast = dace.float64
-                right_cast = dace.float64
             # Floor division with at least one complex argument
-            elif operator == 'FloorDiv' and max(type1, type2) == 3:
-                raise TypeError("can't take floor of complex number")
+            # TODO: NumPy allows this operation
+            # elif operator == 'FloorDiv' and max(type1, type2) == 3:
+            #     raise TypeError("can't take floor of complex number")
             # Floor division with at least one float argument
             elif operator == 'FloorDiv' and max(type1, type2) == 2:
-                result_type = dace.float64
+                if type1 == type2:
+                    result_type = eval('dace.float{}'.format(8 * max_bytes))
+                else:
+                    result_type = dace.float64
             # Floor division between integers
             elif operator == 'FloorDiv' and max(type1, type2) < 2:
-                max_bytes = max(dtype1.bytes, dtype2.bytes)
                 if type1 == type2 and type1 == 0:  # Unsigned integers
                     result_type = eval('dace.uint{}'.format(8 * max_bytes))
                 else:
                     result_type = eval('dace.int{}'.format(8 * max_bytes))
-                right_cast = dace.float64
             # Power with base integer and exponent signed integer
             elif (operator == 'Pow' and max(type1, type2) < 2 and
                     dtype2 in signed_types):
                 result_type = dace.float64
-                left_cast = dace.float64
-                right_cast = dace.float64
+            elif operator == 'FloatPow':
+                # Float power with integers or floats
+                if max(type1, type2) < 3:
+                    result_type = dace.float64
+                # Float power with complex numbers
+                else:
+                    result_type = dace.complex128
+            elif operator == 'Heaviside' and max(type1, type2) == 3:
+                    raise TypeError(
+                        "ufunc '{}' not supported for complex input".format(
+                            operator))
+            elif operator == 'Heaviside' and max(type1, type2) < 2:
+                    result_type = dace.float64
             # All other arithmetic operators and cases of the above operators
             else:
                 result_type = _np_result_type(dtypes_for_result)
@@ -941,14 +968,16 @@ def _result_type(
                     elif type2 < 3:
                         right_cast = dtype1
                     else:  # type1 == type2
-                        max_bytes = max(dtype1.bytes, dtype2.bytes)
                         cast = eval('dace.complex{}'.format(8 * max_bytes))
                         if dtype1 != cast:
                             left_cast = cast
                         if dtype2 != cast:
                             right_cast = cast
             
-            casting = [left_cast, right_cast]
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
 
         elif _is_op_bitwise(operator):
 
@@ -961,19 +990,21 @@ def _result_type(
             if max(type1, type2) > 1:
                 raise TypeError("unsupported operand type(s) for {}: "
                                 "'{}' and '{}'".format(operator, dtype1, dtype2))
-            max_bytes = max(dtype1.bytes, dtype2.bytes)
             result_type = eval('dace.int{}'.format(8 * max_bytes))
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
 
         elif _is_op_boolean(operator):
             result_type = dace.bool_
         
         else:  # Other binary operators
             result_type = _np_result_type(dtypes_for_result)
-            if max(type1, type2) == 3:
-                if type1 < 3:
-                    left_cast = dtype2
-                elif type2 < 3:
-                    right_cast = dtype1
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
             
         casting = [left_cast, right_cast]
 
@@ -981,7 +1012,7 @@ def _result_type(
         result_type = _np_result_type(dtypes_for_result)
         for i, t in enumerate(coarse_types):
             if t != result_type:
-                casting[i] = t
+                casting[i] = _cast_str(result_type)
 
     return result_type, casting
 
@@ -1738,6 +1769,99 @@ ufuncs = dict(
         outputs=["__out"], code="__out = log2( exp2(__in1) + exp2(__in2) )",
         reduce="lambda a, b: log( exp2(a) + exp2(b) )",
         initial=np.logaddexp2.identity),
+    true_divide = dict(
+        name="_numpy_true_divide_",
+        operator="Div",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 / __in2",
+        reduce="lambda a, b: a / b", initial=np.true_divide.identity),
+    floor_divide = dict(
+        name="_numpy_floor_divide_",
+        operator="FloorDiv",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = py_floor(__in1, __in2)",
+        reduce="lambda a, b: py_floor(a, b)",
+        initial=np.floor_divide.identity),
+    negative = dict(
+        name="_numpy_negative_",
+        operator="USub",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = - __in1",
+        reduce=None, initial=np.negative.identity),
+    positive = dict(
+        name="_numpy_positive_",
+        operator="UAdd",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = + __in1",
+        reduce=None, initial=np.positive.identity),
+    power = dict(
+        name="_numpy_power_",
+        operator="Pow",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 ** __in2",
+        reduce="lambda a, b: a ** b", initial=np.power.identity),
+    float_power = dict(
+        name="_numpy_float_power_",
+        operator="FloatPow",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = np_float_pow(__in1, __in2)",
+        reduce="lambda a, b: np_float_pow(a, b)",
+        initial=np.float_power.identity),
+    remainder = dict(
+        name="_numpy_remainder_",
+        operator="Mod",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = py_mod(__in1, __in2)",
+        reduce="lambda a, b: py_mod(a, b)", initial=np.remainder.identity),
+    fmod = dict(
+        name="_numpy_fmod_",
+        operator="Mod",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = cpp_mod(__in1, __in2)",
+        reduce="lambda a, b: cpp_mod(a, b)", initial=np.fmod.identity),
+    divmod = dict(
+        name="_numpy_divmod_",
+        operator="Div",
+        inputs=["__in1", "__in2"],
+        outputs=["__out1", "__out2"],
+        code="py_divmod(__in1, __in2, __out1, __out2)",
+        reduce=None, initial=np.divmod.identity),
+    absolute = dict(
+        name="_numpy_absolute_",
+        operator="Abs",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = abs(__in1)",
+        reduce=None, initial=np.absolute.identity),
+    fabs = dict(
+        name="_numpy_fabs_",
+        operator="Fabs",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = fabs(__in1)",
+        reduce=None, initial=np.fabs.identity),
+    rint = dict(
+        name="_numpy_rint_",
+        operator="Rint",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = round(__in1)",
+        reduce=None, initial=np.rint.identity),
+    sign = dict(
+        name="_numpy_sign_",
+        operator=None,
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = sign(__in1)",
+        reduce=None, initial=np.sign.identity),
+    heaviside = dict(
+        name="_numpy_heaviside_",
+        operator="Heaviside",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = heaviside(__in1, __in2)",
+        reduce="lambda a, b: heaviside(a, b)", initial=np.heaviside.identity),
+    conj = dict(
+        name="_numpy_conj_",
+        operator=None,
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = dace.cmath.conj(__in1)",
+        reduce=None, initial=np.conj.identity),
     minimum = dict(
         name="_numpy_min_",
         operator=None,
