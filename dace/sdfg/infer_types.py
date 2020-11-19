@@ -157,11 +157,13 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
+            # TODO: and parent_schedule is not None?
             if node.schedule is dtypes.ScheduleType.Default:
                 node.schedule = parent_schedule
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
             if node.schedule is dtypes.ScheduleType.Default:
+                # TODO: and parent_schedule is not None?
                 node.schedule = child_schedule if isinstance(node, nodes.EntryNode) else parent_schedule
 
 

@@ -702,9 +702,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
 
-        # Set default storage/schedule types in SDFG
-        set_default_schedule_and_storage_types(sdfg, schedule)
-
         is_top_level = sdfg.parent is None
 
         # Generate code

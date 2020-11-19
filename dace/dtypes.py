@@ -55,7 +55,7 @@ class ScheduleType(aenum.AutoNumberEnum):
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
-    ScheduleType.GPU_Default,
+    #ScheduleType.GPU_Default,
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
