@@ -213,7 +213,7 @@ static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& den
 // Computes Python divmod
 template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
-    cpp_divmod(numerator, denominator, quotient, remainder)
+    cpp_divmod(numerator, denominator, quotient, remainder);
     T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
     quotient -= corr;
     remainder += corr * denominator;
