@@ -13,6 +13,11 @@ from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 import dace
+from dace.transformation.helpers import nest_state_subgraph
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.state import SDFGState
+from dace.sdfg.nodes import NestedSDFG
+from dace.data import Array
 
 
 def calc_set_image_index(map_idx, map_set, array_idx):
@@ -233,22 +238,21 @@ class AccumulateTransient(transformation.Transformation):
                           'newly-created transient!')
             return
 
-        from dace.transformation.helpers import nest_state_subgraph
-        from dace.sdfg.graph import SubgraphView
-        from dace.sdfg.state import SDFGState
-
-
         sdfg_state: SDFGState = sdfg.node(self.state_id)
 
         map_entry = sdfg_state.entry_node(map_exit)
 
+        # nest_state_subgraph will use incorrect type if we leave default (python)
         dtypes_key = ('compiler', 'default_data_types')
         old_dtype = dace.Config.get(*dtypes_key)
         dace.Config.set(*dtypes_key, value='C')
 
-        from dace.sdfg.nodes import NestedSDFG
-
-        nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg, state=sdfg_state, subgraph=SubgraphView(sdfg_state, [map_entry, tasklet, map_exit]))
+        nested_sdfg: NestedSDFG = nest_state_subgraph(
+            sdfg=sdfg,
+            state=sdfg_state,
+            subgraph=SubgraphView(
+                sdfg_state,
+                sdfg_state.all_nodes_between(map_entry, map_exit) | {map_exit}))
 
         dace.Config.set(*dtypes_key, value=old_dtype)
 
@@ -256,19 +260,22 @@ class AccumulateTransient(transformation.Transformation):
 
         init_state = nested_sdfg.sdfg.add_state_before(nested_sdfg_state)
 
-        from dace.data import Array
-
         temp_array: Array = sdfg.arrays[data_node.data]
 
         init_state.add_mapped_tasklet(
             name='acctrans_init',
             map_ranges={
-                '_o%d' % i: '0:%s' % symstr(d) for i, d in enumerate(temp_array.shape)
+                '_o%d' % i: '0:%s' % symstr(d)
+                for i, d in enumerate(temp_array.shape)
             },
             inputs={},
             code='out = %s' % self.identity,
             outputs={
-                'out': dace.Memlet.simple(data=data_node.data, subset_str=','.join(['0:%d' % i for i in temp_array.shape]))
+                'out':
+                    dace.Memlet.simple(data=data_node.data,
+                                       subset_str=','.join([
+                                           '0:%d' % i for i in temp_array.shape
+                                       ]))
             },
             external_edges=True)
 
