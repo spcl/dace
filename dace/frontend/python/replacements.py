@@ -611,7 +611,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
 
-    restype, _ = _result_type([arr1], opname)
+    restype, cast = _result_type([arr1], opname)
+    tasklet_code = "__out = {} __in1".format(opcode)
+    if cast:
+        tasklet_code = tasklet_code.replace('__in1', "{}(__in1)".format(cast))
 
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
@@ -839,7 +842,7 @@ def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
 
 
 def _cast_str(dtype: dtypes.typeclass) -> str:
-    return dtypes.TYPECLASS_TO_STRING[dtype]
+    return dtypes.TYPECLASS_TO_STRING[dtype].replace('::', '.')
 
 
 def _result_type(
@@ -898,7 +901,7 @@ def _result_type(
         elif operator in ('Fabs') and coarse_types[0] == 3:
             raise TypeError("ufunc '{}' not supported for complex input".format(
                 operator))
-        elif operator == ('Fabs', 'Rint') and coarse_types[0] < 2:
+        elif operator in ('Fabs', 'Rint') and coarse_types[0] < 2:
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
         elif _is_op_boolean(operator):
@@ -1483,11 +1486,11 @@ def _const_const_binop(visitor: 'ProgramVisitor',
     right_cast = casting[1]
 
     if isinstance(left_operand, Number) and left_cast is not None:
-        left = left_cast(left_operand)
+        left = eval(left_cast)(left_operand)
     else:
         left = left_operand
     if isinstance(right_operand, Number) and right_cast is not None:
-        right = right_cast(right_operand)
+        right = eval(right_cast)(right_operand)
     else:
         right = right_operand
 
