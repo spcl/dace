@@ -39,9 +39,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
-
-    #: Default scope schedule for CPU code. Specializes to schedule CPU_Multicore and CPU_Heap during inference.
-    CPU_Default = ()
     CPU_Multicore = ()  #: OpenMP
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
@@ -55,7 +52,6 @@ class ScheduleType(aenum.AutoNumberEnum):
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
-    #ScheduleType.GPU_Default,
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
@@ -131,7 +127,6 @@ SCOPEDEFAULT_STORAGE = {
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
-    ScheduleType.CPU_Default: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
@@ -146,7 +141,6 @@ SCOPEDEFAULT_SCHEDULE = {
     None: ScheduleType.CPU_Multicore,
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
-    ScheduleType.CPU_Default: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
@@ -1127,7 +1121,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             StorageType.GPU_Global, StorageType.GPU_Shared,
             StorageType.CPU_Pinned
         ]
-    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Default]:
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
             StorageType.CPU_ThreadLocal
@@ -1162,7 +1156,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     ]:
         return schedule in [
             ScheduleType.CPU_Multicore, ScheduleType.Sequential,
-            ScheduleType.MPI, ScheduleType.CPU_Default
+            ScheduleType.MPI
         ]
 
     # FPGA-local memory

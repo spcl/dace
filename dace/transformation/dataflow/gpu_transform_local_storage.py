@@ -178,7 +178,6 @@ class GPUTransformLocalStorage(transformation.Transformation):
                     if node.map.schedule == dtypes.ScheduleType.Default:
                         node.map.schedule = dtypes.ScheduleType.Sequential
 
-        # TODO use dtypes.can_access here?
         gpu_storage_types = [
             dtypes.StorageType.GPU_Global,
             dtypes.StorageType.GPU_Shared,
