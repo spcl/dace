@@ -10,7 +10,9 @@ import numpy as np
 def compare_numpy_output(non_zero=False,
                          positive=False,
                          check_dtype=False,
-                         validation_func=None):
+                         validation_func=None,
+                         casting=None,
+                         max_value=10):
     """ Check that the `dace.program` func works identically to python
         (including errors).
 
@@ -29,6 +31,9 @@ def compare_numpy_output(non_zero=False,
                             consistent between NumPy and DaCe.
         :param validation_func: If set, then it is used to validates the
                                 results per element
+        :param casting: If set, then the reference output is computed on the
+                        cast inputs.
+        :param max_value: The maximum value allowed in the inputs.
     """
     def decorator(func):
         def test():
@@ -42,8 +47,8 @@ def compare_numpy_output(non_zero=False,
                 if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
                     res = np.random.rand(*ddesc.shape).astype(
                         getattr(np, ddesc.dtype.to_string()))
-                    b = 0 if positive else -10
-                    a = 10
+                    b = 0 if positive else - max_value
+                    a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
@@ -54,8 +59,8 @@ def compare_numpy_output(non_zero=False,
                         + 1j * np.random.rand(*ddesc.shape).astype(
                             getattr(np, ddesc.dtype.to_string()))
                     )
-                    b = 0 if positive else -10
-                    a = 10
+                    b = 0 if positive else - max_value
+                    a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
@@ -63,8 +68,8 @@ def compare_numpy_output(non_zero=False,
                         dace.int8, dace.int16, dace.int32, dace.int64,
                         dace.bool
                 ]:
-                    res = np.random.randint(0 if positive else -99,
-                                            100,
+                    res = np.random.randint(0 if positive else - max_value,
+                                            max_value,
                                             size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
@@ -72,7 +77,7 @@ def compare_numpy_output(non_zero=False,
                 elif ddesc.dtype in [
                     dace.uint8, dace.uint16, dace.uint32, dace.uint64
                 ]:
-                    res = np.random.randint(0, 100, size=ddesc.shape)
+                    res = np.random.randint(0, max_value, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
@@ -92,7 +97,13 @@ def compare_numpy_output(non_zero=False,
                 for name, param in signature.parameters.items())
 
             dace_input = dc(inputs)
-            reference_input = dc(inputs)
+            if casting:
+                reference_input = OrderedDict(
+                    (name, casting(desc))
+                    for name, desc in inputs.items())
+            else:
+                reference_input = dc(inputs)
+
 
             # save exceptions
             dace_thrown, numpy_thrown = None, None
