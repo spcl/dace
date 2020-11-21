@@ -702,6 +702,7 @@ __kernel void \\
         arguments = ', '.join(arguments)
         function_header = f'void {sdfg_label}({arguments}) {{'
         nested_stream = CodeIOStream()
+
         #generate Stream defines if needed
         for edge in state.in_edges(node):
             desc = sdfg.arrays[edge.data.data]
@@ -730,9 +731,8 @@ __kernel void \\
                 continue
             desc = sdfg.arrays[in_memlet.data]
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(in_memlet.data, 1)
-            if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global or desc.storage== dtypes.StorageType.FPGA_Local:
+            if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global or desc.storage== dtypes.StorageType.FPGA_Local):
                 # special case: in intel FPGA this must be handled properly to guarantee OpenCL compatibility
-
                 vec_type  = desc.dtype.ocltype
                 # print("__global volatile  {}* restrict {}".format(
                 #     vec_type, vconn))
@@ -756,11 +756,11 @@ __kernel void \\
             elif isinstance(desc, dace.data.Stream):
                 # streams are defined as global variables
                 continue
-                typedef = desc.dtype.ocltype
-                self._dispatcher.defined_vars.add(vconn,
-                                                  defined_type,
-                                                  typedef,
-                                                  allow_shadowing=False)
+                # typedef = desc.dtype.ocltype
+                # self._dispatcher.defined_vars.add(vconn,
+                #                                   defined_type,
+                #                                   typedef,
+                #                                   allow_shadowing=False)
             elif isinstance(desc, dace.data.Scalar) :#and  defined_type == DefinedType.Scalar:
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
@@ -785,7 +785,7 @@ __kernel void \\
                 desc = sdfg.arrays[out_memlet.data]
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(out_memlet.data, 1)
 
-                if isinstance(desc, dace.data.Array) and desc.storage == dtypes.StorageType.FPGA_Global or desc.storage== dtypes.StorageType.FPGA_Local:
+                if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global or desc.storage== dtypes.StorageType.FPGA_Local):
                     # special case: in intel FPGA this must be handled properly
 
                     vec_type  = desc.dtype.ocltype
