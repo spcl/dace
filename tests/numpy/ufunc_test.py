@@ -257,6 +257,185 @@ def test_ufunc_conj_u(A: dace.uint32[10]):
     return np.conj(A)
 
 
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_conjugate_c(A: dace.complex64[10]):
+    return np.conjugate(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_conjugate_f(A: dace.float32[10]):
+    return np.conjugate(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_conjugate_u(A: dace.uint32[10]):
+    return np.conjugate(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_exp_c(A: dace.complex64[10]):
+    return np.exp(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_exp_f(A: dace.float32[10]):
+    return np.exp(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_exp_u(A: dace.uint32[10]):
+    return np.exp(A)
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_exp2_c(A: dace.complex64[10]):
+    return np.exp2(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_exp2_f(A: dace.float32[10]):
+    return np.exp2(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_exp2_u(A: dace.uint32[10]):
+    return np.exp2(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log_c(A: dace.complex64[10]):
+    return np.log(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log_f(A: dace.float32[10]):
+    return np.log(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log_u(A: dace.uint32[10]):
+    return np.log(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log2_c(A: dace.complex64[10]):
+    return np.log2(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log2_f(A: dace.float32[10]):
+    return np.log2(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log2_u(A: dace.uint32[10]):
+    return np.log2(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log10_c(A: dace.complex64[10]):
+    return np.log10(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log10_f(A: dace.float32[10]):
+    return np.log10(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log10_u(A: dace.uint32[10]):
+    return np.log10(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_expm1_c(A: dace.complex64[10]):
+    return np.expm1(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_expm1_f(A: dace.float32[10]):
+    return np.expm1(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_expm1_u(A: dace.uint32[10]):
+    return np.expm1(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log1p_c(A: dace.complex64[10]):
+    return np.log1p(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log1p_f(A: dace.float32[10]):
+    return np.log1p(A)
+
+
+@compare_numpy_output(positive=True, check_dtype=True)
+def test_ufunc_log1p_u(A: dace.uint32[10]):
+    return np.log1p(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_sqrt_c(A: dace.complex64[10]):
+    return np.sqrt(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_sqrt_f(A: dace.float32[10]):
+    return np.sqrt(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_sqrt_u(A: dace.uint32[10]):
+    return np.sqrt(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_square_c(A: dace.complex64[10]):
+    return np.square(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_square_f(A: dace.float32[10]):
+    return np.square(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_square_u(A: dace.uint32[10]):
+    return np.square(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_cbrt_c(A: dace.complex64[10]):
+    return np.cbrt(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_cbrt_f(A: dace.float32[10]):
+    return np.cbrt(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_cbrt_u(A: dace.uint32[10]):
+    return np.cbrt(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_reciprocal_c(A: dace.complex64[10]):
+    return np.reciprocal(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_reciprocal_f(A: dace.float32[10]):
+    return np.reciprocal(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_reciprocal_u(A: dace.uint32[10]):
+    return np.reciprocal(A)
+
+
 if __name__ == "__main__":
     test_ufunc_add_ff()
     test_ufunc_subtract_ff()
@@ -308,3 +487,39 @@ if __name__ == "__main__":
     test_ufunc_conj_c()
     test_ufunc_conj_f()
     test_ufunc_conj_u()
+    test_ufunc_conjugate_c()
+    test_ufunc_conjugate_f()
+    test_ufunc_conjugate_u()
+    test_ufunc_exp_c()
+    test_ufunc_exp_f()
+    test_ufunc_exp_u()
+    test_ufunc_exp2_c()
+    test_ufunc_exp2_f()
+    test_ufunc_exp2_u()
+    test_ufunc_log_c()
+    test_ufunc_log_f()
+    test_ufunc_log_u()
+    test_ufunc_log2_c()
+    test_ufunc_log2_f()
+    test_ufunc_log2_u()
+    test_ufunc_log10_c()
+    test_ufunc_log10_f()
+    test_ufunc_log10_u()
+    test_ufunc_expm1_c()
+    test_ufunc_expm1_f()
+    test_ufunc_expm1_u()
+    test_ufunc_log1p_c()
+    test_ufunc_log1p_f()
+    test_ufunc_log1p_u()
+    test_ufunc_sqrt_c()
+    test_ufunc_sqrt_f()
+    test_ufunc_sqrt_u()
+    test_ufunc_square_c()
+    test_ufunc_square_f()
+    test_ufunc_square_u()
+    test_ufunc_cbrt_c()
+    test_ufunc_cbrt_f()
+    test_ufunc_cbrt_u()
+    test_ufunc_reciprocal_c()
+    test_ufunc_reciprocal_f()
+    test_ufunc_reciprocal_u()

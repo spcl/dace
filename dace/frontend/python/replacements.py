@@ -898,10 +898,11 @@ def _result_type(
             result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
         elif operator == 'Abs' and coarse_types[0] == 3:
             result_type = eval('dace.float{}'.format(4 * datatypes[0].bytes))
-        elif operator in ('Fabs') and coarse_types[0] == 3:
+        elif operator in ('Fabs', 'Cbrt') and coarse_types[0] == 3:
             raise TypeError("ufunc '{}' not supported for complex input".format(
                 operator))
-        elif operator in ('Fabs', 'Rint') and coarse_types[0] < 2:
+        elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt')
+                           and coarse_types[0] < 2):
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
         elif _is_op_boolean(operator):
@@ -1863,8 +1864,80 @@ ufuncs = dict(
         name="_numpy_conj_",
         operator=None,
         inputs=["__in1"],
-        outputs=["__out"], code="__out = dace.cmath.conj(__in1)",
+        outputs=["__out"], code="__out = conj(__in1)",
         reduce=None, initial=np.conj.identity),
+    conjugate = dict(
+        name="_numpy_conjugate_",
+        operator=None,
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = conj(__in1)",
+        reduce=None, initial=np.conjugate.identity),
+    exp = dict(
+        name="_numpy_exp_",
+        operator="Exp",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = exp(__in1)",
+        reduce=None, initial=np.exp.identity),
+    exp2 = dict(
+        name="_numpy_exp2_",
+        operator="Exp",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = exp2(__in1)",
+        reduce=None, initial=np.exp2.identity),
+    log = dict(
+        name="_numpy_log_",
+        operator="Log",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = log(__in1)",
+        reduce=None, initial=np.log.identity),
+    log2 = dict(
+        name="_numpy_log2_",
+        operator="Log",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = log2(__in1)",
+        reduce=None, initial=np.log2.identity),
+    log10 = dict(
+        name="_numpy_log10_",
+        operator="Log",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = log10(__in1)",
+        reduce=None, initial=np.log10.identity),
+    expm1 = dict(
+        name="_numpy_expm1_",
+        operator="Exp",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = expm1(__in1)",
+        reduce=None, initial=np.expm1.identity),
+    log1p = dict(
+        name="_numpy_log1p_",
+        operator="Log",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = log1p(__in1)",
+        reduce=None, initial=np.log1p.identity),
+    sqrt = dict(
+        name="_numpy_sqrt_",
+        operator="Sqrt",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = sqrt(__in1)",
+        reduce=None, initial=np.sqrt.identity),
+    square = dict(
+        name="_numpy_square_",
+        operator=None,
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = __in1 * __in1",
+        reduce=None, initial=np.square.identity),
+    cbrt = dict(
+        name="_numpy_cbrt_",
+        operator="Cbrt",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = cbrt(__in1)",
+        reduce=None, initial=np.cbrt.identity),
+    reciprocal = dict(
+        name="_numpy_reciprocal_",
+        operator="Div",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = reciprocal(__in1)",
+        reduce=None, initial=np.reciprocal.identity),
     minimum = dict(
         name="_numpy_min_",
         operator=None,

@@ -241,7 +241,8 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> round(const std::complex<T>& a) 
 // For complex numbers: sign(x.real) + 0j if x.real !=0, else sign(x.imag) + 0j
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T sign(const T& x) {
-    return (x < 0) ? -1 : ( (x > 0) ? 1 : 0); 
+    return T( (T(0) < x) - (x < T(0)) );
+    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0); 
 }
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
@@ -252,6 +253,48 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a, const T& b) {
     return (a < 0) ? 0 : ( (a > 0) ? 1 : b); 
+}
+
+// Computes the conjugate of a number (support for non-complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T conj(const T& a) {
+    return a;
+}
+
+// Computes 2 raised to the given power n (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> exp2(const std::complex<T>& n) {
+    return std::exp(n * std::log(T(2)));
+}
+
+// Computes the base-2 logarithm of n (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> log2(const std::complex<T>& n) {
+    T radius = std::abs(n);
+    T theta = std::arg(n);
+    return std::complex<T>(std::log2(radius), theta / std::log(T(2)));
+}
+
+// Computes the e raised to the given power n, minus 1.0 (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> expm1(const std::complex<T>& n) {
+    return std::exp(n) - T(1);
+}
+
+// Computes the base-e logarithm of 1 + n (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> log1p(const std::complex<T>& n) {
+    return std::log(n + T(1));
+}
+
+// Computes the reciprocal of a number
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T reciprocal(const T& a) {
+    return T(1) / a;
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(const std::complex<T>& a) {
+    return T(1) / a;
 }
 
 #endif
@@ -379,11 +422,6 @@ namespace dace
         DACE_CONSTEXPR std::complex<T> conj(const std::complex<T>& a)
         {
             return std::conj(a);
-        }
-        template<typename T>
-        DACE_CONSTEXPR T conj(const T& a)
-        {
-            return a;
         }
 
         #ifdef __CUDACC__
