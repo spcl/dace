@@ -229,8 +229,14 @@ class RTLCodeGen(target.TargetCodeGenerator):
             # add element index
             idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
             # generate padded string and add to list
-            inputs.append(", input{padding}{idx_str} {name}".format(
+            inputs.append(", input{padding} s_axis_{name}_tvalid".format(
+                padding=" " * 17, name=inp))
+            inputs.append(", input{padding}{idx_str} s_axis_{name}_tdata".format(
                 padding=" " * (17 - len(idx_str)), idx_str=idx_str, name=inp))
+            inputs.append(", output reg{padding} s_axis_{name}_tready".format(
+                padding=" " * 12, name=inp))
+            inputs.append(", input{padding} s_axis_{name}_tlast".format(
+                padding=" " * 17, name=inp))
         outputs = list()
         for inp in tasklet.out_connectors:
             # add vector index
@@ -253,9 +259,20 @@ class RTLCodeGen(target.TargetCodeGenerator):
             # add element index
             idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
             # generate padded string and add to list
-            outputs.append(", output reg{padding}{idx_str} {name}".format(
+            outputs.append(", output reg{padding} m_axis_{name}_tvalid".format(
+                padding=" " * 12, name=inp))
+            outputs.append(", output reg{padding}{idx_str} m_axis_{name}_tdata".format(
                 padding=" " * (12 - len(idx_str)), idx_str=idx_str, name=inp))
+            outputs.append(", input {padding} m_axis_{name}_tready".format(
+                padding=" " * 16, name=inp))
+            outputs.append(", output reg{padding} m_axis_{name}_tlast".format(
+                padding=" " * 12, name=inp))
         return inputs, outputs
+
+    def generate_cpp_zero_inits(self, tasklet):
+        valids = [f'model->s_axis_{name}_tvalid = 0;' for name in tasklet.in_connectors]
+        readys = [f'model->m_axis_{name}_tready = 0;' for name in tasklet.out_connectors]
+        return valids, readys
 
     def generate_cpp_inputs_outputs(self, tasklet):
 
@@ -278,28 +295,28 @@ class RTLCodeGen(target.TargetCodeGenerator):
             b[0] = (int)model->b;
         """
         input_read_string = "\n".join([
-            "model->{name} = {name}[in_ptr++];".format(
+            "model->s_axis_{name}_tdata = {name}[in_ptr_{name}++];".format(
                 name=var_name) if isinstance(tasklet.in_connectors[var_name],
                                              dtypes.pointer) else """\
  for(int i = 0; i < {veclen}; i++){{
-   model->{name}[i] = {name}[i];
+   model->s_axis_{name}_tdata[i] = {name}[i];
  }}\
  """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
             if isinstance(tasklet.in_connectors[var_name], dtypes.vector) else
-            "model->{name} = {name}[in_ptr++];".format(name=var_name)
+            "model->s_axis_{name}_tdata = {name}[in_ptr_{name}++];".format(name=var_name)
             for var_name in tasklet.in_connectors
         ])
 
         output_read_string = "\n".join([
-            "{name}[out_ptr++] = (int)model->{name};".format(
+            "{name}[out_ptr_{name}++] = (int)model->m_axis_{name}_tdata;".format(
                 name=var_name) if isinstance(tasklet.out_connectors[var_name],
                                              dtypes.pointer) else """\
 for(int i = 0; i < {veclen}; i++){{
-  {name}[i] = (int)model->{name}[i];
+  {name}[i] = (int)model->m_axis_{name}_tdata[i];
 }}\
 """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
             if isinstance(tasklet.out_connectors[var_name], dtypes.vector) else
-            "{name}[out_ptr++] = (int)model->{name};".format(name=var_name)
+            "{name}[out_ptr_{name}++] = (int)model->m_axis_{name}_tdata;".format(name=var_name)
             for var_name in tasklet.out_connectors
         ])
         # return generated strings
@@ -318,9 +335,13 @@ for(int i = 0; i < {veclen}; i++){{
         return "// initialize vector\n" if len(
             init_vector_string) > 0 else "" + init_vector_string
 
-    def generate_cpp_num_elements(self):
+    def generate_cpp_num_elements(self, tasklet):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        return "int num_elements = {};".format(1)
+        #return "int num_elements = {};".format(1)
+        ins = [f'int num_elements_{name} = 1;' for name in tasklet.in_connectors]
+        outs = [f'int num_elements_{name} = 1;' for name in tasklet.out_connectors]
+        return ins + outs
+
 
     def generate_cpp_internal_state(self, tasklet):
         internal_state_str = " ".join([
@@ -336,6 +357,75 @@ for(int i = 0; i < {veclen}; i++){{
             }
         ])
         return internal_state_str, internal_state_var
+
+    def generate_input_hs(self, tasklet):
+        template = '''
+        if (model->s_axis_{name}_tready == 1 && model->s_axis_{name}_tvalid == 1) {{
+            read_input_hs_{name} = true;
+        }}'''
+        return [template.format(name=name) for name in tasklet.in_connectors]
+
+    def generate_feeding(self, tasklet, inputs):
+        debug_feed_element = "std::cout << \"feed new element\" << std::endl;" if self.verilator_debug else ""
+        template = '''
+        if (model->s_axis_{name}_tvalid == 0 && in_ptr_{name} < num_elements_{name}) {{
+            {debug_feed_element}
+            {inputs}
+            model->s_axis_{name}_tvalid = 1;
+        }}'''
+        return [template.format(name=name, debug_feed_element=debug_feed_element, inputs=inputs) for name in tasklet.in_connectors]
+
+    def generate_ptrs(self, tasklet):
+        ins = [f'int in_ptr_{name} = 0;' for name in tasklet.in_connectors]
+        outs = [f'int out_ptr_{name} = 0;' for name in tasklet.out_connectors]
+        return ins, outs
+
+    def generate_exporting(self, tasklet, outputs):
+        debug_export_element = "std::cout << \"export element\" << std::endl;" if self.verilator_debug else ""
+        template = '''
+        if (model->m_axis_{name}_tvalid == 1) {{
+            {debug_export_element}
+            {outputs}
+            model->m_axis_{name}_tready = 1;
+        }}'''
+        return [template.format(name=name, debug_export_element=debug_export_element, outputs=outputs) for name in tasklet.out_connectors]
+
+    def generate_write_output_hs(self, tasklet):
+        template = '''
+        if (model->m_axis_{name}_tready && model->m_axis_{name}_tvalid == 1) {{
+            write_output_hs_{name} = true;
+        }}'''
+        return [template.format(name=name) for name in tasklet.out_connectors]
+
+    def generate_hs_flags(self, tasklet):
+        ins = [f'bool read_input_hs_{name} = false;' for name in tasklet.in_connectors]
+        outs = [f'bool write_output_hs_{name} = false;' for name in tasklet.out_connectors]
+        return ins + outs
+
+    def generate_input_hs_toggle(self, tasklet):
+        debug_read_input_hs = "std::cout << \"remove read_input_hs flag\" << std::endl;" if self.verilator_debug else ""
+        template = '''
+        if (read_input_hs_{name}) {{
+            // remove valid flag
+            model->s_axis_{name}_tvalid = 0;
+            {debug_read_input_hs}
+            read_input_hs_{name} = false;
+        }}'''
+        return [template.format(name=name, debug_read_input_hs=debug_read_input_hs) for name in tasklet.in_connectors]
+
+    def generate_output_hs_toggle(self, tasklet):
+        debug_write_output_hs = "std::cout << \"remove write_output_hs flag\" << std::endl;" if self.verilator_debug else ""
+        template = '''
+        if (write_output_hs_{name}) {{
+            // remove ready flag
+            model->m_axis_{name}_tready = 0;
+            {debug_write_output_hs}
+            write_output_hs_{name} = false;
+        }}'''
+        return [template.format(name=name, debug_write_output_hs=debug_write_output_hs) for name in tasklet.out_connectors]
+
+    def generate_running_condition(self, tasklet):
+        return [f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors]
 
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                         state_id: int, node: nodes.Node,
@@ -416,10 +506,20 @@ for(int i = 0; i < {veclen}; i++){{
 
         # generate verilator simulation cpp code components
         inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
+        valid_zeros, ready_zeros = self.generate_cpp_zero_inits(tasklet)
         vector_init = self.generate_cpp_vector_init(tasklet)
-        num_elements = self.generate_cpp_num_elements()
+        num_elements = self.generate_cpp_num_elements(tasklet)
         internal_state_str, internal_state_var = self.generate_cpp_internal_state(
             tasklet)
+        read_input_hs = self.generate_input_hs(tasklet)
+        feed_elements = self.generate_feeding(tasklet, inputs)
+        in_ptrs, out_ptrs = self.generate_ptrs(tasklet)
+        export_elements = self.generate_exporting(tasklet, outputs)
+        write_output_hs = self.generate_write_output_hs(tasklet)
+        hs_flags = self.generate_hs_flags(tasklet)
+        input_hs_toggle = self.generate_input_hs_toggle(tasklet)
+        output_hs_toggle = self.generate_output_hs_toggle(tasklet)
+        running_condition = self.generate_running_condition(tasklet)
 
         # add header code to stream
         if not self.cpp_general_header_added:
@@ -437,29 +537,31 @@ for(int i = 0; i < {veclen}; i++){{
             name=unique_name,
             inputs=inputs,
             outputs=outputs,
-            num_elements=num_elements,
+            num_elements=str.join('\n', num_elements),
             vector_init=vector_init,
+            valid_zeros=str.join('\n', valid_zeros),
+            ready_zeros=str.join('\n', ready_zeros),
+            read_input_hs=str.join('\n', read_input_hs),
+            feed_elements=str.join('\n', feed_elements),
+            in_ptrs=str.join('\n', in_ptrs),
+            out_ptrs=str.join('\n', out_ptrs),
+            export_elements=str.join('\n', export_elements),
+            write_output_hs=str.join('\n', write_output_hs),
+            hs_flags=str.join('\n', hs_flags),
+            input_hs_toggle=str.join('\n', input_hs_toggle),
+            output_hs_toggle=str.join('\n', output_hs_toggle),
+            running_condition=str.join(' && ', running_condition),
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
             if self.verilator_debug else "",
-            debug_feed_element="std::cout << \"feed new element\" << std::endl;"
-            if self.verilator_debug else "",
-            debug_export_element="std::cout << \"export element\" << std::endl;"
-            if self.verilator_debug else "",
             debug_internal_state="""
-// report internal state 
-VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
+// report internal state
+VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->ap_aclk, model->ap_areset, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
 """.format(internal_state_str=internal_state_str,
            internal_state_var=internal_state_var)
-            if self.verilator_debug else "",
-            debug_read_input_hs=
-            "std::cout << \"remove read_input_hs flag\" << std::endl;"
-            if self.verilator_debug else "",
-            debug_output_hs=
-            "std::cout << \"remove write_output_hs flag\" << std::endl;"
             if self.verilator_debug else "",
             debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
             if self.verilator_debug else ""),
@@ -487,82 +589,62 @@ vluint64_t main_time = 0;
 V{name}* model = new V{name};
 
 // apply initial input values
-model->rst_i = 0;  // no reset
-model->clk_i = 0; // neg clock
-model->valid_i = 0; // not valid
-model->ready_i = 0; // not ready 
+model->ap_areset = 0;  // no reset
+model->ap_aclk = 0; // neg clock
+{valid_zeros}
+{ready_zeros}
 model->eval();
 
 {vector_init}
 
 // reset design
-model->rst_i = 1;
-model->clk_i = 1; // rising
+model->ap_areset = 1;
+model->ap_aclk = 1; // rising
 model->eval();
-model->clk_i = 0; // falling
+model->ap_aclk = 0; // falling
 model->eval();
-model->rst_i = 0;
-model->clk_i = 1; // rising
+model->ap_areset = 0;
+model->ap_aclk = 1; // rising
 model->eval();
-model->clk_i = 0; // falling
+model->ap_aclk = 0; // falling
 model->eval();
 
 // simulate until in_handshakes = out_handshakes = num_elements
-bool read_input_hs = false, write_output_hs = false;
-int in_ptr = 0, out_ptr = 0;
+{hs_flags}
+{in_ptrs}
+{out_ptrs}
 {num_elements}
 
-while (out_ptr < num_elements) {{
+// TODO tmp fix. Should have correct stopping condition
+//while (out_ptr_b < num_elements_a) {{
+while ({running_condition}) {{
 
     // increment time
     main_time++;
 
     // check if valid_i and ready_o have been asserted at the rising clock edge -> input read handshake
-    if (model->ready_o == 1 && model->valid_i == 1){{
-        read_input_hs = true;
-    }} 
-    // feed new element
-    if(model->valid_i == 0 && in_ptr < num_elements){{
-        {debug_feed_element}
-        {inputs}
-        model->valid_i = 1;
-    }}
+{read_input_hs}
+{feed_elements}
 
     // export element
-    if(model->valid_o == 1){{
-        {debug_export_element}
-        {outputs}
-        model->ready_i = 1;
-    }}
+{export_elements}
     // check if valid_o and ready_i have been asserted at the rising clock edge -> output write handshake
-    if (model->ready_i == 1 && model->valid_o == 1){{
-        write_output_hs = true;
-    }}
+{write_output_hs}
 
     // positive clock edge
-    model->clk_i = !model->clk_i;
+    model->ap_aclk = !model->ap_aclk;
     model->eval();
 
     {debug_internal_state}
 
     // check if valid_i and ready_o have been asserted at the rising clock edge
-    if (read_input_hs){{
-        // remove valid_i flag
-        model->valid_i = 0;
-        {debug_read_input_hs}
-        read_input_hs = false;
-    }}
+{input_hs_toggle}
 
     // check if valid_o and ready_i have been asserted at the rising clock edge
-    if (write_output_hs){{
-        // remove ready_i flag
-        model->ready_i = 0;
-        {debug_output_hs}
-        write_output_hs = false;
-    }}
+{output_hs_toggle}
 
     // negative clock edge
-    model->clk_i = !model->clk_i;
+    model->ap_aclk = !model->ap_aclk;
     model->eval();
 }}
 
@@ -581,13 +663,11 @@ model = NULL;
     RTL_HEADER = """\
 module {name}
 {parameters}
-( input                  clk_i  // convention: clk_i clocks the design
-, input                  rst_i  // convention: rst_i resets the design
-, input                  valid_i
-, input                  ready_i
+( input                  ap_aclk  // convention: ap_aclk clocks the design
+, input                  ap_areset  // convention: ap_areset resets the design
+
 {inputs}
-, output reg             ready_o
-, output reg             valid_o
+
 {outputs}
 );
 """
@@ -595,7 +675,6 @@ module {name}
     RTL_FOOTER = """\
 endmodule
 """
-
 
 def check_issymbolic(iterator: iter, sdfg):
     for item in iterator:
