@@ -33,6 +33,14 @@ hlslib_files = [
     for f in glob.glob(dace_path + 'external/hlslib/include/**/*',
                        recursive=True)
 ] + [dace_path + 'external/hlslib/LICENSE.md']
+rtllib_files = [
+    f[len(dace_path):]
+    for f in glob.glob(dace_path + 'external/rtllib/cmake/**/*', recursive=True)
+] + [
+    f[len(dace_path):]
+    for f in glob.glob(dace_path + 'external/rtllib/templates/**/*',
+                       recursive=True)
+]
 
 with open("README.md", "r") as fp:
     long_description = fp.read()
@@ -62,7 +70,7 @@ setup(
             '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp',
             'external/moodycamel/*.h', 'external/moodycamel/LICENSE.md',
             'codegen/Xilinx_HLS.tcl.in'
-        ] + runtime_files + cub_files + diode_files + hlslib_files + library_files
+        ] + runtime_files + cub_files + diode_files + hlslib_files + library_files + rtllib_files
     },
     include_package_data=True,
     install_requires=[
