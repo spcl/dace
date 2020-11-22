@@ -10,6 +10,13 @@ from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
 from dace.codegen.targets.common import sym2cpp
 
+import sys
+import os
+base_dir = os.path.dirname(__file__)
+rtllib_dir = os.path.join(base_dir, '../../external/rtllib')
+sys.path.append(rtllib_dir)
+from templates.control import generate_from_config as rtllib_control
+from templates.top import generate_from_config as rtllib_top
 
 @registry.autoregister_params(name='rtl')
 class RTLCodeGen(target.TargetCodeGenerator):
@@ -46,6 +53,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
+        self.mode: str = config.Config.get(
+            "compiler", "rtl", "mode")
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                       state_id: int, node: nodes.Node,
@@ -53,11 +62,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
                       callsite_stream: prettycode.CodeIOStream):
         # check instance type
         if isinstance(node, nodes.Tasklet):
-            """ 
-            handle Tasklet: 
+            """
+            handle Tasklet:
                 (1) generate in->tasklet
-                (2) generate tasklet->out 
-                (3) generate tasklet 
+                (2) generate tasklet->out
+                (3) generate tasklet
             """
             # generate code to handle data input to the tasklet
             for edge in dfg.in_edges(node):
@@ -362,6 +371,48 @@ for(int i = 0; i < {veclen}; i++){{
                 additional_compiler_kwargs="",
                 linkable=True,
                 environments=None))
+
+        if self.mode == 'hw_emu':
+            # rtllib
+            rtllib_config = {
+                    "name" : unique_name,
+                    "buses" : {
+                        "inp" : "s_axis",
+                        "outp" : "m_axis"
+                    },
+                    "params" : {
+                        "scalars" : {
+                        },
+                        "memory" : {
+                        }
+                    },
+                    "ip_cores" : {
+                    }
+                }
+
+            self.code_objects.append(
+                codeobject.CodeObject(
+                    name=f"{unique_name}_control",
+                    code=rtllib_control(rtllib_config),
+                    language="v",
+                    target=RTLCodeGen,
+                    title="rtl",
+                    target_type="",
+                    additional_compiler_kwargs="",
+                    linkable=True,
+                    environments=None))
+
+            self.code_objects.append(
+                codeobject.CodeObject(
+                    name=f"{unique_name}_top",
+                    code=rtllib_top(rtllib_config),
+                    language="v",
+                    target=RTLCodeGen,
+                    title="rtl",
+                    target_type="",
+                    additional_compiler_kwargs="",
+                    linkable=True,
+                    environments=None))
 
         # generate verilator simulation cpp code components
         inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
