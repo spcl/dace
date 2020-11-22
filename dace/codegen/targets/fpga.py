@@ -97,7 +97,7 @@ class FPGACodeGen(TargetCodeGenerator):
             ]))
 
         self._dispatcher.register_node_dispatcher(
-            self, predicate=lambda *_: self._in_device_code)
+            self, predicate=lambda sdfg, node: self._in_device_code and not (isinstance(node, nodes.Tasklet) and node.language == dace.dtypes.Language.SystemVerilog))
 
         fpga_storage = [
             dace.dtypes.StorageType.FPGA_Global,
