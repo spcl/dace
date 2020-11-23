@@ -820,13 +820,16 @@ __kernel void \\
                                                       defined_type,
                                                       typedef,
                                                       allow_shadowing=True)
-                elif isinstance(desc, dace.data.Scalar) :#and  defined_type == DefinedType.Scalar:
+                elif isinstance(desc, dace.data.Scalar) :
                     # if this is a scalar and the argument passed is also a scalar
-                    # then we have to pass it by value, as references do not exist in C99
-                    typedef = defined_ctype
-                    memlet_references.append((typedef, uconn, out_memlet.data))
+                    # then we have to pass it by reference, i.e., we should define it
+                    # as a pointer since references do not exist in C99
+
+                    typedef = defined_ctype + "*"
+                    memlet_references.append((typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet)))
+
                     self._dispatcher.defined_vars.add(uconn,
-                                                      defined_type,
+                                                      DefinedType.Pointer,
                                                       typedef,
                                                       allow_shadowing=True)
                 else:
