@@ -2112,6 +2112,42 @@ ufuncs = dict(
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 >> __in2",
         reduce="lambda a, b: a >> b", initial=np.right_shift.identity),
+    greater = dict(
+        name="_numpy_greater_",
+        operator="Gt",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 > __in2",
+        reduce="lambda a, b: a > b", initial=np.greater.identity),
+    greater_equal = dict(
+        name="_numpy_greater_equal_",
+        operator="GtE",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 >= __in2",
+        reduce="lambda a, b: a >= b", initial=np.greater_equal.identity),
+    less = dict(
+        name="_numpy_less_",
+        operator="Lt",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 < __in2",
+        reduce="lambda a, b: a < b", initial=np.less.identity),
+    less_equal = dict(
+        name="_numpy_less_equal_",
+        operator="LtE",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 <= __in2",
+        reduce="lambda a, b: a <= b", initial=np.less_equal.identity),
+    equal = dict(
+        name="_numpy_equal_",
+        operator="Eq",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 == __in2",
+        reduce="lambda a, b: a == b", initial=np.equal.identity),
+    not_equal = dict(
+        name="_numpy_not_equal_",
+        operator="NotEq",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 != __in2",
+        reduce="lambda a, b: a != b", initial=np.not_equal.identity),
     minimum = dict(
         name="_numpy_min_",
         operator=None,

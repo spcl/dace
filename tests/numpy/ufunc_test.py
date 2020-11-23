@@ -855,6 +855,34 @@ def test_ufunc_right_shift_uu(A: dace.uint32[10], B: dace.uint32[10]):
 def test_ufunc_right_shift_su(A: dace.int32[10], B: dace.uint32[10]):
     return np.right_shift(A, B)
 
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_greater_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.greater(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_greater_equal_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.greater_equal(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_less_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.less(A, B)
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_less_equal_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.less_equal(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_equal_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.equal(A, B)
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_not_equal_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.not_equal(A, B)
+
 if __name__ == "__main__":
     # test_ufunc_add_ff()
     # test_ufunc_subtract_ff()
@@ -1018,11 +1046,17 @@ if __name__ == "__main__":
     # test_ufunc_invert_f()
     # test_ufunc_invert_u()
     # test_ufunc_invert_s()
-    test_ufunc_left_shift_cc()
-    test_ufunc_left_shift_ff()
-    test_ufunc_left_shift_uu()
-    test_ufunc_left_shift_su()
-    test_ufunc_right_shift_cc()
-    test_ufunc_right_shift_ff()
-    test_ufunc_right_shift_uu()
-    test_ufunc_right_shift_su()
+    # test_ufunc_left_shift_cc()
+    # test_ufunc_left_shift_ff()
+    # test_ufunc_left_shift_uu()
+    # test_ufunc_left_shift_su()
+    # test_ufunc_right_shift_cc()
+    # test_ufunc_right_shift_ff()
+    # test_ufunc_right_shift_uu()
+    # test_ufunc_right_shift_su()
+    test_ufunc_greater_ff()
+    test_ufunc_greater_equal_ff()
+    test_ufunc_less_ff()
+    test_ufunc_less_equal_ff()
+    test_ufunc_equal_ff()
+    test_ufunc_not_equal_ff()
