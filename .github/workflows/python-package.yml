@@ -42,6 +42,7 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
+        export DACE_experimental_validate_undefs=0
         export DACE_debugprint=0
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
