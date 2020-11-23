@@ -11,11 +11,11 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: [3.7]
+        strict-xforms: [1,0]
 
     steps:
     - uses: actions/checkout@v2
@@ -33,9 +33,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
         pip install ".[testing]" .
+
     - name: Test dependencies
       run: |
         papi_avail
+
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
@@ -44,7 +46,9 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         export DACE_optimizer_transform_on_call=1
+        export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         pytest --cov-report=xml --cov=dace -m "not gpu and not tensorflow"
+
     - name: Report coverage
       run: |
         codecov
