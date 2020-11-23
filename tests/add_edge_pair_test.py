@@ -4,11 +4,13 @@ import numpy as np
 
 sdfg = dace.SDFG('addedgepair')
 state = sdfg.add_state()
+sdfg.add_array('A', [31], dace.float64)
+sdfg.add_array('B', [1], dace.float64)
 
 # Add nodes
 t = state.add_tasklet('do', {'a'}, {'b'}, 'b = 2*a')
-a = state.add_array('A', [31], dace.float64)
-b = state.add_array('B', [1], dace.float64)
+a = state.add_read('A')
+b = state.add_write('B')
 me, mx = state.add_map('m', dict(i='0:31'))
 
 # Add edges

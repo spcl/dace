@@ -2,8 +2,8 @@
 
 import dace
 
-if __name__ == "__main__":
 
+def test():
     N = dace.symbol("N")
 
     sdfg = dace.SDFG("parallel_sections")
@@ -44,8 +44,7 @@ if __name__ == "__main__":
     read_a_entry, read_a_exit = state.add_map(
         "read_map_a", {"i": "0:N"},
         schedule=dace.dtypes.ScheduleType.Sequential)
-    read_a_tasklet = state.add_tasklet("read_a", {"from_memory"},
-                                       {"to_stream"},
+    read_a_tasklet = state.add_tasklet("read_a", {"from_memory"}, {"to_stream"},
                                        "to_stream = from_memory")
 
     # Inner edges
@@ -66,8 +65,7 @@ if __name__ == "__main__":
     read_b_entry, read_b_exit = state.add_map(
         "read_map_b", {"i": "N:2*N"},
         schedule=dace.dtypes.ScheduleType.Sequential)
-    read_b_tasklet = state.add_tasklet("read_b", {"from_memory"},
-                                       {"to_stream"},
+    read_b_tasklet = state.add_tasklet("read_b", {"from_memory"}, {"to_stream"},
                                        "to_stream = from_memory")
 
     # Inner edges
@@ -112,8 +110,7 @@ if __name__ == "__main__":
     # Fourth processing element: reads from stream into an array
 
     write_entry, write_exit = state.add_map(
-        "write_map", {"i": "0:N"},
-        schedule=dace.dtypes.ScheduleType.Sequential)
+        "write_map", {"i": "0:N"}, schedule=dace.dtypes.ScheduleType.Sequential)
     write_tasklet = state.add_tasklet("write", {"from_stream"}, {"to_memory"},
                                       "to_memory = from_stream")
 
@@ -142,3 +139,7 @@ if __name__ == "__main__":
         if val != 2 * i:
             print(i, val)
             raise ValueError
+
+
+if __name__ == '__main__':
+    test()

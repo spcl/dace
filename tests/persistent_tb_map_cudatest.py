@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import pytest
 import dace
 from dace import nodes
 from dace.dtypes import ScheduleType
@@ -19,6 +20,7 @@ def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float64[1]):
         o = a * b
 
 
+@pytest.mark.gpu
 def test_persistent_thread_block():
 
     sdfg = dot.to_sdfg()

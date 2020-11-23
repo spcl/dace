@@ -32,7 +32,7 @@ def confres_test(A, B, red1, red2):
     red1[0:1] = dace.reduce(lambda a, b: a - b, B[2:H - 2, 5, :])
 
 
-if __name__ == "__main__":
+def test():
     parser = argparse.ArgumentParser()
     parser.add_argument("W", type=int, nargs="?", default=20)
     parser.add_argument("H", type=int, nargs="?", default=20)
@@ -55,4 +55,7 @@ if __name__ == "__main__":
 
     confres_test.compile(A, B, red1, red2)
 
-    print("==== Program end ====")
+
+if __name__ == "__main__":
+    test()
+

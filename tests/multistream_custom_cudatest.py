@@ -2,6 +2,7 @@
 import dace as dp
 import numpy as np
 import os
+import pytest
 
 # First, add libraries to link (CUBLAS) to configuration
 cudaroot = os.environ['CUDA_ROOT']  # or any other environment variable
@@ -105,7 +106,9 @@ sdfg.validate()
 
 ######################################################################
 
-if __name__ == '__main__':
+
+@pytest.mark.gpu
+def test_multistream_custom():
     # Initialize arrays. We are using column-major order to support CUBLAS!
     A = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
     B = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
@@ -123,4 +126,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(C - out_ref)
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test_multistream_custom()
