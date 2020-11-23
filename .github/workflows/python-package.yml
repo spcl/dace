@@ -29,9 +29,22 @@ jobs:
       run: |
         sudo apt-get install -y libyaml-dev cmake
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
+        sudo apt-get install verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
         pip install ".[testing]" .
+    - name: Test dependencies
+      run: |
+        papi_avail
     - name: Test with pytest
       run: |
-        pytest -m "not gpu and not tensorflow"
+        export NOSTATUSBAR=1
+        export DACE_debugprint=0
+        export DACE_testing_serialization=1
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        export DACE_optimizer_transform_on_call=1
+        pytest --cov-report=xml --cov=dace -m "not gpu and not tensorflow"
+    - name: Report coverage
+      run: |
+        codecov
