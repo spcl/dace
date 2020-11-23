@@ -796,7 +796,7 @@ def _is_op_bitwise(op: str):
 
 def _is_op_boolean(op: str):
     if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE',
-              'Is', 'NotIs'}:
+              'Is', 'NotIs', 'Xor'}:
         return True
     return False
 
@@ -2148,13 +2148,59 @@ ufuncs = dict(
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 != __in2",
         reduce="lambda a, b: a != b", initial=np.not_equal.identity),
+    logical_and = dict(
+        name="_numpy_logical_and_",
+        operator="And",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 and __in2",
+        reduce="lambda a, b: a and b", initial=np.logical_and.identity),
+    logical_or = dict(
+        name="_numpy_logical_or_",
+        operator="Or",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 or __in2",
+        reduce="lambda a, b: a or b", initial=np.logical_or.identity),
+    logical_xor = dict(
+        name="_numpy_logical_xor_",
+        operator="Xor",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = (not __in1) != (not __in2)",
+        reduce="lambda a, b: (not a) != (not b)",
+        initial=np.logical_xor.identity),
+    logical_not = dict(
+        name="_numpy_logical_not_",
+        operator="Not",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = not __in1",
+        reduce=None, initial=np.logical_not.identity),
+    maximum = dict(
+        name="_numpy_maximum_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"],
+        code="__out = max(__in1, __in2)",
+        reduce="lambda a, b: max(a, b)", initial=np.maximum.identity),
+    fmax = dict(
+        name="_numpy_fmax_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"],
+        code="__out = fmax(__in1, __in2)",
+        reduce="lambda a, b: fmax(a, b)", initial=np.fmax.identity),
     minimum = dict(
-        name="_numpy_min_",
+        name="_numpy_minimum_",
         operator=None,
         inputs=["__in1", "__in2"],
         outputs=["__out"],
         code="__out = min(__in1, __in2)",
-        reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
+        reduce="lambda a, b: min(a, b)", initial=np.minimum.identity),
+    fmin = dict(
+        name="_numpy_fmin_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"],
+        code="__out = fmin(__in1, __in2)",
+        reduce="lambda a, b: fmin(a, b)", initial=np.fmin.identity),
 )
 
 
