@@ -243,7 +243,7 @@ class DaceProgram:
 
         self.global_vars = {
             k: v
-            for k, v in global_vars.items() if dtypes.isallowed(v)
+            for k, v in global_vars.items() if dtypes.isallowed(v, allow_recursive=True)
         }
         if self.argnames is None:
             self.argnames = []

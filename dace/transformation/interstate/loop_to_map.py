@@ -48,7 +48,7 @@ class LoopToMap(DetectLoop):
         if not found:
             return False
 
-        itervar, (start, end, step) = found
+        itervar, (start, end, step), _ = found
 
         # We cannot handle symbols read from data containers unless they are
         # scalar
@@ -56,35 +56,63 @@ class LoopToMap(DetectLoop):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
-        # Currently only detect the trivial case where the set of containers
-        # that are read are completely disjoint from those that are written
         read_set, write_set = begin.read_and_write_sets()
-        if len(read_set & write_set) != 0:
-            return False
+        overlap = read_set & write_set
+        # If the same container is both read and written, only match if it
+        # read and written exactly one place, at exactly the same index
+        if len(overlap) > 0:
+            code_nodes = [
+                n for n in begin.nodes() if isinstance(n, nodes.CodeNode)
+            ]
+            subsets = {}
+            for data in overlap:
+                for cn in code_nodes:
+                    for e in begin.all_edges(cn):
+                        if e.data.data == data:
+                            subset = e.data.subset
+                            if e.data.dynamic or subset.num_elements() != 1:
+                                # If pointers are involved, give up
+                                return False
+                            if data not in subsets:
+                                subsets[data] = subset
+                            else:
+                                if subsets[data] != subset:
+                                    # All subsets to this data must be identical
+                                    return False
 
-        # Check that the iteration variable is not used on other edges
-        loop_edges = set(
-            itertools.chain(graph.out_edges(guard), graph.out_edges(begin)))
-        if any(itervar in e.data.free_symbols for e in sdfg.edges()
-               if e not in loop_edges):
-            return False
-
-        # Check that the iteration variable is not used in any reachable
-        # dataflow states
+        # Check that the iteration variable is not used on other edges or states
+        # before it is reassigned
         states = set()
         stack = [guard]
         while len(stack) > 0:
             s = stack.pop()
             states.add(s)
-            for e in graph.out_edges(s):
-                if e.dst not in states:
-                    stack.append(e.dst)
-        states.remove(begin)
-        for s in states:
-            if itervar in s.free_symbols:
+            if s is not begin and itervar in s.free_symbols:
+                # The final iterator value is used in this dataflow state
                 return False
+            for e in graph.out_edges(s):
+                if e.dst == begin:
+                    continue
+                if itervar in e.data.assignments:
+                    # Don't continue in this direction, as the variable has
+                    # now been reassigned
+                    states.add(e.dst)
+                elif e.src is not guard and itervar in e.data.free_symbols:
+                    # The final iterator value is used on this edge
+                    return False
+                elif e.dst not in states:
+                    stack.append(e.dst)
 
         return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        guard = graph.node(candidate[DetectLoop._loop_guard])
+        begin = graph.node(candidate[DetectLoop._loop_begin])
+        sexit = graph.node(candidate[DetectLoop._exit_state])
+
+        return (' -> '.join(state.label for state in [guard, begin, sexit]) +
+                ' (for loop)')
 
     def apply(self, sdfg):
         # Obtain loop information
@@ -93,7 +121,7 @@ class LoopToMap(DetectLoop):
         after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step) = find_for_loop(sdfg, guard, body)
+        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a
@@ -146,7 +174,8 @@ class LoopToMap(DetectLoop):
                 body.add_nedge(n, exit, memlet.Memlet())
 
         # Get rid of the loop exit condition edge
-        sdfg.remove_edge(sdfg.edges_between(guard, after)[0])
+        after_edge = sdfg.edges_between(guard, after)[0]
+        sdfg.remove_edge(after_edge)
 
         # Remove the assignment on the edge to the guard
         for e in sdfg.in_edges(guard):
@@ -160,9 +189,13 @@ class LoopToMap(DetectLoop):
         # Get rid of backedge to guard
         sdfg.remove_edge(sdfg.edges_between(body, guard)[0])
 
-        # Route body directly to after state
-        sdfg.add_edge(body, after, sd.InterstateEdge())
+        # Route body directly to after state, maintaining any other assignments
+        # it might have had
+        sdfg.add_edge(
+            body, after,
+            sd.InterstateEdge(assignments=after_edge.data.assignments))
 
-        # Remove symbol from SDFG
-        if itervar in sdfg.symbols:
+        # If this had made the iteration variable a free symbol, we can remove
+        # it from the SDFG symbols
+        if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)

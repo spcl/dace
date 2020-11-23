@@ -20,13 +20,13 @@ def test_invert(A: dace.int64[5, 5]):
 
 
 @dace.program
-def nottest(A: dace.bool[5, 5], B: dace.bool[5, 5]):
+def nottest(A: dace.bool_[5, 5], B: dace.bool_[5, 5]):
     B[:] = not A
 
 
 def test_not():
-    A = np.random.randint(0, 2, size=(5, 5)).astype(bool)
-    B = np.zeros((5, 5), dtype=np.int64).astype(bool)
+    A = np.random.randint(0, 2, size=(5, 5)).astype(np.bool_)
+    B = np.zeros((5, 5), dtype=np.int64).astype(np.bool_)
     regression = np.logical_not(A)
     nottest(A, B)
     assert np.alltrue(B == regression)

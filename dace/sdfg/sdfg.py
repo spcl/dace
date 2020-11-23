@@ -49,6 +49,14 @@ def _arrays_from_json(obj, context=None):
     return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
 
 
+def _replace_dict(d, old, new):
+    if old in d:
+        if new in d:
+            raise FileExistsError('"%s" already exists in SDFG' % new)
+        d[new] = d[old]
+        del d[old]
+
+
 def _assignments_from_string(astr):
     """ Returns a dictionary of assignments from a semicolon-delimited
         string of expressions. """
@@ -125,10 +133,41 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(
-                symbolic.pystr_to_symbolic(assign))
+            result |= symbolic.free_symbols_and_functions(assign)
 
         return result - set(self.assignments.keys())
+
+    def replace(self, name: str, new_name: str) -> None:
+        """
+        Replaces all occurrences of ``name`` with ``new_name``.
+        :param name: The source name.
+        :param new_name: The replacement name.
+        """
+        _replace_dict(self.assignments, name, new_name)
+
+        for k, v in self.assignments.items():
+            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
+            if subscript_matches:
+                sym_v = symbolic.pystr_to_symbolic(v)
+                for subscript in subscript_matches:
+                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                        n=name, s=subscript))
+                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                        n=new_name, s=subscript))
+                    sym_v = sym_v.replace(sym_name, sym_new_name)
+                str_v = symbolic.symstr(sym_v)
+                for subscript in subscript_matches:
+                    str_v = str_v.replace("({})".format(subscript),
+                                          "[{}]".format(subscript))
+                self.assignments[k] = str_v
+            else:
+                sym_name = symbolic.pystr_to_symbolic(name)
+                sym_new_name = symbolic.pystr_to_symbolic(new_name)
+                self.assignments[k] = symbolic.symstr(
+                    symbolic.pystr_to_symbolic(v).replace(
+                        sym_name, sym_new_name))
+        condition = self.condition
+        self.condition.as_string = condition.as_string.replace(name, new_name)
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -177,7 +216,7 @@ class InterstateEdge(object):
 
 
 @make_properties
-class SDFG(OrderedDiGraph):
+class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     """ The main intermediate representation of code in DaCe.
 
         A Stateful DataFlow multiGraph (SDFG) is a directed graph of directed
@@ -372,33 +411,27 @@ class SDFG(OrderedDiGraph):
             :param new_name: Name to replace.
             :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
         """
-        def replace_dict(d, old, new):
-            if old in d:
-                if new in d:
-                    raise FileExistsError('"%s" already exists in SDFG' % new)
-                d[new] = d[old]
-                del d[old]
-
         if name == new_name:
             return
 
+        symrepl = {
+            symbolic.symbol(name):
+            symbolic.pystr_to_symbolic(new_name)
+            if isinstance(new_name, str) else new_name
+        }
+
         # Replace in arrays and symbols (if a variable name)
         if validate_name(new_name):
-            replace_dict(self._arrays, name, new_name)
-            replace_dict(self.symbols, name, new_name)
+            _replace_dict(self._arrays, name, new_name)
+            _replace_dict(self.symbols, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
-            replace_properties(array, name, new_name)
+            replace_properties(array, symrepl, name, new_name)
 
         # Replace in inter-state edges
         for edge in self.edges():
-            replace_dict(edge.data.assignments, name, new_name)
-            for k, v in edge.data.assignments.items():
-                edge.data.assignments[k] = v.replace(name, new_name)
-            condition = edge.data.condition
-            edge.data.condition.as_string = condition.as_string.replace(
-                name, new_name)
+            edge.data.replace(name, new_name)
 
         # Replace in states
         for state in self.nodes():
@@ -420,6 +453,10 @@ class SDFG(OrderedDiGraph):
             :param name: Symbol name.
         """
         del self.symbols[name]
+        # Clean up from symbol mapping if this SDFG is nested
+        nsdfg = self.parent_nsdfg_node
+        if nsdfg is not None and name in nsdfg.symbol_mapping:
+            del nsdfg.symbol_mapping[name]
 
     @property
     def start_state(self):
@@ -537,8 +574,7 @@ class SDFG(OrderedDiGraph):
         """
         if location not in self.exit_code:
             self.exit_code[location] = CodeBlock('', dtypes.Language.CPP)
-        self.exit_code[
-            location].code = cpp_code + self.exit_code[location].code
+        self.exit_code[location].code = cpp_code + self.exit_code[location].code
 
     def append_transformation(self, transformation):
         """
@@ -783,12 +819,6 @@ class SDFG(OrderedDiGraph):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def nodes(self) -> List[SDFGState]:
-        return super().nodes()
-
-    def node(self, id) -> SDFGState:
-        return super().node(id)
-
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
             thereof.
@@ -898,19 +928,21 @@ class SDFG(OrderedDiGraph):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data containers are read and written in this SDFG.
-        Writes with conflict resolution are included as both reads and writes.
+        Determines what data containers are read and written in this SDFG. Does
+        not include reads to subsets of containers that have previously been
+        written within the same state.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
         read_set = set()
         write_set = set()
         for state in self.states():
-            rs, ws = state.read_and_write_sets()
-            read_set |= rs
-            write_set |= ws
-        for edge in self.edges():
-            read_set |= edge.data.free_symbols & self.arrays.keys()
+            for edge in self.in_edges(state):
+                read_set |= edge.data.free_symbols & self.arrays.keys()
+            # Get dictionaries of subsets read and written from each state
+            rs, ws = state._read_and_write_sets()
+            read_set |= rs.keys()
+            write_set |= ws.keys()
         return read_set, write_set
 
     def arglist(self) -> Dict[str, dt.Data]:
@@ -1125,7 +1157,7 @@ class SDFG(OrderedDiGraph):
         view(self, filename=filename)
 
     @staticmethod
-    def from_file(filename: str):
+    def from_file(filename: str) -> 'SDFG':
         """ Constructs an SDFG from a file.
             :param filename: File name to load SDFG from.
             :return: An SDFG.
@@ -1404,9 +1436,8 @@ class SDFG(OrderedDiGraph):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError(
-                    'Array or Stream with name "%s" already exists '
-                    "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1484,8 +1515,7 @@ class SDFG(OrderedDiGraph):
         else:
             cond_ast = CodeBlock('True').code
         self.add_edge(guard, loop_state, InterstateEdge(cond_ast))
-        self.add_edge(guard, after_state,
-                      InterstateEdge(negate_expr(cond_ast)))
+        self.add_edge(guard, after_state, InterstateEdge(negate_expr(cond_ast)))
 
         # Loop incrementation
         incr = None if increment_expr is None else {loop_var: increment_expr}
@@ -1596,8 +1626,8 @@ class SDFG(OrderedDiGraph):
             sdfg, program_objects, sdfg.build_folder)
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(
-            program_folder, sdfg.name)
+        shared_library = compiler.configure_and_compile(program_folder,
+                                                        sdfg.name)
 
         # If provided, save output to path or filename
         if output_file is not None:
@@ -1768,7 +1798,8 @@ class SDFG(OrderedDiGraph):
                               validate: bool = True,
                               validate_all: bool = False,
                               strict: bool = False,
-                              states: Optional[List[Any]] = None) -> int:
+                              states: Optional[List[Any]] = None,
+                              print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
             :param xforms: A Transformation class or a sequence.
@@ -1779,6 +1810,9 @@ class SDFG(OrderedDiGraph):
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
+            :param print_report: Whether to show debug prints or not (None if
+                                 the DaCe config option 'debugprint' should
+                                 apply)
             :return: Number of transformations applied.
 
             Examples::
@@ -1806,7 +1840,6 @@ class SDFG(OrderedDiGraph):
             raise ValueError('Length of options and transformations mismatch')
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
-
         for xform, opts in zip(xforms, options):
             # Find only the first match
             try:
@@ -1827,7 +1860,9 @@ class SDFG(OrderedDiGraph):
         if validate:
             self.validate()
 
-        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+        if (len(applied_transformations) > 0
+                and (print_report or
+                     (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
@@ -1842,7 +1877,8 @@ class SDFG(OrderedDiGraph):
             validate: bool = True,
             validate_all: bool = False,
             strict: bool = False,
-            states: Optional[List[Any]] = None) -> int:
+            states: Optional[List[Any]] = None,
+            print_report: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -1853,6 +1889,9 @@ class SDFG(OrderedDiGraph):
             :param strict: If True, operates in strict transformation mode.
             :param states: If not None, specifies a subset of states to
                            apply transformations on.
+            :param print_report: Whether to show debug prints or not (None if
+                                 the DaCe config option 'debugprint' should
+                                 apply)
             :return: Number of transformations applied.
 
             Examples::
@@ -1881,10 +1920,13 @@ class SDFG(OrderedDiGraph):
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
+        # Cache transformations as metadata for faster application
+        opt.set_transformation_metadata(xforms)
+
         applied = True
         while applied:
             applied = False
-            # Find and apply one of
+            # Find and apply one of the chosen transformations
             for match in opt.get_pattern_matches(strict=strict,
                                                  patterns=xforms,
                                                  states=states):
@@ -1899,14 +1941,31 @@ class SDFG(OrderedDiGraph):
                 match.apply(sdfg)
                 applied_transformations[type(match).__name__] += 1
                 if validate_all:
-                    self.validate()
+                    try:
+                        self.validate()
+                    except InvalidSDFGError as err:
+                        raise InvalidSDFGError(
+                            "Validation failed after applying {}.".format(
+                                match.print_match(sdfg)), sdfg,
+                            match.state_id) from err
                 applied = True
                 break
 
         if validate:
-            self.validate()
+            try:
+                self.validate()
+            except InvalidSDFGError as err:
+                if applied:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".format(
+                            match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+                else:
+                    raise err
 
-        if Config.get_bool('debugprint') and len(applied_transformations) > 0:
+        if (len(applied_transformations) > 0
+                and (print_report or
+                     (print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join([
                 '%d %s' % (v, k) for k, v in applied_transformations.items()
             ])))
@@ -1950,9 +2009,9 @@ class SDFG(OrderedDiGraph):
                 if isinstance(node, nd.NestedSDFG):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
-                    node.expand(self, state)
-                    print("Automatically expanded library node \"" +
-                          str(node) + "\".")
+                    impl_name = node.expand(self, state)
+                    print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(str(node),
+                                                                                                          impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
@@ -1975,10 +2034,6 @@ class SDFG(OrderedDiGraph):
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
-
-        # Propagate memlets in the graph
-        if sdfg.propagate:
-            propagate_memlets_sdfg(sdfg)
 
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 

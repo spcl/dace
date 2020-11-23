@@ -4,6 +4,8 @@ import numpy as np
 
 ##################
 # Lists
+from dace.frontend.python.common import DaceSyntaxError
+
 global_axes = [0, 2, 1]
 
 
@@ -52,8 +54,46 @@ def test_local_list_with_slice():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes[0:-1]))
 
 
+def test_local_list_with_symbols():
+    N = dace.symbol('N')
+    local_shape = [N, 4]
+
+    @dace
+    def local_list(A: dace.int32[N, 2, 4]):
+        result = dace.define_local(local_shape, dace.int32)
+        result[:] = np.sum(A, axis=1)
+        return result
+
+    inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
+    result = local_list(A=inp.copy())
+    assert np.allclose(result, np.sum(inp.copy(), axis=1))
+
+
+def test_local_list_nested_lists():
+    N = dace.symbol('N')
+    local_shape = [[N], 4]
+
+    @dace
+    def local_list(A: dace.int32[N, 2, 4]):
+        result = dace.define_local(local_shape, dace.int32)
+        result[:] = np.sum(A, axis=1)
+        return result
+
+    inp = np.random.randint(0, 10, (3, 2, 4)).astype(np.int32)
+
+    try:
+        result = local_list(A=inp.copy())
+    except DaceSyntaxError as e:
+        assert "local_shape" in e.message
+        return
+
+    assert False, "excepted exception"
+
+
 if __name__ == "__main__":
     test_global_func_access_global_list()
     test_local_func_access_global_list()
     test_local_list()
     test_local_list_with_slice()
+    test_local_list_with_symbols()
+    test_local_list_nested_lists()

@@ -436,7 +436,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not'
+    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq',
+    'NotEq', 'Ne'
 }
 
 
@@ -452,10 +453,16 @@ def contains_sympy_functions(expr):
     return False
 
 
-def free_symbols_and_functions(expr: SymbolicType) -> Set[str]:
+def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    if isinstance(expr, str):
+        if dtypes.validate_name(expr):
+            return {expr}
+        expr = pystr_to_symbolic(expr)
+
     result = {str(k) for k in expr.free_symbols}
     for atom in swalk(expr):
-        if is_sympy_userfunction(atom):
+        if (is_sympy_userfunction(atom)
+                and str(atom.func) not in _builtin_userfunctions):
             result.add(str(atom.func))
     return result
 
@@ -625,6 +632,18 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+    def visit_Compare(self, node: ast.Compare):
+        if len(node.ops) > 1 or len(node.comparators) > 1:
+            raise NotImplementedError
+        op = node.ops[0]
+        arguments = [node.left, node.comparators[0]]
+        func_node = ast.copy_location(
+            ast.Name(id=type(op).__name__, ctx=ast.Load()), node)
+        new_node = ast.Call(func=func_node,
+                            args=[self.visit(arg) for arg in arguments],
+                            keywords=[])
+        return ast.copy_location(new_node, node)
+
 
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -636,14 +655,20 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return symbol(expr)
 
     symbol_map = symbol_map or {}
-    locals = {'min': sympy.Min, 'max': sympy.Max}
+    locals = {
+        'min': sympy.Min,
+        'max': sympy.Max,
+        'True': sympy.true,
+        'False': sympy.false
+    }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(sympy.abc._clash)
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b', expr):
+    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|==|!=',
+                                           expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
@@ -675,6 +700,17 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Mod(self, expr):
         return '((%s) %% (%s))' % (self._print(
             expr.args[0]), self._print(expr.args[1]))
+
+    def _print_Equality(self, expr):
+        return '((%s) == (%s))' % (self._print(
+            expr.args[0]), self._print(expr.args[1]))
+
+    def _print_Unequality(self, expr):
+        return '((%s) != (%s))' % (self._print(
+            expr.args[0]), self._print(expr.args[1]))
+
+    def _print_Not(self, expr):
+        return '(not (%s))' % self._print(expr.args[0])
 
 
 def symstr(sym):

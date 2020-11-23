@@ -96,6 +96,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    SystemVerilog = ()
 
 
 class AccessType(aenum.AutoNumberEnum):
@@ -857,16 +858,10 @@ _CONSTANT_TYPES = [
 ]
 
 
-def isconstant(var, allow_recursive=False):
+def isconstant(var):
     """ Returns True if a variable is designated a constant (i.e., that can be
         directly generated in code).
-
-        :param allow_recursive: whether to allow dicts or lists containing constants.
     """
-    if allow_recursive:
-        if isinstance(var, (list, tuple)):
-            return all(isconstant(v, allow_recursive=False) for v in var)
-
     return type(var) in _CONSTANT_TYPES
 
 
@@ -904,10 +899,18 @@ DTYPE_TO_TYPECLASS = {
     numpy.float32: float32,
     numpy.float64: float64,
     numpy.complex64: complex64,
-    numpy.complex128: complex128
+    numpy.complex128: complex128,
+    # FIXME
+    numpy.longlong: int64,
+    numpy.ulonglong: uint64
 }
 
 TYPECLASS_STRINGS = [
+    "int",
+    "float",
+    "complex",
+    "bool",
+    "bool_",
     "int8",
     "int16",
     "int32",
@@ -920,7 +923,7 @@ TYPECLASS_STRINGS = [
     "float32",
     "float64",
     "complex64",
-    "complex128",
+    "complex128"
 ]
 
 INTEGER_TYPES = [
@@ -933,7 +936,7 @@ INTEGER_TYPES = [
     uint8,
     uint16,
     uint32,
-    uint64,
+    uint64
 ]
 
 #######################################################
@@ -983,10 +986,18 @@ def ismodule_and_allowed(var):
     return False
 
 
-def isallowed(var):
-    """ Returns True if a given object is allowed in a DaCe program. """
+def isallowed(var, allow_recursive=False):
+    """ Returns True if a given object is allowed in a DaCe program.
+
+        :param allow_recursive: whether to allow dicts or lists containing constants.
+    """
     from dace.symbolic import symbol
-    return isconstant(var, allow_recursive=True) or ismodule(var) or isinstance(
+
+    if allow_recursive:
+        if isinstance(var, (list, tuple)):
+            return all(isallowed(v, allow_recursive=False) for v in var)
+
+    return isconstant(var) or ismodule(var) or isinstance(
         var, symbol) or isinstance(var, typeclass)
 
 
@@ -1082,6 +1093,8 @@ def deduplicate(iterable):
 
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
+        return False
+    if name in {'True', 'False', 'None'}:
         return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False

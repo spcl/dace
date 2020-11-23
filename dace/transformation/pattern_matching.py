@@ -6,7 +6,8 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Dict, Iterator, List, Tuple, Type, Union
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Tuple, Type,
+                    Union)
 from dace.transformation import transformation as xf
 
 
@@ -51,21 +52,19 @@ def collapse_multigraph_to_nx(
     return result
 
 
-def type_match(node_a, node_b):
+def type_match(graph_node, pattern_node):
     """ Checks whether the node types of the inputs match.
-        :param node_a: First node.
-        :param node_b: Second node.
+        :param graph_node: First node (in matched graph).
+        :param pattern_node: Second node (in pattern subgraph).
         :return: True if the object types of the nodes match, False otherwise.
         :raise TypeError: When at least one of the inputs is not a dictionary
                           or does not have a 'node' attribute.
         :raise KeyError: When at least one of the inputs is a dictionary,
                          but does not have a 'node' key.
     """
-    if isinstance(node_b['node'], xf.PatternNode):
-        return isinstance(node_a['node'], node_b['node'].node)
-    elif isinstance(node_a['node'], xf.PatternNode):
-        return isinstance(node_b['node'], node_a['node'].node)
-    return isinstance(node_a['node'], type(node_b['node']))
+    if isinstance(pattern_node['node'], xf.PatternNode):
+        return isinstance(graph_node['node'], pattern_node['node'].node)
+    return isinstance(graph_node['node'], type(pattern_node['node']))
 
 
 def type_or_class_match(node_a, node_b):
@@ -96,119 +95,191 @@ def type_or_class_match(node_a, node_b):
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def match_pattern(state: SDFGState,
-                  pattern: Type[xf.Transformation],
-                  sdfg: SDFG,
-                  node_match=type_match,
-                  edge_match=None,
-                  strict=False):
+def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
+                                 collapsed_graph: nx.DiGraph,
+                                 subgraph: Dict[int, int], sdfg: SDFG,
+                                 xform: Type[xf.Transformation], expr_idx: int,
+                                 nxpattern: nx.DiGraph, state_id: int,
+                                 strict: bool) -> Optional[xf.Transformation]:
+    """ 
+    Helper function that tries to instantiate a pattern match into a 
+    transformation object. 
+    """
+    subgraph = {
+        nxpattern.nodes[j]['node']:
+        graph.node_id(collapsed_graph.nodes[i]['node'])
+        for i, j in subgraph.items()
+    }
+
+    try:
+        match_found = xform.can_be_applied(graph,
+                                           subgraph,
+                                           expr_idx,
+                                           sdfg,
+                                           strict=strict)
+    except Exception as e:
+        if Config.get_bool('optimizer', 'match_exception'):
+            raise
+        print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+              ' {e}'.format(p=xform.__name__, c=e.__class__.__name__, e=e))
+        return None
+
+    if match_found:
+        return xform(sdfg.sdfg_id, state_id, subgraph, expr_idx)
+
+    return None
+
+
+TransformationData = List[Tuple[Type, int, nx.DiGraph]]
+PatternMetadataType = Tuple[TransformationData, TransformationData]
+
+
+def get_transformation_metadata(
+    patterns: Union[Type[xf.Transformation], List[Type[xf.Transformation]]]
+) -> PatternMetadataType:
+    """
+    Collect all transformation expressions and metadata once, for use when
+    applying transformations repeatedly.
+    :param patterns: Transformation type (or list thereof) to compute.
+    :return: A tuple of inter-state and single-state pattern matching
+             transformations.
+    """
+    singlestate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
+    interstate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
+    ext_dict = xf.Transformation.extensions()
+    for pattern in patterns:
+        # Find if the transformation is inter-state
+        is_interstate = not ext_dict[pattern].get('singlestate', False)
+        for i, expr in enumerate(pattern.expressions()):
+            # Make a networkx-version of the match subgraph
+            nxpattern = collapse_multigraph_to_nx(expr)
+            if len(nxpattern.nodes) == 1:
+                matcher = _node_matcher
+            elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 1:
+                matcher = _edge_matcher
+            else:
+                matcher = _subgraph_isomorphism_matcher
+
+            if is_interstate:
+                interstate_transformations.append(
+                    (pattern, i, nxpattern, matcher))
+            else:
+                singlestate_transformations.append(
+                    (pattern, i, nxpattern, matcher))
+
+    return interstate_transformations, singlestate_transformations
+
+
+def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match based on the VF2 algorithm for general SI. """
+    graph_matcher = iso.DiGraphMatcher(digraph,
+                                       nxpattern,
+                                       node_match=node_pred,
+                                       edge_match=edge_pred)
+    yield from graph_matcher.subgraph_isomorphisms_iter()
+
+
+def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match individual nodes. """
+    pnid = next(iter(nxpattern))
+    pnode = nxpattern.nodes[pnid]
+
+    for nid in digraph:
+        if node_pred(digraph.nodes[nid], pnode):
+            yield {nid: pnid}
+
+
+def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match individual edges. """
+    pedge = next(iter(nxpattern.edges))
+    pu = nxpattern.nodes[pedge[0]]
+    pv = nxpattern.nodes[pedge[1]]
+
+    if edge_pred is None:
+        for u, v in digraph.edges:
+            if (node_pred(digraph.nodes[u], pu)
+                    and node_pred(digraph.nodes[v], pv)):
+                yield {u: pedge[0], v: pedge[1]}
+    else:
+        for u, v in digraph.edges:
+            if (node_pred(digraph.nodes[u], pu)
+                    and node_pred(digraph.nodes[v], pv)
+                    and edge_pred(digraph.edges[u, v], nxpattern.edges[pedge])):
+                yield {u: pedge[0], v: pedge[1]}
+
+
+def match_patterns(sdfg: SDFG,
+                   patterns: Union[Type[xf.Transformation],
+                                   List[Type[xf.Transformation]]],
+                   node_match: Callable[[Any, Any], bool] = type_match,
+                   edge_match: Optional[Callable[[Any, Any], bool]] = None,
+                   strict: bool = False,
+                   metadata: Optional[PatternMetadataType] = None,
+                   states: Optional[List[SDFGState]] = None):
     """ Returns a list of single-state Transformations of a certain class that
         match the input SDFG.
-        :param state: An SDFGState object to match.
-        :param pattern: Transformation type to match.
         :param sdfg: The SDFG to match in.
+        :param patterns: Transformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.
         :param edge_match: Function for checking whether two edges match.
         :param strict: Only match transformation if strict (i.e., can only
                        improve the performance/reduce complexity of the SDFG).
+        :param metadata: Transformation metadata that can be reused.
+        :param states: If given, only tries to match single-state 
+                       transformations on this list.
         :return: A list of Transformation objects that match.
     """
 
-    # Collapse multigraph into directed graph
-    # Handling VF2 in networkx for now
-    digraph = collapse_multigraph_to_nx(state)
+    if isinstance(patterns, type):
+        patterns = [patterns]
 
-    for idx, expression in enumerate(pattern.expressions()):
-        cexpr = collapse_multigraph_to_nx(expression)
-        graph_matcher = iso.DiGraphMatcher(digraph,
-                                           cexpr,
-                                           node_match=node_match,
-                                           edge_match=edge_match)
-        for subgraph in graph_matcher.subgraph_isomorphisms_iter():
-            subgraph = {
-                cexpr.nodes[j]['node']: state.node_id(digraph.nodes[i]['node'])
-                for (i, j) in subgraph.items()
-            }
-            try:
-                match_found = pattern.can_be_applied(state,
-                                                     subgraph,
-                                                     idx,
-                                                     sdfg,
-                                                     strict=strict)
-            except Exception as e:
-                if Config.get_bool('optimizer', 'match_exception'):
-                    raise
-                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__,
-                                    e=e))
-                match_found = False
-            if match_found:
-                yield pattern(sdfg.sdfg_id, sdfg.node_id(state), subgraph, idx)
+    # Collect transformation metadata
+    if metadata is not None:
+        # Transformation metadata can be evaluated once per apply loop
+        interstate_transformations, singlestate_transformations = metadata
+    else:
+        # Otherwise, precompute all transformation data once
+        (interstate_transformations,
+         singlestate_transformations) = get_transformation_metadata(patterns)
 
-    # Recursive call for nested SDFGs
-    for node in state.nodes():
-        if isinstance(node, nd.NestedSDFG):
-            sub_sdfg = node.sdfg
-            for sub_state in sub_sdfg.nodes():
-                yield from match_pattern(sub_state,
-                                         pattern,
-                                         sub_sdfg,
-                                         strict=strict)
+    # Collect SDFG and nested SDFGs
+    sdfgs = sdfg.all_sdfgs_recursive()
 
+    # Try to find transformations on each SDFG
+    for tsdfg in sdfgs:
+        ###################################
+        # Match inter-state transformations
+        if len(interstate_transformations) > 0:
+            # Collapse multigraph into directed graph in order to use VF2
+            digraph = collapse_multigraph_to_nx(tsdfg)
 
-def match_stateflow_pattern(sdfg,
-                            pattern,
-                            node_match=type_match,
-                            edge_match=None,
-                            strict=False):
-    """ Returns a list of multi-state Transformations of a certain class that
-        match the input SDFG.
-        :param sdfg: The SDFG to match in.
-        :param pattern: Transformation object to match.
-        :param node_match: Function for checking whether two nodes match.
-        :param edge_match: Function for checking whether two edges match.
-        :param strict: Only match transformation if strict (i.e., can only
-                       improve the performance/reduce complexity of the SDFG).
-        :return: A list of Transformation objects that match.
-    """
+        for xform, expr_idx, nxpattern, matcher in interstate_transformations:
+            for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
+                match = _try_to_match_transformation(tsdfg, digraph, subgraph,
+                                                     tsdfg, xform, expr_idx,
+                                                     nxpattern, -1, strict)
+                if match is not None:
+                    yield match
 
-    # Collapse multigraph into directed graph
-    # Handling VF2 in networkx for now
-    digraph = collapse_multigraph_to_nx(sdfg)
+        ####################################
+        # Match single-state transformations
+        if len(singlestate_transformations) == 0:
+            continue
+        for state_id, state in enumerate(tsdfg.nodes()):
+            if states is not None and state not in states:
+                continue
 
-    for idx, expression in enumerate(pattern.expressions()):
-        cexpr = collapse_multigraph_to_nx(expression)
-        graph_matcher = iso.DiGraphMatcher(digraph,
-                                           cexpr,
-                                           node_match=node_match,
-                                           edge_match=edge_match)
-        for subgraph in graph_matcher.subgraph_isomorphisms_iter():
-            subgraph = {
-                cexpr.nodes[j]['node']: sdfg.node_id(digraph.nodes[i]['node'])
-                for (i, j) in subgraph.items()
-            }
-            try:
-                match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
-                                                     strict)
-            except Exception as e:
-                if Config.get_bool('optimizer', 'match_exception'):
-                    raise
-                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__,
-                                    e=e))
-                match_found = False
-            if match_found:
-                yield pattern(sdfg.sdfg_id, -1, subgraph, idx)
+            # Collapse multigraph into directed graph in order to use VF2
+            digraph = collapse_multigraph_to_nx(state)
 
-    # Recursive call for nested SDFGs
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                yield from match_stateflow_pattern(node.sdfg,
-                                                   pattern,
-                                                   strict=strict)
+            for xform, expr_idx, nxpattern, matcher in singlestate_transformations:
+                for subgraph in matcher(digraph, nxpattern, node_match,
+                                        edge_match):
+                    match = _try_to_match_transformation(
+                        state, digraph, subgraph, tsdfg, xform, expr_idx,
+                        nxpattern, state_id, strict)
+                    if match is not None:
+                        yield match
 
 
 def enumerate_matches(sdfg: SDFG,
