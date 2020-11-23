@@ -871,7 +871,7 @@ def isconstant(var):
 
 
 bool = typeclass(numpy.bool)
-bool_ = typeclass(numpy.int8)
+bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
