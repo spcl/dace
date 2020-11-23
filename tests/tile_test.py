@@ -25,18 +25,11 @@ def transpose_tiled(A, B, TW, TH):
             b = a
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("W", type=int, nargs="?", default=128)
-    parser.add_argument("H", type=int, nargs="?", default=128)
-    parser.add_argument("TH", type=int, nargs="?", default=16)
-    parser.add_argument("TW", type=int, nargs="?", default=16)
-    args = vars(parser.parse_args())
-
-    W.set(args["W"])
-    H.set(args["H"])
-    TW.set(args["TW"])
-    TH.set(args["TH"])
+def test():
+    W.set(128)
+    H.set(128)
+    TW.set(16)
+    TH.set(16)
 
     print('Transpose (Tiled) %dx%d (tile size: %dx%d)' %
           (W.get(), H.get(), TW.get(), TH.get()))
@@ -50,5 +43,8 @@ if __name__ == "__main__":
 
     diff = np.linalg.norm(np.transpose(A) - B) / (H.get() * W.get())
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

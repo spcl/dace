@@ -20,7 +20,8 @@ B = state.add_write('B')
 state.add_nedge(A, tmp, dace.Memlet.simple('A', '0:N'))
 state.add_nedge(tmp, B, dace.Memlet.simple('tmp', '0:N'))
 
-if __name__ == '__main__':
+
+def test():
     N.set(12)
     A = np.random.rand(12).astype(np.float32)
     B = np.random.rand(12).astype(np.float32)
@@ -38,4 +39,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(A - B)
     print('Difference:', diff)
-    exit(0 if diff < 1e-5 else 1)
+    assert diff < 1e-5
+
+
+if __name__ == "__main__":
+    test()

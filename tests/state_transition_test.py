@@ -3,9 +3,10 @@
 import dace
 import re
 import sys
+import numpy as np
 
-if __name__ == "__main__":
 
+def test_state_transitions():
     if not dace.config.Config.get_bool('optimizer', 'detect_control_flow'):
         print("Control flow not enabled. Skipping test.")
         sys.exit(0)
@@ -118,8 +119,8 @@ if __name__ == "__main__":
                   dace.InterstateEdge(condition=nested_if_cond))
     sdfg.add_edge(
         s5_then, s8_end,
-        dace.InterstateEdge(condition=dace.frontend.python.astutils.
-                            negate_expr(nested_if_cond)))
+        dace.InterstateEdge(condition=dace.frontend.python.astutils.negate_expr(
+            nested_if_cond)))
 
     sdfg.add_edge(s7_then_then, s8_end, dace.InterstateEdge())
 
@@ -154,3 +155,43 @@ if __name__ == "__main__":
 
     if x_output != 128:
         raise RuntimeError("Expected x = 128, got {}".format(x_output))
+
+
+def test_state_transition_array():
+    """ Toplevel array usage in interstate edge """
+    sdfg = dace.SDFG('sta_test')
+
+    s0 = sdfg.add_state()
+    s1 = sdfg.add_state()
+    s2 = sdfg.add_state()
+
+    # Arrays
+    inp = s0.add_array('inp', [1], dace.float32)
+    A = s0.add_array('A', [1], dace.float32)
+    t = s0.add_tasklet('seta', {'a'}, {'b'}, 'b = a')
+    s0.add_edge(inp, None, t, 'a',
+                dace.Memlet.from_array(inp.data, inp.desc(sdfg)))
+    s0.add_edge(t, 'b', A, None, dace.Memlet.from_array(A.data, A.desc(sdfg)))
+
+    A = s1.add_array('A', [1], dace.float32)
+    t = s1.add_tasklet('geta', {'a'}, {}, 'printf("ok %f\\n", a + 1)')
+    s1.add_edge(A, None, t, 'a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+
+    A = s2.add_array('A', [1], dace.float32)
+    t = s2.add_tasklet('geta', {'a'}, {}, 'printf("BAD %f\\n", a - 1)')
+    s2.add_edge(A, None, t, 'a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+
+    sdfg.add_edge(s0, s1, dace.InterstateEdge('A[0] > 3'))
+    sdfg.add_edge(s0, s2, dace.InterstateEdge('A[0] <= 3'))
+
+    input = np.ndarray([1], np.float32)
+    input[0] = 10
+    output = np.ndarray([1], np.float32)
+    output[0] = 10
+
+    sdfg(inp=input, A=output)
+
+
+if __name__ == "__main__":
+    test_state_transitions()
+    test_state_transition_array()
