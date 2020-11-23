@@ -143,13 +143,13 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
         child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
         # Set default schedule type
         if isinstance(node, nodes.MapEntry):
-            if node.map.schedule == dtypes.ScheduleType.Default:
+            if node.map.schedule is dtypes.ScheduleType.Default:
                 node.map.schedule = child_schedule
             # Also traverse children (recursively)
             _set_default_schedule_in_scope(node, node.map.schedule,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.ConsumeEntry):
-            if node.consume.schedule == dtypes.ScheduleType.Default:
+            if node.consume.schedule is dtypes.ScheduleType.Default:
                 node.consume.schedule = child_schedule
 
             # Also traverse children (recursively)
@@ -157,12 +157,14 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
-            if node.schedule == dtypes.ScheduleType.Default:
+            # TODO: and parent_schedule is not None?
+            if node.schedule is dtypes.ScheduleType.Default:
                 node.schedule = parent_schedule
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
-            if node.schedule == dtypes.ScheduleType.Default:
-                node.schedule = child_schedule
+            if node.schedule is dtypes.ScheduleType.Default:
+                # TODO: and parent_schedule is not None?
+                node.schedule = child_schedule if isinstance(node, nodes.EntryNode) else parent_schedule
 
 
 def _set_default_schedule_types(sdfg: SDFG,
@@ -190,7 +192,7 @@ def _set_default_storage_types(sdfg: SDFG,
             desc = node.desc(sdfg)
             # Only set transients if nested
             if ((desc.transient or sdfg.parent_sdfg is None)
-                    and desc.storage == dtypes.StorageType.Default):
+                    and desc.storage is dtypes.StorageType.Default):
                 # Special cases
                 parent_node = scope_dict[node]
                 if parent_node is None:
@@ -198,7 +200,7 @@ def _set_default_storage_types(sdfg: SDFG,
                 else:
                     parent_schedule = parent_node.map.schedule
                     # Skip sequential maps to determine storage
-                    while parent_schedule == dtypes.ScheduleType.Sequential:
+                    while parent_schedule is dtypes.ScheduleType.Sequential:
                         parent_node = scope_dict[parent_node]
                         if parent_node is None:
                             parent_schedule = toplevel_schedule
@@ -206,7 +208,7 @@ def _set_default_storage_types(sdfg: SDFG,
                         parent_schedule = parent_node.map.schedule
                 # Determine default GPU schedule based on existence of
                 # thread-block maps
-                if parent_schedule == dtypes.ScheduleType.GPU_Device:
+                if parent_schedule is dtypes.ScheduleType.GPU_Device:
                     if parent_node not in scopes_with_tbmaps:
                         parent_schedule = dtypes.ScheduleType.GPU_ThreadBlock
                 # End of special cases
@@ -216,7 +218,7 @@ def _set_default_storage_types(sdfg: SDFG,
 
     # Take care of remaining arrays/scalars, e.g., code->code edges
     for desc in sdfg.arrays.values():
-        if desc.storage == dtypes.StorageType.Default:
+        if desc.storage is dtypes.StorageType.Default:
             desc.storage = dtypes.StorageType.Register
 
     for state in sdfg.nodes():
@@ -227,7 +229,7 @@ def _set_default_storage_types(sdfg: SDFG,
                 continue
             for name, desc in node.sdfg.arrays.items():
                 if (not desc.transient
-                        and desc.storage == dtypes.StorageType.Default):
+                        and desc.storage is dtypes.StorageType.Default):
                     # Find connector and ensure storage types match
                     for e in state.in_edges(node):
                         if e.dst_conn == name:
