@@ -436,6 +436,306 @@ def test_ufunc_reciprocal_u(A: dace.uint32[10]):
     return np.reciprocal(A)
 
 
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_gcd_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.gcd(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_gcd_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.gcd(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_gcd_uu(A: dace.uint32[10], B: dace.uint32[10]):
+    return np.gcd(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_lcm_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.lcm(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_lcm_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.lcm(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_lcm_uu(A: dace.uint32[10], B: dace.uint32[10]):
+    return np.lcm(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_sin_c(A: dace.complex64[10]):
+    return np.sin(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_sin_f(A: dace.float32[10]):
+    return np.sin(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_sin_u(A: dace.uint32[10]):
+    return np.sin(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_cos_c(A: dace.complex64[10]):
+    return np.cos(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_cos_f(A: dace.float32[10]):
+    return np.cos(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_cos_u(A: dace.uint32[10]):
+    return np.cos(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_tan_c(A: dace.complex64[10]):
+    return np.tan(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_tan_f(A: dace.float32[10]):
+    return np.tan(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_tan_u(A: dace.uint32[10]):
+    return np.tan(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arcsin_c(A: dace.complex64[10]):
+    return np.arcsin(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arcsin_f(A: dace.float32[10]):
+    return np.arcsin(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arcsin_u(A: dace.uint32[10]):
+    return np.arcsin(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arccos_c(A: dace.complex64[10]):
+    return np.arccos(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arccos_f(A: dace.float32[10]):
+    return np.arccos(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arccos_u(A: dace.uint32[10]):
+    return np.arccos(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arctan_c(A: dace.complex64[10]):
+    return np.arctan(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arctan_f(A: dace.float32[10]):
+    return np.arctan(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arctan_u(A: dace.uint32[10]):
+    return np.arctan(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_sinh_c(A: dace.complex64[10]):
+    return np.sinh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_sinh_f(A: dace.float32[10]):
+    return np.sinh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_sinh_u(A: dace.uint32[10]):
+    return np.sinh(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_cosh_c(A: dace.complex64[10]):
+    return np.cosh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_cosh_f(A: dace.float32[10]):
+    return np.cosh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_cosh_u(A: dace.uint32[10]):
+    return np.cosh(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_tanh_c(A: dace.complex64[10]):
+    return np.tanh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_tanh_f(A: dace.float32[10]):
+    return np.tanh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_tanh_u(A: dace.uint32[10]):
+    return np.tanh(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arcsinh_c(A: dace.complex64[10]):
+    return np.arcsinh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arcsinh_f(A: dace.float32[10]):
+    return np.arcsinh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arcsinh_u(A: dace.uint32[10]):
+    return np.arcsinh(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arccosh_c(A: dace.complex64[10]):
+    return np.arccosh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arccosh_f(A: dace.float32[10]):
+    return np.arccosh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arccosh_u(A: dace.uint32[10]):
+    return np.arccosh(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arctanh_c(A: dace.complex64[10]):
+    return np.arctanh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arctanh_f(A: dace.float32[10]):
+    return np.arctanh(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_arctanh_u(A: dace.uint32[10]):
+    return np.arctanh(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arctan2_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.arctan2(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arctan2_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.arctan2(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_arctan2_uu(A: dace.uint32[10], B: dace.uint32[10]):
+    return np.arctan2(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_hypot_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.hypot(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_hypot_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.hypot(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_hypot_uu(A: dace.uint32[10], B: dace.uint32[10]):
+    return np.hypot(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_degrees_c(A: dace.complex64[10]):
+    return np.degrees(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_degrees_f(A: dace.float32[10]):
+    return np.degrees(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_degrees_u(A: dace.uint32[10]):
+    return np.degrees(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_rad2deg_c(A: dace.complex64[10]):
+    return np.rad2deg(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_rad2deg_f(A: dace.float32[10]):
+    return np.rad2deg(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_rad2deg_u(A: dace.uint32[10]):
+    return np.rad2deg(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_radians_c(A: dace.complex64[10]):
+    return np.radians(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_radians_f(A: dace.float32[10]):
+    return np.radians(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_radians_u(A: dace.uint32[10]):
+    return np.radians(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_deg2rad_c(A: dace.complex64[10]):
+    return np.deg2rad(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_deg2rad_f(A: dace.float32[10]):
+    return np.deg2rad(A)
+
+
+@compare_numpy_output(non_zero=True, check_dtype=True)
+def test_ufunc_deg2rad_u(A: dace.uint32[10]):
+    return np.deg2rad(A)
+
+
 if __name__ == "__main__":
     test_ufunc_add_ff()
     test_ufunc_subtract_ff()
@@ -523,3 +823,63 @@ if __name__ == "__main__":
     test_ufunc_reciprocal_c()
     test_ufunc_reciprocal_f()
     test_ufunc_reciprocal_u()
+    test_ufunc_gcd_cc()
+    test_ufunc_gcd_ff()
+    test_ufunc_gcd_uu()
+    test_ufunc_lcm_cc()
+    test_ufunc_lcm_ff()
+    test_ufunc_lcm_uu()
+    test_ufunc_sin_c()
+    test_ufunc_sin_f()
+    test_ufunc_sin_u()
+    test_ufunc_cos_c()
+    test_ufunc_cos_f()
+    test_ufunc_cos_u()
+    test_ufunc_tan_c()
+    test_ufunc_tan_f()
+    test_ufunc_tan_u()
+    test_ufunc_arcsin_c()
+    test_ufunc_arcsin_f()
+    test_ufunc_arcsin_u()
+    test_ufunc_arccos_c()
+    test_ufunc_arccos_f()
+    test_ufunc_arccos_u()
+    test_ufunc_arctan_c()
+    test_ufunc_arctan_f()
+    test_ufunc_arctan_u()
+    test_ufunc_sinh_c()
+    test_ufunc_sinh_f()
+    test_ufunc_sinh_u()
+    test_ufunc_cosh_c()
+    test_ufunc_cosh_f()
+    test_ufunc_cosh_u()
+    test_ufunc_tanh_c()
+    test_ufunc_tanh_f()
+    test_ufunc_tanh_u()
+    test_ufunc_arcsinh_c()
+    test_ufunc_arcsinh_f()
+    test_ufunc_arcsinh_u()
+    test_ufunc_arccosh_c()
+    test_ufunc_arccosh_f()
+    test_ufunc_arccosh_u()
+    test_ufunc_arctanh_c()
+    test_ufunc_arctanh_f()
+    test_ufunc_arctanh_u()
+    test_ufunc_arctan2_cc()
+    test_ufunc_arctan2_ff()
+    test_ufunc_arctan2_uu()
+    test_ufunc_hypot_cc()
+    test_ufunc_hypot_ff()
+    test_ufunc_hypot_uu()
+    test_ufunc_degrees_c()
+    test_ufunc_degrees_f()
+    test_ufunc_degrees_u()
+    test_ufunc_rad2deg_c()
+    test_ufunc_rad2deg_f()
+    test_ufunc_rad2deg_u()
+    test_ufunc_radians_c()
+    test_ufunc_radians_f()
+    test_ufunc_radians_u()
+    test_ufunc_deg2rad_c()
+    test_ufunc_deg2rad_f()
+    test_ufunc_deg2rad_u()

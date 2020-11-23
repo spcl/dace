@@ -297,6 +297,62 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(const std::complex<T>
     return T(1) / a;
 }
 
+#if __cplusplus < 201703L
+
+// Compute the greates common divisor of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T gcd(T a, T b) {
+    // while b ≠ 0
+    //     t := b
+    //     b := a mod b
+    //     a := t
+    // return a
+    while (b != 0) {
+        auto t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+// Compute the least common multiple of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T lcm(T a, T b) {
+    // lcm(a, b) = |a * b| / gcd(a, b)
+    // more efficient lcm(a, b) = (|a| / gcd(a, b)) * |b|
+    if (a == 0 && b == 0) // special case
+        return 0;
+    return (abs(a) / gcd(a, b)) * abs(b);
+}
+
+#else
+
+// Compute the greates common divisor of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T gcd(const T& a, const T& b) {
+    return std::gcd(a, b);
+}
+
+// Compute the least common multiple of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T lcm(const T& a, const T& b) {
+    return std::lcm(a, b);
+}
+
+#endif
+
+// Converts angles from degrees to radians
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T deg2rad(const T& a) {
+    return a * M_PI / T(180);
+}
+
+// Converts angles from radians to degrees
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T rad2deg(const T& a) {
+    return a * T(180) / M_PI;
+}
+
 #endif
 
 namespace dace

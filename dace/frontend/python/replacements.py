@@ -783,7 +783,7 @@ def _makeunop(op, opcode):
 
 def _is_op_arithmetic(op: str):
     if op in {'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod',
-              'FloatPow', 'Heaviside'}:
+              'FloatPow', 'Heaviside', 'Arctan2', 'Hypot'}:
         return True
     return False
 
@@ -898,11 +898,11 @@ def _result_type(
             result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
         elif operator == 'Abs' and coarse_types[0] == 3:
             result_type = eval('dace.float{}'.format(4 * datatypes[0].bytes))
-        elif operator in ('Fabs', 'Cbrt') and coarse_types[0] == 3:
+        elif operator in ('Fabs', 'Cbrt', 'Angles') and coarse_types[0] == 3:
             raise TypeError("ufunc '{}' not supported for complex input".format(
                 operator))
-        elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt')
-                           and coarse_types[0] < 2):
+        elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt',
+                           'Trigonometric', 'Angles') and coarse_types[0] < 2):
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
         elif _is_op_boolean(operator):
@@ -957,11 +957,13 @@ def _result_type(
                 # Float power with complex numbers
                 else:
                     result_type = dace.complex128
-            elif operator == 'Heaviside' and max(type1, type2) == 3:
+            elif (operator in ('Heaviside', 'Arctan2', 'Hypot')
+                    and max(type1, type2) == 3):
                     raise TypeError(
                         "ufunc '{}' not supported for complex input".format(
                             operator))
-            elif operator == 'Heaviside' and max(type1, type2) < 2:
+            elif (operator in ('Heaviside', 'Arctan2', 'Hypot')
+                        and max(type1, type2) < 2):
                     result_type = dace.float64
             # All other arithmetic operators and cases of the above operators
             else:
@@ -993,7 +995,8 @@ def _result_type(
             # Only integers may be arguments of bitwise and shifting operations
             if max(type1, type2) > 1:
                 raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                                "'{}' and '{}'".format(
+                                    operator, dtype1, dtype2))
             result_type = eval('dace.int{}'.format(8 * max_bytes))
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)
@@ -1002,6 +1005,17 @@ def _result_type(
 
         elif _is_op_boolean(operator):
             result_type = dace.bool_
+        
+        elif operator in ('Gcd', 'Lcm'):
+            if max(type1, type2) > 1:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(
+                                    operator, dtype1, dtype2))
+            result_type = _np_result_type(dtypes_for_result)
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
         
         else:  # Other binary operators
             result_type = _np_result_type(dtypes_for_result)
@@ -1938,6 +1952,126 @@ ufuncs = dict(
         inputs=["__in1"],
         outputs=["__out"], code="__out = reciprocal(__in1)",
         reduce=None, initial=np.reciprocal.identity),
+    gcd = dict(
+        name="_numpy_gcd_",
+        operator="Gcd",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = gcd(__in1, __in2)",
+        reduce="lambda a, b: gcd(a, b)", initial=np.gcd.identity),
+    lcm = dict(
+        name="_numpy_lcm_",
+        operator="Lcm",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = lcm(__in1, __in2)",
+        reduce="lambda a, b: lcm(a, b)", initial=np.lcm.identity),
+    sin = dict(
+        name="_numpy_sin_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = sin(__in1)",
+        reduce=None, initial=np.sin.identity),
+    cos = dict(
+        name="_numpy_cos_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = cos(__in1)",
+        reduce=None, initial=np.cos.identity),
+    tan = dict(
+        name="_numpy_tan_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = tan(__in1)",
+        reduce=None, initial=np.tan.identity),
+    arcsin = dict(
+        name="_numpy_arcsin_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = asin(__in1)",
+        reduce=None, initial=np.arcsin.identity),
+    arccos = dict(
+        name="_numpy_arccos_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = acos(__in1)",
+        reduce=None, initial=np.arccos.identity),
+    arctan = dict(
+        name="_numpy_arctan_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = atan(__in1)",
+        reduce=None, initial=np.arctan.identity),
+    sinh = dict(
+        name="_numpy_sinh_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = sinh(__in1)",
+        reduce=None, initial=np.sinh.identity),
+    cosh = dict(
+        name="_numpy_cosh_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = cosh(__in1)",
+        reduce=None, initial=np.cosh.identity),
+    tanh = dict(
+        name="_numpy_tanh_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = tanh(__in1)",
+        reduce=None, initial=np.tanh.identity),
+    arcsinh = dict(
+        name="_numpy_arcsinh_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = asinh(__in1)",
+        reduce=None, initial=np.arcsinh.identity),
+    arccosh = dict(
+        name="_numpy_arccosh_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = acosh(__in1)",
+        reduce=None, initial=np.arccos.identity),
+    arctanh = dict(
+        name="_numpy_arctanh_",
+        operator="Trigonometric",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = atanh(__in1)",
+        reduce=None, initial=np.arctanh.identity),
+    arctan2 = dict(
+        name="_numpy_arctan2_",
+        operator="Arctan2",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = atan2(__in1, __in2)",
+        reduce="lambda a, b: atan2(a, b)", initial=np.arctan2.identity),
+    hypot = dict(
+        name="_numpy_hypot_",
+        operator="Hypot",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = hypot(__in1, __in2)",
+        reduce="lambda a, b: hypot(a, b)", initial=np.arctan2.identity),
+    degrees = dict(
+        name="_numpy_degrees_",
+        operator="Angles",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = rad2deg(__in1)",
+        reduce=None, initial=np.degrees.identity),
+    rad2deg = dict(
+        name="_numpy_rad2deg_",
+        operator="Angles",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = rad2deg(__in1)",
+        reduce=None, initial=np.rad2deg.identity),
+    radians = dict(
+        name="_numpy_radians_",
+        operator="Angles",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = deg2rad(__in1)",
+        reduce=None, initial=np.radians.identity),
+    deg2rad = dict(
+        name="_numpy_deg2rad_",
+        operator="Angles",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = deg2rad(__in1)",
+        reduce=None, initial=np.deg2rad.identity),
     minimum = dict(
         name="_numpy_min_",
         operator=None,
