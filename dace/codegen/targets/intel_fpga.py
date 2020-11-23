@@ -25,6 +25,7 @@ from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import SDFGState
+import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
 
 REDUCTION_TYPE_TO_HLSLIB = {
@@ -708,6 +709,7 @@ __kernel void \\
             desc = sdfg.arrays[edge.data.data]
             if isinstance(desc, dace.data.Stream):
                 src_node = find_input_arraynode(state, edge)
+                utils.trace_nested_access(src_node, state, sdfg)
                 self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
                                                state, state_id, None,
                                                nested_stream)
