@@ -789,7 +789,7 @@ def _is_op_arithmetic(op: str):
 
 
 def _is_op_bitwise(op: str):
-    if op in {'LShift', 'RShift', 'BitOr', 'BitXor', 'BitAnd'}:
+    if op in {'LShift', 'RShift', 'BitOr', 'BitXor', 'BitAnd', 'Invert'}:
         return True
     return False
 
@@ -905,6 +905,9 @@ def _result_type(
                            'Trigonometric', 'Angles') and coarse_types[0] < 2):
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
+        elif _is_op_bitwise(operator) and coarse_types[0] > 1:
+            raise TypeError("unsupported operand type for {}: '{}'".format(
+                                operator, datatypes[0]))
         elif _is_op_boolean(operator):
             result_type = dace.bool_
         else:
@@ -997,7 +1000,8 @@ def _result_type(
                 raise TypeError("unsupported operand type(s) for {}: "
                                 "'{}' and '{}'".format(
                                     operator, dtype1, dtype2))
-            result_type = eval('dace.int{}'.format(8 * max_bytes))
+            # result_type = eval('dace.int{}'.format(8 * max_bytes))
+            result_type = _np_result_type(dtypes_for_result)
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)
             if dtype2 != result_type:
@@ -2072,6 +2076,42 @@ ufuncs = dict(
         inputs=["__in1"],
         outputs=["__out"], code="__out = deg2rad(__in1)",
         reduce=None, initial=np.deg2rad.identity),
+    bitwise_and = dict(
+        name="_numpy_bitwise_and_",
+        operator="BitAnd",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 & __in2",
+        reduce="lambda a, b: a & b", initial=np.bitwise_and.identity),
+    bitwise_or = dict(
+        name="_numpy_bitwise_or_",
+        operator="BitOr",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 | __in2",
+        reduce="lambda a, b: a | b", initial=np.bitwise_or.identity),
+    bitwise_xor = dict(
+        name="_numpy_bitwise_xor_",
+        operator="BitXor",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 ^ __in2",
+        reduce="lambda a, b: a ^ b", initial=np.bitwise_xor.identity),
+    invert = dict(
+        name="_numpy_invert_",
+        operator="Invert",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = ~ __in1",
+        reduce=None, initial=np.invert.identity),
+    left_shift = dict(
+        name="_numpy_left_shift_",
+        operator="LShift",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 << __in2",
+        reduce="lambda a, b: a << b", initial=np.left_shift.identity),
+    right_shift = dict(
+        name="_numpy_right_shift_",
+        operator="RShift",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = __in1 >> __in2",
+        reduce="lambda a, b: a >> b", initial=np.right_shift.identity),
     minimum = dict(
         name="_numpy_min_",
         operator=None,
