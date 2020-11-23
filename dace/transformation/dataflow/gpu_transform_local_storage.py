@@ -152,18 +152,18 @@ class GPUTransformLocalStorage(transformation.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         if self.expr_index == 0:
-            cnode = graph.nodes()[self.subgraph[
+            cnode: nodes.MapEntry = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._map_entry]]
-            node_schedprop = cnode.map
+            # Change schedule
+            cnode.schedule = dtypes.ScheduleType.GPU_Device
             exit_node = graph.exit_node(cnode)
         else:
-            cnode = graph.nodes()[self.subgraph[
+            cnode: nodes.LibraryNode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._reduce]]
-            node_schedprop = cnode
+            # Change schedule
+            cnode.schedule = dtypes.ScheduleType.GPU_Default
             exit_node = cnode
 
-        # Change schedule
-        node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
         if Config.get_bool("debugprint"):
             GPUTransformLocalStorage._maps_transformed += 1
         # If nested graph is designated as sequential, transform schedules and
