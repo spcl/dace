@@ -794,25 +794,23 @@ def trace_nested_access(node, state, sdfg):
             raise ValueError("{} not found in its parent state {}".format(
                 curr_sdfg.name, curr_state.label))
         if curr_read is not None:
+            curr_read = None
             for e in curr_state.in_edges(nested_sdfg):
                 if e.dst_conn == curr_read.data:
                     # See if the input to this connector traces back to an
                     # access node. If not, just give up here
-                    curr_read = find_input_arraynode(curr_state, e)
-                    if not isinstance(curr_read, nd.AccessNode):
-                        curr_read = None
-                    else:
-                        break
+                    n = find_input_arraynode(curr_state, e)
+                    if isinstance(n, nd.AccessNode):
+                        curr_read = n
         if curr_write is not None:
+            curr_write = None
             for e in curr_state.out_edges(nested_sdfg):
                 if e.src_conn == curr_write.data:
                     # See if the output of this connector traces back to an
                     # access node. If not, just give up here
-                    curr_write = find_output_arraynode(curr_state, e)
-                    if not isinstance(curr_write, nd.AccessNode):
-                        curr_write = None
-                    else:
-                        break
+                    n = find_output_arraynode(curr_state, e)
+                    if isinstance(curr_write, nd.AccessNode):
+                        curr_write = n
         if curr_read is not None or curr_write is not None:
             trace.append(((curr_read, curr_write), curr_state, curr_sdfg))
         else:
