@@ -33,13 +33,8 @@ def confres_test(A, B, red1, red2):
 
 
 def test():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("W", type=int, nargs="?", default=20)
-    parser.add_argument("H", type=int, nargs="?", default=20)
-    args = vars(parser.parse_args())
-
-    W.set(args["W"])
-    H.set(args["H"])
+    W.set(20)
+    H.set(20)
 
     print('Conflict Resolution Test %dx%d' % (W.get(), H.get()))
 
