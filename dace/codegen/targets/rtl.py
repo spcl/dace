@@ -503,71 +503,71 @@ for(int i = 0; i < {veclen}; i++){{
                     additional_compiler_kwargs="",
                     linkable=True,
                     environments=None))
+        else:
+            # generate verilator simulation cpp code components
+            inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
+            valid_zeros, ready_zeros = self.generate_cpp_zero_inits(tasklet)
+            vector_init = self.generate_cpp_vector_init(tasklet)
+            num_elements = self.generate_cpp_num_elements(tasklet)
+            internal_state_str, internal_state_var = self.generate_cpp_internal_state(
+                tasklet)
+            read_input_hs = self.generate_input_hs(tasklet)
+            feed_elements = self.generate_feeding(tasklet, inputs)
+            in_ptrs, out_ptrs = self.generate_ptrs(tasklet)
+            export_elements = self.generate_exporting(tasklet, outputs)
+            write_output_hs = self.generate_write_output_hs(tasklet)
+            hs_flags = self.generate_hs_flags(tasklet)
+            input_hs_toggle = self.generate_input_hs_toggle(tasklet)
+            output_hs_toggle = self.generate_output_hs_toggle(tasklet)
+            running_condition = self.generate_running_condition(tasklet)
 
-        # generate verilator simulation cpp code components
-        inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
-        valid_zeros, ready_zeros = self.generate_cpp_zero_inits(tasklet)
-        vector_init = self.generate_cpp_vector_init(tasklet)
-        num_elements = self.generate_cpp_num_elements(tasklet)
-        internal_state_str, internal_state_var = self.generate_cpp_internal_state(
-            tasklet)
-        read_input_hs = self.generate_input_hs(tasklet)
-        feed_elements = self.generate_feeding(tasklet, inputs)
-        in_ptrs, out_ptrs = self.generate_ptrs(tasklet)
-        export_elements = self.generate_exporting(tasklet, outputs)
-        write_output_hs = self.generate_write_output_hs(tasklet)
-        hs_flags = self.generate_hs_flags(tasklet)
-        input_hs_toggle = self.generate_input_hs_toggle(tasklet)
-        output_hs_toggle = self.generate_output_hs_toggle(tasklet)
-        running_condition = self.generate_running_condition(tasklet)
-
-        # add header code to stream
-        if not self.cpp_general_header_added:
+            # add header code to stream
+            if not self.cpp_general_header_added:
+                sdfg.append_global_code(
+                    cpp_code=RTLCodeGen.CPP_GENERAL_HEADER_TEMPLATE.format(
+                        debug_include="// generic includes\n#include <iostream>"
+                        if self.verilator_debug else ""))
+                self.cpp_general_header_added = True
             sdfg.append_global_code(
-                cpp_code=RTLCodeGen.CPP_GENERAL_HEADER_TEMPLATE.format(
-                    debug_include="// generic includes\n#include <iostream>"
-                    if self.verilator_debug else ""))
-            self.cpp_general_header_added = True
-        sdfg.append_global_code(
-            cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
-                name=unique_name))
+                cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
+                    name=unique_name))
 
-        # add main cpp code to stream
-        callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
-            name=unique_name,
-            inputs=inputs,
-            outputs=outputs,
-            num_elements=str.join('\n', num_elements),
-            vector_init=vector_init,
-            valid_zeros=str.join('\n', valid_zeros),
-            ready_zeros=str.join('\n', ready_zeros),
-            read_input_hs=str.join('\n', read_input_hs),
-            feed_elements=str.join('\n', feed_elements),
-            in_ptrs=str.join('\n', in_ptrs),
-            out_ptrs=str.join('\n', out_ptrs),
-            export_elements=str.join('\n', export_elements),
-            write_output_hs=str.join('\n', write_output_hs),
-            hs_flags=str.join('\n', hs_flags),
-            input_hs_toggle=str.join('\n', input_hs_toggle),
-            output_hs_toggle=str.join('\n', output_hs_toggle),
-            running_condition=str.join(' && ', running_condition),
-            internal_state_str=internal_state_str,
-            internal_state_var=internal_state_var,
-            debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
-            if self.verilator_debug else "",
-            debug_internal_state="""
+            # add main cpp code to stream
+            callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
+                name=unique_name,
+                inputs=inputs,
+                outputs=outputs,
+                num_elements=str.join('\n', num_elements),
+                vector_init=vector_init,
+                valid_zeros=str.join('\n', valid_zeros),
+                ready_zeros=str.join('\n', ready_zeros),
+                read_input_hs=str.join('\n', read_input_hs),
+                feed_elements=str.join('\n', feed_elements),
+                in_ptrs=str.join('\n', in_ptrs),
+                out_ptrs=str.join('\n', out_ptrs),
+                export_elements=str.join('\n', export_elements),
+                write_output_hs=str.join('\n', write_output_hs),
+                hs_flags=str.join('\n', hs_flags),
+                input_hs_toggle=str.join('\n', input_hs_toggle),
+                output_hs_toggle=str.join('\n', output_hs_toggle),
+                running_condition=str.join(' && ', running_condition),
+                internal_state_str=internal_state_str,
+                internal_state_var=internal_state_var,
+                debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
+                if self.verilator_debug else "",
+                debug_internal_state="""
 // report internal state
 VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->ap_aclk, model->ap_areset, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
 """.format(internal_state_str=internal_state_str,
            internal_state_var=internal_state_var)
-            if self.verilator_debug else "",
-            debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
-            if self.verilator_debug else ""),
-                              sdfg=sdfg,
-                              state_id=state_id,
-                              node_id=node)
+                if self.verilator_debug else "",
+                debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
+                if self.verilator_debug else ""),
+                                  sdfg=sdfg,
+                                  state_id=state_id,
+                                  node_id=node)
 
     CPP_GENERAL_HEADER_TEMPLATE = """\
 {debug_include}
