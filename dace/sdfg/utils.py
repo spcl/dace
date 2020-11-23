@@ -780,9 +780,30 @@ def trace_nested_access(node, state, sdfg):
     """
     curr_name = node.data
     curr_sdfg = sdfg
+    curr_read = None
+    memlet_read = None
+    # for m in state.out_edges(node):
+    #     if not m.data.is_empty():
+    #         curr_read = node
+    #         print("curr read = ", node)
+    #         import pdb
+    #         pdb.set_trace()
+    #         memlet_read = m.data
+
+    curr_write =None
+    memlet_write = None
+    # for m in state.in_edges(node):
+    #     if not m.data.is_empty():
+    #         curr_write = node
+    #         print("curr write = ", node)
+    #         import pdb
+    #         pdb.set_trace()
+    #         memlet_read = m.data
+
     curr_read = (node if any(not m.data.is_empty() for m in state.out_edges(node)) else None)
     curr_write = (node if any(not m.data.is_empty() for m in state.in_edges(node)) else None)
-    trace = [((curr_read, curr_write), state, sdfg)]
+    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)]
+
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
         # Find the nested SDFG containing ourself in the parent state
@@ -801,11 +822,13 @@ def trace_nested_access(node, state, sdfg):
                     n = find_input_arraynode(curr_state, e)
                     if isinstance(n, nd.AccessNode):
                         curr_read = n
+                        memlet_read = e.data
                         break
             else:
                 curr_read = None
+                memlet_read = None
         if curr_write is not None:
-            curr_write = None
+            #curr_write = None
             for e in curr_state.out_edges(nested_sdfg):
                 if e.src_conn == curr_write.data:
                     # See if the output of this connector traces back to an
@@ -813,11 +836,13 @@ def trace_nested_access(node, state, sdfg):
                     n = find_output_arraynode(curr_state, e)
                     if isinstance(curr_write, nd.AccessNode):
                         curr_write = n
+                        memlet_write = e.data
                         break
             else:
                 curr_write = None
+                memlet_write = None
         if curr_read is not None or curr_write is not None:
-            trace.append(((curr_read, curr_write), curr_state, curr_sdfg))
+            trace.append(((curr_read, curr_write), (memlet_read, memlet_write), curr_state, curr_state.parent))
         else:
             break
         curr_sdfg = curr_state.parent  # Recurse

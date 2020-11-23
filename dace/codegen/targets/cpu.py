@@ -816,14 +816,18 @@ class CPUCodeGen(TargetCodeGenerator):
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
+                        if isinstance(node, nodes.NestedSDFG):
+                            # This case happens with nested SDFG outputs,
+                            # which we skip since the memlets are references
+                            continue
                         try:
                             defined_type, _ = self._dispatcher.defined_vars.get(
                                 memlet.data)
                         except KeyError:  # The variable is not defined
                             # This case happens with nested SDFG outputs,
                             # which we skip since the memlets are references
-                            if isinstance(node, nodes.NestedSDFG):
-                                continue
+                            # if isinstance(node, nodes.NestedSDFG):
+                            #     continue
                             raise
 
                         if defined_type == DefinedType.Scalar:
@@ -1461,6 +1465,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                      True,
                                      nested_global_stream,
                                      skip_wcr=True)
+
 
             nested_stream.write('}\n\n', sdfg, state_id, node)
 

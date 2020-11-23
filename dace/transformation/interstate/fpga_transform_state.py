@@ -146,7 +146,7 @@ class FPGATransformState(transformation.Transformation):
                     if e.data.wcr is not None:
                         trace = dace.sdfg.trace_nested_access(
                             node, graph, parent_sdfg[graph])
-                        for node_trace, state_trace, sdfg_trace in trace:
+                        for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:
                                 _, outer_node = node_trace

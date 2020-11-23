@@ -709,10 +709,13 @@ __kernel void \\
             desc = sdfg.arrays[edge.data.data]
             if isinstance(desc, dace.data.Stream):
                 src_node = find_input_arraynode(state, edge)
-                utils.trace_nested_access(src_node, state, sdfg)
                 self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
                                                state, state_id, None,
                                                nested_stream)
+                # state_outer_dfg = sdfg_outer.nodes()[state_id_outer]
+                # self.generate_memlet_definition(sdfg_outer, state_outer_dfg, state_id_outer, outermost_src_node, node, edge, nested_stream )
+                # def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
+                #                                dst_node, edge, callsite_stream):
         for edge in state.out_edges(node):
             desc = sdfg.arrays[edge.data.data]
             if isinstance(desc, dace.data.Stream):
@@ -837,7 +840,7 @@ __kernel void \\
                             conntype=node.out_connectors[uconn]))
 
         # Special case for Intel FPGA: this comes out from the unrolling processing elements:
-        # if there first scope of the subgraph is an unrolled map, generate a processing element for each iteration
+        # if the first scope of the subgraph is an unrolled map, generates a processing element for each iteration
         # we need to pass to this function also the id of the PE (the top scope parameter)
         scope_children = dfg.scope_children()
         top_scopes = [
@@ -895,6 +898,8 @@ __kernel void \\
 
         result = ""
 
+        outer_stream_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
+                                                      sdfg)
         def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
             if cast:
@@ -946,18 +951,24 @@ __kernel void \\
             if cast:
                 raise TypeError("Cannot cast stream from {} to {}.".format(
                     data_dtype, dtype))
+
+            # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
+            outer_stream_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
+                                                    sdfg)
+            define_name = outer_stream_node[0][0][1 if is_output else 0].label
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
+
                     result += "{} {} = read_channel_intel({});".format(
-                        memlet_type, connector, data_name)
+                        memlet_type, connector, define_name)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
-                    connector, data_name)
+                    connector, define_name)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         elif def_type == DefinedType.StreamArray:
@@ -965,16 +976,30 @@ __kernel void \\
                 raise TypeError(
                     "Cannot cast stream array from {} to {}.".format(
                         data_dtype, dtype))
+            # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
+            # Since this is a Stream Array, we need also the offset
+            outer_stream_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
+                                                   sdfg)
+            define_name = outer_stream_node[0][0][1 if is_output else 0].label
+            outer_memlet = outer_stream_node[0][1][1 if is_output else 0]
+            outer_sdfg = outer_stream_node[0][-1]
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-                    if offset == 0:
-                        result += "{} {} = read_channel_intel({}[{}]);".format(
-                            memlet_type, connector, data_name, offset)
-                    else:
-                        result += "{} {} = read_channel_intel({});".format(
-                            memlet_type, connector, data_name)
+                    global_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
+                                                            sdfg)
+                    define_name = global_node[0][0][1 if is_output else 0].label
+
+                    if outer_memlet is not None:
+                        offset = cpp.cpp_offset_expr(outer_sdfg.arrays[define_name],
+                                                          outer_memlet.subset)
+                    # if offset == 0:
+                    result += "{} {} = read_channel_intel({}[{}]);".format(
+                            memlet_type, connector, define_name, offset)
+                    # else:
+                    #     result += "{} {} = read_channel_intel({});".format(
+                    #         memlet_type, connector, data_name)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
@@ -982,13 +1007,16 @@ __kernel void \\
                 # Here we create a macro which take the proper channel
                 channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                   memlet.subset)
-                if sdfg.parent is None:
-                    result += "#define {} {}[{}] ".format(
-                        connector, data_name, channel_idx)
-                else:
-                    # This is a nested SDFG: `data_name` channel has been already defined at the
-                    # parent. Here we can not define the channel name with an array subscript
-                    result += "#define {} {} ".format(connector, data_name)
+                if outer_memlet is not None:
+                    channel_idx = cpp.cpp_offset_expr(outer_sdfg.arrays[define_name],
+                                                      outer_memlet.subset)
+                # if sdfg.parent is None:
+                result += "#define {} {}[{}] ".format(
+                    connector, define_name, channel_idx)
+                # else:
+                #     # This is a nested SDFG: `data_name` channel has been already defined at the
+                #     # parent. Here we can not define the channel name with an array subscript
+                #     result += "#define {} {} ".format(connector, define_name)
 
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.StreamArray,
@@ -1250,6 +1278,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
             # the tasklet
             if isinstance(node.targets[0], ast.Subscript):
+
                 if veclen_rhs > veclen_lhs:
                     code_str = unpack_str + "({src}, &{dst}[{idx}]);"
                 else:
@@ -1290,6 +1319,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 # in this case for an output stream we have
                 # previously defined an output local var: we use that one
                 # instead of directly writing to channel
+                # import pdb
+                # pdb.set_trace()
                 updated = ast.Name(id="{} = {};".format(target, value))
         elif memlet is not None and (not is_scalar or memlet.dynamic):
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
