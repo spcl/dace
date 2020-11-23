@@ -774,14 +774,15 @@ def trace_nested_access(node, state, sdfg):
     :param node: An access node.
     :param state: State in which the access node is located.
     :param sdfg: SDFG in which the access node is located.
-    :return: A list of scopes (node, state, sdfg) in which the given
-                data is accessed, from outermost scope to innermost scope.
+    :return: A list of scopes ((input_node, output_node), state, sdfg) in which
+             the given data is accessed, from outermost scope to innermost
+             scope.
     """
-    if node.access == dtypes.AccessType.ReadWrite:
-        raise NotImplementedError("Access node must be read or write only")
-    curr_node = node
+    curr_name = node.data
     curr_sdfg = sdfg
-    trace = [(node, state, sdfg)]
+    curr_read = node if state.out_edges(node) > 0 else None
+    curr_write = node if state.in_edges(node) > 0 else None
+    trace = [((curr_read, curr_write), state, sdfg)]
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
         # Find the nested SDFG containing ourself in the parent state
@@ -792,24 +793,29 @@ def trace_nested_access(node, state, sdfg):
         else:
             raise ValueError("{} not found in its parent state {}".format(
                 curr_sdfg.name, curr_state.label))
-        if node.access == dtypes.AccessType.ReadOnly:
+        if curr_read is not None:
             for e in curr_state.in_edges(nested_sdfg):
-                if e.dst_conn == curr_node.data:
+                if e.dst_conn == curr_read.data:
                     # See if the input to this connector traces back to an
                     # access node. If not, just give up here
-                    curr_node = find_input_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, nd.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
-        if node.access == dtypes.AccessType.WriteOnly:
+                    curr_read = find_input_arraynode(curr_state, e)
+                    if not isinstance(curr_read, nd.AccessNode):
+                        curr_read = None
+                    else:
+                        break
+        if curr_write is not None:
             for e in curr_state.out_edges(nested_sdfg):
-                if e.src_conn == curr_node.data:
+                if e.src_conn == curr_write.data:
                     # See if the output of this connector traces back to an
                     # access node. If not, just give up here
-                    curr_node = find_output_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, nd.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
+                    curr_write = find_output_arraynode(curr_state, e)
+                    if not isinstance(curr_write, nd.AccessNode):
+                        curr_write = None
+                    else:
+                        break
+        if curr_read is not None or curr_write is not None:
+            trace.append(((curr_read, curr_write), curr_state, curr_sdfg))
+        else:
+            break
+        curr_sdfg = curr_state.parent  # Recurse
     return list(reversed(trace))
