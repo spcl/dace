@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 ##################
 # Lists
@@ -42,6 +43,7 @@ def test_local_list():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
+@pytest.mark.skip
 def test_local_list_with_slice():
     local_axes = [1, 2, 0, 100]
 
@@ -94,6 +96,6 @@ if __name__ == "__main__":
     test_global_func_access_global_list()
     test_local_func_access_global_list()
     test_local_list()
-    test_local_list_with_slice()
+    # test_local_list_with_slice()
     test_local_list_with_symbols()
     test_local_list_nested_lists()

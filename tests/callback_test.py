@@ -24,9 +24,9 @@ def arraysquarer(outp_array, inp_array):
     np.copyto(outp_array, np.square(inp_array))
 
 
-M = dace.symbolic.symbol()
-N = dace.symbolic.symbol()
-O = dace.symbolic.symbol()
+M = dace.symbolic.symbol('M')
+N = dace.symbolic.symbol('N')
+O = dace.symbolic.symbol('O')
 giveandtake = dace.symbol('giveandtake', dace.callback(dace.uint32,
                                                        dace.uint32))
 take = dace.symbol('take', dace.callback(None, dace.uint32))

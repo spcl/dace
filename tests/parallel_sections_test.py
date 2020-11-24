@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+import numpy as np
 
 
 def test():
@@ -127,12 +128,11 @@ def test():
                    dace.memlet.Memlet.simple(array_out, "0:N"))
 
     ###########################################################################
-
-    N.set(1024)
-    array_in = dace.ndarray([2 * N], dace.dtypes.int32)
-    array_in[:N.get()] = range(0, N.get())
-    array_in[N.get():] = range(0, N.get())
-    array_out = dace.ndarray([N], dace.dtypes.int32)
+    N = 1024
+    array_in = np.ndarray([2 * N], np.int32)
+    array_in[:N] = range(0, N)
+    array_in[N:] = range(0, N)
+    array_out = np.ndarray([N], np.int32)
     sdfg(array_in=array_in, array_out=array_out, N=N)
 
     for i, val in enumerate(array_out):
