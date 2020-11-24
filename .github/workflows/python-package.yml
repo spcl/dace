@@ -52,10 +52,8 @@ jobs:
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_debugprint=0
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
-        export DACE_optimizer_interface=" "
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
         cd tests
@@ -63,4 +61,39 @@ jobs:
         ./xform_test.sh
         coverage report; coverage xml
         codecov
-  
+
+  test-gpu:
+    runs-on: [self-hosted, linux, gpu]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest coverage codecov
+        pip install ".[testing]" .
+
+    - name: Test dependencies
+      run: |
+        papi_avail
+        nvidia-smi
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
+        codecov
+    - name: Run other tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_single_cache=1
+        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        cd tests
+        ./cuda_test.sh
+        coverage report; coverage xml
+        codecov
