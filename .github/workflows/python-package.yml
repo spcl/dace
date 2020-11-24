@@ -70,8 +70,10 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
+        conda activate py37
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
+        pip uninstall -y dace
         pip install ".[testing]" .
 
     - name: Test dependencies
@@ -85,6 +87,7 @@ jobs:
         export DACE_debugprint=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
+        conda activate py37
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
         codecov
     - name: Run other tests
@@ -95,7 +98,8 @@ jobs:
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         echo $COVERAGE_RCFILE
-        export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode --debug=trace"
+        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode --debug=trace"
+        conda activate py37
         cd tests
         ./cuda_test.sh
         coverage report; coverage xml
