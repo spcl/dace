@@ -157,20 +157,29 @@ def test_types():
                  eps=1e-6)
 
 
+# Try all data layouts
+LAYOUTS = map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3)))
+
+
 @pytest.mark.gpu
-def test_layouts():
-    # Try all data layouts
-    for dl in map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3))):
-        _test_matmul('cuBLAS float ' + dl,
-                     dace.float32,
-                     'cuBLAS',
-                     dace.StorageType.GPU_Global,
-                     data_layout=dl)
+@pytest.mark.parametrize('dl', LAYOUTS)
+def test_layouts(dl):
+    old_impl = blas.default_implementation
+    blas.default_implementation = "cuBLAS"
+    _test_matmul('cuBLAS float ' + dl,
+                 dace.float32,
+                 'cuBLAS',
+                 dace.StorageType.GPU_Global,
+                 data_layout=dl)
+    blas.default_implementation = old_impl
 
 
 @pytest.mark.gpu
 def test_batchmm():
     b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+
+    old_impl = blas.default_implementation
+    blas.default_implementation = "cuBLAS"
 
     @dace.program
     def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n],
@@ -188,6 +197,8 @@ def test_batchmm():
     z = np.zeros([b, m, n], np.float64)
     csdfg(A=x, B=y, C=z, b=b, m=m, n=n, k=k)
 
+    blas.default_implementation = old_impl
+
     ref = x @ y
 
     diff = np.linalg.norm(ref - z)
@@ -199,7 +210,6 @@ def test_batchmm():
 
 if __name__ == '__main__':
     import os
-    blas.default_implementation = "cuBLAS"
     try:
         test_batchmm()
         test_types()

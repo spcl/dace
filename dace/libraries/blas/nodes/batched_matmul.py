@@ -193,10 +193,6 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        # TODO: Fix
-        if node.alpha != 1.0 or node.beta != 0.0:
-            raise NotImplementedError('Only alpha = 1 and beta = 0 supported')
-
         alpha = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sPone()" % factort
         beta = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sZero()" % factort
 

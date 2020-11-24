@@ -4,14 +4,6 @@ import numpy as np
 import os
 import pytest
 
-# First, add libraries to link (CUBLAS) to configuration
-cudaroot = os.environ['CUDA_ROOT']  # or any other environment variable
-dp.Config.append('compiler',
-                 'cpu',
-                 'libs',
-                 value='%s/lib64/libcublas.so' % cudaroot)
-######################################################################
-
 # Create symbols
 N = dp.symbol('N')
 N.set(27)
@@ -109,6 +101,13 @@ sdfg.validate()
 
 @pytest.mark.gpu
 def test_multistream_custom():
+    # First, add libraries to link (CUBLAS) to configuration
+    cudaroot = os.environ['CUDA_ROOT']  # or any other environment variable
+    dp.Config.append('compiler',
+                    'cpu',
+                    'libs',
+                    value='%s/lib64/libcublas.so' % cudaroot)
+
     # Initialize arrays. We are using column-major order to support CUBLAS!
     A = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
     B = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')

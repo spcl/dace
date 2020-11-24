@@ -81,6 +81,7 @@ jobs:
 
     - name: Test with pytest
       run: |
+        export CUDA_ROOT=/usr/local/cuda
         export NOSTATUSBAR=1
         export DACE_debugprint=1
         export DACE_testing_single_cache=1
