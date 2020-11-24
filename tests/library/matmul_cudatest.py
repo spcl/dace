@@ -137,6 +137,8 @@ def _test_matmul(implementation,
 
 @pytest.mark.gpu
 def test_types():
+    old_impl = blas.default_implementation
+    blas.default_implementation = "cuBLAS"
     # Try different data types
     _test_matmul('cuBLAS double',
                  dace.float64,
@@ -155,6 +157,7 @@ def test_types():
                  'cuBLAS',
                  dace.StorageType.GPU_Global,
                  eps=1e-6)
+    blas.default_implementation = old_impl
 
 
 # Try all data layouts
@@ -213,7 +216,8 @@ if __name__ == '__main__':
     try:
         test_batchmm()
         test_types()
-        test_layouts()
+        for dl in LAYOUTS:
+            test_layouts(dl)
     except SystemExit as ex:
         print('\n', flush=True)
         # Skip all teardown to avoid crashes affecting exit code
