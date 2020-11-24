@@ -108,7 +108,7 @@ def run_test(implementation,
 
 
 @pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('OpenBLAS', ),
+                         [('pure', ), ('MKL', ),
                           pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
@@ -158,6 +158,6 @@ def test_library_gemm(implementation):
 
 if __name__ == "__main__":
     test_library_gemm('pure')
-    test_library_gemm('OpenBLAS')
+    test_library_gemm('MKL')
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_library_gemm('cuBLAS')
