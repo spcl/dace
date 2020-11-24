@@ -48,11 +48,8 @@ def test():
     sdfg.apply_strict_transformations()
     sdfg(A=A, B=B)
 
-    if len(sdfg.node(0).nodes()) != 8:
-        print('ERROR: Unexpected number of nodes after strict transformations '
-              '(%d, expected 8)' % len(sdfg.node(0).nodes()))
-        exit(2)
-
+    assert len(sdfg.node(0).nodes()) == 8
+    
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[0], B[0]], dtype=np.float32)
     diff = np.linalg.norm(expected - result)

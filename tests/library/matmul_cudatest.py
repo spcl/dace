@@ -130,10 +130,7 @@ def _test_matmul(implementation,
         return
 
     diff = np.linalg.norm(ref - z)
-    if diff >= eps:
-        print("Unexpected result returned from matrix multiplication: "
-              "diff %f" % diff)
-        sys.exit(1)
+    assert diff < eps
 
     print("Test ran successfully for {}.".format(implementation))
 

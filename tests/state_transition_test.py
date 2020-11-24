@@ -9,7 +9,7 @@ import numpy as np
 def test_state_transitions():
     if not dace.config.Config.get_bool('optimizer', 'detect_control_flow'):
         print("Control flow not enabled. Skipping test.")
-        sys.exit(0)
+        return
 
     sdfg = dace.SDFG("Transitions")
 

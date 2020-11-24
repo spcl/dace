@@ -42,7 +42,7 @@ def test_reload():
         # On some systems (e.g., Windows), the file will be locked, so
         # compilation will fail
         print('Compilation failed due to locked file. Skipping test.')
-        exit(0)
+        return
 
     func1(input=array_one, output=output_one)
     func2(input=array_two, output=output_two)

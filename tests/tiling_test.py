@@ -95,9 +95,7 @@ def test():
     for node in body.nodes():
         if (isinstance(node, dace.sdfg.nodes.MapEntry)
                 and node.label[:-2] == 'stencil'):
-            if len(body.in_edges(node)) > 1:
-                print(f"Edge union in {node} failed!")
-                exit(1)
+            assert len(body.in_edges(node)) <= 1
 
     sdfg(A=A, H=H.get(), W=W.get(), MAXITER=MAXITER.get())
 

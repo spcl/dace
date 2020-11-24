@@ -30,12 +30,8 @@ def test():
         warnings.simplefilter("always")
         sdfg(A=A, B=B, N=N)
 
-        if not w:
-            print('FAIL: No warnings caught')
-            exit(2)
-        if not any('Variable-length' in str(warn.message) for warn in w):
-            print('FAIL: No VLA warnings caught')
-            exit(3)
+        assert w
+        assert any('Variable-length' in str(warn.message) for warn in w)
 
     diff = np.linalg.norm(A - B)
     print('Difference:', diff)
