@@ -15,7 +15,7 @@ N = dace.symbol('N')
 
 
 def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                     alpha, beta):
+                     alpha, beta, implementation):
 
     sdfg = dace.SDFG("gemm")
     state = sdfg.add_state()
@@ -33,6 +33,7 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
                    transB=transB,
                    alpha=alpha,
                    beta=beta)
+    tasklet.implementation = implementation
     state.add_node(tasklet)
 
     state.add_edge(rA, None, tasklet, '_a', dace.Memlet.from_array(A, A_arr))
@@ -55,11 +56,6 @@ def run_test(implementation,
     if C_shape is not None:
         replace_map = dict(M=M, N=N)
         C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
-
-    dace.Config.set("library",
-                    "blas",
-                    "default_implementation",
-                    value=implementation)
 
     # shape of the transposed arrays
     A_shape = trans_A_shape = [M, K]
@@ -98,7 +94,7 @@ def run_test(implementation,
 
     sdfg = create_gemm_sdfg(dace.complex64 if complex else dace.float32,
                             A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                            alpha, beta)
+                            alpha, beta, implementation)
 
     if C_shape is not None:
         Y[:] = C
@@ -112,7 +108,7 @@ def run_test(implementation,
 
 
 @pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ),
+                         [('pure', ), ('OpenBLAS', ),
                           pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
@@ -162,6 +158,6 @@ def test_library_gemm(implementation):
 
 if __name__ == "__main__":
     test_library_gemm('pure')
-    test_library_gemm('MKL')
+    test_library_gemm('OpenBLAS')
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_library_gemm('cuBLAS')
