@@ -85,7 +85,6 @@ jobs:
         export DACE_debugprint=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
         codecov
     - name: Run other tests
@@ -94,7 +93,9 @@ jobs:
         export DACE_debugprint=1
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        echo $COVERAGE_RCFILE
+        export PYTHON_BINARY="python3 -m coverage run --source=`pwd`/dace --parallel-mode --debug=trace"
         cd tests
         ./cuda_test.sh
         coverage report; coverage xml
