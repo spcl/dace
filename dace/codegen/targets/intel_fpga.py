@@ -856,7 +856,9 @@ __kernel void \\
                 # Unrolled processing elements
                 typedef = "const int"
                 for p in scope.params:
-                    memlet_references.append((typedef, p, p))
+                    # if this is not already a mapped symbol, add it
+                    if p not in node.symbol_mapping.keys():
+                        memlet_references.append((typedef, p, p))
         return memlet_references
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
@@ -901,8 +903,6 @@ __kernel void \\
 
         result = ""
 
-        outer_stream_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
-                                                      sdfg)
         def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
             if cast:
@@ -956,9 +956,9 @@ __kernel void \\
                     data_dtype, dtype))
 
             # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
-            outer_stream_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
+            outer_stream_node_trace = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
                                                     sdfg)
-            define_name = outer_stream_node[0][0][1 if is_output else 0].label
+            define_name = outer_stream_node_trace[0][0][1 if is_output else 0].label
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
@@ -981,11 +981,11 @@ __kernel void \\
                         data_dtype, dtype))
             # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
             # Since this is a Stream Array, we need also the offset
-            outer_stream_node = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
+            outer_stream_node_trace = utils.trace_nested_access(dst_node if is_output else src_node, sdfg.nodes()[state_id],
                                                    sdfg)
-            define_name = outer_stream_node[0][0][1 if is_output else 0].label
-            outer_memlet = outer_stream_node[0][1][1 if is_output else 0]
-            outer_sdfg = outer_stream_node[0][-1]
+            define_name = outer_stream_node_trace[0][0][1 if is_output else 0].label
+            outer_memlet = outer_stream_node_trace[0][1][1 if is_output else 0]
+            outer_sdfg = outer_stream_node_trace[0][-1]
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
