@@ -52,6 +52,7 @@ class NestStateSubgraph(unittest.TestCase):
         @dace.program
         def multiply(a: dace.float32[N]):
             a *= 2
+            a *= 3
 
         sdfg = multiply.to_sdfg(strict=True)
         for state in sdfg.nodes():
@@ -119,7 +120,7 @@ class NestStateSubgraph(unittest.TestCase):
 
         # Outer map scope
         sdfg, state = create_tiled_sdfg()
-        sdc = state.scope_dict(True)
+        sdc = state.scope_children()
         entry = next(n for n in sdc[None] if isinstance(n, MapEntry))
         nest_state_subgraph(sdfg, state, state.scope_subgraph(entry))
         sdfg.validate()

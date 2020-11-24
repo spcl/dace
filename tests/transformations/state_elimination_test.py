@@ -1,6 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.interstate import StateAssignElimination
+from dace.transformation.interstate import StateAssignElimination, StateFusion
 
 
 def test_eliminate_end_state():
@@ -30,11 +30,11 @@ def test_state_assign_elimination():
                   dace.InterstateEdge(assignments=dict(k='k + 1')))
 
     # Assertions before/after transformations
-    sdfg.apply_strict_transformations()
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
     assert sdfg.number_of_nodes() == 3
     assert sdfg.apply_transformations_repeated(StateAssignElimination) == 1
     assert str(sdfg.nodes()[-1].edges()[0].data.subset) == 'k + 1'
-    sdfg.apply_strict_transformations()
+    sdfg.apply_transformations_repeated(StateFusion, strict=True)
     assert sdfg.number_of_nodes() == 2
 
     # Applying transformations again should yield one state
@@ -43,6 +43,31 @@ def test_state_assign_elimination():
     assert sdfg.number_of_nodes() == 1
     assert str(sdfg.nodes()[-1].edges()[0].data.subset) == '2'
 
+
+def test_sae_scalar():
+    # Construct SDFG
+    sdfg = dace.SDFG('state_assign_elimination_test')
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_scalar('scal', dace.int32, transient=True)
+    initstate = sdfg.add_state()
+    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'),
+                       'out', initstate.add_write('scal'), None,
+                       dace.Memlet('scal'))
+    state = sdfg.add_state()
+    sdfg.add_edge(initstate, state,
+                  dace.InterstateEdge(assignments=dict(s2='scal')))
+    a = state.add_read('A')
+    t = state.add_tasklet('do', {'inp'}, {'out'}, 'out = inp')
+    b = state.add_write('B')
+    state.add_edge(a, None, t, 'inp', dace.Memlet('A[s2, s2 + 1]'))
+    state.add_edge(t, 'out', b, None, dace.Memlet('B[0]'))
+    #######################################################
+
+    assert sdfg.apply_transformations(StateAssignElimination) == 0
+
+
 if __name__ == '__main__':
     test_eliminate_end_state()
     test_state_assign_elimination()
+    test_sae_scalar()

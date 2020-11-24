@@ -3,7 +3,7 @@
 import dace
 import numpy as np
 
-from dace.transformation.pattern_matching import match_pattern
+from dace.transformation.pattern_matching import match_patterns
 from dace.transformation.dataflow import DoubleBuffering, InLocalStorage
 
 
@@ -39,7 +39,8 @@ if __name__ == '__main__':
     sdfg.apply_strict_transformations()
     for i in range(2):
         for match in reversed(
-                list(match_pattern(sdfg.node(0), InLocalStorage, sdfg))):
+                list(match_patterns(sdfg, InLocalStorage,
+                                    states=[sdfg.node(0)]))):
             match.apply(sdfg)
             break
         else:

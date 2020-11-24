@@ -156,6 +156,7 @@ required:
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
                     generating code.
 
+
             autobuild_bitstreams:
                 type: bool
                 default: true
@@ -167,6 +168,15 @@ required:
                     If set to false, the program will optimistically assume
                     that the bitstream is present in the build directory, and
                     will crash if this is not the case.
+
+            unique_functions:
+                type: bool
+                default: true
+                title: Generate unique functions
+                description: >
+                    If set to true, if multiple nested SDFGs with equivalent contents exist,
+                    the code is generated only once.
+
             #############################################
             # CPU compiler
             cpu:
@@ -431,6 +441,34 @@ required:
                         description: >
                             Instead of launching kernels one-by-one, spawn a separate C++ thread using std::async and
                             std::future. This also allows each kernel to measure its own runtime from the host code.
+
+            #############################################
+            # RTL (SystemVerilog) compiler
+            rtl:
+                type: dict
+                title: RTL
+                description: RTL (SystemVerilog) compiler preferences
+                required:
+                    verbose:
+                        type: bool
+                        default: false
+                        title: Verbose Build & Execution Output
+                        description: Output full build and execution (incl internal state) log.
+                    verilator_flags:
+                        type: str
+                        default: ''
+                        title: Additional Verilator Arguments
+                        description: Additional arguments feed to verilator.
+                    verilator_lint_warnings:
+                        type: bool
+                        default: true
+                        title: Verilator Lint Warnings
+                        description: Enable/Disable detailed SV lint checker output.
+                    verilator_enable_debug:
+                        type: bool
+                        default: false
+                        title: Verilator Enable Debug
+                        description: Enable/disable verbose internal state debug output.
 
             #############################################
             # MPI compiler
@@ -702,3 +740,16 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+                    fpga:
+                        type: dict
+                        title: FPGA 
+                        description: FPGA-specific BLAS options. 
+                        required:
+                            default_stream_depth:
+                                type: int
+                                default: 32
+                                title: Default FPGA stream depth
+                                description: >
+                                    Default FPGA stream depth used in the BLAS
+                                    library nodes and the corresponding
+                                    streaming transformations

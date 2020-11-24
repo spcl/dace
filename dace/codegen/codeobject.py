@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import re
 from dace.properties import (Property, DictProperty, SetProperty,
                              make_properties)
 
@@ -51,3 +52,7 @@ class CodeObject(object):
         self.extra_compiler_kwargs = additional_compiler_kwargs or {}
         self.linkable = linkable
         self.environments = environments or set()
+
+    @property
+    def clean_code(self):
+        return re.sub(r'[ \t]*////__DACE:[^\n]*', '', self.code)

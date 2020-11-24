@@ -1,18 +1,22 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+""" 
+Helper functions for C++ code generation. 
+NOTE: The C++ code generator is currently located in cpu.py.
+"""
 import ast
 import copy
 import functools
 
 import sympy as sp
 from six import StringIO
-from typing import Tuple
+from typing import IO, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt
 from dace.codegen import cppunparse
 from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
                                          codeblock_to_cpp)
-from dace.codegen.targets.target import DefinedType
+from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
@@ -208,7 +212,8 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
     datadef = memlet.data
-    offset_expr = '[' + cpp_offset_expr(desc, memlet.subset) + ']'
+    offset = cpp_offset_expr(desc, memlet.subset)
+    offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
 
@@ -253,15 +258,28 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
             ref = ''
             typedef = defined_ctype
             defined_type = DefinedType.StreamArray
-    elif defined_type == FPGA_ShiftRegister:
+    elif defined_type == DefinedType.FPGA_ShiftRegister:
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Pointer
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    # Cast as necessary
-    expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet, conntype,
-                                is_scalar, defined_type)
+    if desc.storage == dace.StorageType.FPGA_Global:
+        # This is a device buffer.
+        # Can not be accessed with offset different than zero. Check this if we can:
+        if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
+                offset, str) and offset.isnumeric() and int(offset) != 0):
+            raise TypeError(
+                "Can not offset device buffers from host code ({}, offset {})".
+                format(datadef, offset))
+
+        # Device buffers are passed by reference
+        expr = datadef
+        ref = '&'
+    else:
+        # Cast as necessary
+        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet,
+                                    conntype, is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
@@ -664,6 +682,48 @@ def shape_to_strides(shape):
         strides.append(curstride)
         curstride *= s
     return list(reversed(strides))
+
+
+class InterstateEdgeUnparser(cppunparse.CPPUnparser):
+    """ 
+    An extension of the Python->C++ unparser that allows including 
+    multidimensional array expressions from an existing SDFGs. Used in 
+    inter-state edge code generation.
+    """
+    def __init__(self,
+                 sdfg: SDFG,
+                 tree: ast.AST,
+                 file: IO[str],
+                 defined_symbols=None):
+        self.sdfg = sdfg
+        super().__init__(tree,
+                         0,
+                         cppunparse.CPPLocals(),
+                         file,
+                         expr_semicolon=False,
+                         defined_symbols=defined_symbols)
+
+    def _Subscript(self, t: ast.Subscript):
+        from dace.frontend.python.astutils import subscript_to_slice
+        target, rng = subscript_to_slice(t, self.sdfg.arrays)
+        rng = subsets.Range(rng)
+        if rng.num_elements() != 1:
+            raise SyntaxError('Range subscripts disallowed in interstate edges')
+
+        memlet = mmlt.Memlet(data=target, subset=rng)
+        self.write(cpp_array_expr(self.sdfg, memlet))
+
+
+def unparse_interstate_edge(code_ast: Union[ast.AST, str],
+                            sdfg: SDFG,
+                            symbols=None) -> str:
+    # Convert from code to AST as necessary
+    if isinstance(code_ast, str):
+        code_ast = ast.parse(code_ast).body[0]
+
+    strio = StringIO()
+    InterstateEdgeUnparser(sdfg, code_ast, strio, symbols)
+    return strio.getvalue().strip()
 
 
 class DaCeKeywordRemover(ExtNodeTransformer):

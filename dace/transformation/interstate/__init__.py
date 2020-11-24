@@ -9,3 +9,4 @@ from .gpu_transform_sdfg import GPUTransformSDFG
 from .sdfg_nesting import NestSDFG, InlineSDFG
 from .loop_unroll import LoopUnroll
 from .loop_peeling import LoopPeeling
+from .loop_to_map import LoopToMap

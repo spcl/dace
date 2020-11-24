@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
+from common import compare_numpy_output
 
 M, N = 24, 24
 
@@ -10,7 +11,26 @@ def transpose_test(A: dace.float32[M, N], B: dace.float32[M, N]):
     B[:] = np.transpose(A)
 
 
+@compare_numpy_output()
+def transpose_axes0(A: dace.float32[10, 5, 3, 2]):
+    return np.transpose(A, axes=[3, 1, 2, 0])
+
+
+@compare_numpy_output()
+def transpose_axes1(A: dace.float32[10, 5, 3, 2]):
+    return np.transpose(A, axes=[3, 1, 0, 2])
+
+
+@compare_numpy_output()
+def transpose_axes2(A: dace.float32[10, 5, 3, 2]):
+    return np.transpose(A, axes=[3, 0, 2])
+
+
 if __name__ == '__main__':
+    transpose_axes0()
+    transpose_axes1()
+    transpose_axes2()
+
     A = np.random.rand(M, N).astype(np.float32)
     B = np.zeros([M, N], dtype=np.float32)
     transpose_test(A, B)

@@ -80,7 +80,7 @@ class GPUTransformLocalStorage(transformation.Transformation):
 
             # Disallow GPUTransform on nested maps in strict mode
             if strict:
-                if graph.scope_dict()[map_entry] is not None:
+                if graph.entry_node(map_entry) is not None:
                     return False
 
             # Map schedules that are disallowed to transform to GPUs
@@ -152,18 +152,18 @@ class GPUTransformLocalStorage(transformation.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         if self.expr_index == 0:
-            cnode = graph.nodes()[self.subgraph[
+            cnode: nodes.MapEntry = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._map_entry]]
-            node_schedprop = cnode.map
+            # Change schedule
+            cnode.schedule = dtypes.ScheduleType.GPU_Device
             exit_node = graph.exit_node(cnode)
         else:
-            cnode = graph.nodes()[self.subgraph[
+            cnode: nodes.LibraryNode = graph.nodes()[self.subgraph[
                 GPUTransformLocalStorage._reduce]]
-            node_schedprop = cnode
+            # Change schedule
+            cnode.schedule = dtypes.ScheduleType.GPU_Default
             exit_node = cnode
 
-        # Change schedule
-        node_schedprop._schedule = dtypes.ScheduleType.GPU_Device
         if Config.get_bool("debugprint"):
             GPUTransformLocalStorage._maps_transformed += 1
         # If nested graph is designated as sequential, transform schedules and
@@ -476,7 +476,7 @@ class GPUTransformLocalStorage(transformation.Transformation):
                     graph.add_edge(edge.src, edge.src_conn, node, None,
                                    newmemlet)
 
-                    end_node = graph.scope_dict()[edge.src]
+                    end_node = graph.entry_node(edge.src)
                     for e in graph.bfs_edges(edge.src, reverse=True):
                         parent, _, _child, _, memlet = e
                         if parent == end_node:

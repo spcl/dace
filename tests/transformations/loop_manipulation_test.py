@@ -64,6 +64,27 @@ def test_peeling_start():
     assert np.allclose(B, reg)
 
 
+def test_peeling_end():
+    sdfg: dace.SDFG = tounroll.to_sdfg()
+    sdfg.apply_strict_transformations()
+    assert len(sdfg.nodes()) == 4
+    sdfg.apply_transformations(LoopPeeling, dict(count=2, begin=False))
+    assert len(sdfg.nodes()) == 6
+    sdfg.apply_strict_transformations()
+    assert len(sdfg.nodes()) == 4
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    reg = regression(A, B)
+
+    # HACK: Workaround to deal with bug in frontend (See PR #161)
+    if 'i' in sdfg.symbols:
+        del sdfg.symbols['i']
+
+    sdfg(A=A, B=B)
+    assert np.allclose(B, reg)
+
+
 if __name__ == '__main__':
     test_unroll()
     test_peeling_start()
+    test_peeling_end()

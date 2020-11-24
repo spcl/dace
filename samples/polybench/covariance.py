@@ -39,10 +39,12 @@ def init_array(data, cov, mean, M, N):
 
 @dace.program(datatype[N, M], datatype[M, M], datatype[M])
 def covariance(data, cov, mean):
+    mean[:] = 0.0
+
     @dace.map
     def comp_mean(j: _[0:M], i: _[0:N]):
         inp << data[i, j]
-        out >> mean(1, lambda x, y: x + y, 0)[j]
+        out >> mean(1, lambda x, y: x + y)[j]
         out = inp
 
     @dace.map
@@ -62,21 +64,23 @@ def covariance(data, cov, mean):
     def comp_cov_row(i: _[0:M]):
         @dace.mapscope
         def comp_cov_col(j: _[i:M]):
+            with dace.tasklet:
+                cov_ij >> cov[i, j]
+                cov_ij = 0.0
+
             @dace.map
             def comp_cov_k(k: _[0:N]):
                 indi << data[k, i]
                 indj << data[k, j]
-                cov_ij >> cov(1, lambda x, y: x + y, 0)[i, j]
+                cov_ij >> cov(1, lambda x, y: x + y)[i, j]
                 cov_ij = (indi * indj)
 
-    @dace.mapscope
-    def symmetrize(i: _[0:M]):
-        @dace.map
-        def symmetrize_col(j: _[i:M]):
-            cov_ij << cov[i, j]
-            covout >> cov(2)[:, :]
-            covout[i, j] = cov_ij / (N - 1)
-            covout[j, i] = cov_ij / (N - 1)
+            with dace.tasklet:
+                cov_ij_in << cov[i, j]
+                cov_ij_out >> cov[i, j]
+                cov_ji_out >> cov[j, i]
+                cov_ij_out = cov_ij_in / (N - 1)
+                cov_ji_out = cov_ij_out
 
 
 if __name__ == '__main__':
