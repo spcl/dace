@@ -102,6 +102,7 @@ sdfg.validate()
 @pytest.mark.gpu
 def test_multistream_custom():
     # First, add libraries to link (CUBLAS) to configuration
+    oldconf = dp.Config.get('compiler', 'cpu', 'libs')
     if os.name == 'nt':
         dp.Config.append('compiler', 'cpu', 'libs', value='cublas.lib')
     else:
@@ -121,6 +122,9 @@ def test_multistream_custom():
     # We can safely call numpy with arrays allocated on the CPU, since they
     # will be copied.
     sdfg(A=A, B=B, C=C, N=N)
+
+    # Revert config change
+    dp.Config.set('compiler', 'cpu', 'libs', value=oldconf)
 
     diff = np.linalg.norm(C - out_ref)
     print('Difference:', diff)
