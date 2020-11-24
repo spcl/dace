@@ -42,22 +42,27 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
-        export DACE_experimental_validate_undefs=0
         export DACE_debugprint=0
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
-        export DACE_optimizer_transform_on_call=1
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not tensorflow and not verilator"
     - name: Run other tests
       run: |
+        export NOSTATUSBAR=1
+        export DACE_debugprint=0
+        export DACE_testing_serialization=1
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
-        echo "STRICT: $DACE_optimizer_automatic_strict_transformations"
-        ./tests/polybench_test.sh
-        ./tests/xform_test.sh
-        coverage combine . */; coverage report; coverage xml
+        cd tests
+        ./polybench_test.sh
+        ./xform_test.sh
+        cd ..
     - name: Report coverage
       run: |
+        coverage combine . ./tests; coverage report; coverage xml
         codecov
   

@@ -68,7 +68,7 @@ testcmd() {
 
 runtest_py() {
     test_start $1
-    yes | testcmd $PYTHON_BINARY $1 --size=mini
+    yes | testcmd $PYTHON_BINARY $1 --size=mini --compile
     if [ $? -ne 0 ]; then bail $1; fi
 }
 
