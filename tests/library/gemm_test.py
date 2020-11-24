@@ -107,9 +107,13 @@ def run_test(implementation,
     assert diff <= 1e-5
 
 
-@pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ),
-                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ('implementation', ),
+    [
+        ('pure', ),
+        ('MKL', ),
+        # pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+    ])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
         transA=[True, False],
@@ -157,7 +161,7 @@ def test_library_gemm(implementation):
 
 
 if __name__ == "__main__":
-    test_library_gemm('pure')
-    test_library_gemm('MKL')
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_library_gemm('cuBLAS')
+    test_library_gemm('pure')
+    test_library_gemm('MKL')
