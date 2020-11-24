@@ -70,6 +70,7 @@ jobs:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
+        source /opt/anaconda3/etc/profile.d/conda.sh
         conda activate py37
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
@@ -87,6 +88,7 @@ jobs:
         export DACE_debugprint=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
+        source /opt/anaconda3/etc/profile.d/conda.sh
         conda activate py37
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
         codecov
@@ -99,6 +101,7 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         echo $COVERAGE_RCFILE
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode --debug=trace"
+        source /opt/anaconda3/etc/profile.d/conda.sh
         conda activate py37
         cd tests
         ./cuda_test.sh
