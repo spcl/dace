@@ -50,7 +50,7 @@ jobs:
         export DACE_optimizer_interface=" "
         export DACE_optimizer_transform_on_call=1
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
-        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not tensorflow"
+        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not tensorflow and not verilator"
 
     - name: Report coverage
       run: |
