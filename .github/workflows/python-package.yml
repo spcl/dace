@@ -108,6 +108,8 @@ jobs:
         . /opt/setupenv
         cd tests
         ./cuda_test.sh
+        coverage combine .; coverage report; coverage xml
+        codecov
 
     - name: Run MPI tests
       run: |
@@ -118,6 +120,8 @@ jobs:
         . /opt/setupenv
         cd tests
         ./mpi_test.sh
+        coverage combine .; coverage report; coverage xml
+        codecov
 
     - name: Run Xilinx tests
       run: |
@@ -128,6 +132,8 @@ jobs:
         . /opt/setupenv
         cd tests/
         ./xilinx_test.sh 0
+        coverage combine .; coverage report; coverage xml
+        codecov
     
     - name: Run Intel FPGA tests
       run: |
@@ -139,12 +145,5 @@ jobs:
         cd tests
         export DACE_compiler_default_data_types=C
         ./intel_fpga_test.sh
-        
-    - name: Report overall coverage
-      run: |
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
-        . /opt/setupenv
-        cd tests
         coverage combine .; coverage report; coverage xml
         codecov
