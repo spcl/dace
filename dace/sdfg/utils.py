@@ -774,34 +774,27 @@ def trace_nested_access(node, state, sdfg):
     :param node: An access node.
     :param state: State in which the access node is located.
     :param sdfg: SDFG in which the access node is located.
-    :return: A list of scopes ((input_node, output_node), state, sdfg) in which
+    :return: A list of scopes ((input_node, output_node), (memlet_read, memlet_write), state, sdfg) in which
              the given data is accessed, from outermost scope to innermost
              scope.
     """
-    curr_name = node.data
     curr_sdfg = sdfg
     curr_read = None
     memlet_read = None
-    # for m in state.out_edges(node):
-    #     if not m.data.is_empty():
-    #         curr_read = node
-    #         print("curr read = ", node)
-    #         import pdb
-    #         pdb.set_trace()
-    #         memlet_read = m.data
+    for m in state.out_edges(node):
+        if not m.data.is_empty():
+            curr_read = node
+            memlet_read = m.data
+            break
 
-    curr_write =None
+    curr_write = None
     memlet_write = None
-    # for m in state.in_edges(node):
-    #     if not m.data.is_empty():
-    #         curr_write = node
-    #         print("curr write = ", node)
-    #         import pdb
-    #         pdb.set_trace()
-    #         memlet_read = m.data
+    for m in state.in_edges(node):
+        if not m.data.is_empty():
+            curr_write = node
+            memlet_read = m.data
+            break
 
-    curr_read = (node if any(not m.data.is_empty() for m in state.out_edges(node)) else None)
-    curr_write = (node if any(not m.data.is_empty() for m in state.in_edges(node)) else None)
     trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)]
 
     while curr_sdfg.parent is not None:
@@ -828,7 +821,6 @@ def trace_nested_access(node, state, sdfg):
                 curr_read = None
                 memlet_read = None
         if curr_write is not None:
-            #curr_write = None
             for e in curr_state.out_edges(nested_sdfg):
                 if e.src_conn == curr_write.data:
                     # See if the output of this connector traces back to an
@@ -842,7 +834,8 @@ def trace_nested_access(node, state, sdfg):
                 curr_write = None
                 memlet_write = None
         if curr_read is not None or curr_write is not None:
-            trace.append(((curr_read, curr_write), (memlet_read, memlet_write), curr_state, curr_state.parent))
+            trace.append(((curr_read, curr_write), (memlet_read, memlet_write),
+                          curr_state, curr_state.parent))
         else:
             break
         curr_sdfg = curr_state.parent  # Recurse

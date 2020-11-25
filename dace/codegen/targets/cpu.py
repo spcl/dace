@@ -1427,10 +1427,7 @@ class CPUCodeGen(TargetCodeGenerator):
         codegen = self.calling_codegen
         memlet_references = codegen.generate_nsdfg_arguments(
             sdfg, dfg,  state_dfg, node)
-        # print(sdfg.label)
-        # print(memlet_references)
-        # import pdb
-        # pdb.set_trace()
+
         if not unique_functions or not code_already_generated:
             nested_stream.write(
                 codegen.generate_nsdfg_header(sdfg, state_dfg, state_id, node,
