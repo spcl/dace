@@ -8,6 +8,10 @@
 
 #include "types.h"
 
+#if defined(__CUDACC__) || defined(__HIPCC__)
+    #include "cuda/halfvec.cuh"
+#endif
+
 namespace dace
 {
     //////////////////////////////////////////////////////////////////
@@ -23,7 +27,7 @@ namespace dace
         typedef T aligned;
         typedef T unaligned;
     };
-    
+
 #if defined(__CUDACC__) || defined(__HIPCC__)
     // NOTE: This file is inline and MUST be included here
     #include "cuda/vectype.cuh"

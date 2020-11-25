@@ -105,7 +105,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
-    :return: A generator of edges in the lastvisit depth-first-search.
+    :return: A generator of nodes in the lastvisit depth-first-search.
 
     @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
@@ -207,11 +207,11 @@ def change_edge_dest(graph: gr.OrderedDiGraph,
         The function finds all edges in the graph that have node A as their
         destination. It then creates a new edge for each one found,
         using the same source nodes and data, but node B as the destination.
-        Afterwards, it deletes the edges found and inserts the new ones into 
+        Afterwards, it deletes the edges found and inserts the new ones into
         the graph.
 
         :param graph: The graph upon which the edge transformations will be
-                      applied.  
+                      applied.
         :param node_a: The original destination of the edges.
         :param node_b: The new destination of the edges to be transformed.
     """
@@ -234,9 +234,9 @@ def change_edge_src(graph: gr.OrderedDiGraph,
                     node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph]):
     """ Changes the sources of edges from node A to node B.
 
-        The function finds all edges in the graph that have node A as their 
-        source. It then creates a new edge for each one found, using the same 
-        destination nodes and data, but node B as the source. Afterwards, it 
+        The function finds all edges in the graph that have node A as their
+        source. It then creates a new edge for each one found, using the same
+        destination nodes and data, but node B as the source. Afterwards, it
         deletes the edges
         found and inserts the new ones into the graph.
 
@@ -262,7 +262,7 @@ def change_edge_src(graph: gr.OrderedDiGraph,
 def find_source_nodes(graph):
     """ Finds the source nodes of a graph.
 
-        The function finds the source nodes of a graph, i.e. the nodes with 
+        The function finds the source nodes of a graph, i.e. the nodes with
         zero in-degree.
 
         :param graph: The graph whose source nodes are being searched for.
@@ -307,7 +307,7 @@ def merge_maps(
     # Create merged map by inheriting attributes from outer map and using
     # the merge functions for parameters and ranges.
     merged_map = copy.deepcopy(outer_map)
-    merged_map.label = 'merged_' + outer_map.label
+    merged_map.label = outer_map.label
     merged_map.params = param_merge(outer_map.params, inner_map.params)
     merged_map.range = range_merge(outer_map.range, inner_map.range)
 
@@ -747,7 +747,7 @@ def local_transients(sdfg, dfg, entry_node):
     """ Returns transients local to the scope defined by the specified entry
         node in the dataflow graph. """
     state: SDFGState = dfg._graph
-    scope_dict = state.scope_dict(node_to_children=True)
+    scope_children = state.scope_children()
     scope_tree = state.scope_tree()
     current_scope = scope_tree[entry_node]
 
@@ -755,19 +755,19 @@ def local_transients(sdfg, dfg, entry_node):
     defined_transients = set(sdfg.shared_transients())
 
     # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_dict)
+    transients = _transients_in_scope(sdfg, current_scope, scope_children)
 
     # Add transients defined in parent scopes
     while current_scope.parent is not None:
         current_scope = current_scope.parent
         defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_dict))
+            _transients_in_scope(sdfg, current_scope, scope_children))
 
     return sorted(list(transients - defined_transients))
 
 
 def trace_nested_access(node, state, sdfg):
-    """ 
+    """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
 

@@ -60,10 +60,12 @@ def test_p1():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N, M=M)
+    del csdfg
 
     expand_reduce(sdfg, state)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
+    del csdfg
 
     assert np.allclose(C1, C2)
     print(np.linalg.norm(C1))
@@ -82,6 +84,7 @@ def test_p2():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N, M=M)
+    del csdfg
 
     expand_reduce(sdfg, state)
     csdfg = sdfg.compile()

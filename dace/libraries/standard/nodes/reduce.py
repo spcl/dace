@@ -723,12 +723,12 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         from dace.transformation.dataflow.local_storage import LocalStorage
 
         in_local_storage_subgraph = {
-            LocalStorage._node_a: graph.nodes().index(new_entry),
-            LocalStorage._node_b: graph.nodes().index(reduce_node)
+            LocalStorage.node_a: graph.nodes().index(new_entry),
+            LocalStorage.node_b: graph.nodes().index(reduce_node)
         }
         out_local_storage_subgraph = {
-            LocalStorage._node_a: graph.nodes().index(reduce_node),
-            LocalStorage._node_b: graph.nodes().index(new_exit)
+            LocalStorage.node_a: graph.nodes().index(reduce_node),
+            LocalStorage.node_b: graph.nodes().index(new_exit)
         }
 
         local_storage = LocalStorage(sdfg.sdfg_id,

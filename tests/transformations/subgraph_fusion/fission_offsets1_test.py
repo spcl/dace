@@ -40,7 +40,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,

@@ -3,7 +3,6 @@ import dace
 import numpy as np
 from copy import deepcopy as dc
 from common import compare_numpy_output
-import pytest
 
 
 @compare_numpy_output()

@@ -13,6 +13,7 @@ import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo
+from numbers import Integral, Number
 from typing import List, Set, Union
 
 ###############################################################################
@@ -65,22 +66,22 @@ class Property:
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
     def __init__(
-        self,
-        getter=None,
-        setter=None,
-        dtype=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        meta_to_json=None,
-        choices=None,  # Values must be present in this enum
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        indirected=False,  # This property belongs to a different class
-        category='General',
-        desc=""):
+            self,
+            getter=None,
+            setter=None,
+            dtype=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            meta_to_json=None,
+            choices=None,  # Values must be present in this enum
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            indirected=False,  # This property belongs to a different class
+            category='General',
+            desc=""):
 
         self._getter = getter
         self._setter = setter
@@ -414,7 +415,8 @@ def make_properties(cls):
         # Assert that there are no fields in the object not captured by
         # properties, unless they are prefixed with "_"
         for name, prop in obj.__dict__.items():
-            if name not in properties and not name.startswith("_"):
+            if (name not in properties and not name.startswith("_")
+                    and name not in dir(type(obj))):
                 raise PropertyError(
                     "{} : Variable {} is neither a Property nor "
                     "an internal variable (prefixed with \"_\")".format(
@@ -667,7 +669,10 @@ class DictProperty(Property):
                 for k, v in saved_dictionary.items()
             }
 
-        return saved_dictionary
+        # Sort by key before saving
+        return {k: v
+                for k, v in sorted(saved_dictionary.items())
+                } if None not in saved_dictionary else saved_dictionary
 
     @staticmethod
     def from_string(s):
@@ -804,19 +809,19 @@ class DebugInfoProperty(Property):
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
     def __init__(
-        self,
-        element_type,
-        getter=None,
-        setter=None,
-        default=None,
-        from_string=None,
-        to_string=None,
-        from_json=None,
-        to_json=None,
-        unmapped=False,  # Don't enforce 1:1 mapping with a member variable
-        allow_none=False,
-        desc="",
-        **kwargs):
+            self,
+            element_type,
+            getter=None,
+            setter=None,
+            default=None,
+            from_string=None,
+            to_string=None,
+            from_json=None,
+            to_json=None,
+            unmapped=False,  # Don't enforce 1:1 mapping with a member variable
+            allow_none=False,
+            desc="",
+            **kwargs):
         if to_json is None:
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
@@ -954,7 +959,7 @@ class CodeBlock(object):
         return set()
 
     @property
-    def as_string(self):
+    def as_string(self) -> str:
         if isinstance(self.code, str) or self.code is None:
             return self.code
         return unparse(self.code)
@@ -995,6 +1000,8 @@ class CodeBlock(object):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
+        elif lang.endswith("sv") or lang.endswith("systemverilog"):
+            lang = dace.dtypes.Language.SystemVerilog
 
         try:
             cdata = tmp['string_data']
@@ -1044,6 +1051,8 @@ class CodeProperty(Property):
             lang = dace.dtypes.Language.Python
         elif lang.endswith("CPP"):
             lang = dace.dtypes.Language.CPP
+        elif lang.endswith("SystemVerilog"):
+            lang = dace.dtypes.Language.SystemVerilog
 
         try:
             cdata = tmp['string_data']
@@ -1127,14 +1136,13 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if isinstance(val, (sp.Expr, int, float, str, complex)):
-            val = SymbolicProperty.from_string(str(val))
-        elif self.allow_none and val is None:
-            pass
-        else:
+        if (val is not None and not isinstance(val, sp.expr.Expr)
+                and not isinstance(val, Integral) and not isinstance(val, str)):
             raise TypeError(
-                "Property {} must a literal or symbolic expression".format(
+                "Property {} must be a literal or symbolic expression".format(
                     self.attr_name))
+        if isinstance(val, (Number, str)):
+            val = SymbolicProperty.from_string(str(val))
 
         super(SymbolicProperty, self).__set__(obj, val)
 

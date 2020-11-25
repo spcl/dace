@@ -81,8 +81,8 @@ class GPUTransformSDFG(transformation.Transformation):
                 return False
 
         for state in sdfg.nodes():
-            sdict = state.scope_dict(node_to_children=True)
-            for node in sdict[None]:
+            schildren = state.scope_children()
+            for node in schildren[None]:
                 # If two top-level tasklets are connected with a code->code
                 # memlet, they will transform into an invalid SDFG
                 if (isinstance(node, nodes.CodeNode) and any(
@@ -309,11 +309,13 @@ class GPUTransformSDFG(transformation.Transformation):
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
-                    if sdict[node] is None:
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Default
+                    elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, (nodes.EntryNode, nodes.LibraryNode))
-                          and self.sequential_innermaps):
+                else:
+                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
                         node.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################

@@ -140,8 +140,8 @@ class MPITransformMap(transformation.Transformation):
         # Now create a transient for each array
         for e in edges:
             in_local_storage_subgraph = {
-                LocalStorage._node_a: graph.node_id(outer_map),
-                LocalStorage._node_b: self.subgraph[MPITransformMap._map_entry]
+                LocalStorage.node_a: graph.node_id(outer_map),
+                LocalStorage.node_b: self.subgraph[MPITransformMap._map_entry]
             }
             sdfg_id = sdfg.sdfg_id
             in_local_storage = LocalStorage(sdfg_id, self.state_id,
@@ -157,8 +157,8 @@ class MPITransformMap(transformation.Transformation):
         for e in graph.out_edges(out_map_exit):
             name = e.data.data
             outlocalstorage_subgraph = {
-                LocalStorage._node_a: graph.node_id(in_map_exit),
-                LocalStorage._node_b: graph.node_id(out_map_exit)
+                LocalStorage.node_a: graph.node_id(in_map_exit),
+                LocalStorage.node_b: graph.node_id(out_map_exit)
             }
             sdfg_id = sdfg.sdfg_id
             outlocalstorage = LocalStorage(sdfg_id, self.state_id,

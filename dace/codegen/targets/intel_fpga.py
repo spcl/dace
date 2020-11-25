@@ -13,9 +13,11 @@ import dace
 from dace import registry, subsets, dtypes
 from dace.codegen import cppunparse
 from dace.config import Config
+from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import make_absolute, DefinedType
+from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
@@ -108,7 +110,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         elif execution_mode == "hardware":
             kernel_file_name += "_hardware.aocx\""
         else:
-            raise dace.codegen.codegen.CodegenError(
+            raise cgx.CodegenError(
                 "Unknown Intel FPGA execution mode: {}".format(execution_mode))
 
         host_code = CodeIOStream()
@@ -514,9 +516,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
-        scope_dict = subgraph.scope_dict(node_to_children=True)
+        scope_children = subgraph.scope_children()
         top_scopes = [
-            n for n in scope_dict[None]
+            n for n in scope_children[None]
             if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
@@ -551,7 +553,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 # Due to restrictions on channel indexing, PE IDs must start from zero
                 # and skip index must be 1
                 if start_idx != 0 or skip_idx != 1:
-                    raise dace.codegen.codegen.CodegenError(
+                    raise cgx.CodegenError(
                         "Unrolled Map in {} should start from 0 and have skip equal to 1"
                         .format(sdfg.name))
                 for p in range(start_idx, stop_idx + 1, skip_idx):
@@ -940,7 +942,10 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         defined_symbols = state_dfg.symbols_defined_at(node)
 
         # This could be problematic for numeric constants that have no dtype
-        defined_symbols.update({k: v.dtype for k, v in sdfg.constants.items()})
+        defined_symbols.update({
+            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+            for k, v in sdfg.constants.items()
+        })
 
         for connector, (memlet, _, _, conntype) in memlets.items():
             if connector is not None:
@@ -1040,7 +1045,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                       expr_semicolon=False)
 
         veclen_lhs = self.sdfg.data(memlet.data).veclen
-        dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+        try:
+            dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+        except SyntaxError:
+            # non-valid python
+            dtype_rhs = None
+
         if dtype_rhs is None:
             # If we don't understand the vector length of the RHS, assume no
             # conversion is needed
@@ -1139,12 +1149,12 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         defined_type, _ = self.defined_vars.get(node.id)
         updated = node
 
-        if (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) \
-                and memlet.num_accesses != 1:
+        if ((defined_type == DefinedType.Stream
+             or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)
-        elif defined_type == DefinedType.Pointer and memlet.num_accesses != 1:
+        elif defined_type == DefinedType.Pointer and memlet.dynamic:
             # if this has a variable number of access, it has been declared
             # as a pointer. We need to deference it
             if isinstance(node.id, ast.Subscript):

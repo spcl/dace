@@ -2,7 +2,7 @@
 from __future__ import print_function
 
 import dace
-from dace.codegen.compiler import CompilationError
+from dace.codegen.exceptions import CompilationError
 import numpy as np
 
 
