@@ -251,8 +251,8 @@ class AccumulateTransient(transformation.Transformation):
             sdfg=sdfg,
             state=sdfg_state,
             subgraph=SubgraphView(
-                sdfg_state,
-                sdfg_state.all_nodes_between(map_entry, map_exit) | {map_exit}))
+                sdfg_state, {map_entry, map_exit}
+                | sdfg_state.all_nodes_between(map_entry, map_exit)))
 
         dace.Config.set(*dtypes_key, value=old_dtype)
 
@@ -272,10 +272,9 @@ class AccumulateTransient(transformation.Transformation):
             code='out = %s' % self.identity,
             outputs={
                 'out':
-                    dace.Memlet.simple(data=data_node.data,
-                                       subset_str=','.join([
-                                           '0:%d' % i for i in temp_array.shape
-                                       ]))
+                dace.Memlet.simple(data=data_node.data,
+                                   subset_str=','.join(
+                                       ['0:%d' % i for i in temp_array.shape]))
             },
             external_edges=True)
 
