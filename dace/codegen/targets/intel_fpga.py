@@ -162,7 +162,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                        target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
-
         return [host_code_obj] + kernel_code_objs
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
@@ -1210,8 +1209,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     Removes Dace Keywords and enforces OpenCL compliance
     """
 
-    nptypes_to_ctypes = {'float64': 'double'}
-    nptypes = ['float64']
+    nptypes_to_ctypes = {'float64': 'double', 'float32': 'float'}
+    nptypes = ['float64', 'float32']
     ctypes = [
         'bool', 'char', 'cl_char', 'unsigned char', 'uchar', 'cl_uchar',
         'short', 'cl_short', 'unsigned short', 'ushort', 'int', 'unsigned int',
@@ -1381,12 +1380,18 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def visit_Call(self, node):
         # enforce compliance to OpenCL
         # Type casting:
-        if isinstance(node.func, ast.Name) and node.func.id in self.ctypes:
-            node.func.id = "({})".format(node.func.id)
-        elif isinstance(node.func,
-                        ast.Name) and node.func.id in self.nptypes_to_ctypes:
-            # if it as numpy type, convert to C type
-            node.func.id = "({})".format(self.nptypes_to_ctypes(node.func.id))
+        if isinstance(node.func, ast.Name):
+            if node.func.id in self.ctypes:
+                node.func.id = "({})".format(node.func.id)
+            elif node.func.id in self.nptypes_to_ctypes:
+                # if it as numpy type, convert to C type
+                node.func.id = "({})".format(self.nptypes_to_ctypes[node.func.id])
+        elif isinstance(node.func, ast.Attribute):
+            if node.func.attr in self.ctypes:
+                node.func.attr = "({})".format(node.func.attr)
+            elif node.func.attr in self.nptypes_to_ctypes:
+                # if it as numpy type, convert to C type
+                node.func.attr = "({})".format(self.nptypes_to_ctypes[node.func.attr])
         elif (isinstance(node.func, (ast.Num, ast.Constant))
               and (node.func.n.to_string() in self.ctypes
                    or node.func.n.to_string() in self.nptypes)):
