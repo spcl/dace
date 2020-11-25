@@ -42,7 +42,6 @@ jobs:
     - name: Test with pytest
       run: |
         export NOSTATUSBAR=1
-        export DACE_debugprint=0
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
@@ -63,18 +62,19 @@ jobs:
         coverage combine .; coverage report; coverage xml
         codecov
 
-  test-gpu:
-    runs-on: [self-hosted, linux, gpu]
+  test-heterogeneous:
+    runs-on: [self-hosted, linux, gpu, intel-fpga, xilinx-fpga]
     steps:
     - uses: actions/checkout@v2
       with:
         submodules: 'recursive'
     - name: Install dependencies
       run: |
-        source /opt/anaconda3/etc/profile.d/conda.sh
-        conda activate py37
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
+        pip install mpi4py
         pip uninstall -y dace
         pip install -e ".[testing]"
 
@@ -85,28 +85,49 @@ jobs:
 
     - name: Test with pytest
       run: |
-        export NOSTATUSBAR=1
-        export DACE_debugprint=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
-        source /opt/anaconda3/etc/profile.d/conda.sh
-        conda activate py37
-        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
+        . /opt/setupenv
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator or papi"
         codecov
-    - name: Run other tests
+    
+    - name: Run other GPU tests
       run: |
-        source ~/.bashrc
         export NOSTATUSBAR=1
-        export DACE_debugprint=1
-        export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        echo $COVERAGE_RCFILE
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
-        source /opt/anaconda3/etc/profile.d/conda.sh
-        conda activate py37
+        . /opt/setupenv
         cd tests
-        rm -f .coverage*
+        ./mpi_test.sh
         ./cuda_test.sh
+
+    - name: Run Xilinx tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        . /opt/setupenv
+        cd tests/
+        ./xilinx_test.sh 0
+    
+    - name: Run Intel FPGA tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        . /opt/setupenv
+        cd tests/
+        export DACE_compiler_default_data_types=C
+        ./intel_fpga_test.sh
+        
+    - name: Report overall coverage
+      run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        . /opt/setupenv
+        cd tests/
         coverage combine .; coverage report; coverage xml
         codecov
