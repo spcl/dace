@@ -824,10 +824,6 @@ class CPUCodeGen(TargetCodeGenerator):
                             defined_type, _ = self._dispatcher.defined_vars.get(
                                 memlet.data)
                         except KeyError:  # The variable is not defined
-                            # This case happens with nested SDFG outputs,
-                            # which we skip since the memlets are references
-                            # if isinstance(node, nodes.NestedSDFG):
-                            #     continue
                             raise
 
                         if defined_type == DefinedType.Scalar:
