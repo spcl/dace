@@ -88,10 +88,20 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         . /opt/setupenv
-        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator or papi"
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
         codecov
     
-    - name: Run other GPU tests
+    - name: Run extra GPU tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        . /opt/setupenv
+        cd tests
+        ./cuda_test.sh
+
+    - name: Run MPI tests
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_single_cache=1
@@ -100,7 +110,6 @@ jobs:
         . /opt/setupenv
         cd tests
         ./mpi_test.sh
-        ./cuda_test.sh
 
     - name: Run Xilinx tests
       run: |
@@ -119,7 +128,7 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
         . /opt/setupenv
-        cd tests/
+        cd tests
         export DACE_compiler_default_data_types=C
         ./intel_fpga_test.sh
         
@@ -128,6 +137,6 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
         . /opt/setupenv
-        cd tests/
+        cd tests
         coverage combine .; coverage report; coverage xml
         codecov
