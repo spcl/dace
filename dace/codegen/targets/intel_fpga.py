@@ -502,7 +502,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
 
-        module_function_name = "module_" + name
+        # create a unique module name to prevent name clashes
+        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
 
         # The official limit suggested by Intel is 61. However, the compiler
         # can also append text to the module. Longest seen so far is

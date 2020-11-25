@@ -547,7 +547,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                         p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
                         p.as_arg(with_types=True, name=pname))
-        module_function_name = "module_" + name
+                    
+        # create a unique module name to prevent name clashes
+        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
