@@ -88,7 +88,7 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         . /opt/setupenv
-        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator or papi"
         codecov
     
     - name: Run extra GPU tests
