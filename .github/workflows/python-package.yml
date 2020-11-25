@@ -33,8 +33,7 @@ jobs:
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
-        pip install ".[testing]"
-        python setup.py develop
+        pip install -e ".[testing]"
 
     - name: Test dependencies
       run: |
@@ -58,9 +57,10 @@ jobs:
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
         cd tests
+        rm -f .coverage*
         ./polybench_test.sh
         ./xform_test.sh
-        coverage report; coverage xml
+        coverage combine .; coverage report; coverage xml
         codecov
 
   test-gpu:
@@ -76,8 +76,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
         pip uninstall -y dace
-        pip install ".[testing]"
-        python setup.py develop
+        pip install -e ".[testing]"
 
     - name: Test dependencies
       run: |
@@ -96,6 +95,7 @@ jobs:
         codecov
     - name: Run other tests
       run: |
+        source ~/.bashrc
         export NOSTATUSBAR=1
         export DACE_debugprint=1
         export DACE_testing_serialization=1
@@ -106,6 +106,7 @@ jobs:
         source /opt/anaconda3/etc/profile.d/conda.sh
         conda activate py37
         cd tests
+        rm -f .coverage*
         ./cuda_test.sh
-        coverage report; coverage xml
+        coverage combine .; coverage report; coverage xml
         codecov
