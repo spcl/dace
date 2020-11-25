@@ -54,11 +54,9 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_single_cache=1
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
-        cd tests
-        rm -f .coverage*
-        ./polybench_test.sh
-        ./xform_test.sh
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        ./tests/polybench_test.sh
+        ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
         codecov
 
@@ -104,46 +102,39 @@ jobs:
         export NOSTATUSBAR=1
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        cd tests
-        ./cuda_test.sh
-        coverage combine .; coverage report; coverage xml
-        codecov
+        ./tests/cuda_test.sh
 
     - name: Run MPI tests
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        cd tests
-        ./mpi_test.sh
-        coverage combine .; coverage report; coverage xml
-        codecov
+        ./tests/mpi_test.sh
 
     - name: Run Xilinx tests
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        cd tests/
-        ./xilinx_test.sh 0
-        coverage combine .; coverage report; coverage xml
-        codecov
+        ./tests/xilinx_test.sh 0
     
     - name: Run Intel FPGA tests
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_single_cache=1
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PYTHON_BINARY="coverage run --source=`pwd`/dace --parallel-mode"
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         . /opt/setupenv
-        cd tests
         export DACE_compiler_default_data_types=C
-        ./intel_fpga_test.sh
-        coverage combine .; coverage report; coverage xml
+        ./tests/intel_fpga_test.sh
+        
+    - name: Report overall coverage
+      run: |
+        coverage combine . */; coverage report; coverage xml
         codecov
