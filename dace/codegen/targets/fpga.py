@@ -898,7 +898,6 @@ class FPGACodeGen(TargetCodeGenerator):
         except KeyError:
             dst_parent = None
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
-
         state_dfg = sdfg.nodes()[state_id]
 
         # Emit actual copy
@@ -1021,8 +1020,10 @@ class FPGACodeGen(TargetCodeGenerator):
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
-                if is_innermost and not fully_degenerate:
+                if is_innermost and not fully_degenerate and not is_degenerate[0]:
+                    # Do not put pragma if the first loop is degenerate (does not exist)
                     self.generate_flatten_loop_pre(result, sdfg, state_id, node)
+
 
                 for i, r in enumerate(node.map.range):
                     var = node.map.params[i]
