@@ -987,6 +987,245 @@ def test_ufunc_fmin_nan_ff(A: dace.float32[10], B:dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.fmin(C, B)
 
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_isfinite_c(A: dace.complex64[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isfinite(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_isfinite_f(A: dace.float32[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isfinite(A)
+
+
+# NumPy accepts integer arrays in np.isfinite.
+# However, if any element of an integer array is inf, it will fail because it
+# "<class 'OverflowError'>: cannot convert float infinity to integer"
+@compare_numpy_output(validation_func=lambda a: np.isfinite(a))
+def test_ufunc_isfinite_u(A: dace.uint32[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isfinite(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_isinf_c(A: dace.complex64[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isinf(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_isinf_f(A: dace.float32[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isinf(A)
+
+
+# NumPy accepts integer arrays in np.isinf.
+# However, if any element of an integer array is inf, it will fail because it
+# "<class 'OverflowError'>: cannot convert float infinity to integer"
+@compare_numpy_output(validation_func=lambda a: np.isinf(a))
+def test_ufunc_isinf_u(A: dace.uint32[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isinf(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_isnan_c(A: dace.complex64[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isnan(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_isnan_f(A: dace.float32[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isnan(A)
+
+
+# NumPy accepts integer arrays in np.isnan.
+# However, if any element of an integer array is inf, it will fail because it
+# "<class 'OverflowError'>: cannot convert float infinity to integer"
+@compare_numpy_output(validation_func=lambda a: np.isnan(a))
+def test_ufunc_isnan_u(A: dace.uint32[10]):
+    A[0] = np.inf
+    A[1] = np.NaN
+    return np.isnan(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_signbit_c(A: dace.complex64[10]):
+    return np.signbit(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_signbit_f(A: dace.float32[10]):
+    return np.signbit(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_signbit_u(A: dace.uint32[10]):
+    return np.signbit(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_copysign_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.copysign(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_copysign_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.copysign(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_copysign_fd(A: dace.float32[10], B: dace.float64[10]):
+    return np.copysign(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_copysign_uu(A: dace.uint32[10], B: dace.uint32[10]):
+    return np.copysign(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_nextafter_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.nextafter(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_nextafter_ff(A: dace.float32[10], B: dace.float32[10]):
+    return np.nextafter(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_nextafter_fd(A: dace.float32[10], B: dace.float64[10]):
+    return np.nextafter(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_nextafter_uu(A: dace.uint32[10], B: dace.uint32[10]):
+    return np.nextafter(A, B)
+
+
+@compare_numpy_output(validation_func=lambda a: np.nextafter(a, np.inf) - a)
+def test_ufunc_spacing_c(A: dace.complex64[10]):
+    return np.spacing(A)
+
+
+@compare_numpy_output(validation_func=lambda a: np.nextafter(a, np.inf) - a)
+def test_ufunc_spacing_f(A: dace.float32[10]):
+    return np.spacing(A)
+
+
+@compare_numpy_output(validation_func=lambda a: np.nextafter(a, np.inf) - a)
+def test_ufunc_spacing_u(A: dace.uint32[10]):
+    return np.spacing(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_modf_c(A: dace.complex64[10]):
+    Q, R = np.modf(A)
+    return Q, R
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_modf_f(A: dace.float32[10]):
+    Q, R = np.modfd(A)
+    return Q, R
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_modf_u(A: dace.uint32[10]):
+    Q, R = np.modf(A)
+    return Q, R
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_ldexp_cc(A: dace.complex64[10], B: dace.complex64[10]):
+    return np.ldexp(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_ldexp_fs(A: dace.float32[10], B: dace.int32[10]):
+    return np.ldexp(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_ldexp_ss(A: dace.int32[10], B: dace.int32[10]):
+    return np.ldexp(A, B)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_frexp_c(A: dace.complex64[10]):
+    Q, R = np.frexp(A)
+    return Q, R
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_frexp_f(A: dace.float32[10]):
+    Q, R = np.frexp(A)
+    return Q, R
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_frexp_u(A: dace.uint32[10]):
+    Q, R = np.frexp(A)
+    return Q, R
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_floor_c(A: dace.complex64[10]):
+    return np.floor(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_floor_f(A: dace.float32[10]):
+    return np.floor(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_floor_u(A: dace.uint32[10]):
+    return np.floor(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_ceil_c(A: dace.complex64[10]):
+    return np.ceil(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_ceil_f(A: dace.float32[10]):
+    return np.ceil(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_ceil_u(A: dace.uint32[10]):
+    return np.ceil(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_trunc_c(A: dace.complex64[10]):
+    return np.trunc(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_trunc_f(A: dace.float32[10]):
+    return np.trunc(A)
+
+
+@compare_numpy_output(check_dtype=True)
+def test_ufunc_trunc_u(A: dace.uint32[10]):
+    return np.trunc(A)
+
+
 if __name__ == "__main__":
     test_ufunc_add_ff()
     test_ufunc_subtract_ff()
@@ -1184,3 +1423,44 @@ if __name__ == "__main__":
     test_ufunc_minimum_nan_ff()
     test_ufunc_fmin_ff()
     test_ufunc_fmin_nan_ff()
+    test_ufunc_isfinite_c()
+    test_ufunc_isfinite_f()
+    test_ufunc_isfinite_u()
+    test_ufunc_isinf_c()
+    test_ufunc_isinf_f()
+    test_ufunc_isinf_u()
+    test_ufunc_isnan_c()
+    test_ufunc_isnan_f()
+    test_ufunc_isnan_u()
+    test_ufunc_signbit_c()
+    test_ufunc_signbit_f()
+    test_ufunc_signbit_u()
+    test_ufunc_copysign_cc()
+    test_ufunc_copysign_ff()
+    test_ufunc_copysign_fd()
+    test_ufunc_copysign_uu()
+    test_ufunc_nextafter_cc()
+    test_ufunc_nextafter_ff()
+    test_ufunc_nextafter_fd()
+    test_ufunc_nextafter_uu()
+    test_ufunc_spacing_c()  # Unclear formula
+    test_ufunc_spacing_f()  # Unclear formula
+    test_ufunc_spacing_u()  # Unclear formula
+    test_ufunc_modf_c()
+    test_ufunc_modf_f()
+    test_ufunc_modf_u()
+    test_ufunc_ldexp_cc()
+    test_ufunc_ldexp_fs()
+    test_ufunc_ldexp_ss()
+    test_ufunc_frexp_c()
+    test_ufunc_frexp_f()
+    test_ufunc_frexp_u()
+    test_ufunc_floor_c()
+    test_ufunc_floor_f()
+    test_ufunc_floor_u()
+    test_ufunc_ceil_c()
+    test_ufunc_ceil_f()
+    test_ufunc_ceil_u()
+    test_ufunc_trunc_c()
+    test_ufunc_trunc_f()
+    test_ufunc_trunc_u()

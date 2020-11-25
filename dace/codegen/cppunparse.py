@@ -88,7 +88,8 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr",
+                  "inf": "INFINITY", "nan": "NAN"}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),

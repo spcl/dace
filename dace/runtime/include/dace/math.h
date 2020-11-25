@@ -353,6 +353,45 @@ static DACE_CONSTEXPR DACE_HDFI T rad2deg(const T& a) {
     return a * T(180) / M_PI;
 }
 
+// Determines if the given (floating point) number has finite value
+// (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isfinite(const std::complex<T>& a) {
+    return isfinite(a.real()) && isfinite(a.imag());
+}
+
+// Determines if the given (floating point) number is a positive or negative
+// infinity (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isinf(const std::complex<T>& a) {
+    return isinf(a.real()) || isinf(a.imag());
+}
+
+// Determines if the given (floating point) number is not-a-number (NaN) value
+// (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isnan(const std::complex<T>& a) {
+    return isnan(a.real()) || isnan(a.imag());
+}
+
+// Computes modf (compatibility between Python tasklets and C++ modf)
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, double& integral, double& fractional) {
+    integral = double(a);
+    fractional = double(0);
+}
+template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, T& integral, T& fractional) {
+    fractional = std::modf(a, &integral);
+}
+
+// Computes frexp (compatibility between Python tasklets and C++ frexp)
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_frexp(const T& a, T& mantissa, int& exponent) {
+    mantissa = std::frexp(a, &exponent);
+}
+
+
 #endif
 
 namespace dace

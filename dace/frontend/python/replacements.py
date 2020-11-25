@@ -796,7 +796,7 @@ def _is_op_bitwise(op: str):
 
 def _is_op_boolean(op: str):
     if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE',
-              'Is', 'NotIs', 'Xor'}:
+              'Is', 'NotIs', 'Xor', 'FpBoolean', 'SignBit'}:
         return True
     return False
 
@@ -848,7 +848,7 @@ def _cast_str(dtype: dtypes.typeclass) -> str:
 def _result_type(
     arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
     operator: str = None
-) -> Tuple[Union[dtypes.typeclass, str], ...]:
+) -> Tuple[Union[List[dtypes.typeclass], dtypes.typeclass, str], ...]:
 
     datatypes = []
     dtypes_for_result = []
@@ -898,18 +898,34 @@ def _result_type(
             result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
         elif operator == 'Abs' and coarse_types[0] == 3:
             result_type = eval('dace.float{}'.format(4 * datatypes[0].bytes))
-        elif operator in ('Fabs', 'Cbrt', 'Angles') and coarse_types[0] == 3:
+        elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing',
+                           'Modf', 'Floor', 'Ceil', 'Trunc')
+                           and coarse_types[0] == 3):
             raise TypeError("ufunc '{}' not supported for complex input".format(
                 operator))
         elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt',
-                           'Trigonometric', 'Angles') and coarse_types[0] < 2):
+                           'Trigonometric', 'Angles', 'FpBoolean', 'Spacing',
+                           'Modf', 'Floor', 'Ceil', 'Trunc')
+                           and coarse_types[0] < 2):
             result_type = dace.float64
             casting[0] = _cast_str(result_type)
+        elif operator in ('Frexp'):
+            if coarse_types[0] == 3:
+                raise TypeError("ufunc '{}' not supported for complex "
+                                "input".format(operator))
+            result_type = [None, dace.int32]
+            if coarse_types[0] < 2:
+                result_type[0] = dace.float64
+                casting[0] = _cast_str(result_type[0])
+            else:
+                result_type[0] = datatypes[0]
         elif _is_op_bitwise(operator) and coarse_types[0] > 1:
             raise TypeError("unsupported operand type for {}: '{}'".format(
                                 operator, datatypes[0]))
         elif _is_op_boolean(operator):
             result_type = dace.bool_
+            if operator == 'SignBit' and coarse_types[0] < 2:
+                casting[0] = _cast_str(dace.float64)
         else:
             result_type = datatypes[0]
 
@@ -1020,6 +1036,37 @@ def _result_type(
                 left_cast = _cast_str(result_type)
             if dtype2 != result_type:
                 right_cast = _cast_str(result_type)
+
+        elif operator and operator in ('CopySign', 'NextAfter'):
+            if max(type1, type2) > 2:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(
+                                    operator, dtype1, dtype2))
+            if max(type1, type2) < 2:
+                result_type = dace.float64
+            else:
+                result_type = _np_result_type(dtypes_for_result)
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
+        
+        elif operator and operator in ('Ldexp'):
+            if max(type1, type2) > 2 or type2 > 1:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(
+                                    operator, dtype1, dtype2))
+            if type1 < 2:
+                result_type = dace.float64
+                left_cast = _cast_str(result_type)
+            else:
+                result_type = dtype1
+            if dtype2 != dace.int32:
+                right_cast = _cast_str(dace.int32)
+                if not np.can_cast(dtype2.type, np.int32):
+                    warnings.warn("Second input to {} is of type {}, which "
+                                  "cannot be safely cast to {}".format(
+                                      operator, dtype2, dace.int32))
         
         else:  # Other binary operators
             result_type = _np_result_type(dtypes_for_result)
@@ -1712,6 +1759,15 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
                                   arr1.shape[1], arr2.shape[0]))
 
         output_shape = (arr1.shape[0], )
+    
+    elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
+
+        if arr1.shape[0] != arr2.shape[0]:
+            raise SyntaxError("Size of vector {} must match number of matrix "
+                              "rows {} must match".format(
+                                  arr1.shape[0], arr2.shape[0]))
+
+        output_shape = (arr2.shape[1], )
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
@@ -2201,6 +2257,90 @@ ufuncs = dict(
         outputs=["__out"],
         code="__out = fmin(__in1, __in2)",
         reduce="lambda a, b: fmin(a, b)", initial=np.fmin.identity),
+    isfinite = dict(
+        name="_numpy_isfinite_",
+        operator="FpBoolean",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = isfinite(__in1)",
+        reduce=None, initial=np.isfinite.identity),
+    isinf = dict(
+        name="_numpy_isinf_",
+        operator="FpBoolean",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = isinf(__in1)",
+        reduce=None, initial=np.isinf.identity),
+    isnan = dict(
+        name="_numpy_isnan_",
+        operator="FpBoolean",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = isnan(__in1)",
+        reduce=None, initial=np.isnan.identity),
+    signbit = dict(
+        name="_numpy_signbit_",
+        operator="SignBit",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = signbit(__in1)",
+        reduce=None, initial=np.signbit.identity),
+    copysign = dict(
+        name="_numpy_copysign_",
+        operator="CopySign",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = copysign(__in1, __in2)",
+        reduce="lambda a, b: copysign(a, b)", initial=np.copysign.identity),
+    nextafter = dict(
+        name="_numpy_nextafter_",
+        operator="NextAfter",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = nextafter(__in1, __in2)",
+        reduce="lambda a, b: nextafter(a, b)", initial=np.nextafter.identity),
+    spacing = dict(
+        name="_numpy_spacing_",
+        operator="Spacing",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = nextafter(__in1, inf) - __in1",
+        reduce=None, initial=np.spacing.identity),
+    modf = dict(
+        name="_numpy_modf_",
+        operator="Modf",
+        inputs=["__in1"],
+        outputs=["__out1", "__out2"],
+        code="np_modf(__in1, __out1, __out2)",
+        reduce=None, initial=np.modf.identity),
+    ldexp = dict(
+        name="_numpy_ldexp_",
+        operator="Ldexp",
+        inputs=["__in1", "__in2"],
+        outputs=["__out"], code="__out = ldexp(__in1, __in2)",
+        # NumPy apparently has np.ldexp.reduce, but for any kind of input array
+        # it returns "TypeError: No loop matching the specified signature and
+        # casting was found for ufunc ldexp". Considering that the method
+        # computes __in1 * 2 ** __in2, it is hard to define a reduction.
+        reduce=None, initial=np.ldexp.identity),
+    frexp = dict(
+        name="_numpy_frexp_",
+        operator="Frexp",
+        inputs=["__in1"],
+        outputs=["__out1", "__out2"],
+        code="np_frexp(__in1, __out1, __out2)",
+        reduce=None, initial=np.frexp.identity),
+    floor = dict(
+        name="_numpy_floor_",
+        operator="Floor",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = floor(__in1)",
+        reduce=None, initial=np.floor.identity),
+    ceil = dict(
+        name="_numpy_ceil_",
+        operator="Ceil",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = ceil(__in1)",
+        reduce=None, initial=np.ceil.identity),
+    trunc = dict(
+        name="_numpy_trunc_",
+        operator="Trunc",
+        inputs=["__in1"],
+        outputs=["__out"], code="__out = trunc(__in1)",
+        reduce=None, initial=np.trunc.identity),
 )
 
 
@@ -2538,13 +2678,15 @@ def _broadcast(
     return out_shape, map_indices, output_indices, input_indices
 
 
-def _create_output(sdfg: SDFG,
-                   inputs: List[UfuncInput],
-                   outputs: List[UfuncOutput],
-                   output_shape: Shape,
-                   output_dtype: dtypes.typeclass,
-                   storage: dtypes.StorageType = None,
-                   force_scalar: bool = False,) -> List[UfuncOutput]:
+def _create_output(
+    sdfg: SDFG,
+    inputs: List[UfuncInput],
+    outputs: List[UfuncOutput],
+    output_shape: Shape,
+    output_dtype: Union[dtypes.typeclass, List[dtypes.typeclass]],
+    storage: dtypes.StorageType = None,
+    force_scalar: bool = False
+) -> List[UfuncOutput]:
     """ Creates output data for storing the result of a NumPy ufunc call.
 
         :param sdfg: SDFG object
@@ -2576,8 +2718,19 @@ def _create_output(sdfg: SDFG,
     # Set storage
     storage = storage or dtypes.StorageType.Default
 
+    # Validate datatypes
+    if isinstance(output_dtype, (list, tuple)):
+        if len(output_dtype) == 1:
+            datatypes = [output_dtype[0]] * len(outputs)
+        elif len(output_dtype) == len(outputs):
+            datatypes = output_dtype
+        else:
+            raise ValueError("Missing output datatypes")
+    else:
+        datatypes = [output_dtype] * len(outputs)
+
     # Create output data (if needed)
-    for i, arg in enumerate(outputs):
+    for i, (arg, datatype) in enumerate(zip(outputs, datatypes)):
         if arg is None:
             if (len(output_shape) == 1 and output_shape[0] == 1
                     and (is_output_scalar or force_scalar)):
@@ -2586,8 +2739,7 @@ def _create_output(sdfg: SDFG,
                                 transient=True, storage=storage)
                 outputs[i] = output_name
             else:
-                outputs[i], _ = sdfg.add_temp_transient(output_shape,
-                                                        output_dtype)
+                outputs[i], _ = sdfg.add_temp_transient(output_shape, datatype)
 
     return outputs
 
