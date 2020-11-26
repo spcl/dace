@@ -943,14 +943,14 @@ def _result_type(
 
             # Float/True division between integers
             if operator == 'Div' and max(type1, type2) < 2:
-                # TODO: Leaving this here in case we implement a C/C++ flag
+                # NOTE: Leaving this here in case we implement a C/C++ flag
                 # if type1 == type2 and type1 == 0:  # Unsigned integers
                 #     result_type = eval('dace.uint{}'.format(8 * max_bytes))
                 # else:
                 #     result_type = eval('dace.int{}'.format(8 * max_bytes))
                 result_type = dace.float64
             # Floor division with at least one complex argument
-            # TODO: NumPy allows this operation
+            # NOTE: NumPy allows this operation
             # elif operator == 'FloorDiv' and max(type1, type2) == 3:
             #     raise TypeError("can't take floor of complex number")
             # Floor division with at least one float argument
@@ -1016,7 +1016,6 @@ def _result_type(
                 raise TypeError("unsupported operand type(s) for {}: "
                                 "'{}' and '{}'".format(
                                     operator, dtype1, dtype2))
-            # result_type = eval('dace.int{}'.format(8 * max_bytes))
             result_type = _np_result_type(dtypes_for_result)
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)

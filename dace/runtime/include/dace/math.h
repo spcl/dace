@@ -302,11 +302,8 @@ static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(const std::complex<T>
 // Compute the greates common divisor of two integers
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI T gcd(T a, T b) {
-    // while b ≠ 0
-    //     t := b
-    //     b := a mod b
-    //     a := t
-    // return a
+    // Modern Euclidian algorithm
+    // (Knuth, Art of Computer Programming - Vol. 2 Seminumerical Algorithms)
     while (b != 0) {
         auto t = b;
         b = a % b;
