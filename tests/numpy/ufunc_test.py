@@ -79,7 +79,7 @@ def test_ufunc_negative_f(A: dace.float32[10]):
     return np.negative(A)
 
 
-@compare_numpy_output(validation_func=lambda a: - a)
+@compare_numpy_output(validation_func=lambda a: -a)
 def test_ufunc_negative_u(A: dace.uint32[10]):
     return np.negative(A)
 
@@ -99,7 +99,7 @@ def test_ufunc_power_uu(A: dace.uint32[10], B: dace.uint32[10]):
     return np.power(A, B)
 
 
-@compare_numpy_output(non_zero=True, validation_func=lambda a, b: a ** b)
+@compare_numpy_output(non_zero=True, validation_func=lambda a, b: a**b)
 def test_ufunc_power_ss(A: dace.int32[10], B: dace.int32[10]):
     return np.power(A, B)
 
@@ -285,6 +285,7 @@ def test_ufunc_exp_f(A: dace.float32[10]):
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_exp_u(A: dace.uint32[10]):
     return np.exp(A)
+
 
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_exp2_c(A: dace.complex64[10]):
@@ -870,6 +871,7 @@ def test_ufunc_greater_equal_ff(A: dace.float32[10], B: dace.float32[10]):
 def test_ufunc_less_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.less(A, B)
 
+
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_less_equal_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.less_equal(A, B)
@@ -878,6 +880,7 @@ def test_ufunc_less_equal_ff(A: dace.float32[10], B: dace.float32[10]):
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_equal_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.equal(A, B)
+
 
 @compare_numpy_output(check_dtype=True)
 def test_ufunc_not_equal_ff(A: dace.float32[10], B: dace.float32[10]):
@@ -945,45 +948,45 @@ def test_ufunc_logical_xor_su(A: dace.int32[10], B: dace.uint32[10]):
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_maximum_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_maximum_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.maximum(A, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_maximum_nan_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_maximum_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.maximum(C, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_fmax_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_fmax_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.fmax(A, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_fmax_nan_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_fmax_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.fmax(C, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_minimum_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_minimum_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.minimum(A, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_minimum_nan_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_minimum_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.minimum(C, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_fmin_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_fmin_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.fmin(A, B)
 
 
 @compare_numpy_output(check_dtype=True)
-def test_ufunc_fmin_nan_ff(A: dace.float32[10], B:dace.float32[10]):
+def test_ufunc_fmin_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     C = np.true_divide(A, 0)
     return np.fmin(C, B)
 

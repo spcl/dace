@@ -47,43 +47,39 @@ def compare_numpy_output(non_zero=False,
                 if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
                     res = np.random.rand(*ddesc.shape).astype(
                         getattr(np, ddesc.dtype.to_string()))
-                    b = 0 if positive else - max_value
+                    b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = (
-                        np.random.rand(*ddesc.shape).astype(
-                            getattr(np, ddesc.dtype.to_string()))
-                        + 1j * np.random.rand(*ddesc.shape).astype(
-                            getattr(np, ddesc.dtype.to_string()))
-                    )
-                    b = 0 if positive else - max_value
+                    res = (np.random.rand(*ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())) +
+                           1j * np.random.rand(*ddesc.shape).astype(
+                               getattr(np, ddesc.dtype.to_string())))
+                    b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [
-                        dace.int8, dace.int16, dace.int32, dace.int64,
-                        dace.bool
+                        dace.int8, dace.int16, dace.int32, dace.int64, dace.bool
                 ]:
-                    res = np.random.randint(0 if positive else - max_value,
+                    res = np.random.randint(0 if positive else -max_value,
                                             max_value,
                                             size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [
-                    dace.uint8, dace.uint16, dace.uint32, dace.uint64
+                        dace.uint8, dace.uint16, dace.uint32, dace.uint64
                 ]:
                     res = np.random.randint(0, max_value, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
                 else:
-                    raise ValueError("unsupported dtype {}".format(
-                        ddesc.dtype))
+                    raise ValueError("unsupported dtype {}".format(ddesc.dtype))
 
                 if type(ddesc) is dace.data.Scalar:
                     return res[0]
@@ -99,11 +95,9 @@ def compare_numpy_output(non_zero=False,
             dace_input = dc(inputs)
             if casting:
                 reference_input = OrderedDict(
-                    (name, casting(desc))
-                    for name, desc in inputs.items())
+                    (name, casting(desc)) for name, desc in inputs.items())
             else:
                 reference_input = dc(inputs)
-
 
             # save exceptions
             dace_thrown, numpy_thrown = None, None
@@ -136,7 +130,7 @@ def compare_numpy_output(non_zero=False,
                     for ref, val in zip(reference_result, dace_result):
                         assert np.allclose(ref, val, equal_nan=True)
                         if check_dtype and not validation_func:
-                            assert(ref.dtype == val.dtype)
+                            assert (ref.dtype == val.dtype)
 
         return test
 
