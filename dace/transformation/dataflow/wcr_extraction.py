@@ -2,7 +2,7 @@ from dace import data, dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, SDFG, propagation, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.transformation.helpers import replicate_scope
 from dace.properties import Property, make_properties
 import dace
@@ -65,7 +65,7 @@ def get_inner_node_and_edge(
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class WCRExtraction(pattern_matching.Transformation):
+class WCRExtraction(transformation.Transformation):
 
     _map_exit = nodes.MapExit(nodes.Map("", [], []))
     _output_node = nodes.AccessNode("_")
@@ -141,7 +141,8 @@ class WCRExtraction(pattern_matching.Transformation):
 
             me, mx = sdfg_state.add_map(
                 'extracted_wcr',
-                {str(k): v for k, v in zip(map.params, map_range_str)})
+                {str(k): v
+                 for k, v in zip(map.params, map_range_str)})
             id_array_name, id_array = sdfg.add_transient(
                 'identity_array', [1], dtype)
 
