@@ -24,7 +24,7 @@ class ExpandGemvPure(ExpandTransformation):
          _) = _get_matmul_operands(node,
                                    parent_state,
                                    parent_sdfg,
-                                   name_lhs="_a",
+                                   name_lhs="_A",
                                    name_rhs="_x",
                                    name_out="_y")
 
@@ -49,7 +49,7 @@ class ExpandGemvPure(ExpandTransformation):
             raise ValueError("Input matrices must have same storage")
         storage = outer_array_a.storage
 
-        _, array_a = sdfg.add_array("_a",
+        _, array_a = sdfg.add_array("_A",
                                     shape_a,
                                     dtype_a,
                                     strides=strides_a,
@@ -58,9 +58,9 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, storage=storage)
 
         if node.alpha == 1.0:
-            mul_program = "__out = __a * __x"
+            mul_program = "__out = __A * __x"
         else:
-            mul_program = "__out = {} * __a * __x".format(
+            mul_program = "__out = {} * __A * __x".format(
                 _cast_to_dtype_str(node.alpha, dtype_a))
 
         init_state = sdfg.add_state(node.label + "_initstate")
@@ -94,9 +94,9 @@ class ExpandGemvPure(ExpandTransformation):
             "_GEMV_", {"__i%d" % i: "0:%s" % s
                        for i, s in enumerate([N, M])},
             {
-                "__a":
+                "__A":
                 dace.Memlet.simple(
-                    "_a", "__i1, __i0" if node.transA else "__i0, __i1"),
+                    "_A", "__i1, __i0" if node.transA else "__i0, __i1"),
                 "__x":
                 dace.Memlet.simple("_x", "__i1")
             },
@@ -165,7 +165,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                  beta=0):
         super().__init__(name,
                          location=location,
-                         inputs={"_a", "_x"},
+                         inputs={"_A", "_x"},
                          outputs={"_y"})
         self.dtype = dtype
         self.transA = transA
@@ -178,7 +178,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected 2 or 3 inputs to GEMV")
         size_y_in = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
-            if dst_conn == "_a":
+            if dst_conn == "_A":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
                 size_a = subset.size()
