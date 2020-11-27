@@ -78,6 +78,16 @@ def compare_numpy_output(non_zero=False,
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
+                elif ddesc.dtype in [dace.complex64, dace.complex128]:
+                    res = np.random.rand(*ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())
+                    ) + 1j * np.random.rand(*ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string()))
+                    b = 0 if positive else -10 - 10j
+                    a = 10 + 10j
+                    res = (b - a) * res + a
+                    if non_zero:
+                        res[res == 0] = 1 + 1j
                 else:
                     raise ValueError("unsupported dtype {}".format(ddesc.dtype))
 

@@ -4,7 +4,8 @@ import numpy as np
 
 import dace
 
-def call_multiple_sdfgs():
+
+def test_call_multiple_sdfgs():
     inparr = dace.float32[2, 2]
     axis = 1
     out_tmp_shape = inparr.shape
@@ -27,19 +28,21 @@ def call_multiple_sdfgs():
         },
         inputs={
             '__max':
-                dace.Memlet.simple(
-                    "tmp_max", ','.join("__i" + str(i) for i in range(len(inparr.shape))
-                                        if i != axis)),
+            dace.Memlet.simple(
+                "tmp_max", ','.join("__i" + str(i)
+                                    for i in range(len(inparr.shape))
+                                    if i != axis)),
             '__x':
-                dace.Memlet.simple(
-                    "original_input", ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            dace.Memlet.simple(
+                "original_input",
+                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
         },
         code='__out = exp(__x - __max)',
         outputs={
             '__out':
-                dace.Memlet.simple(
-                    "output",
-                    ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            dace.Memlet.simple(
+                "output",
+                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
         },
         external_edges=True)
 
@@ -58,20 +61,23 @@ def call_multiple_sdfgs():
         },
         inputs={
             '__sum':
-                dace.Memlet.simple(
-                    "tmp_sum", ','.join("__i" + str(i) for i in range(len(inparr.shape))
-                                        if i != axis)),
+            dace.Memlet.simple(
+                "tmp_sum", ','.join("__i" + str(i)
+                                    for i in range(len(inparr.shape))
+                                    if i != axis)),
             '__exp':
-                dace.Memlet.simple(
-                    "out_tmp", ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            dace.Memlet.simple(
+                "out_tmp",
+                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
         },
         code='__out = __exp / __sum',
         outputs={
             '__out':
-                dace.Memlet.simple(
-                    "output",
-                    ','.join("__i" + str(i) for i in range(len(inparr.shape))))
-        }, external_edges=True)
+            dace.Memlet.simple(
+                "output",
+                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+        },
+        external_edges=True)
 
     ##################
     # put everything together as a program
@@ -90,13 +96,13 @@ def call_multiple_sdfgs():
     state = sdfg.nodes()[-1]
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):
-            assert(n.data in {'out_tmp', 'tmp_sum', 'output'})
+            assert (n.data in {'out_tmp', 'tmp_sum', 'output'})
         elif isinstance(n, dace.sdfg.nodes.CodeNode):
             for src, _, _, _, _ in state.in_edges(n):
-                assert(src.data in {'out_tmp', 'tmp_sum'})
+                assert (src.data in {'out_tmp', 'tmp_sum'})
             for _, _, dst, _, _ in state.out_edges(n):
-                assert(dst.data in {'output'})
+                assert (dst.data in {'output'})
 
 
 if __name__ == "__main__":
-    call_multiple_sdfgs()
+    test_call_multiple_sdfgs()

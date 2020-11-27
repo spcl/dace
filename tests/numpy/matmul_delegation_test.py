@@ -23,7 +23,7 @@ def matmul_delegation_test2(matrix0: dace.float32[N, K],
     result[0] = vector1 @ (matrix0 @ matrix1) @ vector0
 
 
-if __name__ == '__main__':
+def test_matmul_delegation():
     matrix0 = np.random.rand(N, K).astype(np.float32)
     matrix1 = np.random.rand(K, M).astype(np.float32)
     vector0 = np.random.rand(M).astype(np.float32)
@@ -44,7 +44,15 @@ if __name__ == '__main__':
             result, reference))
     else:
         print("Linear algebra multiplication delegation test verified.")
-    
+
+
+def test_matmul_delegation2():
+    matrix0 = np.random.rand(N, K).astype(np.float32)
+    matrix1 = np.random.rand(K, M).astype(np.float32)
+    vector0 = np.random.rand(M).astype(np.float32)
+    vector1 = np.random.rand(N).astype(np.float32)
+    result = np.empty([1], dtype=np.float32)
+
     matmul_delegation_test2(
         matrix0=matrix0,
         matrix1=matrix1,
@@ -59,3 +67,7 @@ if __name__ == '__main__':
             result, reference))
     else:
         print("Linear algebra multiplication delegation test no.2 verified.")
+
+if __name__ == '__main__':
+    test_matmul_delegation()
+    test_matmul_delegation2()

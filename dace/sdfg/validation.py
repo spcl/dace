@@ -455,7 +455,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         sdfg, state_id, eid)
                 if e.data.other_subset is not None:
                     undefs = (e.data.other_subset.free_symbols -
-                              defined_symbols)
+                              set(defined_symbols.keys()))
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet '
