@@ -262,6 +262,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 state_id,
                 nid,
             )
+        if isinstance(node, nd.NestedSDFG):
+            validate_sdfg(node.sdfg)
 
         # Connector tests
         ########################################
