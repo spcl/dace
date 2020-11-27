@@ -17,7 +17,7 @@ def prog(A, stats):
         ssq = inp * inp
 
 
-if __name__ == '__main__':
+def test():
     W.set(120)
 
     A = dace.ndarray([W])
@@ -36,5 +36,8 @@ if __name__ == '__main__':
     print("Difference (mean):", diff_mean)
     diff_var = abs(variance - np.var(A))
     print("Difference (variance):", diff_var)
-    print("==== Program end ====")
-    exit(0 if diff_mean <= 1e-5 and diff_var <= 1e-4 else 1)
+    assert diff_mean <= 1e-5 and diff_var <= 1e-4
+
+
+if __name__ == "__main__":
+    test()

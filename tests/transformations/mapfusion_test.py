@@ -82,8 +82,7 @@ def test_fusion_simple():
 
     diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
-    if diff > 1e-3:
-        exit(1)
+    assert diff <= 1e-3
 
 
 def test_multiple_fusions():
@@ -112,12 +111,10 @@ def test_multiple_fusions():
     diff1 = np.linalg.norm(A * A + 1 - B)
     diff2 = np.linalg.norm(A * A + 2 - C)
     print('Difference1:', diff1)
-    if diff1 > 1e-4:
-        exit(1)
+    assert diff1 <= 1e-4
 
     print('Difference2:', diff2)
-    if diff2 > 1e-4:
-        exit(1)
+    assert diff2 <= 1e-4
 
 
 def test_fusion_chain():
@@ -144,8 +141,7 @@ def test_fusion_chain():
     sdfg(A=A, B=B)
     diff = np.linalg.norm(A * 8 + 5 - B)
     print('Difference:', diff)
-    if diff > 1e-4:
-        exit(1)
+    assert diff <= 1e-4
 
 
 @dace.program

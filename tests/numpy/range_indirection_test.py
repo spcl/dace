@@ -14,7 +14,7 @@ def range_indirection(A: dace.float64[M, N], x: dace.int32[M]):
         A[x[j]] += A[x[j - 1]]
 
 
-if __name__ == '__main__':
+def test():
     M.set(100)
     N.set(100)
 
@@ -33,7 +33,8 @@ if __name__ == '__main__':
     rel_norm = np.linalg.norm(npA - A) / np.linalg.norm(npA)
 
     print(rel_norm)
-    if rel_norm < 1e-12:
-        exit(0)
-    else:
-        exit(1)
+    assert rel_norm < 1e-12
+
+
+if __name__ == '__main__':
+    test()

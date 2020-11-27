@@ -32,7 +32,8 @@ state.add_nedge(globalstream, globalarr,
 
 sdfg.fill_scope_connectors()
 
-if __name__ == '__main__':
+
+def test():
     print('Thread-local stream test')
 
     N.set(20)
@@ -42,9 +43,7 @@ if __name__ == '__main__':
 
     code_nonspec = sdfg.generate_code()
 
-    if 'Threadlocal' not in code_nonspec[0].code:
-        print('ERROR: Thread-local stream was not created')
-        exit(1)
+    assert 'Threadlocal' in code_nonspec[0].code
 
     func = sdfg.compile()
     func(ga=output, N=N)
@@ -53,5 +52,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(output - np.arange(0, N.get(), dtype=np.float32))
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 2)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()
