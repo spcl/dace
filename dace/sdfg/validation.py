@@ -28,6 +28,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         on failure.
     """
     try:
+        if sdfg.parent is not None and sdfg.parent_nsdfg_node not in sdfg.parent.nodes():
+            raise InvalidSDFGError("Invalid parent or parent_nsdfg_node", sdfg, None)
+
         # SDFG-level checks
         if not validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
