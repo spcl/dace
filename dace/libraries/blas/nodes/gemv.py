@@ -26,7 +26,6 @@ class ExpandGemvPure(ExpandTransformation):
                                    name_lhs="_A",
                                    name_rhs="_x",
                                    name_out="_y")
-
         dtype_a = outer_array_a.dtype.type
         dtype_x = outer_array_x.dtype.type
         dtype_y = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_x).type]
@@ -61,12 +60,17 @@ class ExpandGemvPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
+        if node.beta == 0:
+            mul_out, mul_out_array = "_y", array_y
+            output_nodes = None
+        else:
+            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
+                shape_y, dtype_y, storage=storage)
 
-        mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-            shape_y, dtype_y, storage=storage)
+            access_tmp = state.add_read(tmp)
+            output_nodes = {mul_out: access_tmp}
 
-        access_tmp = state.add_read(tmp)
-        output_nodes = {mul_out: access_tmp}
+
 
         # Initialization map
         init_state.add_mapped_tasklet(
@@ -153,7 +157,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                  beta=dace.symbolic.symbol("beta")):
         super().__init__(name,
                          location=location,
-                         inputs={"_A", "_x", "_y"},
+                         inputs={"_A", "_x", "_y"} if beta!=0 else {"_A", "_x"} ,
                          outputs={"_y"})
         self.dtype = dtype
         self.transA = transA

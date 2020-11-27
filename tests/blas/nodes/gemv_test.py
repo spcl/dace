@@ -33,7 +33,6 @@ def pure_graph(dtype, transposed):
 
     A = state.add_read("A")
     x = state.add_read("x")
-    y = state.add_read("y")
     result = state.add_write("y")
 
     gemv_node = blas.Gemv("gemv",
@@ -50,6 +49,7 @@ def pure_graph(dtype, transposed):
                           dst_conn="_x",
                           memlet=Memlet.simple(x,
                                                "0:{}".format(x_size)))
+    y = state.add_read("y")
     state.add_memlet_path(y,
                           gemv_node,
                           dst_conn="_y",
@@ -100,9 +100,11 @@ if __name__ == "__main__":
     x = np.random.rand(n if transposed else m).astype(np.float32)
     y = np.random.rand(m if transposed else n).astype(np.float32)
 
+    y_copy = np.copy(y)
+
     sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
 
-    ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y, trans=transposed)
+    ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
     diff = np.linalg.norm(y - ref) / (m if transposed else n)
     if diff >= 1e-5:
