@@ -5,8 +5,9 @@ import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
+
 # Constructs an SDFG with multiple tasklets manually and runs it
-if __name__ == '__main__':
+def test():
     print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
@@ -31,17 +32,15 @@ if __name__ == '__main__':
     # Tasklet 1
     t1 = state.add_tasklet('task1', {'a'}, {'b'}, 'b = a')
     state.add_edge(map_entry, None, t1, 'a', Memlet.simple(A, 'i'))
-    state.add_edge(
-        t1, 'b', map_exit, None,
-        Memlet.simple(s, '0', wcr_str='lambda a,b: a+b'))
+    state.add_edge(t1, 'b', map_exit, None,
+                   Memlet.simple(s, '0', wcr_str='lambda a,b: a+b'))
     state.add_edge(map_exit, None, s, None, Memlet.simple(s, '0'))
 
     # Tasklet 2
     t2 = state.add_tasklet('task2', {'a'}, {'b'}, 'b = a')
     state.add_edge(map_entry, None, t2, 'a', Memlet.simple(A, 'i'))
-    state.add_edge(
-        t2, 'b', map_exit, None,
-        Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
+    state.add_edge(t2, 'b', map_exit, None,
+                   Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
     state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
 
     mysdfg(A=input, s=sum, p=product, N=N)
@@ -49,5 +48,8 @@ if __name__ == '__main__':
     diff_sum = 5 * 20 - sum[0]
     diff_prod = 5**20 - product[0]
     print("Difference:", diff_sum, '(sum)', diff_prod, '(product)')
-    print("==== Program end ====")
-    exit(0 if diff_sum <= 1e-5 and diff_prod <= 1e-5 else 1)
+    assert diff_sum <= 1e-5 and diff_prod <= 1e-5
+
+
+if __name__ == '__main__':
+    test()

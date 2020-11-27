@@ -6,7 +6,8 @@ import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
-if __name__ == '__main__':
+
+def test():
     print('Constant specialization test')
 
     N = dp.symbol('N')
@@ -43,16 +44,12 @@ if __name__ == '__main__':
 
     code_nonspec = spec_sdfg.generate_code()
 
-    if 'Dynamic' not in code_nonspec[0].code:
-        print('ERROR: Constants were needlessly specialized')
-        exit(1)
+    assert 'Dynamic' in code_nonspec[0].code
 
     spec_sdfg.specialize(dict(N=N, M=M))
     code_spec = spec_sdfg.generate_code()
 
-    if 'Dynamic' in code_spec[0].code:
-        print('ERROR: Constants were not properly specialized')
-        exit(2)
+    assert 'Dynamic' not in code_spec[0].code
 
     func = spec_sdfg.compile()
     func(A=input, B=output, N=N, M=M)
@@ -60,5 +57,8 @@ if __name__ == '__main__':
     diff = np.linalg.norm(
         np.exp(input[1:(N.get() - 1), 0:M.get()]) - output[1:-1, :]) / N.get()
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 3)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

@@ -24,6 +24,9 @@ def sse_sigma(neigh_idx: dace.int32[NA, NB],
         Sigma[k, E, a] += dHG @ dHD
 
 
-if __name__ == '__main__':
-
+def test():
     sse_sigma.compile()
+
+
+if __name__ == '__main__':
+    test()

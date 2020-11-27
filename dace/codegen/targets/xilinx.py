@@ -431,7 +431,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # Insert interface pragmas
         num_mapped_args = 0
         for arg, (_, dataname, _) in zip(array_args, arrays):
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
@@ -453,7 +453,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             kernel_stream.write(
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
