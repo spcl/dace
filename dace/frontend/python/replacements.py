@@ -611,7 +611,9 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
 
-    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
+    restype, _ = _result_type([arr1], opname)
+
+    name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
@@ -727,7 +729,7 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         scalar1 = sdfg.arrays[op1]
-        restype = scalar1.dtype
+        restype, _ = _result_type([scalar1], op)
         op2 = sdfg.temp_data_name()
         _, scalar2 = sdfg.add_scalar(op2, restype, transient=True)
         tasklet = state.add_tasklet("_%s_" % op, {'__in'}, {'__out'},
@@ -789,23 +791,75 @@ def _is_op_bitwise(op: str):
 
 
 def _is_op_boolean(op: str):
-    if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'}:
+    if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE',
+              'Is', 'NotIs'}:
         return True
     return False
 
 
-def _sym_type(expr: Union[symbolic.symbol, sp.Expr]) -> dtypes.typeclass:
+def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
+    if isinstance(dtype, dtypes.typeclass):
+        nptype = dtype.type
+    else:
+        nptype = dtype
+    if issubclass(nptype, bool):
+        return True
+    elif issubclass(nptype, Integral):
+        return nptype(np.iinfo(nptype).max)
+    else:
+        return nptype(np.finfo(nptype).resolution)
+
+
+def _np_result_type(nptypes):
+    # Fix for np.result_type returning platform-dependent types,
+    # e.g. np.longlong
+    restype = np.result_type(*nptypes)
+    if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
+        for k in dtypes.DTYPE_TO_TYPECLASS.keys():
+            if k == restype.type:
+                return dtypes.DTYPE_TO_TYPECLASS[k]
+    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+
+
+def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
     if isinstance(expr, symbolic.symbol):
         return expr.dtype
-    freesym = [s for s in expr.free_symbols]
-    if len(freesym) == 1:
-        return freesym[0].dtype
-    typeclasses = [s.dtype.type for s in freesym]
-    return dtypes.DTYPE_TO_TYPECLASS[np.result_type(*typeclasses).type]
+    representative_value = expr.subs([(s, _representative_num(s.dtype))
+                                      for s in expr.free_symbols])
+    pyval = eval(astutils.unparse(representative_value))
+    # Overflow check
+    if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max or
+                                  pyval < np.iinfo(np.int64).min):
+        nptype = np.int64
+    else:
+        nptype = np.result_type(pyval)
+    return _np_result_type([nptype])
 
 
-def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
+def _result_type(
+    arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
+    operator: str = None
+) -> Tuple[dtypes.typeclass, ...]:
 
+    datatypes = []
+    dtypes_for_result = []
+    for arg in arguments:
+        if isinstance(arg, (data.Array, data.Stream)):
+            datatypes.append(arg.dtype)
+            dtypes_for_result.append(arg.dtype.type)
+        elif isinstance(arg, data.Scalar):
+            datatypes.append(arg.dtype)
+            dtypes_for_result.append(_representative_num(arg.dtype))
+        elif isinstance(arg, Number):
+            datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+            dtypes_for_result.append(arg)
+        elif symbolic.issymbolic(arg):
+            datatypes.append(_sym_type(arg))
+            dtypes_for_result.append(_representative_num(_sym_type(arg)))
+        else:
+            raise TypeError("Type {t} of argument {a} is not supported".format(
+                t=type(arg), a=arg))
+    
     complex_types = {dace.complex64, dace.complex128,
                      np.complex64, np.complex128}
     float_types = {dace.float16, dace.float32, dace.float64,
@@ -814,90 +868,122 @@ def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
                     np.int8, np.int16, np.int32, np.int64}
     # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
 
-    if dtype1 in complex_types:
-        type1 = 3  # complex
-    elif dtype1 in float_types:
-        type1 = 2  # float
-    elif dtype1 in signed_types:
-        type1 = 1  # signed integer, bool
-    else:
-        type1 = 0  # unsigned integer
-
-    if dtype2 in complex_types:
-        type2 = 3  # complex
-    elif dtype2 in float_types:
-        type2 = 2  # float
-    elif dtype2 in signed_types:
-        type2 = 1  # signed integer, bool
-    else:
-        type2 = 0  # unsigned integer
-
-    left_cast = None
-    right_cast = None
-
-    if _is_op_arithmetic(operator):
-
-        # Float division between integers
-        if operator == 'Div' and max(type1, type2) < 2:
-            max_bytes = max(dtype1.bytes, dtype2.bytes)
-            if type1 == type2 and type1 == 0:  # Unsigned integers
-                result_type = eval('dace.uint{}'.format(4 * max_bytes))
-            else:
-                result_type = eval('dace.int{}'.format(4 * max_bytes))
-        # Floor division with at least one complex argument
-        elif operator == 'FloorDiv' and max(type1, type2) == 3:
-            raise TypeError("can't take floor of complex number")
-        # Floor division with at least one float argument
-        elif operator == 'FloorDiv' and max(type1, type2) == 2:
-            result_type = dace.int64
-        # Floor division between integers
-        elif operator == 'FloorDiv' and max(type1, type2) < 2:
-            max_bytes = max(dtype1.bytes, dtype2.bytes)
-            if type1 == type2 and type1 == 0:  # Unsigned integers
-                result_type = eval('dace.uint{}'.format(4 * max_bytes))
-            else:
-                result_type = eval('dace.int{}'.format(4 * max_bytes))
-            # TODO: Improve this performance-wise?
-            right_cast = dace.float64
-        # Power with base integer and exponent signed integer
-        elif (operator == 'Pow' and max(type1, type2) < 2 and
-                dtype2 in signed_types):
-            result_type = dace.float64
-            left_cast = dace.float64
-            right_cast = dace.float64
-        # All other arithmetic operators and cases of the above operators
+    coarse_types = []
+    for dtype in datatypes:
+        if dtype in complex_types:
+            coarse_types.append(3) # complex
+        elif dtype in float_types:
+            coarse_types.append(2)  # float
+        elif dtype in signed_types:
+            coarse_types.append(1) # signed integer, bool
         else:
-            # TODO: Does this always make sense?
-            result_type = dace.DTYPE_TO_TYPECLASS[
-                np.result_type(dtype1.type, dtype2.type).type]
+            coarse_types.append(0)  # unsigned integer
+    
+    casting = [None] * len(arguments)
+
+    if len(arguments) == 1:  # Unary operators
+
+        if operator == 'USub' and coarse_types[0] == 0:
+            result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
+        elif _is_op_boolean(operator):
+            result_type = dace.bool_
+        else:
+            result_type = datatypes[0]
+
+    elif len(arguments) == 2:  # Binary operators
+
+        type1 = coarse_types[0]
+        type2 = coarse_types[1]
+        dtype1 = datatypes[0]
+        dtype2 = datatypes[1]
+        left_cast = None
+        right_cast = None
+
+        if _is_op_arithmetic(operator):
+
+            # Float/True division between integers
+            if operator == 'Div' and max(type1, type2) < 2:
+                # TODO: Leaving this here in case we implement a C/C++ flag
+                # max_bytes = max(dtype1.bytes, dtype2.bytes)
+                # if type1 == type2 and type1 == 0:  # Unsigned integers
+                #     result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                # else:
+                #     result_type = eval('dace.int{}'.format(8 * max_bytes))
+                result_type = dace.float64
+                left_cast = dace.float64
+                right_cast = dace.float64
+            # Floor division with at least one complex argument
+            elif operator == 'FloorDiv' and max(type1, type2) == 3:
+                raise TypeError("can't take floor of complex number")
+            # Floor division with at least one float argument
+            elif operator == 'FloorDiv' and max(type1, type2) == 2:
+                result_type = dace.float64
+            # Floor division between integers
+            elif operator == 'FloorDiv' and max(type1, type2) < 2:
+                max_bytes = max(dtype1.bytes, dtype2.bytes)
+                if type1 == type2 and type1 == 0:  # Unsigned integers
+                    result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                else:
+                    result_type = eval('dace.int{}'.format(8 * max_bytes))
+                right_cast = dace.float64
+            # Power with base integer and exponent signed integer
+            elif (operator == 'Pow' and max(type1, type2) < 2 and
+                    dtype2 in signed_types):
+                result_type = dace.float64
+                left_cast = dace.float64
+                right_cast = dace.float64
+            # All other arithmetic operators and cases of the above operators
+            else:
+                result_type = _np_result_type(dtypes_for_result)
+                if max(type1, type2) == 3:
+                    if type1 < 3:
+                        left_cast = dtype2
+                    elif type2 < 3:
+                        right_cast = dtype1
+                    else:  # type1 == type2
+                        max_bytes = max(dtype1.bytes, dtype2.bytes)
+                        cast = eval('dace.complex{}'.format(8 * max_bytes))
+                        if dtype1 != cast:
+                            left_cast = cast
+                        if dtype2 != cast:
+                            right_cast = cast
+            
+            casting = [left_cast, right_cast]
+
+        elif _is_op_bitwise(operator):
+
+            type1 = coarse_types[0]
+            type2 = coarse_types[1]
+            dtype1 = datatypes[0]
+            dtype2 = datatypes[1]
+
+            # Only integers may be arguments of bitwise and shifting operations
+            if max(type1, type2) > 1:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+            max_bytes = max(dtype1.bytes, dtype2.bytes)
+            result_type = eval('dace.int{}'.format(8 * max_bytes))
+
+        elif _is_op_boolean(operator):
+            result_type = dace.bool_
+        
+        else:  # Other binary operators
+            result_type = _np_result_type(dtypes_for_result)
             if max(type1, type2) == 3:
                 if type1 < 3:
                     left_cast = dtype2
                 elif type2 < 3:
                     right_cast = dtype1
+            
+        casting = [left_cast, right_cast]
 
-    elif _is_op_bitwise(operator):
-        # Only integers may be arguments of bitwise and shifting operations
-        if max(type1, type2) > 1:
-            raise TypeError("unsupported operand type(s) for {}: "
-                            "'{}' and '{}'".format(operator, dtype1, dtype2))
-        max_bytes = max(dtype1.bytes, dtype2.bytes)
-        result_type = eval('dace.int{}'.format(4 * max_bytes))
+    else:  # Operators with 3 or more arguments
+        result_type = _np_result_type(dtypes_for_result)
+        for i, t in enumerate(coarse_types):
+            if t != result_type:
+                casting[i] = t
 
-    elif _is_op_boolean(operator):
-        result_type = dace.bool_
-
-    else:
-        result_type = dace.DTYPE_TO_TYPECLASS[
-            np.result_type(dtype1.type, dtype2.type).type]
-        if max(type1, type2) == 3:
-            if type1 < 3:
-                left_cast = dtype2
-            elif type2 < 3:
-                right_cast = dtype1
-
-
-    return result_type, left_cast, right_cast
+    return result_type, casting
 
 
 def _array_array_binop(visitor: 'ProgramVisitor',
@@ -916,9 +1002,12 @@ def _array_array_binop(visitor: 'ProgramVisitor',
     right_type = right_arr.dtype
 
     # Implicit Python coversion implemented as casting
+    arguments = [left_arr, right_arr]
     tasklet_args = ['__in1', '__in2']
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
     if right_cast is not None:
@@ -990,6 +1079,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
         right_arr = None
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         right_shape = [1]
+        arguments = [left_arr, right_operand]
         tasklet_args = ['__in1', str(right_operand)]
     else:
         left_arr = None
@@ -999,10 +1089,13 @@ def _array_const_binop(visitor: 'ProgramVisitor',
         right_type = right_arr.dtype
         right_shape = right_arr.shape
         storage = right_arr.storage
+        arguments = [left_operand, right_arr]
         tasklet_args = [str(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
@@ -1074,6 +1167,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         right_arr = None
         right_type = _sym_type(right_operand)
         right_shape = [1]
+        arguments = [left_arr, right_operand]
         tasklet_args = ['__in1', astutils.unparse(right_operand)]
     else:
         left_arr = None
@@ -1083,10 +1177,13 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         right_type = right_arr.dtype
         right_shape = right_arr.shape
         storage = right_arr.storage
+        arguments = [left_operand, right_arr]
         tasklet_args = [astutils.unparse(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
@@ -1157,9 +1254,12 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor',
     right_type = right_scal.dtype
 
     # Implicit Python coversion implemented as casting
+    arguments = [left_scal, right_scal]
     tasklet_args = ['__in1', '__in2']
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
     if right_cast is not None:
@@ -1204,6 +1304,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
         storage = left_scal.storage
         right_scal = None
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+        arguments = [left_scal, right_operand]
         tasklet_args = ['__in1', str(right_operand)]
     else:
         left_scal = None
@@ -1211,10 +1312,13 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
+        arguments = [left_operand, right_scal]
         tasklet_args = [str(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
@@ -1267,6 +1371,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         storage = left_scal.storage
         right_scal = None
         right_type = _sym_type(right_operand)
+        arguments = [left_scal, right_operand]
         tasklet_args = ['__in1', astutils.unparse(right_operand)]
     else:
         left_scal = None
@@ -1274,10 +1379,13 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
+        arguments = [left_operand, right_scal]
         tasklet_args = [astutils.unparse(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
@@ -1339,21 +1447,9 @@ def _const_const_binop(visitor: 'ProgramVisitor',
                        opcode: str):
     '''Both operands are Constants or Symbols'''
 
-    if isinstance(left_operand, Number):
-        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    else:
-        left_type = None
-    if isinstance(right_operand, Number):
-        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
-    else:
-        right_type = None
-
-    if left_type and right_type:
-        _, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                 operator)
-    else:
-        left_cast = None
-        right_cast = None
+    _, casting = _result_type([left_operand, right_operand], operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
 
     if isinstance(left_operand, Number) and left_cast is not None:
         left = left_cast(left_operand)
@@ -1606,16 +1702,19 @@ UfuncOutput = Union[str, None]
 ufuncs = dict(
     add = dict(
         name="_numpy_add_",
+        operator="Add",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 + __in2",
         reduce="lambda a, b: a + b", initial=np.add.identity),
     subtract = dict(
         name="_numpy_subtract_",
+        operator="Sub",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 - __in2",
         reduce="lambda a, b: a - b", initial=np.subtract.identity),
     multiply = dict(
         name="_numpy_multipy_",
+        operator="Mul",
         inputs=["__in1", "__in2"],
         outputs=["__out"], code="__out = __in1 * __in2",
         reduce="lambda a, b: a * b", initial=np.multiply.identity),
@@ -1625,9 +1724,13 @@ ufuncs = dict(
     #     inputs=["__in1", "__in2"],
     #     outputs=["__out"], code="__out = __in1 / __in2",
     #     reduce="lambda a, b: a / b", initial=np.divide.identity),
-    minimum = dict(name="_numpy_min_", inputs=["__in1", "__in2"],
-                   outputs=["__out"], code="__out = min(__in1, __in2)",
-                   reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
+    minimum = dict(
+        name="_numpy_min_",
+        operator=None,
+        inputs=["__in1", "__in2"],
+        outputs=["__out"],
+        code="__out = min(__in1, __in2)",
+        reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
 )
 
 
@@ -2019,8 +2122,11 @@ def _create_output(sdfg: SDFG,
     return outputs
 
 
-def _set_tasklet_params(ufunc_impl: Dict[str, Any],
-                        inputs: List[UfuncInput]) -> Dict[str, Any]:
+def _set_tasklet_params(
+    ufunc_impl: Dict[str, Any],
+    inputs: List[UfuncInput],
+    casting: List[dtypes.typeclass] = None
+) -> Dict[str, Any]:
     """ Sets the tasklet parameters for a NumPy ufunc call.
 
         :param ufunc_impl: Information on how the ufunc must be implemented
@@ -2039,6 +2145,11 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
     # Remove input connectors related to constants
     # and fix constants/symbols in the tasklet code
     for i, arg in reversed(list(enumerate(inputs))):
+        inp_conn = inp_connectors[i]
+        if casting and casting[i]:
+            repl = "{c}({o})".format(c=str(casting[i]).replace('::', '.'),
+                                     o=inp_conn)
+            code = code.replace(inp_conn, repl)
         if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
             code = code.replace(inp_conn, astutils.unparse(arg))
@@ -2302,18 +2413,11 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
          visitor, ast_node, sdfg, ufunc_name, inp_shapes, outputs)
     
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # Infer result type
+    result_type, casting = _result_type(
+        [sdfg.arrays[arg]
+        if isinstance(arg, str) and arg in sdfg.arrays else arg
+        for arg in inputs], ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
         if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
@@ -2323,7 +2427,7 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
-    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
 
     # Create subgraph
     _create_subgraph(visitor, sdfg, state, inputs, outputs, map_indices,
@@ -2867,18 +2971,11 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     else:
         input_indices.append(None)
     
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    # Infer result type
+    result_type, casting = _result_type(
+        [sdfg.arrays[arg]
+        if isinstance(arg, str) and arg in sdfg.arrays else arg
+        for arg in inputs], ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
         if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
@@ -2888,7 +2985,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
-    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
 
     # Create subgraph
     _create_subgraph(visitor, sdfg, state, inputs, outputs, map_range,
