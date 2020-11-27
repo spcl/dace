@@ -18,7 +18,6 @@ class ExpandGemvPure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
-
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
                                                        shape_x, _),
          _) = _get_matmul_operands(node,
@@ -57,24 +56,17 @@ class ExpandGemvPure(ExpandTransformation):
         _, array_x = sdfg.add_array("_x", shape_x, dtype_x, storage=storage)
         _, array_y = sdfg.add_array("_y", shape_y, dtype_y, storage=storage)
 
-        if node.alpha == 1.0:
-            mul_program = "__out = __A * __x"
-        else:
-            mul_program = "__out = {} * __A * __x".format(
-                _cast_to_dtype_str(node.alpha, dtype_a))
+        mul_program = "__out = {} * __A * __x".format(node.alpha)
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if node.beta == 0:
-            mul_out, mul_out_array = "_y", array_y
-            output_nodes = None
-        else:
-            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-                shape_y, dtype_y, storage=storage)
 
-            access_tmp = state.add_read(tmp)
-            output_nodes = {mul_out: access_tmp}
+        mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
+            shape_y, dtype_y, storage=storage)
+
+        access_tmp = state.add_read(tmp)
+        output_nodes = {mul_out: access_tmp}
 
         # Initialization map
         init_state.add_mapped_tasklet(
@@ -108,22 +100,22 @@ class ExpandGemvPure(ExpandTransformation):
             external_edges=True,
             output_nodes=output_nodes)
 
-        if node.beta != 0:
-            add_program = "__y_out = ({} * __y_in) + __tmp".format(
-                _cast_to_dtype_str(node.beta, dtype_a))
+        add_program = "__y_out = ({} * __y_in) + __tmp".format(
+            node.beta)
 
-            memlet_idx = "__i"
+        memlet_idx = "__i"
 
-            # addition map
-            state.add_mapped_tasklet(
-                "_Add_", {"__i": "0:{}".format(N)}, {
-                    "__y_in": dace.Memlet.simple("_y", memlet_idx),
-                    "__tmp": dace.Memlet.simple(mul_out, "__i"),
-                },
-                add_program, {"__y_out": dace.Memlet.simple("_y", "__i")},
-                external_edges=True,
-                input_nodes={mul_out: access_tmp})
+        # addition map
+        state.add_mapped_tasklet(
+            "_Add_", {"__i": "0:{}".format(N)}, {
+                "__y_in": dace.Memlet.simple("_y", memlet_idx),
+                "__tmp": dace.Memlet.simple(mul_out, "__i"),
+            },
+            add_program, {"__y_out": dace.Memlet.simple("_y", "__i")},
+            external_edges=True,
+            input_nodes={mul_out: access_tmp})
 
+        sdfg.save('/tmp/expansion.sdfg')
         return sdfg
 
     @staticmethod
@@ -146,26 +138,22 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
+    alpha = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("alpha"))
+    beta = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("beta"))
+
     transA = Property(dtype=bool,
                       desc="Whether to transpose A before multiplying")
-    alpha = Property(
-        dtype=tuple(dace.dtypes._CONSTANT_TYPES),
-        default=1,
-        desc="A scalar which will be multiplied with A @ x before adding y")
-    beta = Property(dtype=tuple(dace.dtypes._CONSTANT_TYPES),
-                    default=1,
-                    desc="A scalar which will be multiplied with y")
 
     def __init__(self,
                  name,
                  dtype=None,
                  location=None,
                  transA=False,
-                 alpha=1,
-                 beta=0):
+                 alpha=dace.symbolic.symbol("alpha"),
+                 beta=dace.symbolic.symbol("beta")):
         super().__init__(name,
                          location=location,
-                         inputs={"_A", "_x"},
+                         inputs={"_A", "_x", "_y"},
                          outputs={"_y"})
         self.dtype = dtype
         self.transA = transA
