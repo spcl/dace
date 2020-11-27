@@ -43,25 +43,25 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # COMPUTE
         # ---------- ----------
         vec_map_entry, vec_map_exit = vec_add_state.add_map(
-            'vecAdd_map', dict(i='0:{0}/{1}'.format(n, veclen)))
+            'axpy_map', dict(i='0:{0}/{1}'.format(n, veclen)))
 
-        vecAdd_tasklet = vec_add_state.add_tasklet(
-            'vecAdd_task', ['x_con', 'y_con'], ['z_con'],
+        axpy_tasklet = vec_add_state.add_tasklet(
+            'axpy_task', ['x_con', 'y_con'], ['z_con'],
             'z_con = {} * x_con + y_con'.format(a))
 
         vec_add_state.add_memlet_path(x_in,
                                       vec_map_entry,
-                                      vecAdd_tasklet,
+                                      axpy_tasklet,
                                       dst_conn='x_con',
                                       memlet=dace.Memlet.simple(x_in.data, 'i'))
 
         vec_add_state.add_memlet_path(y_in,
                                       vec_map_entry,
-                                      vecAdd_tasklet,
+                                      axpy_tasklet,
                                       dst_conn='y_con',
                                       memlet=dace.Memlet.simple(y_in.data, 'i'))
 
-        vec_add_state.add_memlet_path(vecAdd_tasklet,
+        vec_add_state.add_memlet_path(axpy_tasklet,
                                       vec_map_exit,
                                       z_out,
                                       src_conn='z_con',
@@ -121,27 +121,27 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         # COMPUTE
         # ---------- ----------
         vec_map_entry, vec_map_exit = vec_add_state.add_map(
-            'vecAdd_map',
+            'axpy_map',
             dict(i='0:{0}/{1}'.format(n, veclen)),
             schedule=dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet = vec_add_state.add_tasklet(
-            'vecAdd_task', ['x_con', 'y_con'], ['z_con'],
+        axpy_tasklet = vec_add_state.add_tasklet(
+            'axpy_task', ['x_con', 'y_con'], ['z_con'],
             'z_con = {} * x_con + y_con'.format(a))
 
         vec_add_state.add_memlet_path(x_in,
                                       vec_map_entry,
-                                      vecAdd_tasklet,
+                                      axpy_tasklet,
                                       dst_conn='x_con',
                                       memlet=dace.Memlet.simple(x_in.data, '0'))
 
         vec_add_state.add_memlet_path(y_in,
                                       vec_map_entry,
-                                      vecAdd_tasklet,
+                                      axpy_tasklet,
                                       dst_conn='y_con',
                                       memlet=dace.Memlet.simple(y_in.data, '0'))
 
-        vec_add_state.add_memlet_path(vecAdd_tasklet,
+        vec_add_state.add_memlet_path(axpy_tasklet,
                                       vec_map_exit,
                                       z_out,
                                       src_conn='z_con',
@@ -169,6 +169,102 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
                                                  buffer_size_y, buffer_size_res)
 
 
+@dace.library.expansion
+class ExpandAxpyIntelFPGAVectorized(ExpandTransformation):
+
+    # Intel FPGA expansion, inputs are Global FPGA Buffer
+    # Plain data type, computation is internally unrolled
+
+    environments = []
+
+    @staticmethod
+    def make_sdfg(dtype, vec_width, a):
+
+        # --------------------
+        # SETUP GRAPH
+        # --------------------
+        n = dace.symbol("n")
+
+        axpy_sdfg = dace.SDFG('axpy_graph')
+        axpy_state = axpy_sdfg.add_state()
+
+        # ---------- ----------
+        # MEMORY LOCATIONS
+        # ---------- ----------
+        axpy_sdfg.add_array('_x',
+                            shape=[n],
+                            dtype=dtype,
+                            storage=dace.dtypes.StorageType.FPGA_Global)
+        axpy_sdfg.add_array('_y',
+                            shape=[n],
+                            dtype=dtype,
+                            storage=dace.dtypes.StorageType.FPGA_Global)
+        axpy_sdfg.add_array('_res',
+                            shape=[n],
+                            dtype=dtype,
+                            storage=dace.dtypes.StorageType.FPGA_Global)
+
+        x_in = axpy_state.add_read('_x')
+        y_in = axpy_state.add_read('_y')
+        z_out = axpy_state.add_write('_res')
+
+        # ---------- ---------------------
+        # COMPUTE: we have two nested maps
+        # ---------- --------------------
+        #Strip mined loop
+        outer_map_entry, outer_map_exit = axpy_state.add_map(
+            'outer_map',
+            dict(i='0:{0}/{1}'.format(n, vec_width)),
+            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        compute_map_entry, compute_map_exit = axpy_state.add_map(
+            'compute_map',
+            dict(j='0:{}'.format(vec_width)),
+            schedule=dace.dtypes.ScheduleType.FPGA_Device,
+            unroll=True)
+
+        axpy_tasklet = axpy_state.add_tasklet(
+            'axpy_task', ['x_con', 'y_con'], ['z_con'],
+            'z_con = {} * x_con + y_con'.format(a))
+
+        axpy_state.add_memlet_path(x_in,
+                                   outer_map_entry,
+                                   compute_map_entry,
+                                   axpy_tasklet,
+                                   dst_conn='x_con',
+                                   memlet=dace.Memlet.simple(
+                                       x_in.data, 'i*{}+j'.format(vec_width)))
+
+        axpy_state.add_memlet_path(y_in,
+                                   outer_map_entry,
+                                   compute_map_entry,
+                                   axpy_tasklet,
+                                   dst_conn='y_con',
+                                   memlet=dace.Memlet.simple(
+                                       y_in.data, 'i*{}+j'.format(vec_width)))
+
+        axpy_state.add_memlet_path(axpy_tasklet,
+                                   compute_map_exit,
+                                   outer_map_exit,
+                                   z_out,
+                                   src_conn='z_con',
+                                   memlet=dace.Memlet.simple(
+                                       z_out.data, 'i*{}+j'.format(vec_width)))
+
+        return axpy_sdfg
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
+
+        node_sdfg = ExpandAxpyIntelFPGAVectorized.make_sdfg(
+            node.dtype, int(node.veclen), node.a)
+
+        return node_sdfg
+
+
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """Executes a * _x + _y. It implements the BLAS AXPY operation
@@ -182,7 +278,8 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
-        "fpga_stream": ExpandAxpyFPGAStreaming
+        "fpga_stream": ExpandAxpyFPGAStreaming,
+        "Intel_FPGA_DRAM": ExpandAxpyIntelFPGAVectorized
     }
     default_implementation = 'pure'
 

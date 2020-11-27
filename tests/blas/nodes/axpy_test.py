@@ -52,11 +52,16 @@ def run_test(configs, target, implementation, overwrite_y=False):
                                  config[2],
                                  implementation,
                                  testCase=config[3])
+        elif target == "intel_fpga_dram":
+            program = intel_fpga_graph(config[1],
+                                       config[2],
+                                       implementation,
+                                       testCase=config[3])
         else:
             program = pure_graph(config[1], config[2], testCase=config[3])
 
         ref_norm = 0
-        if target == "fpga":
+        if target == "fpga" or target == "intel_fpga_dram":
 
             # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
             queue = Queue()
@@ -153,7 +158,7 @@ def test_pure():
 
 
 # ---------- ----------
-# FPGA graph program
+# FPGA graph programs
 # ---------- ----------
 def fpga_graph(veclen, precision, vendor, testCase="0"):
 
@@ -200,7 +205,116 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     return test_sdfg.compile()
 
 
-def test_fpga(vendor):
+def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
+
+    DATATYPE = precision
+
+    n = dace.symbol("n")
+    a = dace.symbol("a")
+
+    test_sdfg = dace.SDFG("axpy_test_intel_" + testCase)
+    test_sdfg.add_symbol(a.name, DATATYPE)
+
+    test_sdfg.add_array('x1', shape=[n], dtype=DATATYPE)
+    test_sdfg.add_array('y1', shape=[n], dtype=DATATYPE)
+    test_sdfg.add_array('z1', shape=[n], dtype=DATATYPE)
+
+    ###########################################################################
+    # Copy data to FPGA
+
+    copy_in_state = test_sdfg.add_state("copy_to_device")
+
+    in_host_x = copy_in_state.add_read("x1")
+    in_host_y = copy_in_state.add_read("y1")
+
+    test_sdfg.add_array("device_x",
+                        shape=[n],
+                        dtype=precision,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+    test_sdfg.add_array("device_y",
+                        shape=[n],
+                        dtype=precision,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+
+    in_device_x = copy_in_state.add_write("device_x")
+    in_device_y = copy_in_state.add_write("device_y")
+
+    copy_in_state.add_memlet_path(in_host_x,
+                                  in_device_x,
+                                  memlet=Memlet.simple(in_host_x,
+                                                       "0:{}".format(n)))
+    copy_in_state.add_memlet_path(in_host_y,
+                                  in_device_y,
+                                  memlet=Memlet.simple(in_host_y,
+                                                       "0:{}".format(n)))
+
+    ###########################################################################
+    # Copy data from FPGA
+    copy_out_state = test_sdfg.add_state("copy_to_host")
+
+    test_sdfg.add_array("device_z",
+                        shape=[n],
+                        dtype=precision,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+
+    out_device = copy_out_state.add_read("device_z")
+    out_host = copy_out_state.add_write("z1")
+
+    copy_out_state.add_memlet_path(out_device,
+                                   out_host,
+                                   memlet=Memlet.simple(out_host,
+                                                        "0:{}".format(n)))
+
+    ########################################################################
+    # FPGA State
+
+    fpga_state = test_sdfg.add_state("fpga_state")
+
+    x = fpga_state.add_read("device_x")
+    y = fpga_state.add_read("device_y")
+    z = fpga_state.add_write("device_z")
+
+    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, veclen=veclen, n=n, a=a)
+    saxpy_node.implementation = 'Intel_FPGA_DRAM'
+
+    fpga_state.add_memlet_path(x,
+                               saxpy_node,
+                               dst_conn="_x",
+                               memlet=Memlet.simple(x, "0:{}".format(n)))
+    fpga_state.add_memlet_path(y,
+                               saxpy_node,
+                               dst_conn="_y",
+                               memlet=Memlet.simple(y, "0:{}".format(n)))
+    fpga_state.add_memlet_path(saxpy_node,
+                               z,
+                               src_conn="_res",
+                               memlet=Memlet.simple(z, "0:{}".format(n)))
+
+    ######################################
+    # Interstate edges
+    test_sdfg.add_edge(copy_in_state, fpga_state,
+                       dace.sdfg.sdfg.InterstateEdge())
+    test_sdfg.add_edge(fpga_state, copy_out_state,
+                       dace.sdfg.sdfg.InterstateEdge())
+
+    #########
+    # Validate
+    test_sdfg.fill_scope_connectors()
+    test_sdfg.validate()
+
+    test_sdfg.expand_library_nodes()
+
+    mode = "simulation" if vendor == "xilinx" else "emulator"
+    dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
+    dace.config.Config.set("compiler", vendor, "mode", value=mode)
+
+    return test_sdfg.compile()
+
+
+def test_fpga(type, vendor):
 
     print("Run BLAS test: AXPY fpga", vendor + "...")
 
@@ -208,7 +322,7 @@ def test_fpga(vendor):
                (random.random(), 1, dace.float32, "2"),
                (1.0, 1, dace.float64, "3"), (1.0, 4, dace.float64, "4")]
 
-    run_test(configs, "fpga", vendor)
+    run_test(configs, type, vendor)
 
     print(" --> passed")
 
@@ -222,6 +336,8 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "intel_fpga" or args.target == "xilinx":
-        test_fpga(args.target)
+        test_fpga("fpga", args.target)
+    elif args.target == "intel_fpga_dram":
+        test_fpga("intel_fpga_dram", "intel_fpga")
     else:
         test_pure()

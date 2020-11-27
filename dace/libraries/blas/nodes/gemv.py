@@ -654,7 +654,6 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
         gemv_sdfg.fill_scope_connectors()
         gemv_sdfg.validate()
-        gemv_sdfg.save('/tmp/out.sdfg')
 
         return gemv_sdfg
 
