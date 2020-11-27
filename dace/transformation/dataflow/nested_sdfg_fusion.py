@@ -191,6 +191,13 @@ class NestedSDFGFusion(transformation.Transformation):
                 prefix = 'nested2_'
             node._label = prefix + node._label  # is there a better way?
             node.parent = new_nested_sdfg
+
+            # ugly fix of nested sdfg field that points to parent
+            for n in node.nodes():
+                if isinstance(n, dace_nodes.NestedSDFG):
+                    s: dace_sdfg.SDFG = n.sdfg
+                    s.parent_sdfg = new_nested_sdfg
+
             new_nested_sdfg.add_node(node)
 
         for edge in itertools.chain(nested_sdfg1.sdfg.edges(),
