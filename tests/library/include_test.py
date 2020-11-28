@@ -16,11 +16,15 @@ def assert_not_exists(name):
     if not raised:
         raise RuntimeError("Library " + name + " exists.")
 
+def test_include():
+    assert_not_exists("FooLib")
+    assert_not_exists("BarLib")
 
-assert_not_exists("FooLib")
-assert_not_exists("BarLib")
+    import foolib  # foolib depends on barlib
 
-import foolib  # foolib depends on barlib
+    assert_exists("FooLib")
+    assert_exists("BarLib")
 
-assert_exists("FooLib")
-assert_exists("BarLib")
+
+if __name__ == '__main__':
+    test_include()

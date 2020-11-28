@@ -14,8 +14,7 @@ def cpp_tasklet(A, B):
         """
 
 
-if __name__ == '__main__':
-
+def test():
     A = dace.ndarray((2, ), dace.uint32)
     B = dace.ndarray((1, ), dace.uint32)
 
@@ -24,5 +23,8 @@ if __name__ == '__main__':
 
     cpp_tasklet(A, B)
 
-    if B[0] != 5:
-        raise RuntimeError("Expected output {}, got {}".format(5, B))
+    assert B[0] == 5
+
+
+if __name__ == "__main__":
+    test()

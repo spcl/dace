@@ -36,9 +36,12 @@ def test_local_program():
     nested_call_subarray2(A, B, N=2)
 
 
-if __name__ == '__main__':
+def test_nested_call():
     A = np.array([1, 2], dtype=np.float32)
     B = np.array([1, 2], dtype=np.float32)
     nested_call_subarray(A, B, N=2)
 
+
+if __name__ == '__main__':
+    test_nested_call()
     test_local_program()

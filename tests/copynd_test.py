@@ -4,7 +4,8 @@ from __future__ import print_function
 import dace
 import numpy as np
 
-if __name__ == "__main__":
+
+def test():
     print("==== Program start ====")
     print('Copy ND tests')
 
@@ -17,10 +18,10 @@ if __name__ == "__main__":
     arrays = []
 
     # Copy 1: sub-2d array to sub-2d array
-    arrays.append(
-        state.add_array('A_' + str(len(arrays)), [N, N], dace.float32))
-    arrays.append(
-        state.add_array('A_' + str(len(arrays)), [5, 7], dace.float32))
+    arrays.append(state.add_array('A_' + str(len(arrays)), [N, N],
+                                  dace.float32))
+    arrays.append(state.add_array('A_' + str(len(arrays)), [5, 7],
+                                  dace.float32))
     state.add_edge(arrays[-2], None, arrays[-1], None,
                    dace.memlet.Memlet.simple(arrays[-2], '5:10, N-7:N'))
 
@@ -34,14 +35,11 @@ if __name__ == "__main__":
 
     # Copy 3: 5d array to 5d array
     arrays.append(
-        state.add_array('A_' + str(len(arrays)), [2, 3, 4, 5, 6],
-                        dace.float32))
+        state.add_array('A_' + str(len(arrays)), [2, 3, 4, 5, 6], dace.float32))
     arrays.append(
-        state.add_array('A_' + str(len(arrays)), [2, 3, 4, 5, 6],
-                        dace.float32))
-    state.add_edge(
-        arrays[-2], None, arrays[-1], None,
-        dace.memlet.Memlet.simple(arrays[-2], '0:2,0:3,0:4,0:5,0:6'))
+        state.add_array('A_' + str(len(arrays)), [2, 3, 4, 5, 6], dace.float32))
+    state.add_edge(arrays[-2], None, arrays[-1], None,
+                   dace.memlet.Memlet.simple(arrays[-2], '0:2,0:3,0:4,0:5,0:6'))
 
     # Copy 4: contiguous 1d subset of a 4d array to a 1d array
     arrays.append(
@@ -129,5 +127,8 @@ if __name__ == "__main__":
 
     print('Differences: ', diffs)
 
-    print("==== Program end ====")
-    exit(0 if all([diff < 1e-7 for diff in diffs]) else 1)
+    assert all([diff < 1e-7 for diff in diffs])
+
+
+if __name__ == "__main__":
+    test()
