@@ -448,7 +448,7 @@ class StateFusion(transformation.Transformation):
 
         # Merge second state to first state
         # First keep a backup of the topological sorted order of the nodes
-        sdict = second_state.scope_dict()
+        sdict = first_state.scope_dict()
         order = [
             x for x in reversed(list(nx.topological_sort(first_state._nx)))
             if isinstance(x, nodes.AccessNode) and sdict[x] is None
