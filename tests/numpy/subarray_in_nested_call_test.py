@@ -17,11 +17,14 @@ def transpose_test(C: dace.float32[20, 20], D: dace.float32[20, 20]):
     sdfg_transpose(C[:], D[:])
 
 
-if __name__ == '__main__':
+def test():
     c = np.random.rand(20, 20).astype(np.float32)
     d = np.zeros((20, 20), dtype=np.float32)
 
     transpose_test(c, d, K=20, M=20)
 
-    if not np.allclose(c.transpose(), d):
-        exit(1)
+    assert np.allclose(c.transpose(), d)
+
+
+if __name__ == '__main__':
+    test()

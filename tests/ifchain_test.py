@@ -43,18 +43,22 @@ def ifchain(A: dace.float32[1]):
             o = 9
 
 
-if __name__ == '__main__':
-    print('If without else test')
+def test_if_without_else():
     A = np.ndarray([1], np.float32)
     A[0] = 1
     noelse(A)
     if A[0] != 5:
-        print("ERROR in test: %f != 5" % A[0])
-        exit(1)
-    print('If chain test')
+        raise AssertionError("ERROR in test: %f != 5" % A[0])
+
+
+def test_if_chain():
+    A = np.ndarray([1], np.float32)
+    A[0] = 5
     ifchain(A)
     if A[0] != 9:
-        print("ERROR in test: %f != 9" % A[0])
-        exit(1)
-    print("Success!")
-    exit(0)
+        raise AssertionError("ERROR in test: %f != 9" % A[0])
+
+
+if __name__ == "__main__":
+    test_if_without_else()
+    test_if_chain()

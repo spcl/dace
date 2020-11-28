@@ -104,6 +104,7 @@ def test_subgraph():
 
     B = dcpy(B_init)
     cgraph(A=A, B=B)
+    del cgraph
     assert np.allclose(B, expected)
 
     graph.validate()

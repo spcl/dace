@@ -19,9 +19,14 @@ nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {})
 state.add_edge(state.add_read('A'), None, nsdfg_node, 'a',
                dace.Memlet.simple('A', '0'))
 
-if __name__ == '__main__':
+
+def test():
     try:
         sdfg.validate()
         raise AssertionError('SDFG should not validate')
     except InvalidSDFGError:
         print('Test passed')
+
+
+if __name__ == '__main__':
+    test()

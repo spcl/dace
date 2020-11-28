@@ -170,6 +170,8 @@ def rgf_dense(
 if __name__ == '__main__':
 
     print("=== Generating SDFG ===")
-    sdfg = rgf_dense.to_sdfg()
+    sdfg = rgf_dense.to_sdfg(strict=False)
+    print("=== Applying strict transformations ===")
+    sdfg.apply_strict_transformations()
     print("=== Compiling ===")
     sdfg.compile()

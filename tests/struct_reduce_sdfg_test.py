@@ -18,7 +18,8 @@ state.add_edge(
         '0',
         wcr_str='lambda a, b: vec3d(x=a.x + b.x, y=a.y + b.y, z=a.z + b.z)'))
 
-if __name__ == '__main__':
+
+def test():
     inout = np.ndarray([1], dtype=np.dtype(vec3d.as_ctypes()))
     inout[0] = (4.0, 5.0, 6.0)
 
@@ -28,4 +29,8 @@ if __name__ == '__main__':
     diff = tuple(abs(x - y) for x, y in zip(inout[0], expected))
 
     print('Difference:', diff)
-    exit(0 if all(d <= 1e-5 for d in diff) else 1)
+    assert all(d <= 1e-5 for d in diff)
+
+
+if __name__ == "__main__":
+    test()

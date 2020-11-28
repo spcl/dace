@@ -145,9 +145,28 @@ def test_2d_assignment():
     assert np.allclose(A[0, 0], A[1, 1])
 
 
+@dace.program
+def whiletest(A: dace.int32[1]):
+    while A[0] > 0:
+        with dace.tasklet:
+            a << A[0]
+            b >> A[0]
+            b = a - 1
+
+
+def test_while():
+    A = dace.ndarray([1], dace.int32)
+    A[0] = 5
+
+    whiletest(A)
+
+    assert A[0] == 0
+
+
 if __name__ == '__main__':
     test_control_flow_basic()
     test_function_in_condition()
     test_2d_access()
     test_2d_access_sdfgapi()
     test_2d_assignment()
+    test_while()
