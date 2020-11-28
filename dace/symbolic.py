@@ -597,6 +597,8 @@ def simplify_ext(expr):
     :param expr: A sympy expression.
     :return: Simplified version of the expression.
     """
+    if not isinstance(expr, sympy.Basic):
+        return expr
     a = sympy.Wild('a')
     b = sympy.Wild('b')
     c = sympy.Wild('c')

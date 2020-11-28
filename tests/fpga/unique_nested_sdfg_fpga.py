@@ -124,7 +124,6 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     # Validate
     vecAdd_sdfg.fill_scope_connectors()
     vecAdd_sdfg.validate()
-    vecAdd_sdfg.save('/tmp/out.sdfg')
     return vecAdd_sdfg
 
 

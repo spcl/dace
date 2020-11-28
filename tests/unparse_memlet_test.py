@@ -14,7 +14,7 @@ def floor_div(Input, Output):
         out = inp
 
 
-if __name__ == '__main__':
+def test():
     N.set(25)
     A = np.random.rand(N.get())
     B = np.zeros([N.get()], dtype=np.float64)
@@ -28,4 +28,7 @@ if __name__ == '__main__':
     actual = np.sum(B)
     diff = abs(actual - expected)
     print('Difference:', diff)
-    exit(1 if diff > 1e-5 else 0)
+    assert diff <= 1e-5
+
+if __name__ == "__main__":
+    test()

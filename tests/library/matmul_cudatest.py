@@ -6,7 +6,7 @@ import dace.libraries.blas as blas
 import itertools
 import numpy as np
 import sys
-import warnings
+import pytest
 
 ###############################################################################
 
@@ -130,15 +130,15 @@ def _test_matmul(implementation,
         return
 
     diff = np.linalg.norm(ref - z)
-    if diff >= eps:
-        print("Unexpected result returned from matrix multiplication: "
-              "diff %f" % diff)
-        sys.exit(1)
+    assert diff < eps
 
     print("Test ran successfully for {}.".format(implementation))
 
 
+@pytest.mark.gpu
 def test_types():
+    old_impl = blas.default_implementation
+    blas.default_implementation = "cuBLAS"
     # Try different data types
     _test_matmul('cuBLAS double',
                  dace.float64,
@@ -157,21 +157,32 @@ def test_types():
                  'cuBLAS',
                  dace.StorageType.GPU_Global,
                  eps=1e-6)
+    blas.default_implementation = old_impl
 
 
-def test_layouts():
-    # Try all data layouts
-    for dl in map(lambda t: ''.join(t),
-                  itertools.product(*([['C', 'F']] * 3))):
-        _test_matmul('cuBLAS float ' + dl,
-                     dace.float32,
-                     'cuBLAS',
-                     dace.StorageType.GPU_Global,
-                     data_layout=dl)
+# Try all data layouts
+LAYOUTS = map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3)))
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize('dl', LAYOUTS)
+def test_layouts(dl):
+    old_impl = blas.default_implementation
+    blas.default_implementation = "cuBLAS"
+    _test_matmul('cuBLAS float ' + dl,
+                 dace.float32,
+                 'cuBLAS',
+                 dace.StorageType.GPU_Global,
+                 data_layout=dl)
+    blas.default_implementation = old_impl
+
+
+@pytest.mark.gpu
 def test_batchmm():
     b, m, n, k = tuple(dace.symbol(k) for k in 'bmnk')
+
+    old_impl = blas.default_implementation
+    blas.default_implementation = "cuBLAS"
 
     @dace.program
     def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n],
@@ -189,6 +200,8 @@ def test_batchmm():
     z = np.zeros([b, m, n], np.float64)
     csdfg(A=x, B=y, C=z, b=b, m=m, n=n, k=k)
 
+    blas.default_implementation = old_impl
+
     ref = x @ y
 
     diff = np.linalg.norm(ref - z)
@@ -200,11 +213,11 @@ def test_batchmm():
 
 if __name__ == '__main__':
     import os
-    blas.default_implementation = "cuBLAS"
     try:
         test_batchmm()
         test_types()
-        test_layouts()
+        for dl in LAYOUTS:
+            test_layouts(dl)
     except SystemExit as ex:
         print('\n', flush=True)
         # Skip all teardown to avoid crashes affecting exit code

@@ -308,7 +308,7 @@ def merge_maps(
     # Create merged map by inheriting attributes from outer map and using
     # the merge functions for parameters and ranges.
     merged_map = copy.deepcopy(outer_map)
-    merged_map.label = 'merged_' + outer_map.label
+    merged_map.label = outer_map.label
     merged_map.params = param_merge(outer_map.params, inner_map.params)
     merged_map.range = range_merge(outer_map.range, inner_map.range)
 

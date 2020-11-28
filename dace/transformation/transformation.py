@@ -474,19 +474,12 @@ class ExpandTransformation(Transformation):
         node = state.nodes()[self.subgraph[type(self)._match_node]]
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
-            # Modify internal schedules according to node schedule
-            if node.schedule != ScheduleType.Default:
-                for nstate in expansion.nodes():
-                    topnodes = nstate.scope_children()[None]
-                    for topnode in topnodes:
-                        if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
-                            topnode.schedule = node.schedule
-
             expansion = state.add_nested_sdfg(expansion,
                                               sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name,
+                                              schedule=node.schedule,
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
@@ -497,6 +490,9 @@ class ExpandTransformation(Transformation):
                 nsdfg.parent_sdfg = sdfg
                 nsdfg.update_sdfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
+
+                # update schedule to match library node schedule
+                nsdfg.schedule = node.schedule
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule

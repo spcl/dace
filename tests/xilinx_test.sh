@@ -55,7 +55,7 @@ run_sample() {
 }
 
 run_all() {
-  
+
     # Args:
     #  0: Boolean flag that runs all (1) or a reduced set (0) of samples
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test 0
@@ -83,6 +83,9 @@ run_all() {
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
 
+
+    #Nested SDFGs generated as FPGA kernels
+    run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
 }
 
 # Check if xocc is vailable

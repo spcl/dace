@@ -1,7 +1,8 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
-if __name__ == '__main__':
+
+def test():
     s = dace.define_stream()
     S = dace.define_streamarray([2, 2])
 
@@ -15,3 +16,7 @@ if __name__ == '__main__':
         print(s[0].popleft())
     while len(S[1, 1]):
         print(S[1, 1].popleft())
+
+
+if __name__ == "__main__":
+    test()
