@@ -1373,6 +1373,9 @@ def propagate_subset(memlets: List[Memlet],
 
     new_subset = None
     for md in memlets:
+        if md.is_empty():
+            continue
+
         tmp_subset = None
 
         subset = None

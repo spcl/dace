@@ -473,12 +473,18 @@ class StateGraphView(object):
             for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
                 if isinstance(n, nd.AccessNode):
                     for e in sg.in_edges(n):
+                        # skip empty memlets
+                        if e.data.is_empty():
+                            continue
                         # Store all subsets that have been written
                         ws[n.data].append(e.data.subset)
                     for e in sg.out_edges(n):
-                        # if n.data in ws:
-                        #     if any(s.covers(e.data.subset) for s in ws[n.data]):
-                        #         continue
+                        # skip empty memlets
+                        if e.data.is_empty():
+                            continue
+                        #if n.data in ws:
+                        #    if any(s.covers(e.data.subset) for s in ws[n.data]):
+                        #        continue
                         rs[n.data].append(e.data.subset)
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
