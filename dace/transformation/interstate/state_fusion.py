@@ -129,11 +129,13 @@ class StateFusion(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         if isinstance(candidate[StateFusion.first_state], SDFGState):
-            first_state = candidate[StateFusion.first_state]
-            second_state = candidate[StateFusion.second_state]
+            first_state: SDFGState = candidate[StateFusion.first_state]
+            second_state: SDFGState = candidate[StateFusion.second_state]
         else:
-            first_state = graph.node(candidate[StateFusion.first_state])
-            second_state = graph.node(candidate[StateFusion.second_state])
+            first_state: SDFGState = graph.node(
+                candidate[StateFusion.first_state])
+            second_state: SDFGState = graph.node(
+                candidate[StateFusion.second_state])
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -208,7 +210,7 @@ class StateFusion(transformation.Transformation):
             }
             first_output = {
                 node
-                for node in first_state.nodes() if
+                for node in first_state.scope_children()[None] if
                 isinstance(node, nodes.AccessNode) and node not in first_input
             }
             second_input = {
@@ -218,7 +220,7 @@ class StateFusion(transformation.Transformation):
             }
             second_output = {
                 node
-                for node in second_state.nodes() if
+                for node in second_state.scope_children()[None] if
                 isinstance(node, nodes.AccessNode) and node not in second_input
             }
 
@@ -392,11 +394,13 @@ class StateFusion(transformation.Transformation):
 
     def apply(self, sdfg):
         if isinstance(self.subgraph[StateFusion.first_state], SDFGState):
-            first_state = self.subgraph[StateFusion.first_state]
-            second_state = self.subgraph[StateFusion.second_state]
+            first_state: SDFGState = self.subgraph[StateFusion.first_state]
+            second_state: SDFGState = self.subgraph[StateFusion.second_state]
         else:
-            first_state = sdfg.node(self.subgraph[StateFusion.first_state])
-            second_state = sdfg.node(self.subgraph[StateFusion.second_state])
+            first_state: SDFGState = sdfg.node(
+                self.subgraph[StateFusion.first_state])
+            second_state: SDFGState = sdfg.node(
+                self.subgraph[StateFusion.second_state])
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)
@@ -444,9 +448,10 @@ class StateFusion(transformation.Transformation):
 
         # Merge second state to first state
         # First keep a backup of the topological sorted order of the nodes
+        sdict = second_state.scope_dict()
         order = [
             x for x in reversed(list(nx.topological_sort(first_state._nx)))
-            if isinstance(x, nodes.AccessNode)
+            if isinstance(x, nodes.AccessNode) and sdict[x] is None
         ]
         for node in second_state.nodes():
             first_state.add_node(node)
