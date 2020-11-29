@@ -21,7 +21,7 @@ import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 
 
-def _check_range(subset, a, itersym, b, mapskip):
+def _check_range(subset, a, itersym, b, step):
     found = False
     for rb, re, _ in subset.ndrange():
         m = rb.match(a * itersym + b)
@@ -37,7 +37,7 @@ def _check_range(subset, a, itersym, b, mapskip):
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) > m[a]*mapskip) != False:
+            if ((re - rb) > m[a] * step) != False:
                 continue
 
             m = re.match(a * itersym + b)
@@ -125,7 +125,7 @@ class LoopToMap(DetectLoop):
                     # of the form "a*i+b" where a >= 1, and i is the iteration
                     # variable. The iteration variable must be used.
                     if e.data.wcr is None:
-                        if not _check_range(e.data.subset, a, itersym, b):
+                        if not _check_range(e.data.subset, a, itersym, b, step):
                             return False
                     # End of check
 
@@ -143,7 +143,7 @@ class LoopToMap(DetectLoop):
                     if e.data.dynamic and subset.num_elements() != 1:
                         # If pointers are involved, give up
                         return False
-                    if not _check_range(e.data.subset, a, itersym, b):
+                    if not _check_range(e.data.subset, a, itersym, b, step):
                         return False
 
                     pread = propagate_subset([e.data], sdfg.arrays[data],
