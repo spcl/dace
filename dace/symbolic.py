@@ -145,6 +145,12 @@ class SymExpr(object):
         else:
             self._approx_expr = pystr_to_symbolic(approx_expr)
 
+    def __new__(cls, main_expr, approx_expr=None):
+        # If values are equivalent, create a normal symbolic expression
+        if approx_expr is None or main_expr == approx_expr:
+            return main_expr
+        return super().__new__(cls, main_expr, approx_expr)
+
     @property
     def expr(self):
         return self._main_expr
