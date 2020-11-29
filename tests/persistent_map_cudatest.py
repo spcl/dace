@@ -2,11 +2,11 @@
 
 import numpy as np
 import scipy
+import pytest
 
 import dace
 from dace import nodes
 from dace.dtypes import ScheduleType
-
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -18,6 +18,7 @@ nnz = dace.symbol('nnz')
 def spmv(A_row, A_col, A_val, x, b):
     for ignore in dace.map[0]:
         for i in dace.map[0:H]:
+
             @dace.map(_[A_row[i]:A_row[i + 1]])
             def compute(j):
                 a << A_val[j]
@@ -27,6 +28,7 @@ def spmv(A_row, A_col, A_val, x, b):
                 out = a * in_x
 
 
+@pytest.mark.gpu
 def test_persistent_dynamic_map():
 
     print('SPMV with dynamic map')
@@ -48,6 +50,7 @@ def test_persistent_dynamic_map():
     verify(sdfg)
 
 
+@pytest.mark.gpu
 def test_persistent_default():
 
     print('SPMV with default map')

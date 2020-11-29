@@ -10,7 +10,7 @@ def tile_twice_test(a: dace.float64[200]):
     a *= 2.0
 
 
-if __name__ == '__main__':
+def test():
     sdfg = tile_twice_test.to_sdfg()
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations(MapTiling, options={'tile_sizes': (5, )})
@@ -27,4 +27,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(A - expected)
     print('Difference:', diff)
-    exit(1 if diff > 1e-8 else 0)
+    assert diff <= 1e-8
+
+
+if __name__ == "__main__":
+    test()

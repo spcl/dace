@@ -23,7 +23,8 @@ n = state.add_nested_sdfg(nsdfg, None, set(), {'nout'})
 state.add_edge(n, 'nout', B, None,
                Memlet.simple('B', '0', wcr_str='lambda a, b: a*b'))
 
-if __name__ == '__main__':
+
+def test():
     print('Nested conflict resolution test')
 
     Bdata = np.ones([1], np.int32)
@@ -34,4 +35,8 @@ if __name__ == '__main__':
     diff = B_regression[0] - Bdata[0]
     print("Difference:", diff)
     print("==== Program end ====")
-    exit(0 if diff == 0 else 1)
+    assert diff == 0
+
+
+if __name__ == "__main__":
+    test()

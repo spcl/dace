@@ -56,7 +56,8 @@ consume_exit.add_in_connector('IN_V')
 consume_exit.add_out_connector('OUT_S')
 consume_exit.add_out_connector('OUT_V')
 
-if __name__ == '__main__':
+
+def test():
     print('Fibonacci recursion using consume (with chunks, custom condition)')
     input = np.ndarray([1], np.int32)
     output = np.ndarray([1], np.float32)
@@ -69,4 +70,8 @@ if __name__ == '__main__':
     diff = output[0] - regression
     print('Difference:', diff)
     # Allowing for race conditions on quiescence condition
-    exit(1 if (diff < 0 or diff > nprocs) else 0)
+    assert not (diff < 0 or diff > nprocs)
+
+
+if __name__ == '__main__':
+    test()
