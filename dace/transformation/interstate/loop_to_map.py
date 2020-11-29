@@ -30,6 +30,11 @@ def _check_range(subset, a, itersym, b, mapskip):
         if (m[a] >= 1) != True:
             continue
         if re != rb:
+            if isinstance(rb, symbolic.SymExpr):
+                rb = rb.approx
+            if isinstance(re, symbolic.SymExpr):
+                re = re.approx
+
             # If False or indeterminate, the range may
             # overlap across iterations
             if ((re - rb) > m[a]*mapskip) != False:
