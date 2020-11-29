@@ -21,7 +21,7 @@ import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 
 
-def _check_range(subset, a, itersym, b):
+def _check_range(subset, a, itersym, b, mapskip):
     found = False
     for rb, re, _ in subset.ndrange():
         m = rb.match(a * itersym + b)
@@ -32,7 +32,7 @@ def _check_range(subset, a, itersym, b):
         if re != rb:
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) > m[a]) != False:
+            if ((re - rb) > m[a]*mapskip) != False:
                 continue
 
             m = re.match(a * itersym + b)

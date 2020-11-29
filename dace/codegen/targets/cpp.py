@@ -530,11 +530,11 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     def check_map(map, edge):
         from dace.transformation.interstate.loop_to_map import _check_range
         import sympy as sp
-        for itervar in map.params:
+        for itervar, (_,_,mapskip) in zip(map.params, map.range):
             itersym = symbolic.pystr_to_symbolic(itervar)
             a = sp.Wild('a', exclude=[itersym])
             b = sp.Wild('b', exclude=[itersym])
-            if not _check_range(edge.data.subset, a, itersym, b):
+            if not _check_range(edge.data.subset, a, itersym, b, mapskip):
                 return False
         # If matches all map params, good to go
         return True
@@ -576,12 +576,6 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
             edge = None
             print('PAR: Reached transient')
             return False
-        
-    # If SDFG schedule is not None (top-level) or not sequential
-    if (sdfg_schedule is not None
-        and sdfg_schedule != dtypes.ScheduleType.Sequential):
-        print('SEQ: Toplevel schedule is parallel')
-        return True
 
     return False
 
