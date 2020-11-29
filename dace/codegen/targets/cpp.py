@@ -506,7 +506,7 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
         using atomics or critical sections. """
 
-    if edge.data.wcr_nonatomic:
+    if edge.data.wcr_nonatomic or edge.data.wcr is None:
         return False
 
     # If it's an entire SDFG, it's probably write-conflicted
