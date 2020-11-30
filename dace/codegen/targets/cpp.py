@@ -503,6 +503,8 @@ def cpp_ptr_expr(sdfg,
 
 def _check_range_conflicts(subset, a, itersym, b, step):
     found = False
+    if isinstance(step, symbolic.SymExpr):
+        step = step.approx
     for rb, re, _ in subset.ndrange():
         m = rb.match(a * itersym + b)
         if m is None:

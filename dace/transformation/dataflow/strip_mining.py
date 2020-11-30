@@ -158,7 +158,7 @@ class StripMining(transformation.Transformation):
 
     skew = Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc="If True, offsets inner tile back such that it starts with zero")
 
     @staticmethod
