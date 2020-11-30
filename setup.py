@@ -70,7 +70,7 @@ setup(
         'ply', 'websockets', 'requests', 'flask', 'scikit-build', 'cmake',
         'aenum'
     ],
-    extras_require={'testing': ['coverage', 'scipy', 'absl-py', 'opt_einsum']},
+    extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum']},
     entry_points={
         'console_scripts': [
             'dacelab = dace.frontend.octave.dacelab:main',

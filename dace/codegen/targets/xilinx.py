@@ -98,9 +98,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -432,7 +431,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # Insert interface pragmas
         num_mapped_args = 0
         for arg, (_, dataname, _) in zip(array_args, arrays):
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
@@ -441,7 +440,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                     sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                assignment = self._bank_assignments[(dataname, sdfg)]
+                assignment = self._bank_assignments[(dataname, sdfg)] if (
+                    dataname, sdfg) in self._bank_assignments else None
                 if assignment is not None:
                     mem_type, mem_bank = assignment
                     self._interface_assignments[(kernel_name,
@@ -453,7 +453,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             kernel_stream.write(
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
@@ -564,8 +564,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 kernel_args_module += ["int " + p for p in scope.params]
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
-                        raise cgx.CodegenError(
-                            "Strided unroll not supported")
+                        raise cgx.CodegenError("Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".format(

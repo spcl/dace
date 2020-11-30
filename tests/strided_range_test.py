@@ -31,7 +31,8 @@ s0.add_memlet_path(tasklet,
                    src_conn='b',
                    memlet=Memlet.simple(B, '4*i:4*i+4'))
 
-if __name__ == '__main__':
+
+def test():
     print('Strided range tasklet test')
     A = np.random.rand(2, 16, 4).astype(np.float32)
     B = np.random.rand(16).astype(np.float32)
@@ -46,4 +47,8 @@ if __name__ == '__main__':
     ]
     diff = np.linalg.norm(np.array(diffs))
     print('Differences:', [np.linalg.norm(d) for d in diffs])
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

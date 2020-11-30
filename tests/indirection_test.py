@@ -14,7 +14,7 @@ def indirection(A, x, B):
         out = bla
 
 
-if __name__ == '__main__':
+def test():
     W.set(5)
 
     A = dp.ndarray([W * W])
@@ -31,4 +31,7 @@ if __name__ == '__main__':
     print(B)
     B_ref = np.array([A[x[i]] for i in range(W.get())], dtype=B.dtype)
     diff = np.linalg.norm(B - B_ref)
-    exit(0 if diff == 0 else 1)
+    assert diff == 0
+
+if __name__ == "__main__":
+    test()

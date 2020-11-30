@@ -28,7 +28,7 @@ def sdfg_with_children(A: dp.float32[N, N], B: dp.float32[N, N]):
                 out = oin * inp
 
 
-if __name__ == '__main__':
+def test():
     print('Nested SDFG test (Python syntax)')
     # Externals (parameters, symbols)
     N.set(64)
@@ -41,5 +41,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(output - np.power(input, 5)) / (N.get() * N.get())
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

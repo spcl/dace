@@ -10,17 +10,12 @@ flags.DEFINE_bool(
     '(specialized to constant value) symbols')
 flags.DEFINE_bool('sequential', False,
                   'Automatically change all maps to sequential schedule')
+flags.DEFINE_bool('compile', False, 'Only compile without running')
 flags.DEFINE_bool('save', False, 'Save results to file')
 flags.DEFINE_enum('size', 'large',
                   ['mini', 'small', 'medium', 'large', 'extralarge'],
                   'Dataset/problem size')
-_SIZE_TO_IND = {
-    'mini': 0,
-    'small': 1,
-    'medium': 2,
-    'large': 3,
-    'extralarge': 4
-}
+_SIZE_TO_IND = {'mini': 0, 'small': 1, 'medium': 2, 'large': 3, 'extralarge': 4}
 
 FLAGS = flags.FLAGS
 
@@ -71,24 +66,27 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
             sdfg.specialize(psize)
         compiled_sdfg = sdfg.compile()
 
-    print('Initializing arrays...')
-    init_array(*args)
-    print('Running %skernel...' % ('specialized ' if FLAGS.specialize else ''))
+    if FLAGS.compile == False:
+        print('Initializing arrays...')
+        init_array(*args)
+        print('Running %skernel...' %
+              ('specialized ' if FLAGS.specialize else ''))
 
-    if FLAGS.simulate:
-        dace.simulate(func, *args)
-    else:
-        if isinstance(func, dace.SDFG):
-            compiled_sdfg(**keywords, **psize)
+        if FLAGS.simulate:
+            dace.simulate(func, *args)
         else:
-            compiled_sdfg(**{n: arg
-                             for n, arg in zip(func.argnames, args)}, **psize)
+            if isinstance(func, dace.SDFG):
+                compiled_sdfg(**keywords, **psize)
+            else:
+                compiled_sdfg(**{n: arg
+                                 for n, arg in zip(func.argnames, args)},
+                              **psize)
 
-    if FLAGS.save:
-        if not isinstance(output_args, list):
-            output_args(func.name + '.dace.out', *args)
-        else:
-            polybench_dump(func.name + '.dace.out', args, output_args)
+        if FLAGS.save:
+            if not isinstance(output_args, list):
+                output_args(func.name + '.dace.out', *args)
+            else:
+                polybench_dump(func.name + '.dace.out', args, output_args)
 
     print('==== Done ====')
 

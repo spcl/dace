@@ -7,11 +7,11 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic
+from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil
+from dace.sdfg import utils as sdutil, infer_types
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 
@@ -213,6 +213,9 @@ class InlineSDFG(transformation.Transformation):
         nsdfg_node = state.nodes()[self.subgraph[InlineSDFG._nested_sdfg]]
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
+
+        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry)

@@ -5,6 +5,7 @@ import networkx as nx
 import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
+import pytest
 
 N = dace.symbol('N')
 nnz = dace.symbol('nnz')
@@ -310,7 +311,7 @@ fill_update_state(s_update2, front_in, count_in, front_out, count_out,
 bfs.fill_scope_connectors()
 bfs.validate()
 
-
+@pytest.mark.gpu
 def test_persistent_fusion():
     sdfg = bfs
 

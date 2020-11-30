@@ -27,8 +27,8 @@ out1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def test_program(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
-                 C: dace.float64[N, M, O]):
+def program(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
+            C: dace.float64[N, M, O]):
     for i, j in dace.map[0:N, 0:M]:
         with dace.tasklet:
             in1 << A[i, j, 0]
@@ -58,12 +58,6 @@ def helper_sdfg(AA: dace.float64[O], BB: dace.float64[O], CC: dace.float64[O]):
             out >> CC[z]
 
             out = 2 * in1 + 2 * in2 + in3
-
-
-def test_qualitatively(sdfg, graph):
-    fusion(sdfg, graph)
-    sdfg.validate()
-    print("PASS")
 
 
 def fix_sdfg(sdfg, graph):
@@ -108,7 +102,7 @@ def fix_sdfg(sdfg, graph):
     sdfg.validate()
 
 
-def test_quantitatively(sdfg, graph):
+def _test_quantitatively(sdfg, graph):
     A = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
     B = np.random.rand(N.get(), M.get(), O.get()).astype(np.float64)
     C1 = np.zeros([N.get(), M.get(), O.get()], dtype=np.float64)
@@ -117,21 +111,23 @@ def test_quantitatively(sdfg, graph):
     sdfg.validate()
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N, M=M, O=O)
+    del csdfg
 
     fusion(sdfg, graph)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M, O=O)
+    del csdfg
 
     assert np.allclose(C1, C2)
     print('PASS')
 
 
 def test_invariant_dim():
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     sdfg.apply_strict_transformations()
     graph = sdfg.nodes()[0]
     fix_sdfg(sdfg, graph)
-    test_quantitatively(sdfg, graph)
+    _test_quantitatively(sdfg, graph)
 
 
 if __name__ == '__main__':
