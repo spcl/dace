@@ -120,8 +120,8 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     entry = find_map_by_param(sdfg, 'k')
 
     # Create a tiling strategy
-    divides_evenly = (m % 64 == 0) and (n % 32 == 0) and (k % 512 == 0)
-    tile(sdfg, entry, divides_evenly, False, k=512, i=64, j=32)
+    divides_evenly = (m % 32 == 0) and (n % 32 == 0) and (k % 256 == 0)
+    tile(sdfg, entry, divides_evenly, False, k=256, i=32, j=32)
     tile(sdfg, entry, divides_evenly, divides_evenly, j=16, i=4)
 
     # Reorder internal map to "k,i,j"
@@ -182,7 +182,7 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     # Create a tiling strategy
     divides_evenly = (m % 64 == 0) and (n % 64 == 0) and (k % 8 == 0)
     tile(sdfg, entry, divides_evenly, True, i=64, j=64, k=8)
-    tile(sdfg, entry, divides_evenly, True, i=8, j=8)
+    tile(sdfg, entry, divides_evenly, True, i=8, j=4)
 
     # Create kernel schedule by collapsing and reordering maps
     gtile_i = find_map_by_param(sdfg, 'tile_i')
@@ -277,7 +277,7 @@ cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
     B = np.random.rand(k, n)
     C = np.zeros((m, n), dtype=np.float64)
 
-    print(f'Matrix multiplication {m}x{k}x{n}')
+    print(f'Matrix multiplication {m}x{k}x{n} (version: {version})')
 
     if version == 'unoptimized':
         # Simply call the program to run it
