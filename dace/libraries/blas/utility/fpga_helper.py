@@ -806,4 +806,206 @@ class StreamWriteVector():
 
 
 
+class streamWriteMatrixFull(streamWriteBase):
+
+    def __init__(
+            self,
+            destination,
+            rows,
+            columns,
+            rowTile,
+            colTile,
+            dtype,
+            bufferSize=32,
+            vecWidth=1,
+            blockByRow=True, # TODO implement block by column
+            tileByRow=True
+        ):
+
+        self.destination = destination
+        self.rows = rows
+        self.columns = columns
+        self.rowTile = rowTile
+        self.colTile = colTile
+        self.dtype = dtype
+        self.bufferSize = bufferSize
+        self.vecWidth = vecWidth
+
+        self.blockByRow = blockByRow
+        self.tileByRow = tileByRow
+
+        self.fpga_data = None
+        self.fpga_dataName = None
+        self.fpga_stream = None
+
+
+    def copyToCPU(self, sdfg, postState, bank=None):
+
+        fpga_outputs, fpgaOut_names = memOps.fpga_copyGlobalToCPU(
+            sdfg,
+            postState,
+            [self.destination],
+            [self.rows * self.columns],
+            [self.dtype],
+            bank=bank
+        )
+
+        self.fpga_data = fpga_outputs[0]
+        self.fpga_dataName = fpgaOut_names[0]
+
+
+    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+
+        out_mem, out_name = self.stream(
+            sdfg,
+            state,
+            self.fpga_data.data,
+            srcName=libConnector,
+            access=access
+        )  
+
+        stream_out = state.add_stream(
+            out_name,
+            self.dtype,
+            veclen=self.vecWidth,
+            buffer_size=self.bufferSize,
+            transient=True,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+        self.fpga_stream = stream_out
+
+        state.add_memlet_path(
+            libNode, stream_out,
+            src_conn=libConnector,
+            memlet=Memlet.simple(
+                stream_out, "0", num_accesses=self.rows*self.columns, veclen=self.vecWidth
+            )
+        )
+
+
+    def getCopySize(self):
+
+        return self.rows * self.columns
+
+
+    def stream(
+            self,
+            sdfg,
+            state,
+            dest,
+            srcName='',
+            access=False
+        ):
+
+        src = dest + "_"
+        if srcName != '':
+            src += srcName + "_" 
+        src += "wS"
+
+        data_in = state.add_stream(
+            src,
+            self.dtype,
+            veclen=self.vecWidth,
+            buffer_size=self.bufferSize,
+            transient=True,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+        
+        data_out = None
+        if access:
+            data_out = self.fpga_data
+        else:
+            data_out = state.add_write(dest)
+
+        readRows_entry, readRows_exit = state.add_map(
+            'streamReadRows_{}_map'.format(dest),
+            dict(i='0:{0}'.format(self.rows/self.rowTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device
+        )
+
+        readCols_entry, readCols_exit = state.add_map(
+            'streamReadCols_{}_map'.format(dest),
+            dict(j='0:{0}'.format(self.columns/self.colTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device
+        )
+
+        
+
+        read_tasklet = state.add_tasklet(
+            'sW_{}'.format(dest),
+            ['inCon'],
+            ['outCon'],
+            'outCon = inCon'
+        )
+
+        if self.tileByRow:
+
+            readRowTile_entry, readRowTile_exit = state.add_map(
+                'streamReadRowTile_{}_map'.format(dest),
+                dict(ii='0:{0}'.format(self.rowTile)),
+                schedule=dtypes.ScheduleType.FPGA_Device
+            )
+
+            readColTile_entry, readColTile_exit = state.add_map(
+                'streamReadColTile_{}_map'.format(dest),
+                dict(jj='0:{0}/{1}'.format(self.colTile, self.vecWidth)),
+                schedule=dtypes.ScheduleType.FPGA_Device
+            )
+
+            state.add_memlet_path(
+                data_in, readRows_entry, readCols_entry, 
+                readRowTile_entry, readColTile_entry,
+                read_tasklet,
+                dst_conn='inCon',
+                memlet=Memlet.simple(data_in.data, '0', veclen=self.vecWidth)
+            )
+
+            state.add_memlet_path(
+                read_tasklet, readColTile_exit, readRowTile_exit,
+                readCols_exit, readRows_exit,
+                data_out,
+                src_conn='outCon',
+                memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                    self.rowTile, self.columns, self.colTile, self.vecWidth), veclen=self.vecWidth)
+            )
+
+        else :
+
+            assert self.vecWidth == 1, "Vectorization not supported for streaming by columns, assume row-major storage"
+
+            readRowTile_entry, readRowTile_exit = state.add_map(
+                'streamReadRowTile_{}_map'.format(dest),
+                dict(ii='0:{0}'.format(self.rowTile)),
+                schedule=dtypes.ScheduleType.FPGA_Device
+            )
+
+            readColTile_entry, readColTile_exit = state.add_map(
+                'streamReadColTile_{}_map'.format(dest),
+                dict(jj='0:{0}'.format(self.colTile)),
+                schedule=dtypes.ScheduleType.FPGA_Device
+            )
+
+            state.add_memlet_path(
+                data_in, readRows_entry, readCols_entry, 
+                readColTile_entry, readRowTile_entry,
+                read_tasklet,
+                dst_conn='inCon',
+                memlet=Memlet.simple(data_in.data, '0')
+            )
+
+            state.add_memlet_path(
+                read_tasklet, readRowTile_exit, readColTile_exit,
+                readRows_exit, readCols_exit,
+                data_out,
+                src_conn='outCon',
+                memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(self.rowTile, self.columns, self.colTile))
+            )
+
+
+        return data_in, src
+
+
+
+
+
 
