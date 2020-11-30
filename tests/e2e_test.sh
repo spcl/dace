@@ -44,7 +44,7 @@ runall() {
     runtest ddot.py $1
     runtest fibonacci.py $1
     runtest filter.py $1
-    runtest gemm.py $1
+    runtest matmul.py $1
     runtest histogram.py $1
     runtest histogram_declarative.py $1
     runtest jacobi.py $1

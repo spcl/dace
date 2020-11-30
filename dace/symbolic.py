@@ -157,6 +157,9 @@ class SymExpr(object):
         return SymExpr(self._main_expr.subs(repldict),
                        self._approx_expr.subs(repldict))
 
+    def match(self, *args, **kwargs):
+        return self._main_expr.match(*args, **kwargs)
+
     def __str__(self):
         if self.expr != self.approx:
             return str(self.expr) + " (~" + str(self.approx) + ")"
