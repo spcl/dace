@@ -652,48 +652,6 @@ __kernel void \\
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
-    # def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream,
-    #                          callsite_stream):
-    #
-    #     self._dispatcher.defined_vars.enter_scope(sdfg)
-    #
-    #     state_dfg = sdfg.nodes()[state_id]
-    #
-    #     # Take care of nested SDFG I/O
-    #     for edge in state_dfg.in_edges(node):
-    #         src_node = find_input_arraynode(state_dfg, edge)
-    #         self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-    #                                        state_dfg, state_id, function_stream,
-    #                                        callsite_stream)
-    #     for edge in state_dfg.out_edges(node):
-    #         dst_node = find_output_arraynode(state_dfg, edge)
-    #         self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-    #                                        state_dfg, state_id, function_stream,
-    #                                        callsite_stream)
-    #
-    #     callsite_stream.write('\n    ///////////////////\n', sdfg, state_id,
-    #                           node)
-    #
-    #     sdfg_label = '_%d_%d' % (state_id, dfg.node_id(node))
-    #
-    #     # Generate code for internal SDFG
-    #     global_code, local_code, used_targets, used_environments = \
-    #         self._frame.generate_code(node.sdfg, node.schedule, sdfg_label)
-    #
-    #     # Write generated code in the proper places (nested SDFG writes
-    #     # location info)
-    #     function_stream.write(global_code)
-    #     callsite_stream.write(local_code)
-    #
-    #     callsite_stream.write('    ///////////////////\n\n', sdfg, state_id,
-    #                           node)
-    #
-    #     # Process outgoing memlets with the internal SDFG
-    #     self.process_out_memlets(sdfg, state_id, node, state_dfg,
-    #                              self._dispatcher, callsite_stream, True,
-    #                              function_stream)
-    #
-    #     self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node,
                               memlet_references, sdfg_label):
@@ -837,7 +795,7 @@ __kernel void \\
                             conntype=node.out_connectors[uconn]))
 
         # Special case for Intel FPGA: this comes out from the unrolling processing elements:
-        # if the first scope of the subgraph is an unrolled map, codegen generates a processing element for each iteration
+        # if the first scope of the subgraph is an unrolled map, generates a processing element for each iteration
         # We need to pass to this function also the id of the PE (the top scope parameter)
         scope_children = dfg.scope_children()
         top_scopes = [
@@ -897,6 +855,14 @@ __kernel void \\
 
         result = ""
 
+        if isinstance(data_desc, dace.data.Stream):
+            # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
+            outer_stream_node_trace = utils.trace_nested_access(
+                dst_node if is_output else src_node,
+                sdfg.nodes()[state_id], sdfg)
+            data_name = outer_stream_node_trace[0][0][
+                1 if is_output else 0].label
+
         def_type, ctypedef = self._dispatcher.defined_vars.get(data_name)
         if def_type == DefinedType.Scalar:
             if cast:
@@ -949,25 +915,20 @@ __kernel void \\
                 raise TypeError("Cannot cast stream from {} to {}.".format(
                     data_dtype, dtype))
 
-            # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
-            outer_stream_node_trace = utils.trace_nested_access(
-                dst_node if is_output else src_node,
-                sdfg.nodes()[state_id], sdfg)
-            define_name = outer_stream_node_trace[0][0][
-                1 if is_output else 0].label
+            # In the define we refer to the stream defined in the outermost scope
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
 
                     result += "{} {} = read_channel_intel({});".format(
-                        memlet_type, connector, define_name)
+                        memlet_type, connector, data_name)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
-                    connector, define_name)
+                    connector, data_name)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         elif def_type == DefinedType.StreamArray:
@@ -975,31 +936,29 @@ __kernel void \\
                 raise TypeError(
                     "Cannot cast stream array from {} to {}.".format(
                         data_dtype, dtype))
-            # Derive the name of the original stream, by tracing the memlet path through nested SDFGs
+            # We need to refer to the stream defined in the outermost scope
             # Since this is a Stream Array, we need also the offset, which is contained in the memlet that arrives/departs
-            # from the stream
-
-            outer_stream_node_trace = utils.trace_nested_access(
-                dst_node if is_output else src_node,
-                sdfg.nodes()[state_id], sdfg)
-            define_name = outer_stream_node_trace[0][0][
-                1 if is_output else 0].label
+            # from that stream
             outer_memlet = outer_stream_node_trace[0][1][1 if is_output else 0]
             outer_sdfg = outer_stream_node_trace[0][-1]
-            if not memlet.dynamic and memlet.num_accesses == 1:
+
+            if not memlet.dynamic and memlet.num_accesses == 1 and (
+                    is_output is True
+                    or isinstance(edge.dst, dace.sdfg.nodes.Tasklet)):
+                # if this is an input memlet, generate the read only if this is a tasklet
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     global_node = utils.trace_nested_access(
                         dst_node if is_output else src_node,
                         sdfg.nodes()[state_id], sdfg)
-                    define_name = global_node[0][0][1 if is_output else 0].label
+                    data_name = global_node[0][0][1 if is_output else 0].label
 
                     if outer_memlet is not None:
                         offset = cpp.cpp_offset_expr(
-                            outer_sdfg.arrays[define_name], outer_memlet.subset)
+                            outer_sdfg.arrays[data_name], outer_memlet.subset)
                     result += "{} {} = read_channel_intel({}[{}]);".format(
-                        memlet_type, connector, define_name, offset)
+                        memlet_type, connector, data_name, offset)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
@@ -1007,11 +966,11 @@ __kernel void \\
                 # Here we create a macro which take the proper channel
                 if outer_memlet is not None:
                     channel_idx = cpp.cpp_offset_expr(
-                        outer_sdfg.arrays[define_name], outer_memlet.subset)
+                        outer_sdfg.arrays[data_name], outer_memlet.subset)
                 else:
                     channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                       memlet.subset)
-                result += "#define {} {}[{}] ".format(connector, define_name,
+                result += "#define {} {}[{}] ".format(connector, data_name,
                                                       channel_idx)
                 self._dispatcher.defined_vars.add(connector,
                                                   DefinedType.StreamArray,
