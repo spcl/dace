@@ -13,13 +13,12 @@ def nested_loop_test(A: dace.int32[1]):
                 out_a = in_a + 1
 
 
-if __name__ == '__main__':
+def test():
     A = np.zeros(1).astype(np.int32)
     nested_loop_test(A)
 
-    if A[0] != 11 * 5:
-        print('ERROR: %d != %d' % (A[0], 11 * 5))
-        exit(1)
+    assert A[0] == 11 * 5
 
-    print('OK')
-    exit(0)
+
+if __name__ == "__main__":
+    test()

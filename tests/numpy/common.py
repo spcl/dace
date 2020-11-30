@@ -38,8 +38,7 @@ def compare_numpy_output(non_zero=False, positive=False):
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [
-                        dace.int8, dace.int16, dace.int32, dace.int64,
-                        dace.bool
+                        dace.int8, dace.int16, dace.int32, dace.int64, dace.bool
                 ]:
                     res = np.random.randint(0 if positive else -3,
                                             3,
@@ -47,9 +46,18 @@ def compare_numpy_output(non_zero=False, positive=False):
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
+                elif ddesc.dtype in [dace.complex64, dace.complex128]:
+                    res = np.random.rand(*ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())
+                    ) + 1j * np.random.rand(*ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string()))
+                    b = 0 if positive else -10 - 10j
+                    a = 10 + 10j
+                    res = (b - a) * res + a
+                    if non_zero:
+                        res[res == 0] = 1 + 1j
                 else:
-                    raise ValueError("unsupported dtype {}".format(
-                        ddesc.dtype))
+                    raise ValueError("unsupported dtype {}".format(ddesc.dtype))
 
                 if type(ddesc) is dace.data.Scalar:
                     return res[0]
