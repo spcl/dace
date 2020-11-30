@@ -120,12 +120,12 @@ class CPUCodeGen(TargetCodeGenerator):
         return False
 
     def generate_scope(
-            self,
-            sdfg: SDFG,
-            dfg_scope: ScopeSubgraphView,
-            state_id,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg: SDFG,
+        dfg_scope: ScopeSubgraphView,
+        state_id,
+        function_stream,
+        callsite_stream,
     ):
         entry_node = dfg_scope.source_nodes()[0]
         cpp.presynchronize_streams(sdfg, dfg_scope, state_id, entry_node,
@@ -362,15 +362,15 @@ class CPUCodeGen(TargetCodeGenerator):
             return
 
     def copy_memory(
-            self,
-            sdfg,
-            dfg,
-            state_id,
-            src_node,
-            dst_node,
-            edge,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg,
+        dfg,
+        state_id,
+        src_node,
+        dst_node,
+        edge,
+        function_stream,
+        callsite_stream,
     ):
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
@@ -410,17 +410,17 @@ class CPUCodeGen(TargetCodeGenerator):
         )
 
     def _emit_copy(
-            self,
-            sdfg,
-            state_id,
-            src_node,
-            src_storage,
-            dst_node,
-            dst_storage,
-            dst_schedule,
-            edge,
-            dfg,
-            stream,
+        self,
+        sdfg,
+        state_id,
+        src_node,
+        src_storage,
+        dst_node,
+        dst_storage,
+        dst_schedule,
+        edge,
+        dfg,
+        stream,
     ):
         u, uconn, v, vconn, memlet = edge
 
@@ -703,6 +703,10 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
 
+        # If there is a type mismatch, cast pointer
+        if isinstance(dtype, dtypes.vector):
+            ptr = f'({dtype.ctype} *)({ptr})'
+        
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(
@@ -1384,13 +1388,13 @@ class CPUCodeGen(TargetCodeGenerator):
         return memlet_references
 
     def _generate_NestedSDFG(
-            self,
-            sdfg,
-            dfg: ScopeSubgraphView,
-            state_id,
-            node: nodes.NestedSDFG,
-            function_stream: CodeIOStream,
-            callsite_stream: CodeIOStream,
+        self,
+        sdfg,
+        dfg: ScopeSubgraphView,
+        state_id,
+        node: nodes.NestedSDFG,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
     ):
         # Intel FPGA needs to access to variables defined also in parent sdfg (i.e., streams)
         self._dispatcher.defined_vars.enter_scope(sdfg)
@@ -1481,13 +1485,13 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.exit_scope(sdfg)
 
     def _generate_MapEntry(
-            self,
-            sdfg,
-            dfg,
-            state_id,
-            node: nodes.MapEntry,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg,
+        dfg,
+        state_id,
+        node: nodes.MapEntry,
+        function_stream,
+        callsite_stream,
     ):
         state_dfg = sdfg.node(state_id)
         map_params = node.map.params
@@ -1635,13 +1639,13 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('}', sdfg, state_id, node)
 
     def _generate_ConsumeEntry(
-            self,
-            sdfg,
-            dfg,
-            state_id,
-            node: nodes.MapEntry,
-            function_stream,
-            callsite_stream,
+        self,
+        sdfg,
+        dfg,
+        state_id,
+        node: nodes.MapEntry,
+        function_stream,
+        callsite_stream,
     ):
         result = callsite_stream
 

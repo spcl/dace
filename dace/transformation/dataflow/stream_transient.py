@@ -4,6 +4,8 @@
 
 import copy
 import warnings
+
+from numpy.core.numeric import outer
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import make_properties, Property
@@ -158,7 +160,6 @@ class AccumulateTransient(transformation.Transformation):
         stream. The transient data nodes then act as a local accumulator.
     """
 
-    _tasklet = nodes.Tasklet('_')
     _map_exit = nodes.MapExit(nodes.Map("", [], []))
     _outer_map_exit = nodes.MapExit(nodes.Map("", [], []))
 
@@ -171,31 +172,29 @@ class AccumulateTransient(transformation.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(AccumulateTransient._tasklet,
-                                   AccumulateTransient._map_exit,
+            sdutil.node_path_graph(AccumulateTransient._map_exit,
                                    AccumulateTransient._outer_map_exit)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        tasklet = graph.nodes()[candidate[AccumulateTransient._tasklet]]
         map_exit = graph.nodes()[candidate[AccumulateTransient._map_exit]]
+        outer_map_exit = graph.nodes()[candidate[
+            AccumulateTransient._outer_map_exit]]
 
         # Check if there is an accumulation output
-        for _src, _, dest, _, memlet in graph.out_edges(tasklet):
-            if memlet.wcr is not None and dest == map_exit:
+        for e in graph.edges_between(map_exit, outer_map_exit):
+            if e.data.wcr is not None:
                 return True
 
         return False
 
     @staticmethod
     def match_to_str(graph, candidate):
-        tasklet = candidate[AccumulateTransient._tasklet]
         map_exit = candidate[AccumulateTransient._map_exit]
         outer_map_exit = candidate[AccumulateTransient._outer_map_exit]
 
-        return ' -> '.join(
-            str(node) for node in [tasklet, map_exit, outer_map_exit])
+        return ' -> '.join(str(node) for node in [map_exit, outer_map_exit])
 
     def apply(self, sdfg):
         graph = sdfg.node(self.state_id)

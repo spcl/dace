@@ -391,18 +391,18 @@ class FPGACodeGen(TargetCodeGenerator):
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
             # Language-specific implementation
-            ctype = self.define_stream(nodedesc.dtype, nodedesc.buffer_size,
+            ctype, is_global = self.define_stream(nodedesc.dtype, nodedesc.buffer_size,
                                        dataname, arrsize, function_stream,
                                        result)
 
-            if cpp.sym2cpp(arrsize) != "1":
-                # Is a stream array
-                self._dispatcher.defined_vars.add(dataname,
-                                                  DefinedType.StreamArray,
+            # defined type: decide whether this is a stream array or a single stream
+            def_type = DefinedType.StreamArray if cpp.sym2cpp(arrsize) != "1" else DefinedType.Stream
+            if is_global:
+                self._dispatcher.defined_vars.add_global(dataname,
+                                                  def_type,
                                                   ctype)
             else:
-                # Single stream
-                self._dispatcher.defined_vars.add(dataname, DefinedType.Stream,
+                self._dispatcher.defined_vars.add(dataname, def_type,
                                                   ctype)
 
         elif isinstance(nodedesc, dace.data.Array):
