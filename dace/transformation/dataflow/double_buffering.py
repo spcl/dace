@@ -210,6 +210,8 @@ class DoubleBuffering(transformation.Transformation):
         del nsdfg_node.sdfg.symbols['__dace_db_param']
         del nsdfg_node.symbol_mapping['__dace_db_param']
 
+        return nsdfg_node
+
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):
         desc = sdfg.arrays[data_name]
