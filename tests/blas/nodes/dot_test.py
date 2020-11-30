@@ -193,10 +193,9 @@ def test_fpga(vendor):
 
     print("Run BLAS test: DOT fpga", vendor + "...")
 
-    configs = [(1.0, 4, dace.float32, "0")]
-    # configs = [(0.0, 1, dace.float32, "0"), (1.0, 1, dace.float32, "1"),
-            #    (random.random(), 1, dace.float32, "2"),
-            #    (1.0, 1, dace.float64, "3"), (1.0, 4, dace.float64, "4")]
+    configs = [(0.0, 1, dace.float32, "0"), (1.0, 1, dace.float32, "1"),
+               (random.random(), 1, dace.float32, "2"),
+               (1.0, 1, dace.float64, "3"), (1.0, 4, dace.float64, "4")]
 
     run_test(configs, "fpga", vendor)
 

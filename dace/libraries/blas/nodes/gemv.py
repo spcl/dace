@@ -9,6 +9,10 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
 import numpy as np
 
+from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
+from dace.libraries.blas.utility.fpga_helper import streamReadMatrixFull
+from dace.libraries.blas.utility.reductions import fpga_make_matrixPartialReduction
+
 
 @dace.library.expansion
 class ExpandGemvPure(ExpandTransformation):
@@ -135,12 +139,294 @@ class ExpandGemvPure(ExpandTransformation):
         return ExpandGemvPure.make_sdfg(node, state, sdfg)
 
 
+
+
+@dace.library.expansion
+class ExpandGemvFPGAStreamingRowTiles(ExpandTransformation):
+
+    environments = []
+
+
+    @staticmethod
+    def make_sdfg(
+            dtype, 
+            nTile,
+            mTile,
+            partialWidth,
+            n, m,
+            vecWidthM,
+            a, b
+        ):
+
+        # ---------- ----------
+        # SETUP GRAPH
+        # ---------- ----------
+        # A: n rows, m columns, row-major (or transposed column-major)
+        gemv_sdfg = dace.SDFG("gemv_fpga_stream_rowTiles")
+        gemv_sdfg.add_symbol(a.name, a.dtype)
+
+        if b != 0:
+            gemv_sdfg.add_symbol(b.name, b.dtype)
+
+        gemv_state = gemv_sdfg.add_state()
+
+        A_in = gemv_state.add_stream(
+            '_A',
+            dtype,
+            veclen=vecWidthM,
+            buffer_size=32,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+        y_in = None
+        if b != 0:
+            y_in = gemv_state.add_stream(
+                '_y',
+                dtype,
+                veclen=1,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local,
+                transient=(True if b == 0 else False)
+            )
+
+        # Must be received n/nTile times
+        x_in = gemv_state.add_stream(
+            '_x',
+            dtype,
+            veclen=vecWidthM,
+            buffer_size=32,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+        res = gemv_state.add_stream(
+            '_res',
+            dtype,
+            veclen=1,
+            buffer_size=32,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+
+        # ---------- ----------
+        # COMPUTE
+        # ---------- ----------
+
+        nMap_entry, nMap_exit = gemv_state.add_map(
+            'nTile_map',
+            dict(i = '0:{0}/{1}'.format(n, nTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device
+        )
+
+        yTile_sdfg = Expand_GEMV_FPGA_Streaming_RowTiles.make_yTile(
+            dtype,
+            nTile,
+            mTile,
+            tileRowStreamed,
+            partialWidth,
+            n, m,
+            vecWidthM,
+            a, b
+        )
+        nested_sdfg = gemv_state.add_nested_sdfg(
+            yTile_sdfg,
+            gemv_sdfg,
+            {'_A_yTile', '_x_yTile', '_y_yTile'} if b != 0 else {'_A_yTile', '_x_yTile'},
+            {'yTile'}
+        )
+
+        gemv_state.add_memlet_path(
+            A_in, nMap_entry, nested_sdfg,
+            dst_conn='_A_yTile',
+            memlet=Memlet.simple(A_in.data, "0:{0}*{1}".format(n, m), veclen=vecWidthM)
+        )
+
+        gemv_state.add_memlet_path(
+            x_in, nMap_entry, nested_sdfg,
+            dst_conn='_x_yTile',
+            memlet=Memlet.simple(x_in.data, "0:{}".format(m), veclen=vecWidthM)
+        )
+
+        if b != 0:
+            gemv_state.add_memlet_path(
+                y_in, nMap_entry, nested_sdfg,
+                dst_conn='_y_yTile',
+                memlet=Memlet.simple(y_in.data,"0:{}".format(n))
+            ) 
+
+        gemv_state.add_memlet_path(
+            nested_sdfg, nMap_exit, res,
+            src_conn='yTile',
+            memlet=Memlet.simple(res.data, "0:{}".format(n)) #  num_accesses=-1) # num_accesses=int(nTile))
+        )
+
+        return gemv_sdfg
+
+        
+
+
+
+    @staticmethod
+    def make_yTile(dtype, nTile, mTile, tileRowStreamed, partialWidth, n, m, vecWidthM, a, b):
+
+        yTile_sdfg = dace.SDFG("yTile_sdfg")
+
+        init_state = yTile_sdfg.add_state('yTile_init')
+        compute_state = yTile_sdfg.add_state('yTile_compute')
+
+        yTile_sdfg.add_symbol(a.name, a.dtype)
+        if b != 0:
+            yTile_sdfg.add_symbol(b.name, b.dtype)
+
+        A_in = compute_state.add_stream(
+            '_A_yTile',
+            dtype,
+            veclen=vecWidthM,
+            buffer_size=32,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+        y_in = None
+        if b != 0:
+            y_in = compute_state.add_stream(
+                '_y_yTile',
+                dtype,
+                veclen=1,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
+
+        x_in = compute_state.add_stream(
+            '_x_yTile',
+            dtype,
+            veclen=vecWidthM,
+            buffer_size=32,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+        yTile_sdfg.add_array('y_tileRes', shape=[nTile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
+
+        data_out = compute_state.add_stream(
+            'yTile',
+            dtype,
+            veclen=1,
+            buffer_size=32,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+
+        # ---------- ----------
+        # INIT State
+        # # ---------- ----------
+        fpga_initArray(
+            init_state,
+            'y_tileRes',
+            nTile,
+            0,
+            unroll=True
+        )
+
+
+        # ---------- ----------
+        # Compute
+        # ---------- ----------
+        mMap_entry, mMap_exit = compute_state.add_map(
+            'mTile_map',
+            dict(j = '0:{0}/{1}'.format(m, mTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device
+        )
+
+        outerComputeMap_entry, outerComputeMap_exit = compute_state.add_map(
+            'outerCompute_map',
+            dict(ii = '0:{}'.format(nTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device
+        )
+
+        y_out = compute_state.add_write('y_tileRes')
+        
+        reducedTile_sdfg = fpga_make_matrixPartialReduction(
+            dtype,
+            nTile,
+            mTile,
+            partialWidth,
+            n, m,
+            vecWidthM,
+            a, b
+        )
+
+
+        nested_sdfg = compute_state.add_nested_sdfg(
+            reducedTile_sdfg,
+            yTile_sdfg,
+            {'_A_red', '_x_red', '_y_stream_red'} if b != 0 else {'_A_red', '_x_red'},
+            {'_y_red', '_res_red'}
+        )
+
+
+        compute_state.add_memlet_path(
+            A_in, mMap_entry, outerComputeMap_entry, nested_sdfg,
+            dst_conn='_A_red',
+            memlet=Memlet.simple(A_in.data, "0:{}*{}".format(n, m), veclen=vecWidthM)
+        )
+
+        compute_state.add_memlet_path(
+            x_in, mMap_entry, outerComputeMap_entry, nested_sdfg,
+            dst_conn='_x_red',
+            memlet=Memlet.simple(x_in.data, "0:{}".format(m), veclen=vecWidthM)
+        )
+
+        if b != 0:
+            compute_state.add_memlet_path(
+                y_in, mMap_entry, outerComputeMap_entry, nested_sdfg,
+                dst_conn='_y_stream_red',
+                memlet=Memlet.simple(y_in.data, "0:{}".format(n))
+            )
+
+        compute_state.add_memlet_path(
+            nested_sdfg, outerComputeMap_exit, mMap_exit, y_out,
+            src_conn='_y_red',
+            memlet=Memlet.simple(y_out.data, "0:{}".format(nTile))
+        )
+
+        compute_state.add_memlet_path(
+            nested_sdfg, outerComputeMap_exit, mMap_exit, data_out,
+            src_conn='_res_red',
+            memlet=Memlet.simple(data_out.data, "0:{}".format(n))
+        )
+
+
+
+        yTile_sdfg.fill_scope_connectors()
+        yTile_sdfg.add_edge(init_state, compute_state, dace.InterstateEdge(None))
+
+        return yTile_sdfg
+
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
+        return ExpandGemvFPGAStreamingRowTiles.make_sdfg(
+            node.dtype,
+            int(node.nTile),
+            int(node.mTile),
+            node.partialWidth,
+            node.n,
+            node.m,
+            int(node.vecWidthM),
+            node.alpha,
+            node.beta
+        )
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "pure": ExpandGemvPure,
+        "pure": ExpandGemvPure,,
+        "fpga_stream": ExpandGemvFPGAStreamingRowTiles
     }
     default_implementation = None
 
@@ -156,21 +442,56 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                     default=1,
                     desc="A scalar which will be multiplied with y")
 
+
+    # FPGA
+    nTile = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    mTile = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
+    m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"))
+
+    vecWidthM = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    partialWidth = dace.properties.SymbolicProperty(default=1, allow_none=False)
+
+
     def __init__(self,
                  name,
                  dtype=None,
                  location=None,
                  transA=False,
                  alpha=1,
-                 beta=0):
+                 beta=0,
+                 nTile=1,
+                 mTile=1,
+                 partialWidth=2,
+                 n=dace.symbolic.symbol("n"),
+                 m=dace.symbolic.symbol("m"),
+                 vecWidthM=1
+                 ):
+
+        # FPGA ???
+        # input_cons = {'_A', '_x'}
+        # if b != 0:
+        #     input_cons = {"_A", "_x", "_y"}
+
         super().__init__(name,
                          location=location,
                          inputs={"_a", "_x"},
                          outputs={"_y"})
+
         self.dtype = dtype
         self.transA = transA
         self.alpha = alpha
         self.beta = beta
+
+        # FPGA
+        self.n = n
+        self.m = m
+        self.nTile = nTile
+        self.mTile = mTile
+        self.vecWidthM = vecWidthM
+        self.partialWidth = partialWidth
+
+        
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
@@ -215,3 +536,65 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Input y-vector must match output y-vector.")
         if (len(size_y_out) != 1 or size_y_out[0] != size_a[0]):
             raise ValueError("Vector input to GEMV must match matrix rows.")
+
+    def compare(self, other):
+
+        if (self.dtype == other.dtype and self.vecWidthM == other.vecWidthM
+            and self.implementation == other.implementation
+            and self.nTile == other.nTile and self.mTile == other.mTile):
+
+            return True
+        else:
+            return False
+
+    # Implementation dependent, extend if more implementations added
+    def streamProductionLatency(self):
+
+        return (self.m / self.mTile - 1) * self.mTile * self.nTile + self.mTile
+
+    def streamConsumptionLatency(self):
+
+        return {
+            "_x": self.nTile,
+            "_y": (self.m / self.mTile - 1) * self.mTile * self.nTile + self.mTile,
+            "_A": 0
+        }
+
+
+    def getStreamReader(self):
+        
+        return {
+            "_x" : streamReadVector(
+                '-',
+                self.m,
+                self.dtype,
+                vecWidth=int(self.vecWidthM),
+                repeat='{}/{}'.format(self.n, self.nTile)
+            ),
+            "_y" : streamReadVector(
+                '-',
+                self.n,
+                self.dtype
+            ),
+            "_A" : streamReadMatrixFull(
+                '-',
+                self.n,
+                self.m,
+                self.nTile,
+                self.mTile,
+                self.dtype,
+                tileByRow=True,
+                vecWidth=int(self.vecWidthM)
+            )
+
+        }
+
+    def getStreamWriter(self):
+        
+        return {
+            "_res" : streamWriteVector(
+                '-',
+                self.n,
+                self.dtype
+            )
+        }
