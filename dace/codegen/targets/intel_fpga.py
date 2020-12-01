@@ -902,7 +902,7 @@ __kernel void \\
                                                   memlet_type)
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
-                    qualifiers = "__global volatile "
+                    qualifiers = "__global "
                 else:
                     qualifiers = ""
                 ctype = '{}{} *'.format(qualifiers, memlet_type)
