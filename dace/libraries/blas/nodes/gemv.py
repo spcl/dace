@@ -564,19 +564,19 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     def getStreamReader(self):
         
         return {
-            "_x" : streamReadVector(
+            "_x" : StreamReadVector(
                 '-',
                 self.m,
                 self.dtype,
                 vecWidth=int(self.vecWidthM),
                 repeat='{}/{}'.format(self.n, self.nTile)
             ),
-            "_y" : streamReadVector(
+            "_y" : StreamReadVector(
                 '-',
                 self.n,
                 self.dtype
             ),
-            "_A" : streamReadMatrixFull(
+            "_A" : StreamReadMatrixFull(
                 '-',
                 self.n,
                 self.m,
@@ -592,7 +592,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     def getStreamWriter(self):
         
         return {
-            "_res" : streamWriteVector(
+            "_res" : StreamWriteVector(
                 '-',
                 self.n,
                 self.dtype

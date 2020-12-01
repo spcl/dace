@@ -659,7 +659,7 @@ class Ger(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": Expand_GER_Pure,
-        "fpga_stream_tiledRows": Expand_GER_FPGA_Streaming_RowTiles,
+        "fpga_stream": Expand_GER_FPGA_Streaming_RowTiles,
     }
     default_implementation = 'pure'
 
@@ -733,19 +733,19 @@ class Ger(dace.sdfg.nodes.LibraryNode):
     def getStreamReader(self):
         
         return {
-            "_x" : streamReadVector(
+            "_x" : StreamReadVector(
                 '-',
                 self.m,
                 self.dtype,
-                vecWidth=int(self.vecWidthM),
+                veclen=int(self.vecWidthM),
                 repeat='{}/{}'.format(self.n, self.nTile)
             ),
-            "_y" : streamReadVector(
+            "_y" : StreamReadVector(
                 '-',
                 self.n,
                 self.dtype
             ),
-            "_A" : streamReadMatrixFull(
+            "_A" : StreamReadMatrixFull(
                 '-',
                 self.n,
                 self.m,
@@ -761,7 +761,7 @@ class Ger(dace.sdfg.nodes.LibraryNode):
     def getStreamWriter(self):
         
         return {
-            "_RES" : streamWriteMatrixFull(
+            "_RES" : StreamWriteMatrixFull(
                 '-',
                 self.n,
                 self.m,

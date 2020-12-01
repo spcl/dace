@@ -35,7 +35,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
     for config in configs:
 
         prec = np.float32 if config[2] == dace.float32 else np.float64
-        A = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
+        A = aligned_ndarray(np.random.uniform(0, 100, testN * testN).astype(prec),
                             alignment=256)
         x = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
                             alignment=256)
@@ -61,7 +61,8 @@ def run_test(configs, target, implementation, overwrite_y=False):
                                  implementation,
                                  testCase=config[3])
         else:
-            program = pure_graph(config[2], testCase=config[3])
+            # TODO: add pure test
+            pass
 
         ref_norm = 0
         if target == "fpga":
@@ -90,7 +91,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
 # Ref result
 # ---------- ----------
 def reference_result(A_in, x_in, y_in, alpha, beta):
-    return ref_result = alpha * A_in @ x_in + beta * y_in
+    return alpha * A_in @ x_in + beta * y_in
 
 
 # ---------- ----------
@@ -111,7 +112,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     partialWidth = 2
     vecM = veclen
 
-    test_sdfg = dace.SDFG("gemv_testing_stream")
+    vendor_mark = "x" if vendor == "xilinx" else "i"
+    test_sdfg = dace.SDFG("gemv_test_" + vendor_mark + "_" + testCase)
     test_state = test_sdfg.add_state("test_state")
 
     test_sdfg.add_symbol(a.name, DATATYPE)
@@ -124,7 +126,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     test_sdfg.add_array('y1', shape=[nRows], dtype=DATATYPE)
     test_sdfg.add_array('res1', shape=[nRows], dtype=DATATYPE)
 
-    x_stream = streaming.streamReadVector(
+    x_stream = streaming.StreamReadVector(
         'x1',
         mCols,
         DATATYPE,
@@ -134,25 +136,25 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     y_stream = None
     if b != 0:
-        y_stream = streaming.streamReadVector(
+        y_stream = streaming.StreamReadVector(
             'y1',
             nRows,
             DATATYPE,
             vecWidth=1,
         )
 
-    A_stream = streaming.streamReadMatrixFull(
+    A_stream = streaming.StreamReadMatrixFull(
         'A1',
         nRows,
         mCols,
         rowTile,
         colTile,
         DATATYPE,
-        tileByRow=tilesRowStreamed,
+        tileByRow=True,
         vecWidth=vecM
     )
 
-    res_stream = streaming.streamWriteVector(
+    res_stream = streaming.StreamWriteVector(
         'res1',
         nRows,
         DATATYPE
@@ -214,4 +216,5 @@ if __name__ == "__main__":
     if args.target == "intel_fpga" or args.target == "xilinx":
         test_fpga(args.target)
     else:
+        # TODO: add pure test
         pass

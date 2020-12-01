@@ -282,7 +282,7 @@ class StreamReadVector():
 
 
 
-class streamReadMatrixFull():
+class StreamReadMatrixFull():
 
     def __init__(
             self,
@@ -806,7 +806,7 @@ class StreamWriteVector():
 
 
 
-class streamWriteMatrixFull(streamWriteBase):
+class StreamWriteMatrixFull(streamWriteBase):
 
     def __init__(
             self,
