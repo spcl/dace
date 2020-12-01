@@ -31,4 +31,4 @@ jobs:
           requirements: requirements.txt
       - name: install dace
         run: python3 -m pip install .
-      - run: python3 tests/rtl/simulation_test.py
+      - run: pytest -m "verilator"
