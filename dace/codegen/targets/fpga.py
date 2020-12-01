@@ -391,19 +391,19 @@ class FPGACodeGen(TargetCodeGenerator):
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
             # Language-specific implementation
-            ctype, is_global = self.define_stream(nodedesc.dtype, nodedesc.buffer_size,
-                                       dataname, arrsize, function_stream,
-                                       result)
+            ctype, is_global = self.define_stream(nodedesc.dtype,
+                                                  nodedesc.buffer_size,
+                                                  dataname, arrsize,
+                                                  function_stream, result)
 
             # defined type: decide whether this is a stream array or a single stream
-            def_type = DefinedType.StreamArray if cpp.sym2cpp(arrsize) != "1" else DefinedType.Stream
+            def_type = DefinedType.StreamArray if cpp.sym2cpp(
+                arrsize) != "1" else DefinedType.Stream
             if is_global:
-                self._dispatcher.defined_vars.add_global(dataname,
-                                                  def_type,
-                                                  ctype)
+                self._dispatcher.defined_vars.add_global(
+                    dataname, def_type, ctype)
             else:
-                self._dispatcher.defined_vars.add(dataname, def_type,
-                                                  ctype)
+                self._dispatcher.defined_vars.add(dataname, def_type, ctype)
 
         elif isinstance(nodedesc, dace.data.Array):
 
@@ -985,14 +985,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 degenerate_values.append(val)
             fully_degenerate = all(is_degenerate)
 
-            if not fully_degenerate:
-                if node.map.unroll:
-                    self.generate_unroll_loop_pre(result, None, sdfg, state_id,
-                                                  node)
-                elif is_innermost:
-                    self.generate_pipeline_loop_pre(result, sdfg, state_id,
-                                                    node)
-
             # Being this a map (each iteration is independent), we can add pragmas to ignore dependencies on data
             # that is read/written inside this map
             map_exit_node = dfg.exit_node(node)
@@ -1022,13 +1014,19 @@ class FPGACodeGen(TargetCodeGenerator):
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
-
-
                 for i, r in enumerate(node.map.range):
 
-                    if is_innermost and not fully_degenerate and not is_degenerate[i]:
-                        # Do not put pragma if this is degenerate (does not exist)
-                        self.generate_flatten_loop_pre(result, sdfg, state_id, node)
+                    # Add pragmas
+                    if not fully_degenerate and not is_degenerate[i]:
+                        if node.map.unroll:
+                            self.generate_unroll_loop_pre(
+                                result, None, sdfg, state_id, node)
+                        elif is_innermost:
+                            self.generate_pipeline_loop_pre(
+                                result, sdfg, state_id, node)
+                            # Do not put pragma if this is degenerate (loop does not exist)
+                            self.generate_flatten_loop_pre(
+                                result, sdfg, state_id, node)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1079,6 +1077,23 @@ class FPGACodeGen(TargetCodeGenerator):
                                 loop_var_type, var, cpp.sym2cpp(begin), var,
                                 cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                             sdfg, state_id, node)
+
+                    # Add pragmas
+                    if not fully_degenerate and not is_degenerate[i]:
+                        if node.map.unroll:
+                            self.generate_unroll_loop_post(
+                                result, None, sdfg, state_id, node)
+                        elif is_innermost:
+                            self.generate_pipeline_loop_post(
+                                result, sdfg, state_id, node)
+                            self.generate_flatten_loop_post(
+                                result, sdfg, state_id, node)
+                        if not node.map.unroll:
+                            # add pragmas for data read/written inside this map
+                            for candidate in in_out_data:
+                                self.generate_no_dependence_post(
+                                    candidate, result, sdfg, state_id, node)
+
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -1095,21 +1110,6 @@ class FPGACodeGen(TargetCodeGenerator):
                         node.pipeline.drain_condition(), flat_it,
                         bound + (" - " + cpp.sym2cpp(pipeline.drain_size)
                                  if pipeline.drain_size != 0 else "")))
-
-            if not fully_degenerate:
-                if node.map.unroll:
-                    self.generate_unroll_loop_post(result, None, sdfg, state_id,
-                                                   node)
-                elif is_innermost:
-                    self.generate_pipeline_loop_post(result, sdfg, state_id,
-                                                     node)
-                    self.generate_flatten_loop_post(result, sdfg, state_id,
-                                                    node)
-                if not node.map.unroll:
-                    # add pragmas for data read/written inside this map
-                    for candidate in in_out_data:
-                        self.generate_no_dependence_post(
-                            candidate, result, sdfg, state_id, node)
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
@@ -1226,10 +1226,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 subgraph_parameters[subgraph] + scalar_parameters,
                 symbol_parameters, module_stream, entry_stream, host_stream)
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
-                              sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, state_id, node,
-                                                       memlet_references,
+    def generate_nsdfg_header(self, sdfg, state, state_id, node,
+                              memlet_references, sdfg_label):
+        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, state_id,
+                                                       node, memlet_references,
                                                        sdfg_label)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
@@ -1239,7 +1239,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                      sdfg_label)
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
-        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
+        return self._cpu_codegen.generate_nsdfg_arguments(
+            sdfg, state, dfg, node)
 
     def generate_host_function_boilerplate(self, sdfg, state, kernel_name,
                                            parameters, symbol_parameters,
