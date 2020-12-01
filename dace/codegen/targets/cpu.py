@@ -473,8 +473,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(
-                        vconn)[0] == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(vconn)[0]
+                    == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -497,9 +497,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else
-                                    memlet.other_subset)
+                    array_subset = (memlet.subset if memlet.data
+                                    == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -706,7 +705,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # If there is a type mismatch, cast pointer
         if isinstance(dtype, dtypes.vector):
             ptr = f'({dtype.ctype} *)({ptr})'
-        
+
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(
@@ -824,11 +823,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             # This case happens with nested SDFG outputs,
                             # which we skip since the memlets are references
                             continue
-                        try:
-                            defined_type, _ = self._dispatcher.defined_vars.get(
-                                memlet.data)
-                        except KeyError:  # The variable is not defined
-                            raise
+                        defined_type, _ = self._dispatcher.defined_vars.get(
+                            memlet.data)
 
                         if defined_type == DefinedType.Scalar:
                             expr = memlet.data
@@ -1338,8 +1334,8 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
-                              sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node,
+                              memlet_references, sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
             f'{atype} {aname}' for atype, aname, _ in memlet_references
@@ -1425,7 +1421,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Arguments are input connectors, output connectors, and symbols
         codegen = self.calling_codegen
         memlet_references = codegen.generate_nsdfg_arguments(
-            sdfg, dfg,  state_dfg, node)
+            sdfg, dfg, state_dfg, node)
 
         if not unique_functions or not code_already_generated:
             nested_stream.write(
@@ -1453,15 +1449,14 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Process outgoing memlets with the internal SDFG
             codegen.process_out_memlets(sdfg,
-                                     state_id,
-                                     node,
-                                     state_dfg,
-                                     self._dispatcher,
-                                     nested_stream,
-                                     True,
-                                     nested_global_stream,
-                                     skip_wcr=True)
-
+                                        state_id,
+                                        node,
+                                        state_dfg,
+                                        self._dispatcher,
+                                        nested_stream,
+                                        True,
+                                        nested_global_stream,
+                                        skip_wcr=True)
 
             nested_stream.write('}\n\n', sdfg, state_id, node)
 
