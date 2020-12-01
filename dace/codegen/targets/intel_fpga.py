@@ -166,6 +166,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
+        """
+        Defines a stream
+        :return: a tuple containing the  type of the created variable, and boolean indicating
+            whether this is a global variable or not
+        """
         vec_type = self.make_vector_type(dtype, False)
         if buffer_size > 1:
             depth_attribute = " __attribute__((depth({})))".format(buffer_size)
@@ -180,7 +185,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                                                         depth_attribute))
 
         # Return value is used for adding to defined_vars in fpga.py
-        return 'channel {}'.format(vec_type)
+        # In Intel FPGA, streams must be defined as global entity, so they will be added to the global variables
+        return 'channel {}'.format(vec_type), True
 
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):

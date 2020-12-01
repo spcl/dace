@@ -124,3 +124,5 @@ class MapExpansion(pm.Transformation):
             raise ValueError('Cannot find scope in state')
 
         consolidate_edges(sdfg, scope)
+
+        return [map_entry] + entries
