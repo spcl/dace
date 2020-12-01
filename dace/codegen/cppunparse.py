@@ -80,6 +80,7 @@ import tokenize
 import dace
 from numbers import Number
 from six import StringIO
+from dace import dtypes
 from dace.codegen.tools import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -722,10 +723,9 @@ class CPPUnparser:
 
     def _Num(self, t):
         repr_n = repr(t.n)
-
-        # For complex values, use type of assignment (if exists), or
-        # double-complex (128-bit) otherwise
-        dtype = self.dtype or 'dace::complex128'
+        # For complex values, use DTYPE_TO_TYPECLASS dictionary
+        if isinstance(t.n, complex):
+            dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
 
         if repr_n.endswith("j"):
             self.write("%s(0, %s)" %
