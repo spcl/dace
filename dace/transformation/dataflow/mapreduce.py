@@ -149,7 +149,7 @@ class MapReduceFusion(pm.Transformation):
                           wcr_str=reduce_node.wcr))
 
         # Add initialization state as necessary
-        if reduce_node.identity is not None:
+        if not self.no_init and reduce_node.identity is not None:
             init_state = sdfg.add_state_before(graph)
             init_state.add_mapped_tasklet(
                 'freduce_init',

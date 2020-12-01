@@ -259,6 +259,10 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
+        # TODO: Fix
+        if node.alpha != 1.0 or node.beta != 0.0:
+            raise NotImplementedError('Only alpha = 1 and beta = 0 supported')
+
         alpha = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sPone()" % factort
         beta = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sZero()" % factort
 
@@ -304,7 +308,7 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
 
         # If buffers are not on the GPU, copy them
-        # TODO: This creates variable shadowing
+        # TODO: This creates potential variable shadowing
         if any(desc.storage not in
                [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
                for desc in [adesc, bdesc, cdesc]):
@@ -325,6 +329,7 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             c = nstate.add_write('_c')
             gc = nstate.add_access('_c_gpu')
 
+            # Reset code and connectors
             tasklet.in_connectors = {
                 "_conn" + k: None
                 for k in tasklet.in_connectors
@@ -333,6 +338,20 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                 "_conn" + k: None
                 for k in tasklet.out_connectors
             }
+
+            call = '''cublas{func}(__dace_cublas_handle,
+                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                {M}, {N}, {K},
+                {alpha},
+                ({dtype}*){x}, {lda},
+                ({dtype}*){y}, {ldb},
+                {beta},
+                ({dtype}*)_conn_c, {ldc});'''
+            opt['x'] = '_conn' + opt['x']
+            opt['y'] = '_conn' + opt['y']
+            tasklet.code.as_string = (
+                environments.cublas.cuBLAS.handle_setup_code(node) +
+                call.format_map(opt))
 
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))

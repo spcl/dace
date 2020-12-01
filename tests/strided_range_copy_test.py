@@ -21,7 +21,8 @@ s0.add_nedge(B, C, dace.Memlet.simple(C, '1, 0:10:8:2, 3'))
 s0.add_nedge(D, E, dace.Memlet.simple(D, '8:76:64:4,4:72:64:4'))
 s0.add_nedge(E, F, dace.Memlet.simple(F, '8:76:64:4,4:72:64:4'))
 
-if __name__ == '__main__':
+
+def test():
     print('Strided range copy tasklet test')
     A = np.random.rand(2, 16, 4).astype(np.float32)
     B = np.random.rand(4).astype(np.float32)
@@ -48,4 +49,8 @@ if __name__ == '__main__':
     ]
     diff_array = [np.linalg.norm(d) for d in diffs]
     print('Differences:', diff_array)
-    exit(0 if np.average(np.array(diff_array)) <= 1e-5 else 1)
+    assert np.average(np.array(diff_array)) <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

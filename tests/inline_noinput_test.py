@@ -18,11 +18,15 @@ def inline_noinput(A: dace.float64[2]):
         internal(A)
 
 
-if __name__ == '__main__':
+def test():
     A = np.random.rand(2)
 
     inline_noinput(A)
 
     diff = np.linalg.norm(A - np.array([5., 3.]))
     print('Difference:', diff)
-    exit(0 if diff < 1e-5 else 1)
+    assert diff < 1e-5
+
+
+if __name__ == "__main__":
+    test()

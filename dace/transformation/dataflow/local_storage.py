@@ -114,6 +114,8 @@ class LocalStorage(xf.Transformation, ABC):
             edge.data.subset.offset(offset, True)
             edge.data.data = new_data
 
+        return data_node
+
 
 @registry.autoregister_params(singlestate=True)
 @make_properties

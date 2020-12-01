@@ -2,6 +2,7 @@
 
 import dace
 import numpy as np
+import pytest
 import scipy
 
 W = dace.symbol('W')
@@ -23,6 +24,7 @@ def spmv(A_row, A_col, A_val, x, b):
             out = a * in_x
 
 
+@pytest.mark.gpu
 def test_dynamic_map():
     height = 1024
     width = 1024
@@ -70,7 +72,7 @@ def test_dynamic_map():
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(height)
     print("Difference:", diff)
     print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
 
 
 if __name__ == '__main__':

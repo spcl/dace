@@ -46,12 +46,15 @@ def softmax(x):
     return e_x / e_x.sum(axis=0)
 
 
-if __name__ == '__main__':
+def test_softmax():
     X = np.array([1, 2, 3, 4, 5], dtype=np.float32)
     Y = np.zeros(X.shape, dtype=np.float32)
 
     dace_softmax.compile()
     dace_softmax(X_in=X, X_out=Y, N=X.shape[0])
 
-    if not np.allclose(softmax(X), Y):
-        exit(1)
+    assert np.allclose(softmax(X), Y)
+
+
+if __name__ == "__main__":
+    test_softmax()
