@@ -255,7 +255,6 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
 
         return  dot_sdfg
 
-
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
@@ -278,6 +277,267 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
         )
 
 
+@dace.library.expansion
+class ExpandDOTIntelFPGAVectorized(ExpandTransformation):
+
+    # Expansion targeting Intel FPGA
+    environments = []
+
+    @staticmethod
+    def make_sdfg(dtype, vec_width, node, parent_state, parent_sdfg):
+
+        # FPGA Nested SDFG:
+        # - The dot product is represented by two nested maps: the innermost is a fully unrolled map,
+        #       the outermost is obtained by strip mining the original loop (over n) to expose unrolling
+        #       opportunity
+        # - since we want to produce perfectly nested loop, the body of the map will be a nested SDFG
+        #   Inside this, the computation is performed and, if we are on the last iteration of the outermost map,
+        #   we compute the final result and we write it into memory
+        # - Note: this expansion takes advantage of Intel single clock cycle accumulation
+        # - TODO: deal with double precision
+
+        #get input size
+        n = parent_state.in_edges(node)[0].data.subset.size()[0]
+
+        parent_sdfg = dace.SDFG('dot_graph')
+        dot_state = parent_sdfg.add_state("dot_state")
+
+        # ---------- ----------
+        # MEMORY LOCATIONS
+        # ---------- ----------
+
+        parent_sdfg.add_array('_x',
+                              shape=[n],
+                              dtype=dtype,
+                              storage=dace.dtypes.StorageType.FPGA_Global)
+        parent_sdfg.add_array('_y',
+                              shape=[n],
+                              dtype=dtype,
+                              storage=dace.dtypes.StorageType.FPGA_Global)
+        parent_sdfg.add_array('_result',
+                              shape=[1],
+                              dtype=dtype,
+                              storage=dace.dtypes.StorageType.FPGA_Global)
+
+        parent_sdfg.add_array('_accum',
+                              dtype=dtype,
+                              shape=[1],
+                              transient=True,
+                              storage=dace.dtypes.StorageType.FPGA_Registers)
+
+        #--------------------
+        # Create the nested Map body
+        #--------------------
+
+        nested_dot = dace.SDFG("dot_compute")
+        nested_dot.add_symbol("i", dace.int32)
+        nested_dot.add_symbol("n", dace.int32)
+
+        nested_dot.add_array('nested_x',
+                             shape=[vec_width],
+                             dtype=dtype,
+                             storage=dace.dtypes.StorageType.FPGA_Global)
+        nested_dot.add_array('nested_y',
+                             shape=[vec_width],
+                             dtype=dtype,
+                             storage=dace.dtypes.StorageType.FPGA_Global)
+        nested_dot.add_array('nested_res',
+                             shape=[1],
+                             dtype=dtype,
+                             storage=dace.dtypes.StorageType.FPGA_Global)
+
+        nested_dot.add_array('nested_accum_in',
+                             dtype=dtype,
+                             shape=[1],
+                             storage=dace.dtypes.StorageType.FPGA_Registers)
+        nested_dot.add_array('nested_accum_out',
+                             dtype=dtype,
+                             shape=[1],
+                             storage=dace.dtypes.StorageType.FPGA_Registers)
+
+        dot_product = nested_dot.add_state("product")
+
+        # Fully unrolled map
+        dot_product_map_entry, dot_product_map_exit = dot_product.add_map(
+            'product',
+            dict(j='0:{}'.format(vec_width)),
+            schedule=dace.dtypes.ScheduleType.FPGA_Device,
+            unroll=True)
+
+        dot_tasklet = dot_product.add_tasklet(
+            'dot_task', ['x_con', 'y_con', 'red_con_in'], ['red_con_out'],
+            'red_con_out = red_con_in + x_con * y_con')
+
+        nested_x = dot_product.add_read("nested_x")
+        nested_y = dot_product.add_read("nested_y")
+        nested_accum_in = dot_product.add_read("nested_accum_in")
+        nested_accum_out = dot_product.add_write("nested_accum_out")
+        dot_product.add_memlet_path(nested_x,
+                                    dot_product_map_entry,
+                                    dot_tasklet,
+                                    dst_conn='x_con',
+                                    memlet=dace.Memlet.simple(
+                                        nested_x.data, 'j'))
+        dot_product.add_memlet_path(nested_y,
+                                    dot_product_map_entry,
+                                    dot_tasklet,
+                                    dst_conn='y_con',
+                                    memlet=dace.Memlet.simple(
+                                        nested_y.data, 'j'))
+        dot_product.add_memlet_path(nested_accum_in,
+                                    dot_product_map_entry,
+                                    dot_tasklet,
+                                    dst_conn='red_con_in',
+                                    memlet=dace.Memlet.simple(
+                                        nested_accum_in.data, '0'))
+        dot_product.add_memlet_path(dot_tasklet,
+                                    dot_product_map_exit,
+                                    nested_accum_out,
+                                    src_conn='red_con_out',
+                                    memlet=dace.Memlet.simple(
+                                        nested_accum_out.data, '0'))
+
+        # copy the result out
+        dot_write_result = nested_dot.add_state("dot_write_result")
+        nested_res = dot_write_result.add_read("nested_accum_out")
+        res_out = dot_write_result.add_write('nested_res')
+
+        write_tasklet = dot_write_result.add_tasklet('mapToStream_task',
+                                                     ['inCon'], ['outCon'],
+                                                     'outCon = inCon')
+
+        dot_write_result.add_memlet_path(nested_res,
+                                         write_tasklet,
+                                         dst_conn='inCon',
+                                         memlet=dace.Memlet.simple(
+                                             nested_res.data, '0'))
+
+        dot_write_result.add_memlet_path(write_tasklet,
+                                         res_out,
+                                         src_conn='outCon',
+                                         memlet=dace.Memlet.simple(
+                                             res_out.data, '0'))
+
+        # Add interstate edges: copies out only if we are at the last iteration of the outermost map
+        if_state = nested_dot.add_state_after(dot_product, "if_state")
+        empty_state = nested_dot.add_state("empty_state")
+        else_state = nested_dot.add_state("else_state")
+        nested_dot.add_edge(
+            if_state, dot_write_result,
+            dace.sdfg.sdfg.InterstateEdge(
+                condition=dace.properties.CodeProperty.from_string(
+                    "i == {}/{} - 1".format(n, vec_width),
+                    language=dace.dtypes.Language.Python)))
+        nested_dot.add_edge(
+            if_state, else_state,
+            dace.sdfg.sdfg.InterstateEdge(
+                condition=dace.properties.CodeProperty.from_string(
+                    "i != {}/{} - 1".format(n, vec_width),
+                    language=dace.dtypes.Language.Python)))
+        nested_dot.add_edge(dot_write_result, empty_state,
+                            dace.sdfg.sdfg.InterstateEdge())
+        nested_dot.add_edge(else_state, empty_state,
+                            dace.sdfg.sdfg.InterstateEdge())
+
+        # --------------------
+        # create the outermost map, nest the body
+        # ---------------------
+
+        accum_init = dot_state.add_access("_accum")
+        init_tasklet = dot_state.add_tasklet('init_task', [], ['outCon'],
+                                             'outCon = 0;',
+                                             language=dace.dtypes.Language.CPP)
+
+        dot_state.add_memlet_path(init_tasklet,
+                                  accum_init,
+                                  src_conn='outCon',
+                                  memlet=dace.Memlet.simple(
+                                      accum_init.data, '0'))
+
+        dotMap_entry, dotMap_exit = dot_state.add_map(
+            'dot_map',
+            dict(i='0:{0}/{1}'.format(n, vec_width)),
+            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+
+        # Nest the other SDFG
+        nested_sdfg = dot_state.add_nested_sdfg(
+            nested_dot,
+            parent_sdfg, {"nested_x", "nested_y", "nested_accum_in"},
+            {"nested_res", "nested_accum_out"},
+            symbol_mapping={
+                "i": "i",
+                "n": n
+            })
+
+        x_read = dot_state.add_read("_x")
+        y_read = dot_state.add_read("_y")
+
+        accum_write = dot_state.add_write("_accum")
+        res_write = dot_state.add_write("_result")
+
+        dot_state.add_memlet_path(x_read,
+                                  dotMap_entry,
+                                  nested_sdfg,
+                                  dst_conn="nested_x",
+                                  memlet=dace.Memlet.simple(
+                                      x_read,
+                                      "i*{}".format(vec_width),
+                                      num_accesses=vec_width))
+        dot_state.add_memlet_path(y_read,
+                                  dotMap_entry,
+                                  nested_sdfg,
+                                  dst_conn="nested_y",
+                                  memlet=dace.Memlet.simple(
+                                      y_read,
+                                      "i*{}".format(vec_width),
+                                      num_accesses=vec_width))
+        dot_state.add_memlet_path(accum_init,
+                                  dotMap_entry,
+                                  nested_sdfg,
+                                  dst_conn="nested_accum_in",
+                                  memlet=dace.Memlet.simple(accum_init, "0"))
+        dot_state.add_memlet_path(nested_sdfg,
+                                  dotMap_exit,
+                                  accum_write,
+                                  src_conn='nested_accum_out',
+                                  memlet=dace.Memlet.simple(
+                                      accum_write.data, "0"))
+        dot_state.add_memlet_path(nested_sdfg,
+                                  dotMap_exit,
+                                  res_write,
+                                  src_conn='nested_res',
+                                  memlet=dace.Memlet.simple(
+                                      res_write.data, "0"))
+        parent_sdfg.validate()
+        return parent_sdfg
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
+        node_sdfg = ExpandDOTIntelFPGAVectorized.make_sdfg(
+            node.dtype, int(node.vec_width), node, state, sdfg)
+
+        # Modify internal schedules according to node schedule
+        if node.schedule != dace.ScheduleType.Default:
+            for nstate in node_sdfg.nodes():
+                topnodes = nstate.scope_dict(node_to_children=True)[None]
+                for topnode in topnodes:
+                    if isinstance(
+                            topnode,
+                        (dace.nodes.EntryNode, dace.nodes.LibraryNode)):
+                        topnode.schedule = node.schedule
+        # nest and map symbol
+        symbol_mapping = {}  #{"n": node.n}
+        expansion = state.add_nested_sdfg(node_sdfg,
+                                          sdfg,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          name=node.name,
+                                          debuginfo=node.debuginfo)
+        return expansion
 
 
 @dace.library.node
@@ -289,17 +549,20 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
-        "fpga_stream": ExpandDOTFPGAStreamingLinearReduction
+        "fpga_stream": ExpandDOTFPGAStreamingLinearReduction,
+        "IntelFPGA": ExpandDOTIntelFPGAVectorized
     }
     default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
+    vec_width = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     partial_width = dace.properties.SymbolicProperty(allow_none=False, default=2)
     veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
+
 
     def __init__(self,
                 name,
@@ -307,6 +570,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
                 partial_width=2,
                 veclen=1,
                 n=None,
+                vec_width=1,
                 *args,
                 **kwargs):
         super().__init__(name,
@@ -318,7 +582,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         self.veclen = veclen
         self.partial_width = partial_width
         self.n = n or dace.symbolic.symbol("n")
-
+        self.vec_width = vec_width
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
@@ -366,7 +630,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
 
     def getStreamReader(self):
-        
+
         return {
             "_x" : streamReadVector(
                 '-',
@@ -383,7 +647,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         }
 
     def getStreamWriter(self):
-        
+
         return {
             "_res" : streamWriteVector(
                 '-',

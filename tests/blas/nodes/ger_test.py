@@ -18,79 +18,6 @@ from dace.libraries.standard.memory import aligned_ndarray
 
 from multiprocessing import Process, Queue
 
-
-def run_program(program, x, y, A, res, testN, ref_result, queue, alpha):
-
-    program(x1=x, y1=y, A1=A, res1=res, n=np.int32(testN), m=np.in32(testN), a=alpha)
-    ref_norm = np.linalg.norm(res - ref_result) / testN * testN
-
-    queue.put(ref_norm)
-
-
-
-def run_test(configs, target, implementation, overwrite_y=False):
-
-    # TODO: add testM to test non-square matrices
-    testN = int(2**13)
-
-    for config in configs:
-
-        prec = np.float32 if config[2] == dace.float32 else np.float64
-        A = aligned_ndarray(np.random.uniform(0, 100, testN * testN).astype(prec),
-                            alignment=256)
-        x = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
-                            alignment=256)
-        y = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
-                            alignment=256)
-        
-        # TODO: support non-square matrix test via test config
-        res = aligned_ndarray(np.zeros(testN*testN).astype(prec), alignment=256)
-
-        alpha = np.float32(
-            config[0]) if config[2] == dace.float32 else np.float64(config[0])
-
-
-        ref_result = reference_result(A, x, y, alpha)
-
-        program = None
-        if target == "fpga":
-            program = fpga_graph(config[1],
-                                 config[2],
-                                 implementation,
-                                 testCase=config[3])
-        else:
-            program = pure_graph(config[2], testCase=config[3])
-
-        ref_norm = 0
-        if target == "fpga":
-
-            # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
-            queue = Queue()
-            p = Process(target=run_program,
-                        args=(program, x, y, A, res, testN, ref_result, queue, alpha))
-            p.start()
-            p.join()
-            ref_norm = queue.get()
-
-        else:
-            program(x1=x, y1=y, A1=A, res1=res, n=np.int32(testN), m=np.in32(testN), a=alpha)
-            ref_norm = np.linalg.norm(res - ref_result) / testN * testN
-
-        passed = ref_norm < 1e-5
-
-        if not passed:
-            raise RuntimeError(
-                'GER {} implementation wrong test results on config: '.format(
-                    implementation), config)
-
-
-# ---------- ----------
-# Ref result
-# ---------- ----------
-def reference_result(A_in, x_in, y_in, alpha):
-    return A_in + alpha * np.outer(y_in, x_in)
-
-
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
@@ -185,100 +112,104 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
 
-    return test_sdfg.compile()
-
-
-def test_fpga(vendor):
-
-    print("Run BLAS test: GER fpga", vendor + "...")
-
-    configs = [(0.0, 1, dace.float32, "0"), (1.0, 1, dace.float32, "1"),
-               (random.random(), 1, dace.float32, "2"),
-               (1.0, 1, dace.float64, "3"), (1.0, 4, dace.float64, "4")]
-
-    run_test(configs, "fpga", vendor)
-
-    print(" --> passed")
-
-
+    return test_sdfg
 
 
 # ---------- ----------
-# Pure graph program
+# Pure graph program (CPU)
 # ---------- ----------
-def pure_graph(precision, implementation="pure", testCase="0"):
+def pure_graph(dtype):
 
     n = dace.symbol("n")
-    a = dace.symbol("a")
+    m = dace.symbol("m")
 
-    prec = "single" if precision == dace.float32 else "double"
-    test_sdfg = dace.SDFG("ger_test_" + prec + "_v" + str(veclen) + "_" +
-                          implementation + "_" + testCase)
-    test_state = test_sdfg.add_state("test_state")
+    sdfg = dace.SDFG(
+        "ger_operation")  # rank 1 operation: r = alpha * x * yT + A
 
-    test_sdfg.add_symbol(a.name, precision)
+    state = sdfg.add_state("ger")
 
-    test_sdfg.add_array('x1', shape=[n], dtype=prec)
-    test_sdfg.add_array('y1', shape=[n], dtype=prec)
-    test_sdfg.add_array('res1', shape=[n*n], dtype=prec)
-    test_sdfg.add_array('A1', shape=[n*n], dtype=prec)
+    sdfg.add_symbol("alpha", dtype)
 
-    x_in = test_state.add_read('x1')
-    y_in = test_state.add_read('y1')
-    A_in = test_state.add_read('A1')
-    z_out = test_state.add_write('res1')
+    sdfg.add_array("x", shape=[m], dtype=dtype)
+    sdfg.add_array("y", shape=[n], dtype=dtype)
+    sdfg.add_array("A", shape=[m, n], dtype=dtype)
+    sdfg.add_array("r", shape=[m, n], dtype=dtype)  # result
 
-    ger_node = blas.ger.Ger("ger", dtype=precision)
-    ger_node.implementation = implementation
+    x = state.add_read("x")
+    y = state.add_read("y")
+    A = state.add_read("A")
+    result = state.add_write("r")
 
-    test_state.add_memlet_path(x_in,
-                               ger_node,
-                               dst_conn='_x',
-                               memlet=Memlet.simple(x_in,
-                                                    "0:n"))
-    test_state.add_memlet_path(y_in,
-                               ger_node,
-                               dst_conn='_y',
-                               memlet=Memlet.simple(y_in,
-                                                    "0:n"))
+    ger_node = blas.Ger(name="ger", dtype=dtype)
+    ger_node.implementation = "pure"
 
-    test_state.add_memlet_path(A_in,
-                               ger_node,
-                               dst_conn='_A',
-                               memlet=Memlet.simple(A_in,
-                                                    "0:n*n"))
+    state.add_memlet_path(x,
+                          ger_node,
+                          dst_conn="_x",
+                          memlet=Memlet.simple(x, "0:m", num_accesses=m))
+    state.add_memlet_path(y,
+                          ger_node,
+                          dst_conn="_y",
+                          memlet=Memlet.simple(y, "0:n", num_accesses=n))
+    state.add_memlet_path(A,
+                          ger_node,
+                          dst_conn="_A",
+                          memlet=Memlet.simple(A,
+                                               "0:m, 0:n",
+                                               num_accesses=m * n))
+    state.add_memlet_path(ger_node,
+                          result,
+                          src_conn="_res",
+                          memlet=Memlet.simple(result,
+                                               "0:m, 0:n",
+                                               num_accesses=m * n))
 
-    test_state.add_memlet_path(ger_node,
-                               z_out,
-                               src_conn='_RES',
-                               memlet=Memlet.simple(z_out,
-                                                    "0:n*n"))
-
-    test_sdfg.expand_library_nodes()
-
-    return test_sdfg.compile()
-
-
-def test_pure():
-
-    print("Run BLAS test: GER pure...")
-
-    configs = [(1.0, 1, dace.float32, "0"), (0.0, 1, dace.float32, "1"),
-               (random.random(), 1, dace.float32, "2")]
-
-    run_test(configs, "pure", "pure")
-
-
+    sdfg.validate()
+    return sdfg
 
 
 if __name__ == "__main__":
 
-    cmdParser = argparse.ArgumentParser(allow_abbrev=False)
-    cmdParser.add_argument("--target", dest="target", default="pure")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("N", type=int, nargs="?", default=64)
+    parser.add_argument("M", type=int, nargs="?", default=64)
+    parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
+    parser.add_argument("--target", dest="target", default="pure")
+    parser.add_argument("--eps", type=float, default=1e-6)
+    args = parser.parse_args()
+    n = args.N
+    m = args.M
+    alpha = args.alpha
 
-    args = cmdParser.parse_args()
-
-    if args.target == "intel_fpga" or args.target == "xilinx":
-        test_fpga(args.target)
+    if args.target == "pure":
+        sdfg = pure_graph(dace.float32)
+    elif args.target == "intel_fpga":
+        raise NotImplementedError()
+    elif args.target == "xilinx":
+        sdfg = fpga_graph(1, dace.float32, args.target, "0")
     else:
-        test_pure()
+        print("Unsupported target")
+        exit(-1)
+
+    ger = sdfg.compile()
+
+    x = np.ndarray(m, dtype=np.float32)
+    y = np.ndarray(n, dtype=np.float32)
+    A = np.ndarray((m, n), dtype=np.float32)
+    result = np.ndarray((m, n), dtype=np.float32)
+
+    x[:] = np.random.rand(m).astype(np.float32)
+    y[:] = np.random.rand(n).astype(np.float32)
+    A[:] = np.random.rand(m, n).astype(np.float32)
+    result[:] = np.zeros((m, n)).astype(np.float32)
+
+    ger(alpha=alpha, x=x, y=y, A=A, r=result, m=m, n=n)
+
+    ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=A)
+
+    diff = np.linalg.norm(np.subtract(result, ref))
+    if diff >= args.eps * n * m:
+        print("Unexpected result returned from ger rank 1 operation: "
+              "got:\n{}\nexpected:\n{}".format(result, ref))
+    else:
+        print("Ok")

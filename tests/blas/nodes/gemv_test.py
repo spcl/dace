@@ -19,80 +19,6 @@ from dace.libraries.standard.memory import aligned_ndarray
 from multiprocessing import Process, Queue
 
 
-def run_program(program, x, y, A, res, testN, ref_result, queue, alpha, beta):
-
-    program(x1=x, y1=y, A1=A, res1=res, n=np.int32(testN), m=np.in32(testN), a=alpha, b=beta)
-    ref_norm = np.linalg.norm(res - ref_result) / testN
-
-    queue.put(ref_norm)
-
-
-def run_test(configs, target, implementation, overwrite_y=False):
-
-    # TODO: add testM to test non-square matrices
-    testN = int(2**13)
-
-    for config in configs:
-
-        prec = np.float32 if config[2] == dace.float32 else np.float64
-        A = aligned_ndarray(np.random.uniform(0, 100, testN * testN).astype(prec),
-                            alignment=256)
-        x = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
-                            alignment=256)
-        y = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
-                            alignment=256)
-        
-        res = aligned_ndarray(np.zeros(testN).astype(prec), alignment=256)
-
-        alpha = np.float32(
-            config[0]) if config[2] == dace.float32 else np.float64(config[0])
-
-        # TODO: add separate beta value to test config
-        beta = np.float32(
-            config[0]) if config[2] == dace.float32 else np.float64(config[0])
-
-
-        ref_result = reference_result(A, x, y, alpha, beta)
-
-        program = None
-        if target == "fpga":
-            program = fpga_graph(config[1],
-                                 config[2],
-                                 implementation,
-                                 testCase=config[3])
-        else:
-            # TODO: add pure test
-            pass
-
-        ref_norm = 0
-        if target == "fpga":
-
-            # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
-            queue = Queue()
-            p = Process(target=run_program,
-                        args=(program, x, y, A, res, testN, ref_result, queue, alpha, beta))
-            p.start()
-            p.join()
-            ref_norm = queue.get()
-
-        else:
-            program(x1=x, y1=y, A1=A, res1=res, n=np.int32(testN), m=np.in32(testN), a=alpha, b=beta)
-            ref_norm = np.linalg.norm(b - ref_result) / testN
-
-        passed = ref_norm < 1e-5
-
-        if not passed:
-            raise RuntimeError(
-                'GEMV {} implementation wrong test results on config: '.format(
-                    implementation), config)
-
-
-# ---------- ----------
-# Ref result
-# ---------- ----------
-def reference_result(A_in, x_in, y_in, alpha, beta):
-    return alpha * A_in @ x_in + beta * y_in
-
 
 # ---------- ----------
 # FPGA graph program
@@ -190,31 +116,223 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
 
-    return test_sdfg.compile()
+    return test_sdfg
 
 
-def test_fpga(vendor):
 
-    print("Run BLAS test: GEMV fpga", vendor + "...")
 
-    configs = [(0.0, 1, dace.float32, "0"), (1.0, 1, dace.float32, "1"),
-               (random.random(), 1, dace.float32, "2"),
-               (1.0, 1, dace.float64, "3"), (1.0, 4, dace.float64, "4")]
+# ---------- ----------
+# Pure graph program (CPU)
+# ---------- ----------
+def pure_graph(dtype, transposed):
+    n = dace.symbol("n")
+    m = dace.symbol("m")
 
-    run_test(configs, "fpga", vendor)
+    sdfg = dace.SDFG("gemv")
 
-    print(" --> passed")
+    # alpha and beta are symbols
+    sdfg.add_symbol("alpha", dtype)
+    sdfg.add_symbol("beta", dtype)
+
+    state = sdfg.add_state("gemv_compute")
+
+    A_rows = n
+    A_cols = m
+    x_size = n if transposed else m
+    y_size = m if transposed else n
+
+    sdfg.add_array('A', shape=[A_rows, A_cols], dtype=dtype)
+    sdfg.add_array('x', shape=[x_size], dtype=dtype)
+    sdfg.add_array('y', shape=[y_size], dtype=dtype)
+
+    A = state.add_read("A")
+    x = state.add_read("x")
+    result = state.add_write("y")
+
+    gemv_node = blas.Gemv("gemv",
+                          dtype=dace.float32,
+                          transA=transposed)
+
+    state.add_memlet_path(A,
+                          gemv_node,
+                          dst_conn="_A",
+                          memlet=Memlet.simple(
+                              A, "0:{}, 0:{}".format(A_rows, A_cols)))
+    state.add_memlet_path(x,
+                          gemv_node,
+                          dst_conn="_x",
+                          memlet=Memlet.simple(x,
+                                               "0:{}".format(x_size)))
+    y = state.add_read("y")
+    state.add_memlet_path(y,
+                          gemv_node,
+                          dst_conn="_y",
+                          memlet=Memlet.simple(y,
+                                               "0:{}".format(y_size)))
+    state.add_memlet_path(gemv_node,
+                          result,
+                          src_conn="_y",
+                          memlet=Memlet.simple(result, "0:{}".format(y_size)))
+    return sdfg
+
+
+# ---------- ----------
+# Intel FPGA graph
+# ---------- ----------
+def intel_fpga_graph(dtype, transposed, vec_width=4):
+    n = dace.symbol("n")
+    m = dace.symbol("m")
+
+
+
+    if transposed:
+        tile_m_size = dace.symbol("tile_m_size")
+    sdfg = dace.SDFG("gemv")
+    sdfg.add_symbol("tile_m_size", int)
+    # alpha and beta are symbols
+    sdfg.add_symbol("alpha", dtype)
+    sdfg.add_symbol("beta", dtype)
+
+    A_rows = n
+    A_cols = m
+    x_size = n if transposed else m
+    y_size = m if transposed else n
+
+    ###########################################################################
+    # Copy data to FPGA
+
+    copy_in_state = sdfg.add_state("copy_to_device")
+
+    sdfg.add_array("A", shape=[n, m], dtype=dtype)
+    sdfg.add_array("x", shape=[x_size], dtype=dtype)
+    sdfg.add_array("y", shape=[y_size], dtype=dtype)
+
+    in_host_A = copy_in_state.add_read("A")
+    in_host_x = copy_in_state.add_read("x")
+    in_host_y = copy_in_state.add_read("y")
+
+    sdfg.add_array("device_A", shape=[A_rows, A_cols], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+                   transient=True)
+    sdfg.add_array("device_x", shape=[x_size], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+                   transient=True)
+    sdfg.add_array("device_y", shape=[y_size], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+                   transient=True)
+
+    in_device_A = copy_in_state.add_write("device_A")
+    in_device_x = copy_in_state.add_write("device_x")
+    in_device_y = copy_in_state.add_write("device_y")
+
+    copy_in_state.add_memlet_path(
+        in_host_A, in_device_A,
+        memlet=Memlet.simple(in_host_A, "0:{}, 0:{}".format(A_rows, A_cols))
+    )
+    copy_in_state.add_memlet_path(
+        in_host_x, in_device_x,
+        memlet=Memlet.simple(in_host_x, "0:{}".format(x_size))
+    )
+    copy_in_state.add_memlet_path(
+        in_host_y, in_device_y,
+        memlet=Memlet.simple(in_host_y, "0:{}".format(y_size))
+    )
+
+    ###########################################################################
+    # Copy data from FPGA
+
+    copy_out_state = sdfg.add_state("copy_to_host")
+
+    out_device = copy_out_state.add_read("device_y")
+    out_host = copy_out_state.add_write("y")
+
+    copy_out_state.add_memlet_path(
+        out_device, out_host,
+        memlet=Memlet.simple(out_host, "0:{}".format(y_size))
+    )
+
+    ########################################################################
+    # FPGA State
+
+    fpga_state = sdfg.add_state("gemv_computation")
+    # This should not be an FPGA kernel, rather the gemv_expanded nested SDFG should
+
+    A = fpga_state.add_read("device_A")
+    x = fpga_state.add_read("device_x")
+    y_in = fpga_state.add_read("device_y")
+    y_out = fpga_state.add_write("device_y")
+
+
+    gemv_node = blas.Gemv("gemv", dtype=dace.float32, vec_width=vec_width, transA=transposed)
+    gemv_node.implementation = "IntelFPGA"
+
+    fpga_state.add_memlet_path(A,
+                               gemv_node,
+                               dst_conn="_A",
+                               memlet=Memlet.simple(A, "0:{}, 0:{}".format(n, m)))
+
+    fpga_state.add_memlet_path(x,
+                               gemv_node,
+                               dst_conn="_x",
+                               memlet=Memlet.simple(x, "0:{}".format("{}".format(x_size))))
+    fpga_state.add_memlet_path(y_in,
+                               gemv_node,
+                               dst_conn="_y",
+                               memlet=Memlet.simple(y_in, "0:{}".format(y_size)))
+    fpga_state.add_memlet_path(gemv_node,
+                               y_out,
+                               src_conn="_y",
+                               memlet=Memlet.simple(y_out, "0:{}".format(y_size)))
+
+    ######################################
+    # Interstate edges
+    sdfg.add_edge(copy_in_state, fpga_state,
+                  dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(fpga_state, copy_out_state,
+                  dace.sdfg.sdfg.InterstateEdge())
+
+    sdfg.fill_scope_connectors()
+    return sdfg
 
 
 if __name__ == "__main__":
 
-    cmdParser = argparse.ArgumentParser(allow_abbrev=False)
-    cmdParser.add_argument("--target", dest="target", default="pure")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("N", type=int, nargs="?", default=16)
+    parser.add_argument("M", type=int, nargs="?", default=16)
+    parser.add_argument("alpha", type=int, nargs="?", default=1)
+    parser.add_argument("beta", type=int, nargs="?", default=0)
+    parser.add_argument("--transposed",
+                        action="store_true",
+                        default=False,
+                        help="Compute GEMV with transposed matrix")
+    parser.add_argument("--target", dest="target", default="pure")
 
-    args = cmdParser.parse_args()
-
-    if args.target == "intel_fpga" or args.target == "xilinx":
-        test_fpga(args.target)
+    args = parser.parse_args()
+    n = args.N
+    m = args.M
+    alpha = args.alpha
+    beta = args.beta
+    transposed = args.transposed
+    if args.target == "pure":
+        sdfg = pure_graph(dace.float32, transposed)
+    elif args.target == "xilinx":
+        sdfg = fpga_graph(1, dace.float32, args.target, "0")
+    elif args.target == "intel_fpga":
+        sdfg = intel_fpga_graph(dace.float32, transposed)
     else:
-        # TODO: add pure test
-        pass
+        print("Unsupported target")
+        exit(-1)
+
+    A = np.random.rand(n, m).astype(np.float32)
+    x = np.random.rand(n if transposed else m).astype(np.float32)
+    y = np.random.rand(m if transposed else n).astype(np.float32)
+
+    y_copy = np.copy(y)
+
+    sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
+
+    ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
+
+    diff = np.linalg.norm(y - ref) / (m if transposed else n)
+    if diff >= 1e-5:
+        print("Error")
+    else:
+        print("Ok")

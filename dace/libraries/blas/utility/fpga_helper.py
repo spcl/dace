@@ -319,16 +319,16 @@ class StreamReadMatrixFull():
         self.increasedRowRepeat = increasedRowRepeat
         self.rowPyramid = rowPyramid # only for blocks by Row
         self.reverse = reverse
-        
+
         self.fpga_data = None
         self.fpga_dataName = None
         self.fpga_stream = None
 
 
-        
+
     def __eq__(self, other):
 
-        if (self.source == other.source and 
+        if (self.source == other.source and
             self.dtype == other.dtype and self.vecWidth == other.vecWidth and
             self.rows == other.rows and self.columns == other.columns and
             self.rowTile == other.rowTile and self.colTile == other.colTile and
@@ -336,8 +336,8 @@ class StreamReadMatrixFull():
             self.repeat == other.repeat and self.rowRepeat == other.rowRepeat and
             self.increasedRowRepeat == other.increasedRowRepeat and self.rowPyramid == other.rowPyramid and
             self.reverse == other.reverse):
-            
-            
+
+
             return True
         else:
             return False
@@ -408,8 +408,8 @@ class StreamReadMatrixFull():
         if destName != '':
             dest += destName + "_"
         dest += "rS"
-        
-                
+
+
         data_in = None
         if access:
             data_in = self.fpga_data
@@ -453,7 +453,7 @@ class StreamReadMatrixFull():
                 range = 'i:{0}/{1}'.format(self.rows, self.rowTile)
             else:
                 range = '0:i+1'
-        
+
         rowRepeatMap_entry = None
         rowRepeatMap_exit = None
         if self.tileByRow and self.rowRepeat != 1:
@@ -500,7 +500,7 @@ class StreamReadMatrixFull():
                 schedule=dtypes.ScheduleType.FPGA_Device
             )
 
-        
+
         # Tile ordering
         # ---------- ----------
         if self.tileByRow:
@@ -524,7 +524,7 @@ class StreamReadMatrixFull():
                 if self.repeat != 1:
 
                     state.add_memlet_path(
-                        data_in, repeatMap_entry, firstDimMap_entry, rowRepeatMap_entry, secondDimMap_entry, 
+                        data_in, repeatMap_entry, firstDimMap_entry, rowRepeatMap_entry, secondDimMap_entry,
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
@@ -543,7 +543,7 @@ class StreamReadMatrixFull():
                 else:
 
                     state.add_memlet_path(
-                        data_in, firstDimMap_entry, rowRepeatMap_entry, secondDimMap_entry, 
+                        data_in, firstDimMap_entry, rowRepeatMap_entry, secondDimMap_entry,
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
@@ -566,7 +566,7 @@ class StreamReadMatrixFull():
                 if self.repeat != 1:
 
                     state.add_memlet_path(
-                        data_in, repeatMap_entry, firstDimMap_entry, secondDimMap_entry, 
+                        data_in, repeatMap_entry, firstDimMap_entry, secondDimMap_entry,
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
@@ -585,7 +585,7 @@ class StreamReadMatrixFull():
                 else:
 
                     state.add_memlet_path(
-                        data_in, firstDimMap_entry, secondDimMap_entry, 
+                        data_in, firstDimMap_entry, secondDimMap_entry,
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
@@ -622,7 +622,7 @@ class StreamReadMatrixFull():
             if self.repeat > 1:
 
                 state.add_memlet_path(
-                    data_in, repeatMap_entry, firstDimMap_entry, secondDimMap_entry, 
+                    data_in, repeatMap_entry, firstDimMap_entry, secondDimMap_entry,
                     readColTile_entry, readRowTile_entry,
                     read_tasklet,
                     dst_conn='inCon',
@@ -638,9 +638,9 @@ class StreamReadMatrixFull():
                 )
 
             else:
-            
+
                 state.add_memlet_path(
-                    data_in, firstDimMap_entry, secondDimMap_entry, 
+                    data_in, firstDimMap_entry, secondDimMap_entry,
                     readColTile_entry, readRowTile_entry,
                     read_tasklet,
                     dst_conn='inCon',
@@ -654,7 +654,7 @@ class StreamReadMatrixFull():
                     src_conn='outCon',
                     memlet=Memlet.simple(data_out.data, '0')
                 )
-                
+
 
 
         return data_out, dest
@@ -724,7 +724,7 @@ class StreamWriteVector():
 
 
         vec_type = vector(self.dtype, self.veclen)
-        
+
         out_mem, out_name = self.stream(sdfg,
                                         state,
                                         self.fpga_data.data,
@@ -806,7 +806,7 @@ class StreamWriteVector():
 
 
 
-class StreamWriteMatrixFull(streamWriteBase):
+class StreamWriteMatrixFull():
 
     def __init__(
             self,
@@ -862,7 +862,7 @@ class StreamWriteMatrixFull(streamWriteBase):
             self.fpga_data.data,
             srcName=libConnector,
             access=access
-        )  
+        )
 
         stream_out = state.add_stream(
             out_name,
@@ -899,7 +899,7 @@ class StreamWriteMatrixFull(streamWriteBase):
 
         src = dest + "_"
         if srcName != '':
-            src += srcName + "_" 
+            src += srcName + "_"
         src += "wS"
 
         data_in = state.add_stream(
@@ -910,7 +910,7 @@ class StreamWriteMatrixFull(streamWriteBase):
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
         )
-        
+
         data_out = None
         if access:
             data_out = self.fpga_data
@@ -929,7 +929,7 @@ class StreamWriteMatrixFull(streamWriteBase):
             schedule=dtypes.ScheduleType.FPGA_Device
         )
 
-        
+
 
         read_tasklet = state.add_tasklet(
             'sW_{}'.format(dest),
@@ -953,7 +953,7 @@ class StreamWriteMatrixFull(streamWriteBase):
             )
 
             state.add_memlet_path(
-                data_in, readRows_entry, readCols_entry, 
+                data_in, readRows_entry, readCols_entry,
                 readRowTile_entry, readColTile_entry,
                 read_tasklet,
                 dst_conn='inCon',
@@ -986,7 +986,7 @@ class StreamWriteMatrixFull(streamWriteBase):
             )
 
             state.add_memlet_path(
-                data_in, readRows_entry, readCols_entry, 
+                data_in, readRows_entry, readCols_entry,
                 readColTile_entry, readRowTile_entry,
                 read_tasklet,
                 dst_conn='inCon',
