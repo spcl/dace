@@ -650,7 +650,6 @@ __kernel void \\
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
-
     def generate_nsdfg_header(self, sdfg, state, state_id, node,
                               memlet_references, sdfg_label):
         # Intel FPGA needs to deal with streams
@@ -1007,8 +1006,7 @@ __kernel void \\
 
             if data_name is not None:
                 data_desc = sdfg.arrays[data_name]
-                if (isinstance(data_desc, dace.data.Stream)
-                        and memlet.num_accesses != 1):
+                if (isinstance(data_desc, dace.data.Stream) and memlet.dynamic):
                     callsite_stream.write("#undef {}".format(memlet_name), sdfg)
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
