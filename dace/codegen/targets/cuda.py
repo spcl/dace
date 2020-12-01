@@ -945,6 +945,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self._cpu_codegen.define_out_memlet(sdfg, state_dfg, state_id, src_node,
                                             dst_node, edge, function_stream,
                                             callsite_stream)
+    def process_out_memlets(self, *args, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         # Two modes: device-level state and if this state has active streams
@@ -2075,10 +2078,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
                               sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, state, node, memlet_references, sdfg_label)
+            sdfg, state, state_id, node, memlet_references, sdfg_label)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
@@ -2086,8 +2089,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                                                      memlet_references,
                                                      sdfg_label)
 
-    def generate_nsdfg_arguments(self, sdfg, state, node):
-        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
+        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, dfg, state, node)
         if self.create_grid_barrier:
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 
