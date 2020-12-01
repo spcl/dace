@@ -6,8 +6,6 @@ on:
         description: 'Reason for the trigger'
         required: true
         default: 'Check compatibility'
-  schedule:
-    - cron: '0 0 1 * *' # monthly
 jobs:
   build:
     strategy:
