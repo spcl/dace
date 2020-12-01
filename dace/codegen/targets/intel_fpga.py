@@ -257,8 +257,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         if defined_type == DefinedType.Stream:
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.StreamArray:
-            # remove "[0]" index as this is not allowed if the subscripted value is not an array
-            expr = expr.replace("[0]", "")
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
             read_expr = "*({}{})".format(expr, " + " + index if index else "")
