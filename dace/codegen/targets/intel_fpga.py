@@ -989,8 +989,13 @@ __kernel void \\
                 data_desc = sdfg.arrays[data_name]
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.volume == 1 and not memlet.dynamic):
+                    if data_desc.is_stream_array():
+                        offset = cpp.cpp_offset_expr(data_desc, memlet.subset)
+                        target = f"{data_name}[{offset}]"
+                    else:
+                        target = data_name
                     callsite_stream.write(
-                        f"write_channel_intel({data_name}, {connector});", sdfg)
+                        f"write_channel_intel({target}, {connector});", sdfg)
 
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
