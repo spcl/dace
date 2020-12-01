@@ -7,6 +7,7 @@
 
 #include <complex>
 #include <numeric>
+#include <cmath>
 #include <cfloat>
 
 #ifdef __CUDACC__
@@ -354,21 +355,39 @@ static DACE_CONSTEXPR DACE_HDFI T rad2deg(const T& a) {
 // (support for complex numbers)
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI bool isfinite(const std::complex<T>& a) {
-    return isfinite(a.real()) && isfinite(a.imag());
+    return std::isfinite(a.real()) && std::isfinite(a.imag());
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isfinite(const T& a) {
+    return std::isfinite(a);
 }
 
 // Determines if the given (floating point) number is a positive or negative
 // infinity (support for complex numbers)
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI bool isinf(const std::complex<T>& a) {
-    return isinf(a.real()) || isinf(a.imag());
+    return std::isinf(a.real()) || std::isinf(a.imag());
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isinf(const T& a) {
+    return std::isinf(a);
 }
 
 // Determines if the given (floating point) number is not-a-number (NaN) value
 // (support for complex numbers)
 template<typename T>
 static DACE_CONSTEXPR DACE_HDFI bool isnan(const std::complex<T>& a) {
-    return isnan(a.real()) || isnan(a.imag());
+    return std::isnan(a.real()) || std::isnan(a.imag());
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isnan(const T& a) {
+    return std::isnan(a);
+}
+
+// Determines if the given floating point number a is negative
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool signbit(const T& a) {
+    return std::signbit(a);
 }
 
 // Computes modf (compatibility between Python tasklets and C++ modf)
