@@ -189,6 +189,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
                       kernel_stream):
+        """
+           Defines a stream
+           :return: a tuple containing the type of the created variable, and boolean indicating
+               whether this is a global variable or not
+           """
         ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
                                                 dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
@@ -200,8 +205,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
+        # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
-        return ctype
+        return ctype, False
 
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):

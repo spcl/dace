@@ -501,11 +501,53 @@ def cpp_ptr_expr(sdfg,
         return '%s + %s' % (dname, offset_cppstr)
 
 
+def _check_range_conflicts(subset, a, itersym, b, step):
+    found = False
+    if isinstance(step, symbolic.SymExpr):
+        step = step.approx
+    for rb, re, _ in subset.ndrange():
+        m = rb.match(a * itersym + b)
+        if m is None:
+            continue
+        if (m[a] >= 1) != True:
+            continue
+        if re != rb:
+            if isinstance(rb, symbolic.SymExpr):
+                rb = rb.approx
+            if isinstance(re, symbolic.SymExpr):
+                re = re.approx
+
+            # If False or indeterminate, the range may
+            # overlap across iterations
+            if ((re - rb) > m[a] * step) != False:
+                continue
+
+            m = re.match(a * itersym + b)
+            if m is None:
+                continue
+            if (m[a] >= 1) != True:
+                continue
+        found = True
+        break
+    return found
+
+
+def _check_map_conflicts(map, edge):
+    for itervar, (_, _, mapskip) in zip(map.params, map.range):
+        itersym = symbolic.pystr_to_symbolic(itervar)
+        a = sp.Wild('a', exclude=[itersym])
+        b = sp.Wild('b', exclude=[itersym])
+        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
+            return False
+    # If matches all map params, good to go
+    return True
+
+
 def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     """ Detects whether a write-conflict-resolving edge can be emitted without
         using atomics or critical sections. """
 
-    if edge.data.wcr_nonatomic:
+    if edge.data.wcr_nonatomic or edge.data.wcr is None:
         return False
 
     # If it's an entire SDFG, it's probably write-conflicted
@@ -523,21 +565,44 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     # Traverse memlet path to determine conflicts.
     # If no conflicts will occur, write without atomics
     # (e.g., if the array has been defined in a non-parallel schedule context)
-    # TODO: This is not perfect (need to take indices into consideration)
-    path = dfg.memlet_path(edge)
-    for e in path:
-        if (isinstance(e.dst, nodes.ExitNode)
-                and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
-            return True
-        # Should never happen (no such thing as write-conflicting reads)
-        if (isinstance(e.src, nodes.EntryNode)
-                and e.src.map.schedule != dtypes.ScheduleType.Sequential):
+    while edge is not None:
+        path = dfg.memlet_path(edge)
+        for e in path:
+            if (isinstance(e.dst, nodes.ExitNode)
+                    and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
+                if _check_map_conflicts(e.dst.map, e):
+                    # This map is parallel w.r.t. WCR
+                    # print('PAR: Continuing from map')
+                    continue
+                # print('SEQ: Map is conflicted')
+                return True
+            # Should never happen (no such thing as write-conflicting reads)
+            if (isinstance(e.src, nodes.EntryNode)
+                    and e.src.map.schedule != dtypes.ScheduleType.Sequential):
+                warnings.warn(
+                    'Unexpected WCR path to have write-conflicting reads')
+                return True
+
+        sdfg = dfg.parent
+        dst = path[-1].dst
+        # Unexpected case
+        if not isinstance(dst, nodes.AccessNode):
+            warnings.warn('Unexpected WCR path to not end in access node')
             return True
 
-    # If SDFG schedule is not None (top-level) or not sequential
-    if (sdfg_schedule is not None
-            and sdfg_schedule != dtypes.ScheduleType.Sequential):
-        return True
+        # If this is a nested SDFG and the access leads outside
+        if not sdfg.arrays[dst.data].transient:
+            if sdfg.parent_nsdfg_node is not None:
+                dfg = sdfg.parent
+                nsdfg = sdfg.parent_nsdfg_node
+                edge = next(iter(dfg.out_edges_by_connector(nsdfg, dst.data)))
+            else:
+                break
+        else:
+            # Memlet path ends here, transient. We can thus safely write here
+            edge = None
+            # print('PAR: Reached transient')
+            return False
 
     return False
 
