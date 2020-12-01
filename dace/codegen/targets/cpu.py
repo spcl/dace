@@ -473,8 +473,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(
-                        vconn)[0] == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(vconn)[0]
+                    == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -497,9 +497,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else
-                                    memlet.other_subset)
+                    array_subset = (memlet.subset if memlet.data
+                                    == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -706,7 +705,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # If there is a type mismatch, cast pointer
         if isinstance(dtype, dtypes.vector):
             ptr = f'({dtype.ctype} *)({ptr})'
-        
+
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(
@@ -820,15 +819,12 @@ class CPUCodeGen(TargetCodeGenerator):
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:
-                        try:
-                            defined_type, _ = self._dispatcher.defined_vars.get(
-                                memlet.data)
-                        except KeyError:  # The variable is not defined
+                        if isinstance(node, nodes.NestedSDFG):
                             # This case happens with nested SDFG outputs,
                             # which we skip since the memlets are references
-                            if isinstance(node, nodes.NestedSDFG):
-                                continue
-                            raise
+                            continue
+                        defined_type, _ = self._dispatcher.defined_vars.get(
+                            memlet.data)
 
                         if defined_type == DefinedType.Scalar:
                             expr = memlet.data
@@ -1338,8 +1334,8 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg,
                                   state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
-                              sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node,
+                              memlet_references, sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
             f'{atype} {aname}' for atype, aname, _ in memlet_references
@@ -1361,7 +1357,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ])
         return f'{sdfg_label}({args});'
 
-    def generate_nsdfg_arguments(self, sdfg, state, node):
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
@@ -1425,11 +1421,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # Arguments are input connectors, output connectors, and symbols
         codegen = self.calling_codegen
         memlet_references = codegen.generate_nsdfg_arguments(
-            sdfg, state_dfg, node)
+            sdfg, dfg, state_dfg, node)
 
         if not unique_functions or not code_already_generated:
             nested_stream.write(
-                codegen.generate_nsdfg_header(sdfg, state_dfg, node,
+                codegen.generate_nsdfg_header(sdfg, state_dfg, state_id, node,
                                               memlet_references, sdfg_label),
                 sdfg, state_id, node)
 
@@ -1452,15 +1448,15 @@ class CPUCodeGen(TargetCodeGenerator):
             nested_stream.write(local_code)
 
             # Process outgoing memlets with the internal SDFG
-            self.process_out_memlets(sdfg,
-                                     state_id,
-                                     node,
-                                     state_dfg,
-                                     self._dispatcher,
-                                     nested_stream,
-                                     True,
-                                     nested_global_stream,
-                                     skip_wcr=True)
+            codegen.process_out_memlets(sdfg,
+                                        state_id,
+                                        node,
+                                        state_dfg,
+                                        self._dispatcher,
+                                        nested_stream,
+                                        True,
+                                        nested_global_stream,
+                                        skip_wcr=True)
 
             nested_stream.write('}\n\n', sdfg, state_id, node)
 

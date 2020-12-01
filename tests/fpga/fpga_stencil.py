@@ -3,7 +3,7 @@ import copy
 import dace
 
 
-def make_sdfg(name="fpga_stencil_test", dtype=dace.float32, veclen=8):
+def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
 
     vtype = dace.vector(dtype, veclen)
 
@@ -251,7 +251,6 @@ if __name__ == "__main__":
     b = np.empty((n, m), dtype=dtype.type)
 
     jacobi(a=a, b=b)
-
     padded = np.ones((n + 2, m + 2), dtype.type)
     padded[1:-1, 1:-1] = a
     ref = 0.25 * (padded[:-2, 1:-1] + padded[2:, 1:-1] + padded[1:-1, :-2] +
