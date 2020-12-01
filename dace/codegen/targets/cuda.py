@@ -2090,7 +2090,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                                                      sdfg_label)
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
-        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg,dfg,  state, node)
+        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, dfg, state, node)
         if self.create_grid_barrier:
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 

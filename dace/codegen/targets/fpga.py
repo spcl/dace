@@ -1022,12 +1022,14 @@ class FPGACodeGen(TargetCodeGenerator):
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
-                if is_innermost and not fully_degenerate and not is_degenerate[0]:
-                    # Do not put pragma if the first loop is degenerate (does not exist)
-                    self.generate_flatten_loop_pre(result, sdfg, state_id, node)
 
 
                 for i, r in enumerate(node.map.range):
+
+                    if is_innermost and not fully_degenerate and not is_degenerate[i]:
+                        # Do not put pragma if this is degenerate (does not exist)
+                        self.generate_flatten_loop_pre(result, sdfg, state_id, node)
+
                     var = node.map.params[i]
                     begin, end, skip = r
                     # decide type of loop variable
