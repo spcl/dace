@@ -13,7 +13,7 @@ python3 $DIODEBASEPATH/diode_server.py --localhost --port=$PORT &
 SERVPID=$!
 RETVAL=0
 
-TESTFILES=("simple/gemm.py" "sdfg_api/nested_states.py" "sdfg_api/state_fusion.py" "sdfg_api/control_flow.py")
+TESTFILES=("simple/matmul.py" "sdfg_api/nested_states.py" "sdfg_api/state_fusion.py" "sdfg_api/control_flow.py")
 FAILEDFILES=()
 
 echo "server pid is: $SERVPID"
