@@ -814,6 +814,8 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         nptype = dtype
     if issubclass(nptype, bool):
         return True
+    elif issubclass(nptype, np.bool_):
+        return np.bool_(True)
     elif issubclass(nptype, Integral):
         return nptype(np.iinfo(nptype).max)
     else:
@@ -866,6 +868,7 @@ def _result_type(
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, Number):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+            print(arg, type(arg), dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
@@ -997,17 +1000,6 @@ def _result_type(
             # All other arithmetic operators and cases of the above operators
             else:
                 result_type = _np_result_type(dtypes_for_result)
-                if max(type1, type2) == 3:
-                    if type1 < 3:
-                        left_cast = dtype2
-                    elif type2 < 3:
-                        right_cast = dtype1
-                    else:  # type1 == type2
-                        cast = eval('dace.complex{}'.format(8 * max_bytes))
-                        if dtype1 != cast:
-                            left_cast = cast
-                        if dtype2 != cast:
-                            right_cast = cast
 
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)
