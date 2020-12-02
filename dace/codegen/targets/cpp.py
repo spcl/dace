@@ -467,7 +467,7 @@ def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
             expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
         elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
             expr = '(%s)(&%s)' % (conntype.ctype, expr)
-        elif defined_type in [DefinedType.Pointer, DefinedType.StreamArray]:
+        elif defined_type == DefinedType.Pointer:
             expr = '&' + expr
     elif not is_scalar:
         expr = '&' + expr
