@@ -5,6 +5,7 @@ import copy
 from dace.subsets import Range, Subset, union
 from typing import Dict, List, Optional, Tuple
 
+from dace import symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
@@ -419,6 +420,31 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     new_exit.map = new_entry.map
 
     return ScopeSubgraphView(state, new_nodes, new_entry)
+
+
+def offset_map(sdfg: SDFG,
+               state: SDFGState,
+               entry: nodes.MapEntry,
+               dim: int,
+               offset: symbolic.SymbolicType,
+               negative: bool = True):
+    """
+    Offsets a map parameter and its contents by a value.
+    :param sdfg: The SDFG in which the map resides.
+    :param state: The state in which the map resides.
+    :param entry: The map entry node.
+    :param dim: The map dimension to offset.
+    :param offset: The value to offset by.
+    :param negative: If True, offsets by ``-offset``.
+    """
+    entry.map.range.offset(offset, negative, indices=[dim])
+    param = entry.map.params[dim]
+    subgraph = state.scope_subgraph(entry)
+    # Offset map param by -offset, contents by +offset and vice versa
+    if negative:
+        subgraph.replace(param, f'({param} + {offset})')
+    else:
+        subgraph.replace(param, f'({param} - {offset})')
 
 
 def split_interstate_edges(sdfg: SDFG) -> None:

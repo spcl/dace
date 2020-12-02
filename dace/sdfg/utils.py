@@ -776,40 +776,67 @@ def trace_nested_access(node: nd.AccessNode, state: SDFGState,
     :param node: An access node.
     :param state: State in which the access node is located.
     :param sdfg: SDFG in which the access node is located.
-    :return: A list of scopes (node, state, sdfg) in which the given
-                data is accessed, from outermost scope to innermost scope.
+    :return: A list of scopes ((input_node, output_node), (memlet_read, memlet_write), state, sdfg) in which
+             the given data is accessed, from outermost scope to innermost
+             scope.
     """
-    if node.access == dtypes.AccessType.ReadWrite:
-        raise NotImplementedError("Access node must be read or write only")
-    curr_node = node
     curr_sdfg = sdfg
-    trace = [(node, state, sdfg)]
+    curr_read = None
+    memlet_read = None
+    for m in state.out_edges(node):
+        if not m.data.is_empty():
+            curr_read = node
+            memlet_read = m.data
+            break
+
+    curr_write = None
+    memlet_write = None
+    for m in state.in_edges(node):
+        if not m.data.is_empty():
+            curr_write = node
+            memlet_read = m.data
+            break
+
+    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)]
+
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
 
         # Find the nested SDFG containing ourself in the parent state
         nested_sdfg = curr_sdfg.parent_nsdfg_node
 
-        if node.access == dtypes.AccessType.ReadOnly:
+        if curr_read is not None:
             for e in curr_state.in_edges(nested_sdfg):
-                if e.dst_conn == curr_node.data:
+                if e.dst_conn == curr_read.data:
                     # See if the input to this connector traces back to an
                     # access node. If not, just give up here
-                    curr_node = find_input_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, nd.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
-        if node.access == dtypes.AccessType.WriteOnly:
+                    n = find_input_arraynode(curr_state, e)
+                    if isinstance(n, nd.AccessNode):
+                        curr_read = n
+                        memlet_read = e.data
+                        break
+            else:
+                curr_read = None
+                memlet_read = None
+        if curr_write is not None:
             for e in curr_state.out_edges(nested_sdfg):
-                if e.src_conn == curr_node.data:
+                if e.src_conn == curr_write.data:
                     # See if the output of this connector traces back to an
                     # access node. If not, just give up here
-                    curr_node = find_output_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, nd.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
+                    n = find_output_arraynode(curr_state, e)
+                    if isinstance(curr_write, nd.AccessNode):
+                        curr_write = n
+                        memlet_write = e.data
+                        break
+            else:
+                curr_write = None
+                memlet_write = None
+        if curr_read is not None or curr_write is not None:
+            trace.append(((curr_read, curr_write), (memlet_read, memlet_write),
+                          curr_state, curr_state.parent))
+        else:
+            break
+        curr_sdfg = curr_state.parent  # Recurse
     return list(reversed(trace))
 
 def fuse_states(sdfg: SDFG) -> int:
