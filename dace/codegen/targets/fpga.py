@@ -171,7 +171,11 @@ class FPGACodeGen(TargetCodeGenerator):
                                                    function_stream,
                                                    callsite_stream)
             # Create a unique kernel name to avoid name clashes
-            kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
+            # If this kernels comes from a Nested SDFG, use that name also
+            if sdfg.parent_nsdfg_node is not None:
+                kernel_name = "{}_{}_{}".format(sdfg.parent_nsdfg_node.label, state.label, sdfg.sdfg_id)
+            else:
+                kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
@@ -1190,7 +1194,6 @@ class FPGACodeGen(TargetCodeGenerator):
                          symbol_parameters, module_stream, entry_stream,
                          host_stream):
         """Main entry function for generating a Xilinx kernel."""
-
         # Module generation
         for subgraph in subgraphs:
             # Traverse to find first tasklets reachable in topological order

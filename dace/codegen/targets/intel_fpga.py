@@ -509,17 +509,14 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 kernel_args_call.append(pname)
 
         # create a unique module name to prevent name clashes
-        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
-
-        # The official limit suggested by Intel is 61. However, the compiler
+        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
+        # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
         # 61 - 15 = 46, and round down to 42 to be conservative.
-        if len(module_function_name) > 42:
-            raise NameTooLongError(
-                "Due to a bug in the Intel FPGA OpenCL compiler, "
-                "kernel names cannot be longer than 42 characters:\n\t{}".
-                format(module_function_name))
+        # Therefore we cut down names longer than that
+        module_function_name = module_function_name[0:42]
+
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
