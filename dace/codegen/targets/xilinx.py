@@ -189,6 +189,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
                       kernel_stream):
+        """
+           Defines a stream
+           :return: a tuple containing the type of the created variable, and boolean indicating
+               whether this is a global variable or not
+           """
         ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
                                                 dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
@@ -200,8 +205,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
+        # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
-        return ctype
+        return ctype, False
 
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):
@@ -270,7 +276,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
                               sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
@@ -322,12 +328,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "{}.pop()".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if " " in expr:
                 expr = "(" + expr + ")"
-            read_expr = "{}[{}].pop()".format(expr, index)
+            read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -547,7 +551,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                         p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
                         p.as_arg(with_types=True, name=pname))
-        module_function_name = "module_" + name
+
+        # create a unique module name to prevent name clashes
+        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
