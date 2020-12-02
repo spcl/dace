@@ -4,6 +4,7 @@ import dace
 from dace.sdfg.nodes import MapEntry, Tasklet
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.helpers import nest_state_subgraph
+from dace.transformation.dataflow import tiling
 
 N = dace.symbol('N')
 
@@ -15,6 +16,20 @@ def create_sdfg():
     state = sdfg.add_state()
     t, me, mx = state.add_mapped_tasklet('map',
                                          dict(i='0:2'),
+                                         dict(a=dace.Memlet.simple('A', 'i')),
+                                         'b = a * 2',
+                                         dict(b=dace.Memlet.simple('B', 'i')),
+                                         external_edges=True)
+    return sdfg, state, t, me, mx
+
+
+def create_sdfg_4():
+    sdfg = dace.SDFG('sdfg_4_test')
+    sdfg.add_array('A', [4], dace.float32)
+    sdfg.add_array('B', [4], dace.float32)
+    state = sdfg.add_state()
+    t, me, mx = state.add_mapped_tasklet('map',
+                                         dict(i='0:4'),
                                          dict(a=dace.Memlet.simple('A', 'i')),
                                          'b = a * 2',
                                          dict(b=dace.Memlet.simple('B', 'i')),
@@ -77,6 +92,15 @@ class NestStateSubgraph(unittest.TestCase):
         sdfg, state, t, me, mx = create_sdfg()
         nest_state_subgraph(sdfg, state, SubgraphView(state, [t]))
         sdfg.validate()
+
+    def test_index_propagation_in_tiled_sdfg(self):
+        sdfg, state, t, me, mx = create_sdfg_4()
+        tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2,)}, _map_entry=me)
+        nested_me = state.in_edges(t)[0].src
+        nested_mx = state.out_edges(t)[0].dst
+        nest_state_subgraph(sdfg, state, SubgraphView(state, [nested_me, t, nested_mx]))
+        sdfg.validate()
+        sdfg.compile()
 
     def test_simple_sdfg_map(self):
         sdfg, state, t, me, mx = create_sdfg()
