@@ -392,7 +392,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype,
-                                                  nodedesc.buffer_size,
+                                                  buffer_size,
                                                   dataname, arrsize,
                                                   function_stream, result)
 
