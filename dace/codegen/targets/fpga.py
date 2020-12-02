@@ -1014,10 +1014,7 @@ class FPGACodeGen(TargetCodeGenerator):
             in_out_data = candidates_in.intersection(candidates_out)
 
             # add pragmas
-            if not node.map.unroll:
-                for candidate in in_out_data:
-                    self.generate_no_dependence_pre(candidate, result, sdfg,
-                                                    state_id, node)
+
 
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
@@ -1035,6 +1032,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             # Do not put pragma if this is degenerate (loop does not exist)
                             self.generate_flatten_loop_pre(
                                 result, sdfg, state_id, node)
+                        if not node.map.unroll:
+                            for candidate in in_out_data:
+                                self.generate_no_dependence_pre(candidate, result, sdfg,
+                                                                state_id, node)
 
                     var = node.map.params[i]
                     begin, end, skip = r
