@@ -384,19 +384,19 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise cgx.CodegenError(
                     "Arrays of streams cannot have dynamic size on FPGA")
 
-            if nodedesc.buffer_size < 1:
-                raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
-
-            buffer_length_dynamically_sized = (dace.symbolic.issymbolic(
-                nodedesc.buffer_size, sdfg.constants))
-
-            if buffer_length_dynamically_sized:
+            try:
+                buffer_size = dace.symbolic.evaluate(nodedesc.buffer_size,
+                                                     sdfg.constants)
+            except TypeError:
                 raise cgx.CodegenError(
                     "Buffer length of stream cannot have dynamic size on FPGA")
 
+            if buffer_size < 1:
+                raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
+
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype,
-                                                  nodedesc.buffer_size,
+                                                  buffer_size,
                                                   dataname, arrsize,
                                                   function_stream, result)
 
@@ -760,6 +760,9 @@ class FPGACodeGen(TargetCodeGenerator):
                     self.generate_flatten_loop_post(callsite_stream, sdfg,
                                                     state_id, dst_node)
 
+            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
+
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
             src_index = " + ".join([
@@ -772,9 +775,6 @@ class FPGACodeGen(TargetCodeGenerator):
                     i, " * " + cpp.sym2cpp(stride) if stride != 1 else "")
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
-
-            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
-            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
 
             pattern = re.compile(r"([^\s]+)(\s*\+\s*)?(.*)")
 
@@ -999,13 +999,17 @@ class FPGACodeGen(TargetCodeGenerator):
             for _, _, _, _, memlet in state.in_edges(node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
-                    if desc.storage == dace.dtypes.StorageType.FPGA_Global or desc.storage == dace.dtypes.StorageType.FPGA_Local:
+                    if (isinstance(desc, dace.data.Array) and
+                        (desc.storage == dace.dtypes.StorageType.FPGA_Global or
+                         desc.storage == dace.dtypes.StorageType.FPGA_Local)):
                         candidates_in.add(memlet.data)
 
             for _, _, _, _, memlet in state.out_edges(map_exit_node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
-                    if desc.storage == dace.dtypes.StorageType.FPGA_Global or desc.storage == dace.dtypes.StorageType.FPGA_Local:
+                    if (isinstance(desc, dace.data.Array) and
+                        (desc.storage == dace.dtypes.StorageType.FPGA_Global or
+                         desc.storage == dace.dtypes.StorageType.FPGA_Local)):
                         candidates_out.add(memlet.data)
             in_out_data = candidates_in.intersection(candidates_out)
 
@@ -1194,6 +1198,7 @@ class FPGACodeGen(TargetCodeGenerator):
                          symbol_parameters, module_stream, entry_stream,
                          host_stream):
         """Main entry function for generating a Xilinx kernel."""
+
         # Module generation
         for subgraph in subgraphs:
             # Traverse to find first tasklets reachable in topological order
