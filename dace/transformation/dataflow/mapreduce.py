@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes and functions that implement the map-reduce-fusion 
     transformation. """
 
@@ -9,7 +10,7 @@ from dace.properties import Property, make_properties
 from dace.sdfg import SDFG
 from dace.sdfg import utils as sdutil
 from dace.symbolic import symstr
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion import MapFusion
@@ -148,7 +149,7 @@ class MapReduceFusion(pm.Transformation):
                           wcr_str=reduce_node.wcr))
 
         # Add initialization state as necessary
-        if reduce_node.identity is not None:
+        if not self.no_init and reduce_node.identity is not None:
             init_state = sdfg.add_state_before(graph)
             init_state.add_mapped_tasklet(
                 'freduce_init',
@@ -258,8 +259,8 @@ class MapWCRFusion(pm.Transformation):
 
         map_fusion = MapFusion(
             self.sdfg_id, self.state_id, {
-                MapFusion._first_map_exit:
+                MapFusion.first_map_exit:
                 self.subgraph[MapWCRFusion._tmap_exit],
-                MapFusion._second_map_entry: graph.node_id(map_entry)
+                MapFusion.second_map_entry: graph.node_id(map_entry)
             }, 0)
         map_fusion.apply(sdfg)

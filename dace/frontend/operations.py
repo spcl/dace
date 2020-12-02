@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 from functools import partial
 
@@ -37,11 +38,11 @@ def timethis(program, title, flop_count, f, *args, **kwargs):
             from tqdm import tqdm
             iterator = tqdm(iterator, desc="Profiling")
         except ImportError:
-                print('WARNING: Cannot show profiling progress, missing optional '
-                    'dependency tqdm...\n\tTo see a live progress bar please install '
-                    'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
-                    'this warning) set `profiling_status` to false in the dace '
-                    'config (~/.dace.conf).')
+            print('WARNING: Cannot show profiling progress, missing optional '
+                'dependency tqdm...\n\tTo see a live progress bar please install '
+                'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
+                'this warning) set `profiling_status` to false in the dace '
+                'config (~/.dace.conf).')
     for i in iterator:
         # Call function
         ret = f(*args, **kwargs)

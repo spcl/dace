@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 # Executes a bunch of small test for the Intel FPGA backend
 # These are not intended to be performance test: they just check that everything compiles
@@ -89,8 +90,8 @@ run_all() {
     # Simple reduce
     run_sample intel_fpga/vector_reduce vector_reduce "FPGATransformSDFG\$0\n"
 
-    # GEMM sample
-    run_sample ../samples/simple/gemm gemm "FPGATransformSDFG\$0\n"
+    # Matrix multiplication sample
+    run_sample ../samples/simple/matmul matmul "FPGATransformSDFG\$0\n"
 
     #### TYPE INFERENCE ####
     run_sample ../samples/simple/mandelbrot mandelbrot "FPGATransformSDFG\$0\n"
@@ -111,6 +112,19 @@ run_all() {
     run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 "\n" 24
+
+    ## Multiple kernels
+    run_sample fpga/multiple_kernels multiple_kernels "\n"
+
+    #Unique nested sdfg
+    run_sample fpga/unique_nested_sdfg_fpga two_vecAdd "\n"
+
+    ## BLAS
+    run_sample blas/nodes/axpy_test blas_axpy_test "\n" --target intel_fpga
+
+
+    #Nested SDFGs generated as FPGA kernels
+    run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"
 }
 
 # Check if aoc is vailable

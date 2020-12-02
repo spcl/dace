@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.transformation.subgraph.helpers as helpers
 from dace.transformation.subgraph import ReduceExpansion
@@ -7,51 +8,16 @@ import numpy as np
 import dace.libraries.standard as stdlib
 
 from typing import Union, List
+from util import expand_reduce
 
 M = dace.symbol('M')
 N = dace.symbol('N')
 N.set(20)
 M.set(30)
 
-def expand_reduce(sdfg: dace.SDFG,
-                  graph: dace.SDFGState,
-                  subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-                  **kwargs):
-
-    subgraph = graph if not subgraph else subgraph
-    if not isinstance(subgraph, List):
-        subgraph = [subgraph]
-
-    for sg in subgraph:
-        reduce_nodes = []
-        for node in sg.nodes():
-            if isinstance(node, stdlib.Reduce):
-                if not ReduceExpansion.can_be_applied(
-                        graph=graph,
-                        candidate={
-                            ReduceExpansion._reduce: graph.node_id(node)
-                        },
-                        expr_index=0,
-                        sdfg=sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}: \
-                            Can_be_applied() failed.")
-                    continue
-                reduce_nodes.append(node)
-
-        trafo_reduce = ReduceExpansion(0, 0, {}, 0)
-        for (property, val) in kwargs.items():
-            setattr(trafo_reduce, property, val)
-
-        for reduce_node in reduce_nodes:
-            trafo_reduce.expand(sdfg, graph, reduce_node)
-            if isinstance(sg, SubgraphView):
-                sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._new_reduce)
-                sg.nodes().append(trafo_reduce._outer_entry)
-
 
 @dace.program
-def test_program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
+def program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     tmp[:] = 2 * A[:] + B[:]
@@ -59,7 +25,7 @@ def test_program(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N
 
 
 @dace.program
-def test_program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
+def program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = np.ndarray(shape=[M, N], dtype=np.float64)
     C[:] = dace.reduce(lambda a, b: max(a, b), B, axis=0)
@@ -73,7 +39,7 @@ def test_program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[
 
 
 def test_p1():
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     for node in state.nodes():
@@ -92,10 +58,12 @@ def test_p1():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N, M=M)
+    del csdfg
 
     expand_reduce(sdfg, state)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
+    del csdfg
 
     assert np.allclose(C1, C2)
     print(np.linalg.norm(C1))
@@ -104,7 +72,7 @@ def test_p1():
 
 
 def test_p2():
-    sdfg = test_program2.to_sdfg()
+    sdfg = program2.to_sdfg()
     sdfg.apply_strict_transformations()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
@@ -114,6 +82,7 @@ def test_p2():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N, M=M)
+    del csdfg
 
     expand_reduce(sdfg, state)
     csdfg = sdfg.compile()

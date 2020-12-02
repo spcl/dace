@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various classes to facilitate the detection of control flow elements (e.g.,
     `for`, `if`, `while`) from state machines in SDFGs. """
 

@@ -2,7 +2,7 @@ ignore:
   - "dace/jupyter.py"  # Omit files that cannot be tested
 
 coverage:
-  range: 50..90
+  range: 40..90
   round: nearest
   status:
     patch: off

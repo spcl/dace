@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
@@ -92,8 +93,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     from dace.codegen.targets.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride), (_, _, bshape, bstride), _ = _get_matmul_operands(
-        node, state, sdfg)
+    (_, _, ashape,
+     astride), (_, _, bshape,
+                bstride), _ = _get_matmul_operands(node, state, sdfg)
     opt = get_gemm_opts(astride, bstride, cdesc.strides)
     bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cdesc.shape,
                              cdesc.strides)
@@ -130,8 +132,7 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
 
 
 @dace.library.expansion
-class SpecializeMatMul(
-        dace.transformation.pattern_matching.ExpandTransformation):
+class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
 
     environments = []
 
@@ -143,18 +144,18 @@ class SpecializeMatMul(
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
-            gemm = Gemm(
-                node.name,
-                dtype=node.dtype,
-                location=node.location,
-                alpha=1.0,
-                beta=0.0)
+            gemm = Gemm(node.name,
+                        dtype=node.dtype,
+                        location=node.location,
+                        alpha=1.0,
+                        beta=0.0)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
-            batched = BatchedMatMul(
-                node.name, dtype=node.dtype, location=node.location)
+            batched = BatchedMatMul(node.name,
+                                    dtype=node.dtype,
+                                    location=node.location)
             return batched
         elif len(size_a) == 2 and len(size_b) == 1:
             # Matrix and vector -> GEMV
@@ -197,6 +198,8 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
     def __init__(self, name, dtype=None, location=None):
-        super().__init__(
-            name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
+        super().__init__(name,
+                         location=location,
+                         inputs={"_a", "_b"},
+                         outputs={"_c"})
         self.dtype = dtype

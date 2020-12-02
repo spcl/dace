@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 
@@ -13,7 +14,7 @@ def matmul_delegation_test(matrix0: dace.float32[N, K],
     result[0] = ((matrix0 @ matrix1) @ vector0) @ vector1
 
 
-if __name__ == '__main__':
+def test_matmul_delegation():
     matrix0 = np.random.rand(N, K).astype(np.float32)
     matrix1 = np.random.rand(K, M).astype(np.float32)
     vector0 = np.random.rand(M).astype(np.float32)
@@ -34,3 +35,6 @@ if __name__ == '__main__':
             result, reference))
     else:
         print("Linear algebra multiplication delegation test verified.")
+
+if __name__ == '__main__':
+    test_matmul_delegation()

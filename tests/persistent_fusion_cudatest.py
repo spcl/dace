@@ -1,10 +1,11 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 import networkx as nx
 import dace
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.subgraph import GPUPersistentKernel
+import pytest
 
 N = dace.symbol('N')
 nnz = dace.symbol('nnz')
@@ -310,21 +311,21 @@ fill_update_state(s_update2, front_in, count_in, front_out, count_out,
 bfs.fill_scope_connectors()
 bfs.validate()
 
-
+@pytest.mark.gpu
 def test_persistent_fusion():
     sdfg = bfs
 
     sdfg.apply_gpu_transformations()
 
-    tranform = GPUPersistentKernel()
-
     subgraph = SubgraphView(sdfg, [s_reset1, s_update1, s_reset2, s_update2])
-    tranform.kernel_prefix = 'bfs'
-    tranform.apply(sdfg, subgraph)
+    transform = GPUPersistentKernel(subgraph)
+    transform.kernel_prefix = 'bfs'
+    transform.apply(sdfg)
 
     subgraph = SubgraphView(sdfg, [s_init])
-    tranform.kernel_prefix = 'init'
-    tranform.apply(sdfg, subgraph)
+    transform = GPUPersistentKernel(subgraph)
+    transform.kernel_prefix = 'init'
+    transform.apply(sdfg)
 
     sdfg.validate()
 

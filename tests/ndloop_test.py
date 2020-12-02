@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 
-def NDLoopTest():
+def test_ndloop():
     from dace.frontend.python import ndloop
 
     f1dres = []
@@ -41,5 +41,4 @@ def NDLoopTest():
 
 
 if __name__ == "__main__":
-    NDLoopTest()
-    print("PASS")
+    test_ndloop()

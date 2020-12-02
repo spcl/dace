@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains class decorators to ease creating classes and enumerations whose
     subclasses and values can be registered externally. """
 

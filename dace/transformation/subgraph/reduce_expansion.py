@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the reduce-map transformation.
 """
 
@@ -5,7 +6,7 @@ from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
 from dace.sdfg import SDFG
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 
@@ -22,7 +23,7 @@ import timeit
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class ReduceExpansion(pattern_matching.Transformation):
+class ReduceExpansion(transformation.Transformation):
     """ Implements the ReduceExpansion transformation.
         Expands a Reduce node into inner and outer map components,
         where the outer map consists of the axes not being reduced.
@@ -37,18 +38,18 @@ class ReduceExpansion(pattern_matching.Transformation):
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
     create_in_transient = Property(desc="Create local in-transient"
-                                        "in registers",
+                                   "in registers",
                                    dtype=bool,
                                    default=False)
 
     create_out_transient = Property(desc="Create local out-transient"
-                                         "in registers",
+                                    "in registers",
                                     dtype=bool,
                                     default=False)
 
     reduce_implementation = Property(
         desc="Reduce implementation of inner reduce. If specified,"
-             "overrides any existing implementations",
+        "overrides any existing implementations",
         dtype=str,
         default=None,
         choices=[
@@ -67,7 +68,7 @@ class ReduceExpansion(pattern_matching.Transformation):
         dtypes.ReductionType.Bitwise_Xor: 'out = reduction_in ^ array_in',
         dtypes.ReductionType.Logical_And: 'out = reduction_in and array_in',
         dtypes.ReductionType.Logical_Or: 'out = reduction_in or array_in',
-        dtypes.ReductionType.Logical_Xor: 'out = reduction_in xor array_in'
+        dtypes.ReductionType.Logical_Xor: 'out = reduction_in != array_in'
     }
 
     reduction_type_identity = {
@@ -139,6 +140,7 @@ class ReduceExpansion(pattern_matching.Transformation):
         nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
 
         # find the new nodes in the nested sdfg created
+        # TODO SCOPE_DICT => SCOPE CHILDREN?
         nstate = nsdfg.sdfg.nodes()[0]
         for node, scope in nstate.scope_dict().items():
             if isinstance(node, nodes.MapEntry):
@@ -179,9 +181,6 @@ class ReduceExpansion(pattern_matching.Transformation):
                 print("ReduceExpansion::Expanding Reduction into Map")
             # we are lucky
             shortcut = True
-            if self.create_out_transient:
-                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
-                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
             nstate.out_edges(outer_exit)[0].data.wcr = None
 
         else:
@@ -205,9 +204,9 @@ class ReduceExpansion(pattern_matching.Transformation):
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage._node_a:
+                LocalStorage.node_a:
                 nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
-                LocalStorage._node_b:
+                LocalStorage.node_b:
                 nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
@@ -222,15 +221,19 @@ class ReduceExpansion(pattern_matching.Transformation):
             nsdfg.sdfg.data(out_transient_node_inner.data
                             ).storage = dtypes.StorageType.Register
 
+            if shortcut:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
+
         if self.create_in_transient:
             # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data
 
             from dace.transformation.dataflow.local_storage import LocalStorage
             local_storage_subgraph = {
-                LocalStorage._node_a:
+                LocalStorage.node_a:
                 nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
-                LocalStorage._node_b:
+                LocalStorage.node_b:
                 nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
             }
 
@@ -476,16 +479,11 @@ class ReduceExpansion(pattern_matching.Transformation):
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
-        if node.schedule != dtypes.ScheduleType.Default:
-            topnodes = nstate.scope_dict(node_to_children=True)[None]
-            for topnode in topnodes:
-                if isinstance(topnode, (nodes.EntryNode, nodes.LibraryNode)):
-                    topnode.schedule = node.schedule
-
         nsdfg = state.add_nested_sdfg(nsdfg,
                                       sdfg,
                                       node.in_connectors,
                                       node.out_connectors,
+                                      schedule=node.schedule,
                                       name=node.name)
 
         utils.change_edge_dest(state, node, nsdfg)

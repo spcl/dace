@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import math as mt
 import numpy as np
@@ -14,8 +14,12 @@ def myprint(input, N, M):
                 printf("%f\n", mt.sin(a[i, j]))
 
 
-if __name__ == '__main__':
+def test():
     input = dace.ndarray([10, 10], dtype=dace.float32)
     input[:] = np.random.rand(10, 10).astype(dace.float32.type)
 
     myprint(input, 10, 10)
+
+
+if __name__ == "__main__":
+    test()
