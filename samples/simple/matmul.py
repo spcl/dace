@@ -2,7 +2,6 @@
 from __future__ import print_function
 
 import argparse
-from dace.jupyter import preamble
 import dace
 import numpy as np
 from typing import List
