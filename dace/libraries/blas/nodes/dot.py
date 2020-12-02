@@ -193,9 +193,9 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
             storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers
         )
 
-        dot_sdfg.add_array(
+        dot_sdfg.add_scalar(
             'res_buf',
-            shape=[1],
+            #shape=[1],
             dtype=dtype,
             transient=True,
             storage=dtypes.StorageType.FPGA_Registers

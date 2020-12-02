@@ -95,9 +95,9 @@ def fpga_binary_compute_partial_reduction(
     )
 
 
-    inner_sdfg.add_array(
+    inner_sdfg.add_scalar(
         'reg_buf',
-        shape=[1],
+        #shape=[1],
         dtype=dtype,
         storage=dtypes.StorageType.FPGA_Registers,
         transient=True
@@ -259,7 +259,7 @@ def fpga_binary_compute_partial_reduction(
 
 
 
-def fpga_linear_result_reduction( 
+def fpga_linear_result_reduction(
         state,
         src,
         dest,
@@ -277,7 +277,7 @@ def fpga_linear_result_reduction(
     buf_out = 0
     if toMem:
         buf_out = state.add_write(dest)
-    else:    
+    else:
         buf_out = state.add_stream(
             dest,
             dtype,
@@ -571,7 +571,7 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
         store_task, out,
         src_conn='outCon',
         memlet=Memlet.simple(
-            out.data, 
+            out.data,
             "ii",
             wcr_str="lambda a, b: a + b"
         )
@@ -647,7 +647,7 @@ def make_unrolledCompute(dtype, nTile, mTile, vecWidthM, partialWidth, n, m, a):
     inner_sdfg.add_array('vecBuf_A', shape=[vecWidthM], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
     inner_sdfg.add_array('memBuf_A', shape=[vecWidthM], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
 
-    
+
 
     inner_sdfg.add_array(
         'buf_reg',
@@ -727,13 +727,13 @@ def make_unrolledCompute(dtype, nTile, mTile, vecWidthM, partialWidth, n, m, a):
         memlet=Memlet.simple(data_out.data, "jj * {}".format(vecWidthM), veclen=vecWidthM)
     )
 
-    
+
 
     inner_sdfg.add_edge(init_state, read_x_state, dace.InterstateEdge("ii == 0"))
-    inner_sdfg.add_edge(read_x_state, compute_state, dace.InterstateEdge(None))   
+    inner_sdfg.add_edge(read_x_state, compute_state, dace.InterstateEdge(None))
 
     inner_sdfg.add_edge(init_state, read_empty_state, dace.InterstateEdge("ii != 0"))
-    inner_sdfg.add_edge(read_empty_state, compute_state, dace.InterstateEdge(None))     
+    inner_sdfg.add_edge(read_empty_state, compute_state, dace.InterstateEdge(None))
 
 
 
@@ -841,6 +841,6 @@ def make_unrolledCompute(dtype, nTile, mTile, vecWidthM, partialWidth, n, m, a):
     )
 
     inner_sdfg.fill_scope_connectors()
-    inner_sdfg.add_edge(compute_state, write_state, dace.InterstateEdge(None))     
+    inner_sdfg.add_edge(compute_state, write_state, dace.InterstateEdge(None))
 
     return inner_sdfg
