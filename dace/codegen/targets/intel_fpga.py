@@ -968,8 +968,7 @@ __kernel void \\
                                                       memlet.subset)
                 result += "#define {} {}[{}] ".format(connector, data_name,
                                                       channel_idx)
-                self._dispatcher.defined_vars.add(connector,
-                                                  DefinedType.StreamArray,
+                self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         else:
             raise TypeError("Unknown variable type: {}".format(def_type))
