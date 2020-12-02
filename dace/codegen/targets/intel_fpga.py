@@ -1243,8 +1243,7 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
 
-            defined_type = self._dispatcher.defined_vars.get_if_defined(
-                memlet.data)
+            defined_type = self._dispatcher.defined_vars.get(memlet.data)
             if edge.src == node:
                 memlet_name = edge.src_conn
             elif edge.dst == node:
@@ -1584,8 +1583,14 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
-            if isinstance(node.value, ast.Name) and self.defined_vars.get_if_defined(node.value.id) \
-                    == DefinedType.RemoteStream and self.memlets[node.value.id][0].volume != 1:
+            try:
+                self.defined_vars.get(node.value.id)
+                defined = True
+            except KeyError:
+                defined = False
+            if (isinstance(node.value, ast.Name)
+                    and defined == DefinedType.RemoteStream
+                    and self.memlets[node.value.id][0].volume != 1):
                 # read from a remote stream in the right part of the assignment
                 # Corner case: if we are dealing with vectors, target is already a pointer
                 updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(

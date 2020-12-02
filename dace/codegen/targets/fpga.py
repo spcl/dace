@@ -388,10 +388,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
 
             # Language-specific implementation
-            ctype, is_global = self.define_stream(nodedesc.dtype,
-                                                  buffer_size,
+            ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
-                                                  function_stream, result)
+                                                  function_stream, result,
+                                                  nodedesc.storage, sdfg, dfg,
+                                                  node)
 
             # defined type: decide whether this is a stream array or a single stream
             def_type = DefinedType.StreamArray if cpp.sym2cpp(
