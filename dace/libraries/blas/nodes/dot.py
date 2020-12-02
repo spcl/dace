@@ -195,7 +195,6 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
 
         dot_sdfg.add_scalar(
             'res_buf',
-            #shape=[1],
             dtype=dtype,
             transient=True,
             storage=dtypes.StorageType.FPGA_Registers
@@ -236,17 +235,21 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
             toMem=True
         )
 
+        # -----
+        # Write to stream State
+        # -----
         fpga_map_singleton_to_stream(
             final_state,
             'res_buf',
             '_result',
-            dtype
+            dace.vector(dtype, 1)
         )
 
         # --------------------------
         # Connect States
         # --------------------------
         dot_sdfg.add_edge(init_state, compute_state, dace.InterstateEdge())
+        dot_sdfg.add_edge(init_state, red_state, dace.InterstateEdge())
         dot_sdfg.add_edge(compute_state, red_state, dace.InterstateEdge())
         dot_sdfg.add_edge(red_state, final_state, dace.InterstateEdge())
 

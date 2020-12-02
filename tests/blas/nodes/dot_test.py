@@ -36,20 +36,18 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     vecType = dace.vector(precision, veclen)
 
-    test_sdfg.add_symbol(a.name, DATATYPE)
-
-    test_sdfg.add_array('x1', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[1], dtype=precision)
+    test_sdfg.add_array('x', shape=[n / veclen], dtype=vecType)
+    test_sdfg.add_array('y', shape=[n / veclen], dtype=vecType)
+    test_sdfg.add_array('r', shape=[1], dtype=precision)
 
     dot_node = blas.Dot("dot", DATATYPE, veclen=veclen, partial_width=16, n=n)
     dot_node.implementation = 'fpga_stream'
 
-    x_stream = streaming.StreamReadVector('x1', n, DATATYPE, veclen=veclen)
+    x_stream = streaming.StreamReadVector('x', n, DATATYPE, veclen=veclen)
 
-    y_stream = streaming.StreamReadVector('y1', n, DATATYPE, veclen=veclen)
+    y_stream = streaming.StreamReadVector('y', n, DATATYPE, veclen=veclen)
 
-    z_stream = streaming.StreamWriteVector('z1', 1, DATATYPE)
+    z_stream = streaming.StreamWriteVector('r', 1, DATATYPE)
 
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
@@ -64,6 +62,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
+
+    test_sdfg.fill_scope_connectors()
 
     return test_sdfg
 
