@@ -36,8 +36,8 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val)
 {
     return val;
 }
-template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI T min(const T& a, const T& b, const Ts&... c)
+template <typename T, typename U, typename... Ts>
+DACE_CONSTEXPR DACE_HDFI auto min(const T& a, const U& b, const Ts&... c)
 {
     return (a < b) ? min(a, c...) : min(b, c...);
 }
@@ -47,35 +47,11 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val)
 {
     return val;
 }
-template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI T max(const T& a, const T& b, const Ts&... c)
+template <typename T, typename U, typename... Ts>
+DACE_CONSTEXPR DACE_HDFI auto max(const T& a, const U& b, const Ts&... c)
 {
     return (a > b) ? max(a, c...) : max(b, c...);
 }
-
-// Make explicit comparisons for int and longlong to offset for issues with 
-// numeric literals in C (int32) and symbols in the default Python types (int64) 
-template <typename... Ts>
-DACE_CONSTEXPR DACE_HDFI long long min(const int& a, const long long& b, const Ts&... c)
-{
-    return (a < b) ? min(a, c...) : min(b, c...);
-}
-template <typename... Ts>
-DACE_CONSTEXPR DACE_HDFI long long min(const long long& a, const int& b, const Ts&... c)
-{
-    return (a < b) ? min(a, c...) : min(b, c...);
-}
-template <typename... Ts>
-DACE_CONSTEXPR DACE_HDFI long long max(const int& a, const long long& b, const Ts&... c)
-{
-    return (a > b) ? max(a, c...) : max(b, c...);
-}
-template <typename... Ts>
-DACE_CONSTEXPR DACE_HDFI long long max(const long long& a, const int& b, const Ts&... c)
-{
-    return (a > b) ? max(a, c...) : max(b, c...);
-}
-// END of explicit comparisons
 
 template <typename T, typename T2>
 static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
