@@ -593,18 +593,21 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                                  states_generated,
                                                  generated_edges)
 
-                            callsite_stream.write("} else {", sdfg, sid)
-                            generated_edges.add(else_scope.entry.edge)
+                            if else_scope.entry is None:
+                                callsite_stream.write("}", sdfg, sid)
+                            else:
+                                callsite_stream.write("} else {", sdfg, sid)
+                                generated_edges.add(else_scope.entry.edge)
 
-                            # Generate the else-scope
-                            self.generate_states(sdfg, state.label + "_else",
-                                                 control_flow, global_stream,
-                                                 callsite_stream, else_scope,
-                                                 states_generated,
-                                                 generated_edges)
+                                # Generate the else-scope
+                                self.generate_states(sdfg, state.label + "_else",
+                                                    control_flow, global_stream,
+                                                    callsite_stream, else_scope,
+                                                    states_generated,
+                                                    generated_edges)
 
-                            callsite_stream.write("}", sdfg, sid)
-                            generated_edges.add(else_scope.exit.edge)
+                                callsite_stream.write("}", sdfg, sid)
+                                generated_edges.add(else_scope.exit.edge)
 
                             # Update states to generate after nested call
                             states_to_generate = collections.deque([
@@ -706,7 +709,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Generate code
         ###########################
-        
+
         # Keep track of allocated variables
         allocated = set()
 
@@ -913,8 +916,14 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     continue
 
                 left, right = left_entry.dst, right_entry.dst
-                dominator = dominators[left] & dominators[right]
-                if len(dominator) != 1:
+                common_frontier = set()
+                for oedge in (left_entry, right_entry):
+                    frontier = dominators[oedge.dst]
+                    if not frontier:
+                        frontier = {oedge.dst}
+                    common_frontier |= frontier
+
+                if len(common_frontier) != 1:
                     # There must be a single dominator across both branches,
                     # unless one of the nodes _is_ the next dominator
                     # if (len(dominator) == 0 and dominators[left] == {right}
@@ -923,7 +932,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     # else:
                     #     continue
                     continue
-                dominator = next(iter(dominator))  # Exactly one dominator
+                dominator = next(iter(common_frontier))  # Exactly one dominator
 
                 exit_edges = sdfg.in_edges(dominator)
                 if len(exit_edges) != 2:
@@ -951,7 +960,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     # Not all paths lead to the next dominator
                     continue
                 right_nodes.add(right) # right also belong to scope
-                
+
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:
                     continue
