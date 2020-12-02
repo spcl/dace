@@ -242,19 +242,12 @@ class AccumulateTransient(transformation.Transformation):
 
         map_entry = sdfg_state.entry_node(map_exit)
 
-        # nest_state_subgraph will use incorrect type if we leave default (python)
-        dtypes_key = ('compiler', 'default_data_types')
-        old_dtype = dace.Config.get(*dtypes_key)
-        dace.Config.set(*dtypes_key, value='C')
-
         nested_sdfg: NestedSDFG = nest_state_subgraph(
             sdfg=sdfg,
             state=sdfg_state,
             subgraph=SubgraphView(
                 sdfg_state, {map_entry, map_exit}
                 | sdfg_state.all_nodes_between(map_entry, map_exit)))
-
-        dace.Config.set(*dtypes_key, value=old_dtype)
 
         nested_sdfg_state: SDFGState = nested_sdfg.sdfg.nodes()[0]
 
