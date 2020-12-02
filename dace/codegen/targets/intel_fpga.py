@@ -966,8 +966,8 @@ __kernel void \\
                 else:
                     channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                       memlet.subset)
-                result += "#define {} {}[{}] ".format(connector, data_name,
-                                                      channel_idx)
+                result += "#define {} {}[{}] // God save us".format(
+                    connector, data_name, channel_idx)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         else:
@@ -1004,8 +1004,8 @@ __kernel void \\
 
             if data_name is not None:
                 data_desc = sdfg.arrays[data_name]
-                if (isinstance(data_desc, dace.data.Stream) and memlet.dynamic
-                        or memlet.num_accesses != 1):
+                if (isinstance(data_desc, dace.data.Stream)
+                        and (memlet.dynamic or memlet.num_accesses != 1)):
                     callsite_stream.write("#undef {}".format(memlet_name), sdfg)
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
@@ -1134,7 +1134,6 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                            function_stream, callsite_stream,
                                            after_memlets_stream)
         self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream)
-        self.generate_undefines(sdfg, dfg, node, after_memlets_stream)
 
     def write_and_resolve_expr(self,
                                sdfg,
@@ -1154,6 +1153,22 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                              var_type):
         vtype = self.make_vector_type(conntype, False)
         return f"{vtype}({expr})"
+
+    def process_out_memlets(self, sdfg, state_id, node, dfg, dispatcher, result,
+                            locals_defined, function_stream, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen.process_out_memlets(sdfg,
+                                              state_id,
+                                              node,
+                                              dfg,
+                                              dispatcher,
+                                              result,
+                                              locals_defined,
+                                              function_stream,
+                                              codegen=self,
+                                              **kwargs)
+        # Inject undefines
+        self.generate_undefines(sdfg, dfg, node, result)
 
 
 class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
