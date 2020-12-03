@@ -1346,7 +1346,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
-        return f'inline void {sdfg_label}({arguments}) {{'
+        return f'void {sdfg_label}({arguments}) {{'
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
@@ -1424,7 +1424,7 @@ class CPUCodeGen(TargetCodeGenerator):
             sdfg, dfg, state_dfg, node)
         
         if not inline and (not unique_functions or not code_already_generated):
-            nested_stream.write(
+            nested_stream.write(('inline ' if codegen is self else '') +
                 codegen.generate_nsdfg_header(sdfg, state_dfg, state_id, node,
                                               memlet_references, sdfg_label),
                 sdfg, state_id, node)
