@@ -2999,6 +2999,20 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                                  external_edges=True)
 
 
+def _flatten_args(args: Sequence[UfuncInput]) -> Sequence[UfuncInput]:
+    """ Flattens arguments of a NumPy ufunc. This is useful in cases where
+        one of the arguments is the result of another operation or ufunc, which
+        may be a list of Dace data.
+    """
+    flat_args = []
+    for arg in args:
+        if isinstance(arg, list):
+            flat_args.extend(arg)
+        else:
+            flat_args.append(arg)
+    return flat_args
+
+
 @oprepo.replaces_ufunc('ufunc')
 def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG,
                     state: SDFGState, ufunc_name: str,
@@ -3018,6 +3032,9 @@ def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG,
 
         :returns: List of output datanames
     """
+
+    # Flatten arguments
+    args = _flatten_args(args)
 
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
@@ -3195,6 +3212,9 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
 
         :returns: List of output datanames
     """
+
+    # Flatten arguments
+    args = _flatten_args(args)
 
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
@@ -3388,6 +3408,9 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor', ast_node: ast.Call,
         :returns: List of output datanames
     """
 
+    # Flatten arguments
+    args = _flatten_args(args)
+
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
@@ -3535,6 +3558,9 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call,
 
         :returns: List of output datanames
     """
+
+    # Flatten arguments
+    args = _flatten_args(args)
 
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
