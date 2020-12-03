@@ -626,19 +626,22 @@ endif() # DACE_ENABLE_RTL
 if(DACE_ENABLE_INTELFPGA)
 
   if(DACE_ENABLE_SMI)
-  	set(SMI_SCRIPT ${DACE_SMI_DIR}/codegen/main.py)
-  	set(SMI_TOPOLOGY_SCRIPT ${DACE_SMI_DIR}/codegen/topology_file_generator.py)
-  	set(CMAKE_FIND_PACKAGE_SORT_ORDER NATURAL)
-	set(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
-	# add rewriter
-	add_subdirectory(${DACE_SMI_DIR}/source-rewriter ${CMAKE_BINARY_DIR}/smi/)
-	set(SMI_REWRITER "${CMAKE_BINARY_DIR}/smi/rewriter")
+
+    set(SMI_SCRIPT ${DACE_SMI_DIR}/codegen/main.py)
+    set(SMI_TOPOLOGY_SCRIPT ${DACE_SMI_DIR}/codegen/topology_file_generator.py)
+    set(CMAKE_FIND_PACKAGE_SORT_ORDER NATURAL)
+    set(CMAKE_FIND_PACKAGE_SORT_DIRECTION DEC)
+    # add rewriter
+    add_subdirectory(${DACE_SMI_DIR}/source-rewriter ${CMAKE_BINARY_DIR}/smi/)
+    set(SMI_REWRITER "${CMAKE_BINARY_DIR}/smi/rewriter")
 
   endif()
 
   if((NOT (DACE_INTELFPGA_MODE STREQUAL "hardware")) OR DACE_INTELFPGA_ENABLE_DEBUGGING)
+
     set(DACE_INTELFPGA_HOST_FLAGS "${DACE_INTELFPGA_HOST_FLAGS} -g")
     set(DACE_INTELFPGA_SYNTHESIS_FLAGS "${DACE_INTELFPGA_KERNEL_FLAGS} -fast-compile -profile=all -g -fast-emulator")
+
   endif()
 
   set_source_files_properties(${DACE_INTELFPGA_KERNEL_FILES} ${DACE_INTELFPGA_HOST_FILES} PROPERTIES COMPILE_FLAGS "${DACE_INTELFPGA_HOST_FLAGS}")
@@ -657,6 +660,7 @@ if(DACE_ENABLE_INTELFPGA)
     # In this case, the output AOCX file will be named as the last OpenCL file given in input to the compiler.
     # We need to save the name of the last input file, so that later we can assign a proper name to the produced bitstream.
     get_filename_component(DACE_AOC_OUTPUT_FILE ${DACE_KERNEL_FILE} NAME_WE)
+
   endforeach()
 
   # Set building flags
@@ -673,16 +677,16 @@ if(DACE_ENABLE_INTELFPGA)
 
   if(DACE_ENABLE_SMI)
 
-  	# Add SMI include directory to AOC
-  	set(DACE_AOC_BUILD_FLAGS ${DACE_AOC_BUILD_FLAGS}  -I${DACE_SMI_DIR}/include)
+    # Add SMI include directory to AOC
+    set(DACE_AOC_BUILD_FLAGS ${DACE_AOC_BUILD_FLAGS}  -I${DACE_SMI_DIR}/include)
     set(NUM_RANKS ${DACE_INTELFPGA_SMI_NUM_RANKS})
 
 
-  	# TODO parse optional arguments (dace.conf?)
+    # TODO parse optional arguments (dace.conf?)
     set(EXTRA_ARGS ${ARGN})
     set(OPT_CONSECUTIVE_READS 8)
 
-  	set(PROGRAM_METADATA)           # list of produced JSON metadata (one per program)
+    set(PROGRAM_METADATA)           # list of produced JSON metadata (one per program)
     set(KERNEL_TARGETS)             # list of targets (one per program)
     set(FPGA_SOURCES)               # list of transformed user device files (one per program)
     set(FPGA_GENERATED_SOURCES)     # list of generated device files (one per program)
@@ -695,7 +699,7 @@ if(DACE_ENABLE_INTELFPGA)
 
     #TODO Find a way to add the topology file
     #For the moment being I generate a dummy topology file
-   	set(TOPOLOGY_FILE topology.json)
+     set(TOPOLOGY_FILE topology.json)
     SET(DACE_KERNEL_NAMES_WE_LIST)
     foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
       get_filename_component(DACE_KERNEL_NAME_WE ${DACE_KERNEL_FILE} NAME_WE)
@@ -703,19 +707,20 @@ if(DACE_ENABLE_INTELFPGA)
     endforeach()
 
     add_custom_target(generate_topology_file
-    	COMMAND python3 ${SMI_TOPOLOGY_SCRIPT} -n ${NUM_RANKS} -p ${DACE_KERNEL_NAMES_WE_LIST} -f ${TOPOLOGY_FILE}
-    	WORKING_DIRECTORY ${WORKDIR}
+      COMMAND python3 ${SMI_TOPOLOGY_SCRIPT} -n ${NUM_RANKS} -p ${DACE_KERNEL_NAMES_WE_LIST} -f ${TOPOLOGY_FILE}
+      WORKING_DIRECTORY ${WORKDIR}
     )
 
 
     # Create a target for each program
     foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
-  		get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
+
+      get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
       get_filename_component(DACE_KERNEL_NAME_WE ${DACE_KERNEL_FILE} NAME_WE)
       get_filename_component(DACE_KERNEL_SRC_DIR ${DACE_KERNEL_FILE} DIRECTORY)
 
-	  string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
-	  set(DACE_KERNEL_BIN_DIR ${WORKDIR}/${KERNEL_NAME})
+      string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
+      set(DACE_KERNEL_BIN_DIR ${WORKDIR}/${KERNEL_NAME})
       set(DACE_KERNEL_GENERATED_PATH ${DACE_KERNEL_BIN_DIR}/${DACE_KERNEL_NAME})
       set(SMI_GENERATED_PATH ${DACE_KERNEL_SRC_DIR}/smi_generated_device.cl)
 
@@ -770,6 +775,7 @@ if(DACE_ENABLE_INTELFPGA)
           WORKING_DIRECTORY ${KERNEL_BIN_DIR}
       )
       add_dependencies(${FPGA_BUILD_TARGET} ${KERNEL_TARGET})
+
     endforeach()
 
     # generate routing
@@ -852,14 +858,6 @@ if(DACE_ENABLE_INTELFPGA)
     endforeach()
 
   else()
-
-	  foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
-
-	    get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
-	    string(REGEX REPLACE "kernel_(.+).cl" "\\1" DACE_KERNEL_NAME "${DACE_KERNEL_NAME}")
-	    set(DACE_AOC_KERNEL_FILES ${DACE_AOC_KERNEL_FILES} ${DACE_KERNEL_FILE})
-
-	  endforeach()
 
     add_custom_target(
       intelfpga_report_${DACE_PROGRAM_NAME}

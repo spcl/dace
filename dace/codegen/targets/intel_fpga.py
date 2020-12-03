@@ -799,13 +799,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         module_body_stream = CodeIOStream()
 
         if unrolled_loop is None:
-            if len(kernel_args_opencl) == 0:
-                # If the kernel doesn't need to interact with the host, make it
-                # autorun
-                module_body_stream.write(
-                    "__kernel void {}({}) {{".format(
-                        module_function_name, ", ".join(kernel_args_opencl)),
-                    sdfg, state_id)
+            module_body_stream.write(
+                "__kernel void {}({}) {{".format(
+                    module_function_name, ", ".join(kernel_args_opencl)),
+                sdfg, state_id)
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
@@ -1243,7 +1240,11 @@ __kernel void \\
             memlet = edge.data
             data_name = memlet.data
 
-            defined_type = self._dispatcher.defined_vars.get(memlet.data)
+            try:
+                defined_type = self._dispatcher.defined_vars.get(memlet.data)
+            except KeyError:
+                defined_type = None
+
             if edge.src == node:
                 memlet_name = edge.src_conn
             elif edge.dst == node:
