@@ -775,8 +775,6 @@ class FPGACodeGen(TargetCodeGenerator):
             if not dst_index:
                 dst_index = "0"
 
-            pattern = re.compile(r"([^\s]+)(\s*\+\s*)?(.*)")
-
             # Language specific
             read_expr = self.make_read(src_def_type, dtype, src_node.label,
                                        src_expr, src_index, is_pack,

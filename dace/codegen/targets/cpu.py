@@ -846,7 +846,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         else:
                             expr = cpp.cpp_array_expr(sdfg, memlet)
                             # If there is a type mismatch, cast pointer
-                            expr = cpp.make_ptr_vector_cast(
+                            expr = codegen.make_ptr_vector_cast(
                                 sdfg, expr, memlet, conntype, is_scalar,
                                 defined_type)
 
@@ -1393,7 +1393,8 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream: CodeIOStream,
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
-        self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.defined_vars.enter_scope(sdfg,
+                                                  can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
 
         # Emit nested SDFG as a separate function
@@ -1422,9 +1423,10 @@ class CPUCodeGen(TargetCodeGenerator):
         codegen = self.calling_codegen
         memlet_references = codegen.generate_nsdfg_arguments(
             sdfg, dfg, state_dfg, node)
-        
+
         if not inline and (not unique_functions or not code_already_generated):
-            nested_stream.write(('inline ' if codegen is self else '') +
+            nested_stream.write(
+                ('inline ' if codegen is self else '') +
                 codegen.generate_nsdfg_header(sdfg, state_dfg, state_id, node,
                                               memlet_references, sdfg_label),
                 sdfg, state_id, node)
@@ -1452,8 +1454,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     continue
                 callsite_stream.write(
                     '{dtype} {symname} = __dacesym_{symname};\n'.format(
-                        symname=symname, dtype=node.sdfg.symbols[symname]), sdfg,
-                    state_id, node)
+                        symname=symname, dtype=node.sdfg.symbols[symname]),
+                    sdfg, state_id, node)
             ## End of symbol mappings
             #############################
             nested_stream = callsite_stream
@@ -1493,8 +1495,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Generate function call
             callsite_stream.write(
                 codegen.generate_nsdfg_call(sdfg, state_dfg, node,
-                                            memlet_references, sdfg_label), sdfg,
-                state_id, node)
+                                            memlet_references, sdfg_label),
+                sdfg, state_id, node)
 
             ###############################################################
             # Write generated code in the proper places (nested SDFG writes

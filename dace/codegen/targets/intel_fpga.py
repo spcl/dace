@@ -254,12 +254,13 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def make_read(self, defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "read_channel_intel({})".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
-            read_expr = "*({}{})".format(expr, " + " + index if index else "")
+            if index and index != "0":
+                read_expr = f"*({expr} + {index})"
+            else:
+                read_expr = f"*{expr}"
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -314,8 +315,13 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     ocltype = fpga.vector_element_type_of(dtype).ocltype
                     self.converters_to_generate.add(
                         (False, ocltype, packing_factor))
-                    return "unpack_{}{}({}, &{}[{}]);".format(
-                        ocltype, packing_factor, read_expr, write_expr, index)
+                    if not index or index == "0":
+                        return "unpack_{}{}({}, {});".format(
+                            ocltype, packing_factor, read_expr, write_expr)
+                    else:
+                        return "unpack_{}{}({}, {} + {});".format(
+                            ocltype, packing_factor, read_expr, write_expr,
+                            index)
                 else:
                     return "{}[{}] = {};".format(write_expr, index, read_expr)
         elif defined_type == DefinedType.Scalar:
@@ -646,9 +652,9 @@ __kernel void \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
                    ", ".join(kernel_args_call[:-1]),
-                   AUTORUN_STR_MACRO if is_autorun else "", module_function_name,
-                   ", ".join(kernel_args_opencl[:-1]), name,
-                   ", ".join(kernel_args_call[:-1]),
+                   AUTORUN_STR_MACRO if is_autorun else "",
+                   module_function_name, ", ".join(kernel_args_opencl[:-1]),
+                   name, ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
 
             # create PE kernels by using the previously defined macro
@@ -1168,9 +1174,18 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                offset, inname, memlet.wcr, False, 1)
 
     def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
-                             var_type):
+                             defined_type):
         vtype = self.make_vector_type(conntype, False)
-        return f"{vtype}({expr})"
+        if conntype != sdfg.arrays[memlet.data].dtype:
+            if is_scalar:
+                expr = f"*({vtype} *)(&{expr})"
+            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+                expr = f"({vtype})(&{expr})"
+            elif defined_type == DefinedType.Pointer:
+                expr = "&" + expr
+        elif not is_scalar:
+            expr = "&" + expr
+        return expr
 
     def process_out_memlets(self, sdfg, state_id, node, dfg, dispatcher, result,
                             locals_defined, function_stream, **kwargs):
