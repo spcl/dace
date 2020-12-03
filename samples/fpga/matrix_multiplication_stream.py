@@ -273,32 +273,9 @@ if __name__ == "__main__":
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.abs(C_regression - C)
-    diff_total = np.sum(diff)
-    highest_diff = np.max(diff)
-    wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
-
-    print("==== Program end ====")
-
-    if diff_total >= 0.01:
-        print("Verification failed!")
-        print("Total difference: {}".format(diff_total))
-        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0],
-                                                   N.get() * M.get()))
-        print("Highest difference: {}".format(highest_diff))
-        print("** Result:\n", C)
-        print("** Reference:\n", C_regression)
-        print("Type \"debug\" to enter debugger, "
-              "or any other string to quit (timeout in 10 seconds)")
-        read, _, _ = select.select([sys.stdin], [], [], 10)
-        if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
-            print("Entering debugger...")
-            pdb.set_trace()
-        else:
-            print("Exiting...")
-        exit(1)
+    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    if diff > 1e-6:
+        raise ValueError(f"Verification failed, difference: {diff}")
     else:
-        print("Results verified successfully.")
-    exit(0)
+        print("Results successfully verified.")

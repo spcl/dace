@@ -271,20 +271,13 @@ if __name__ == "__main__":
     B[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
     C[:] = dace.float32(0)
 
-    A_regression = np.ndarray([N.get(), K.get()], dtype=np.float32)
-    B_regression = np.ndarray([K.get(), M.get()], dtype=np.float32)
-    C_regression = np.ndarray([N.get(), M.get()], dtype=np.float32)
-    A_regression[:] = A[:]
-    B_regression[:] = B[:]
-    C_regression[:] = C[:]
-
     if args["specialize"]:
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.linalg.norm(C_regression - C) / float(M.get() * K.get())
-    print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    if diff > 1e-6:
+        raise ValueError(f"Verification failed, difference: {diff}")
+    else:
+        print("Results successfully verified.")
