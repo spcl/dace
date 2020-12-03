@@ -7,18 +7,18 @@ import networkx as nx
 from typing import Dict, List, Set, Optional
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic
+from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching, helpers
+from dace.sdfg import utils as sdutil, infer_types
+from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
 @make_properties
-class InlineSDFG(pattern_matching.Transformation):
+class InlineSDFG(transformation.Transformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -65,9 +65,9 @@ class InlineSDFG(pattern_matching.Transformation):
     def _check_strides(inner_strides: List[symbolic.SymbolicType],
                        outer_strides: List[symbolic.SymbolicType],
                        memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
-        """ 
+        """
         Returns True if the strides of the inner array can be matched
-        to the strides of the outer array upon inlining. Takes into 
+        to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
@@ -214,6 +214,9 @@ class InlineSDFG(pattern_matching.Transformation):
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
+        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry)
                             if nsdfg_scope_entry is not None else None)
@@ -251,6 +254,15 @@ class InlineSDFG(pattern_matching.Transformation):
         for e in state.out_edges(nsdfg_node):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
+
+        # Replace symbols using invocation symbol mapping
+        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace(symname, '__dacesym_' + symname)
+        for symname, symvalue in nsdfg_node.symbol_mapping.items():
+            if str(symname) != str(symvalue):
+                nsdfg.replace('__dacesym_' + symname, symvalue)
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
@@ -311,15 +323,6 @@ class InlineSDFG(pattern_matching.Transformation):
         #######################################################
         # Replace data on inlined SDFG nodes/edges
 
-        # Replace symbols using invocation symbol mapping
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace(symname, '__dacesym_' + symname)
-        for symname, symvalue in nsdfg_node.symbol_mapping.items():
-            if str(symname) != str(symvalue):
-                nsdfg.replace('__dacesym_' + symname, symvalue)
-
         # Replace data names with their top-level counterparts
         repldict = {}
         repldict.update(transients)
@@ -327,10 +330,10 @@ class InlineSDFG(pattern_matching.Transformation):
             k: v.data.data
             for k, v in itertools.chain(inputs.items(), outputs.items())
         })
-        for node in subgraph.nodes():
+        for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
                 node.data = repldict[node.data]
-        for edge in subgraph.edges():
+        for edge in nstate.edges():
             if edge.data.data in repldict:
                 edge.data.data = repldict[edge.data.data]
 
@@ -454,7 +457,7 @@ class InlineSDFG(pattern_matching.Transformation):
 
 @registry.autoregister
 @make_properties
-class NestSDFG(pattern_matching.Transformation):
+class NestSDFG(transformation.Transformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
 

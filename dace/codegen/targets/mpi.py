@@ -126,7 +126,7 @@ void __dace_exit_mpi({params}) {{
 
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, map_header)
         allocated = set()
-        for child in dfg_scope.scope_dict(node_to_children=True)[map_header]:
+        for child in dfg_scope.scope_children()[map_header]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:

@@ -40,7 +40,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -129,6 +129,7 @@ def test_offsets():
     expected[10:] += 3
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
+    del csdfg
     assert (np.allclose(A_cpy, expected))
 
     fusion(sdfg, sdfg.nodes()[0], None)

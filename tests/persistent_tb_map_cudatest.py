@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import pytest
 import dace
 from dace import nodes
 from dace.dtypes import ScheduleType
@@ -19,6 +20,7 @@ def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float64[1]):
         o = a * b
 
 
+@pytest.mark.gpu
 def test_persistent_thread_block():
 
     sdfg = dot.to_sdfg()
@@ -27,8 +29,10 @@ def test_persistent_thread_block():
     sdfg.apply_transformations(StripMining, options={'tile_size': '256'})
 
     for state in sdfg:
-        for scope in [n for n in state if isinstance(n, nodes.MapEntry)]:
-            if state.scope_dict()[scope] is None:
+        for scope in state.nodes():
+            if not isinstance(scope, nodes.EntryNode):
+                continue
+            if state.entry_node(scope) is None:
                 scope.map.schedule = ScheduleType.GPU_Device
             else:
                 scope.map.schedule = ScheduleType.GPU_ThreadBlock

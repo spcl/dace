@@ -67,18 +67,10 @@ def create_sdfg():
     return sdfg, body
 
 
-if __name__ == "__main__":
-    print("==== Program start ====")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("W", type=int, nargs="?", default=1024)
-    parser.add_argument("H", type=int, nargs="?", default=1024)
-    parser.add_argument("MAXITER", type=int, nargs="?", default=30)
-    args = vars(parser.parse_args())
-
-    W.set(args["W"])
-    H.set(args["H"])
-    MAXITER.set(args["MAXITER"])
+def test():
+    W.set(1024)
+    H.set(1024)
+    MAXITER.set(30)
 
     print('Jacobi 5-point Stencil %dx%d (%d steps)' %
           (W.get(), H.get(), MAXITER.get()))
@@ -103,9 +95,7 @@ if __name__ == "__main__":
     for node in body.nodes():
         if (isinstance(node, dace.sdfg.nodes.MapEntry)
                 and node.label[:-2] == 'stencil'):
-            if len(body.in_edges(node)) > 1:
-                print(f"Edge union in {node} failed!")
-                exit(1)
+            assert len(body.in_edges(node)) <= 1
 
     sdfg(A=A, H=H.get(), W=W.get(), MAXITER=MAXITER.get())
 
@@ -122,8 +112,8 @@ if __name__ == "__main__":
                               regression) / (H.get() * W.get())
     print("Residual:", residual)
 
-    #print(A.view(type=np.ndarray))
-    #print(regression.view(type=np.ndarray))
+    assert residual <= 0.05
 
-    print("==== Program end ====")
-    exit(0 if residual <= 0.05 else 1)
+
+if __name__ == "__main__":
+    test()

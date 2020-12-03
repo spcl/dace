@@ -5,7 +5,7 @@ import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 def fpga_update(sdfg, state, depth):
@@ -30,7 +30,7 @@ def fpga_update(sdfg, state, depth):
 
 
 @registry.autoregister
-class FPGATransformState(pattern_matching.Transformation):
+class FPGATransformState(transformation.Transformation):
     """ Implements the FPGATransformState transformation. """
 
     _state = sd.SDFGState()
@@ -56,8 +56,8 @@ class FPGATransformState(pattern_matching.Transformation):
                 return False
 
             # Streams have strict conditions due to code generator limitations
-            if (isinstance(node, nodes.AccessNode)
-                    and isinstance(sdfg.arrays[node.data], data.Stream)):
+            if (isinstance(node, nodes.AccessNode) and isinstance(
+                    graph.parent.arrays[node.data], data.Stream)):
                 nodedesc = graph.parent.arrays[node.data]
                 sdict = graph.scope_dict()
                 if nodedesc.storage in [
@@ -142,19 +142,20 @@ class FPGATransformState(pattern_matching.Transformation):
             if isinstance(graph, dace.SDFG):
                 parent_sdfg[node] = graph
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                for e in graph.all_edges(node):
+                for e in graph.in_edges(node):
                     if e.data.wcr is not None:
                         trace = dace.sdfg.trace_nested_access(
                             node, graph, parent_sdfg[graph])
-                        for node_trace, state_trace, sdfg_trace in trace:
+                        for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:
-                                outer_node = node_trace
-                                break
-                            else:
-                                # This does not trace back to the current state, so
-                                # we don't care
-                                continue
+                                _, outer_node = node_trace
+                                if outer_node is not None:
+                                    break
+                        else:
+                            # This does not trace back to the current state, so
+                            # we don't care
+                            continue
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
 

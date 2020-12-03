@@ -40,7 +40,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -130,6 +130,7 @@ def test_offsets_array():
     A_cpy = A.copy()
     csdfg = sdfg.compile()
     csdfg(A=A_cpy)
+    del csdfg
     print(np.linalg.norm(A_cpy))
     print(np.linalg.norm(expected))
     assert (np.allclose(A_cpy, expected))

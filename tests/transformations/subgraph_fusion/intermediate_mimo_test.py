@@ -14,14 +14,13 @@ from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 
-
 N = dace.symbol('N')
 N.set(1000)
 
 
 @dace.program
-def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-         D: dace.float64[N]):
+def program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
+            D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
         with dace.tasklet:
@@ -48,7 +47,7 @@ def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
             out1[1] = in1[1] * in1[1]
 
 
-def test_quantitatively(sdfg):
+def _test_quantitatively(sdfg):
     graph = sdfg.nodes()[0]
     A = np.random.rand(N.get()).astype(np.float64)
     B = np.random.rand(N.get()).astype(np.float64)
@@ -59,11 +58,12 @@ def test_quantitatively(sdfg):
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, D=D1, N=N)
+    del csdfg
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
-    assert MultiExpansion.match(sdfg, subgraph) == True
+    assert MultiExpansion.can_be_applied(sdfg, subgraph) == True
     MultiExpansion(subgraph).apply(sdfg)
-    assert SubgraphFusion.match(sdfg, subgraph) == True
+    assert SubgraphFusion.can_be_applied(sdfg, subgraph) == True
     SubgraphFusion(subgraph).apply(sdfg)
 
     csdfg = sdfg.compile()
@@ -72,8 +72,9 @@ def test_quantitatively(sdfg):
     assert np.allclose(C1, C2)
     assert np.allclose(D1, D2)
 
+
 def test_mimo():
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     from dace.transformation.interstate.state_fusion import StateFusion
     sdfg.apply_transformations_repeated(StateFusion)
     # merge the C array
@@ -91,7 +92,8 @@ def test_mimo():
     dace.sdfg.utils.change_edge_src(sdfg.nodes()[0], C2, C1)
     sdfg.nodes()[0].remove_node(C2)
     sdfg.validate()
-    test_quantitatively(sdfg)
+    _test_quantitatively(sdfg)
+
 
 if __name__ == '__main__':
     test_mimo()

@@ -4,7 +4,7 @@ import sys
 import types
 import dace.properties
 from dace.sdfg.nodes import LibraryNode
-from dace.transformation.pattern_matching import (Transformation,
+from dace.transformation.transformation import (Transformation,
                                                   ExpandTransformation)
 
 

@@ -6,7 +6,7 @@ from dace.symbolic import symstr
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.pattern_matching import ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_batchmm_opts,

@@ -7,13 +7,13 @@ from dace import data, registry, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
 @registry.autoregister_params(singlestate=True)
-class MapToForLoop(pattern_matching.Transformation):
+class MapToForLoop(transformation.Transformation):
     """ Implements the Map to for-loop transformation.
 
         Takes a map and enforces a sequential schedule by transforming it into
@@ -57,8 +57,7 @@ class MapToForLoop(pattern_matching.Transformation):
         loop_from, loop_to, loop_step = map_entry.map.range[0]
 
         # Turn the map scope into a nested SDFG
-        node = nest_state_subgraph(sdfg, graph,
-                                   graph.scope_subgraph(map_entry))
+        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
 
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]

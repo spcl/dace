@@ -298,7 +298,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # in some cases:
             if incoming_edges > 1 and not isinstance(node, nd.ExitNode):
                 raise InvalidSDFGNodeError(
-                    "Connector %s cannot have more "
+                    "Connector '%s' cannot have more "
                     "than one incoming edge, found %d" % (conn, incoming_edges),
                     sdfg,
                     state_id,
@@ -317,11 +317,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 raise InvalidSDFGNodeError("Dangling out-connector %s" % conn,
                                            sdfg, state_id, nid)
 
-            # In case of scope exit, only one outgoing edge per connector
-            # is allowed.
-            if outgoing_edges > 1 and isinstance(node, nd.ExitNode):
+            # In case of scope exit or code node, only one outgoing edge per
+            # connector is allowed.
+            if outgoing_edges > 1 and isinstance(node,
+                                                 (nd.ExitNode, nd.CodeNode)):
                 raise InvalidSDFGNodeError(
-                    "Connector %s cannot have more "
+                    "Connector '%s' cannot have more "
                     "than one outgoing edge, found %d" % (conn, outgoing_edges),
                     sdfg,
                     state_id,
@@ -454,7 +455,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         sdfg, state_id, eid)
                 if e.data.other_subset is not None:
                     undefs = (e.data.other_subset.free_symbols -
-                              defined_symbols)
+                              set(defined_symbols.keys()))
                     if len(undefs) > 0:
                         raise InvalidSDFGEdgeError(
                             'Undefined symbols %s found in memlet '
@@ -465,29 +466,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # If scope(src) == scope(dst): OK
         if scope[src_node] == scope[dst_node] or src_node == scope[dst_node]:
             pass
-        # If scope(src) contains scope(dst), then src must be a data node
+        # If scope(src) contains scope(dst), then src must be a data node,
+        # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, src_node, dst_node):
-            if not isinstance(src_node, nd.AccessNode):
-                pass
-                # raise InvalidSDFGEdgeError(
-                #     "Memlet creates an "
-                #     "invalid path (source node %s should "
-                #     "be a data node)" % str(src_node),
-                #     sdfg,
-                #     state_id,
-                #     eid,
-                # )
-        # If scope(dst) contains scope(src), then dst must be a data node
+            pass
+        # If scope(dst) contains scope(src), then dst must be a data node,
+        # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                raise InvalidSDFGEdgeError(
-                    "Memlet creates an "
-                    "invalid path (sink node %s should "
-                    "be a data node)" % str(dst_node),
-                    sdfg,
-                    state_id,
-                    eid,
-                )
+                if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
+                    pass
+                else:
+                    raise InvalidSDFGEdgeError(
+                        f"Memlet creates an invalid path (sink node {dst_node}"
+                        " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes",
@@ -507,7 +499,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Verify that source and destination subsets contain the same
         # number of elements
-        if e.data.other_subset is not None and not (
+        if not e.data.allow_oob and e.data.other_subset is not None and not (
             (isinstance(src_node, nd.AccessNode)
              and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
             (isinstance(dst_node, nd.AccessNode)

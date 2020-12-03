@@ -1,7 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
-from dace.codegen.compiler import CompilerConfigurationError, CompilationError
+from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 import dace.libraries.blas as blas
 import numpy as np
 import sys
@@ -119,10 +119,7 @@ def _test_dot(implementation, dtype, sdfg):
     ref = np.dot(x, y)
 
     diff = abs(result[0] - ref)
-    if diff >= 1e-6 * ref:
-        print("Unexpected result returned from dot product: "
-              "got {}, expected {}".format(result[0], ref))
-        sys.exit(1)
+    assert diff < 1e-6 * ref
 
     print("Test ran successfully for {}.".format(implementation))
 

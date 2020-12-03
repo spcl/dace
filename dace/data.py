@@ -33,6 +33,8 @@ def create_datadescriptor(obj):
             return Scalar(symbolic.symtype(obj))
         if isinstance(obj, dtypes.typeclass):
             return Scalar(obj)
+        if obj in {int, float, complex, bool}:
+            return Scalar(dtypes.typeclass(obj))
         return Scalar(dtypes.typeclass(type(obj)))
 
 

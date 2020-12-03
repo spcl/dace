@@ -29,7 +29,7 @@ namespace dace
             template <typename... Args>
             static DACE_HDFI void Copy(const T *src, T *dst, const int& dst_stride, const Args&... dst_otherdims)
             {
-#ifndef __CUDA_ARCH__
+#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (sizeof...(OTHER_COPYDIMS) == 0 && SRC_STRIDE == 1 && dst_stride == 1) {
                     memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
@@ -59,7 +59,7 @@ namespace dace
             template <typename... Args>
             static DACE_HDFI void Copy(const T *src, T *dst, const int& src_stride, const Args&... src_otherdims)
             {
-#ifndef __CUDA_ARCH__
+#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (sizeof...(OTHER_COPYDIMS) == 0 && src_stride == 1 && DST_STRIDE == 1) {
                     memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
@@ -88,7 +88,7 @@ namespace dace
             template <typename... Args>
             static DACE_HDFI void Copy(const T *src, T *dst, const int& src_stride, const int& dst_stride, const Args&... otherdims)
             {
-#ifndef __CUDA_ARCH__
+#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (sizeof...(OTHER_COPYDIMS) == 0 && src_stride == 1 && dst_stride == 1) {
                     memcpy(dst, src, COPYDIM * sizeof(T) * VECLEN);
@@ -171,7 +171,7 @@ namespace dace
             template <typename... Args>
             static DACE_HDFI void Copy(const T *src, T *dst, const int& copydim, const int& dst_stride, const Args&... otherdims)
             {
-#ifndef __CUDA_ARCH__
+#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (N == 1 && SRC_STRIDE == 1 && dst_stride == 1) {
                     memcpy(dst, src, copydim * sizeof(T) * VECLEN);
@@ -201,7 +201,7 @@ namespace dace
             template <typename... Args>
             static DACE_HDFI void Copy(const T *src, T *dst, const int& copydim, const int& src_stride, const Args&... otherdims)
             {
-#ifndef __CUDA_ARCH__
+#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (N == 1 && src_stride == 1 && DST_STRIDE == 1) {
                     memcpy(dst, src, copydim * sizeof(T) * VECLEN);
@@ -232,7 +232,7 @@ namespace dace
             {
                 static_assert(sizeof...(otherdims) == (N - 1) * 3, "Dimensionality mismatch in dynamic copy");
 
-#ifndef __CUDA_ARCH__
+#if !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
                 // Memcpy specialization
                 if (N == 1 && src_stride == 1 && dst_stride == 1) {
                     memcpy(dst, src, copydim * sizeof(T) * VECLEN);

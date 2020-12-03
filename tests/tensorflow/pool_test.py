@@ -1,14 +1,12 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-try:
-    import tensorflow as tf
-except ImportError:
-    print("WARNING: Tensorflow not found, skipping test")
-    exit(0)
-
+import pytest
 import numpy as np
-from dace.frontend.tensorflow import TFSession
 
-if __name__ == '__main__':
+
+@pytest.mark.tensorflow
+def test_pooling():
+    import tensorflow as tf
+    from dace.frontend.tensorflow import TFSession
     size_in = [1, 112, 112, 3]
     # size_in = [4, 4, 4, 4]
     np.random.seed(0)
@@ -108,3 +106,11 @@ if __name__ == '__main__':
         print(tf_output)
         print(tf.norm(dace_output[0] - tf_output[0]).eval(session=sess_tf))
         raise AssertionError("max pool gradient test failed")
+
+
+if __name__ == '__main__':
+    try:
+        import tensorflow
+        test_pooling()
+    except ImportError:
+        pass

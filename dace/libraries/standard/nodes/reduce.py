@@ -25,7 +25,7 @@ from dace import registry, subsets
 import pydoc
 import warnings
 from dace.sdfg import nodes
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.codegen.prettycode import CodeIOStream
@@ -723,12 +723,12 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         from dace.transformation.dataflow.local_storage import LocalStorage
 
         in_local_storage_subgraph = {
-            LocalStorage._node_a: graph.nodes().index(new_entry),
-            LocalStorage._node_b: graph.nodes().index(reduce_node)
+            LocalStorage.node_a: graph.nodes().index(new_entry),
+            LocalStorage.node_b: graph.nodes().index(reduce_node)
         }
         out_local_storage_subgraph = {
-            LocalStorage._node_a: graph.nodes().index(reduce_node),
-            LocalStorage._node_b: graph.nodes().index(new_exit)
+            LocalStorage.node_a: graph.nodes().index(reduce_node),
+            LocalStorage.node_b: graph.nodes().index(new_exit)
         }
 
         local_storage = LocalStorage(sdfg.sdfg_id,
@@ -787,7 +787,6 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
 
         ### set reduce_node axes to all (needed)
         reduce_node.axes = None
-
 
         # fill scope connectors, done.
         sdfg.fill_scope_connectors()

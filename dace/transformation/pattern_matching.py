@@ -1,399 +1,14 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-"""Contains classes and functions related to patterns/transformations.
-"""
+""" Contains functions related to pattern matching in transformations. """
 
-from __future__ import print_function
-import copy
-import dace
-import inspect
+from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import utils as sdutil, propagation
-from dace.sdfg.graph import SubgraphView
-from dace.properties import make_properties, Property, DictProperty, SetProperty
-from dace.registry import make_registry
 from dace.sdfg import graph as gr, nodes as nd
-from dace.dtypes import ScheduleType
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Dict, List, Set, Tuple, Type, Union
-
-
-@make_registry
-@make_properties
-class Transformation(object):
-    """ Base class for transformations, as well as a static registry of
-        transformations, where new transformations can be added in a
-        decentralized manner.
-
-        New transformations are registered with ``Transformation.register``
-        (or ``dace.registry.autoregister_params``) with two optional boolean
-        keyword arguments: ``singlestate`` (default: False) and ``strict``
-        (default: False).
-        If ``singlestate`` is True, the transformation is matched on subgraphs
-        inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
-        matched.
-        If ``strict`` is True, this transformation will be considered strict
-        (i.e., always beneficial to perform) and will be performed automatically
-        as part of SDFG strict transformations.
-    """
-
-    # Properties
-    sdfg_id = Property(dtype=int, category="(Debug)")
-    state_id = Property(dtype=int, category="(Debug)")
-    _subgraph = DictProperty(key_type=int, value_type=int, category="(Debug)")
-    expr_index = Property(dtype=int, category="(Debug)")
-
-    @staticmethod
-    def annotates_memlets():
-        """ Indicates whether the transformation annotates the edges it creates
-            or modifies with the appropriate memlets. This determines
-            whether to apply memlet propagation after the transformation.
-        """
-
-        return False
-
-    @staticmethod
-    def expressions():
-        """ Returns a list of Graph objects that will be matched in the
-            subgraph isomorphism phase. Used as a pre-pass before calling
-            `can_be_applied`.
-            @see Transformation.can_be_applied
-        """
-
-        raise NotImplementedError
-
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        """ Returns True if this transformation can be applied on the candidate
-            matched subgraph.
-            :param graph: SDFGState object if this Transformation is
-                          single-state, or SDFG object otherwise.
-            :param candidate: A mapping between node IDs returned from
-                              `Transformation.expressions` and the nodes in
-                              `graph`.
-            :param expr_index: The list index from `Transformation.expressions`
-                               that was matched.
-            :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
-                         should be equal to `graph`.
-            :param strict: Whether transformation should run in strict mode.
-            :return: True if the transformation can be applied.
-        """
-        raise NotImplementedError
-
-    @staticmethod
-    def match_to_str(graph, candidate):
-        """ Returns a string representation of the pattern match on the
-            candidate subgraph. Used when identifying matches in the console
-            UI.
-        """
-        raise NotImplementedError
-
-    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
-        """ Initializes an instance of Transformation.
-            :param sdfg_id: A unique ID of the SDFG.
-            :param state_id: The node ID of the SDFG state, if applicable.
-            :param subgraph: A mapping between node IDs returned from
-                             `Transformation.expressions` and the nodes in
-                             `graph`.
-            :param expr_index: The list index from `Transformation.expressions`
-                               that was matched.
-            :raise TypeError: When transformation is not subclass of
-                              Transformation.
-            :raise TypeError: When state_id is not instance of int.
-            :raise TypeError: When subgraph is not a dict of
-                              dace.sdfg.nodes.Node : int.
-        """
-
-        self.sdfg_id = sdfg_id
-        self.state_id = state_id
-        for value in subgraph.values():
-            if not isinstance(value, int):
-                raise TypeError('All values of '
-                                'subgraph'
-                                ' dictionary must be '
-                                'instances of int.')
-        # Serializable subgraph with node IDs as keys
-        expr = self.expressions()[expr_index]
-        self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
-        self._subgraph_user = subgraph
-        self.expr_index = expr_index
-
-    @property
-    def subgraph(self):
-        return self._subgraph_user
-
-    def __lt__(self, other):
-        """ Comparing two transformations by their class name and node IDs
-            in match. Used for ordering transformations consistently.
-        """
-        if type(self) != type(other):
-            return type(self).__name__ < type(other).__name__
-
-        self_ids = iter(self.subgraph.values())
-        other_ids = iter(self.subgraph.values())
-
-        try:
-            self_id = next(self_ids)
-        except StopIteration:
-            return True
-        try:
-            other_id = next(other_ids)
-        except StopIteration:
-            return False
-
-        self_end = False
-
-        while self_id is not None and other_id is not None:
-            if self_id != other_id:
-                return self_id < other_id
-            try:
-                self_id = next(self_ids)
-            except StopIteration:
-                self_end = True
-            try:
-                other_id = next(other_ids)
-            except StopIteration:
-                if self_end:  # Transformations are equal
-                    return False
-                return False
-            if self_end:
-                return True
-
-    def apply_pattern(self, sdfg):
-        """ Applies this transformation on the given SDFG. """
-        sdfg.append_transformation(self)
-        self.apply(sdfg)
-        if not self.annotates_memlets():
-            propagation.propagate_memlets_sdfg(sdfg)
-
-    def __str__(self):
-        return type(self).__name__
-
-    def modifies_graph(self):
-        return True
-
-    def print_match(self, sdfg):
-        """ Returns a string representation of the pattern match on the
-            given SDFG. Used for printing matches in the console UI.
-        """
-        if not isinstance(sdfg, dace.SDFG):
-            raise TypeError("Expected SDFG, got: {}".format(
-                type(sdfg).__name__))
-        if self.state_id == -1:
-            graph = sdfg
-        else:
-            graph = sdfg.nodes()[self.state_id]
-        string = type(self).__name__ + ' in '
-        string += type(self).match_to_str(graph, self.subgraph)
-        return string
-
-    def to_json(self, parent=None):
-        props = dace.serialize.all_properties_to_json(self)
-        return {
-            'type': 'Transformation',
-            'transformation': type(self).__name__,
-            **props
-        }
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        xform = next(ext for ext in Transformation.extensions().keys()
-                     if ext.__name__ == json_obj['transformation'])
-
-        # Recreate subgraph
-        expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {
-            expr.node(int(k)): int(v)
-            for k, v in json_obj['_subgraph'].items()
-        }
-
-        # Reconstruct transformation
-        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
-                    json_obj['expr_index'])
-        context = context or {}
-        context['transformation'] = ret
-        dace.serialize.set_properties_from_json(
-            ret,
-            json_obj,
-            context=context,
-            ignore_properties={'transformation', 'type'})
-        return ret
-
-
-class ExpandTransformation(Transformation):
-    """Base class for transformations that simply expand a node into a
-       subgraph, and thus needs only simple matching and replacement
-       functionality. Subclasses only need to implement the method
-       "expansion".
-    """
-    @classmethod
-    def expressions(clc):
-        return [sdutil.node_path_graph(clc._match_node)]
-
-    @staticmethod
-    def can_be_applied(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[dace.sdfg.nodes.Node, int],
-                       expr_index: int,
-                       sdfg,
-                       strict: bool = False):
-        # All we need is the correct node
-        return True
-
-    @classmethod
-    def match_to_str(clc, graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                     candidate: Dict[dace.sdfg.nodes.Node, int]):
-        node = graph.nodes()[candidate[clc._match_node]]
-        return str(node)
-
-    @staticmethod
-    def expansion(node):
-        raise NotImplementedError("Must be implemented by subclass")
-
-    @staticmethod
-    def postprocessing(sdfg, state, expansion):
-        pass
-
-    def apply(self, sdfg, *args, **kwargs):
-        state = sdfg.nodes()[self.state_id]
-        node = state.nodes()[self.subgraph[type(self)._match_node]]
-        expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
-        if isinstance(expansion, dace.SDFG):
-            # Modify internal schedules according to node schedule
-            if node.schedule != ScheduleType.Default:
-                for nstate in expansion.nodes():
-                    topnodes = nstate.scope_dict(node_to_children=True)[None]
-                    for topnode in topnodes:
-                        if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
-                            topnode.schedule = node.schedule
-
-            expansion = state.add_nested_sdfg(expansion,
-                                              sdfg,
-                                              node.in_connectors,
-                                              node.out_connectors,
-                                              name=node.name,
-                                              debuginfo=node.debuginfo)
-        elif isinstance(expansion, dace.sdfg.nodes.CodeNode):
-            expansion.debuginfo = node.debuginfo
-            if isinstance(expansion, dace.sdfg.nodes.NestedSDFG):
-                # Fix parent references
-                nsdfg = expansion.sdfg
-                nsdfg.parent = state
-                nsdfg.parent_sdfg = sdfg
-                nsdfg.update_sdfg_list([])
-                nsdfg.parent_nsdfg_node = expansion
-        else:
-            raise TypeError("Node expansion must be a CodeNode or an SDFG")
-        expansion.environments = copy.copy(
-            set(map(lambda a: a.__name__,
-                    type(self).environments)))
-        sdutil.change_edge_dest(state, node, expansion)
-        sdutil.change_edge_src(state, node, expansion)
-        state.remove_node(node)
-        type(self).postprocessing(sdfg, state, expansion)
-
-
-@make_registry
-@make_properties
-class SubgraphTransformation(object):
-    """
-    Base class for transformations that apply on arbitrary subgraphs, rather than
-    matching a specific pattern. Subclasses need to implement the `match` and `apply`
-    operations.
-    """
-
-    sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
-    state_id = Property(
-        dtype=int,
-        desc='ID of state to transform subgraph within, or -1 to transform the '
-        'SDFG')
-    subgraph = SetProperty(element_type=int,
-                           desc='Subgraph in transformation instance')
-
-    def __init__(self,
-                 subgraph: Union[Set[int], SubgraphView],
-                 sdfg_id: int = None,
-                 state_id: int = None):
-        if (not isinstance(subgraph, (SubgraphView, SDFG, SDFGState))
-                and (sdfg_id is None or state_id is None)):
-            raise TypeError(
-                'Subgraph transformation either expects a SubgraphView or a '
-                'set of node IDs, SDFG ID and state ID (or -1).')
-
-        # An entire graph is given as a subgraph
-        if isinstance(subgraph, (SDFG, SDFGState)):
-            subgraph = SubgraphView(subgraph, subgraph.nodes())
-
-        if isinstance(subgraph, SubgraphView):
-            self.subgraph = set(
-                subgraph.graph.node_id(n) for n in subgraph.nodes())
-
-            if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
-                self.sdfg_id = sdfg.sdfg_id
-                self.state_id = sdfg.node_id(subgraph.graph)
-            elif isinstance(subgraph.graph, SDFG):
-                self.sdfg_id = subgraph.graph.sdfg_id
-                self.state_id = -1
-            else:
-                raise TypeError('Unrecognized graph type "%s"' %
-                                type(subgraph.graph).__name__)
-        else:
-            self.subgraph = subgraph
-            self.sdfg_id = sdfg_id
-            self.state_id = state_id
-
-    def subgraph_view(self, sdfg: SDFG) -> SubgraphView:
-        graph = sdfg.sdfg_list[self.sdfg_id]
-        if self.state_id != -1:
-            graph = graph.node(self.state_id)
-        return SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
-
-    @staticmethod
-    def match(sdfg: SDFG, subgraph: SubgraphView) -> bool:
-        """
-        Tries to match the transformation on a given subgraph, returning
-        True if this transformation can be applied.
-        :param sdfg: The SDFG that includes the subgraph.
-        :param subgraph: The SDFG or state subgraph to try to apply the 
-                         transformation on.
-        :return: True if the subgraph can be transformed, or False otherwise.
-        """
-        pass
-
-    def apply(self, sdfg: SDFG):
-        """
-        Applies the transformation on the given subgraph.
-        :param sdfg: The SDFG that includes the subgraph.
-        """
-        pass
-
-    def to_json(self, parent=None):
-        props = dace.serialize.all_properties_to_json(self)
-        return {
-            'type': 'SubgraphTransformation',
-            'transformation': type(self).__name__,
-            **props
-        }
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        xform = next(ext for ext in SubgraphTransformation.extensions().keys()
-                     if ext.__name__ == json_obj['transformation'])
-
-        # Reconstruct transformation
-        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'],
-                    json_obj['state_id'])
-        context = context or {}
-        context['transformation'] = ret
-        dace.serialize.set_properties_from_json(
-            ret,
-            json_obj,
-            context=context,
-            ignore_properties={'transformation', 'type'})
-        return ret
-
-
-# Module functions ############################################################
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Tuple, Type,
+                    Union)
+from dace.transformation import transformation as xf
 
 
 def collapse_multigraph_to_nx(
@@ -437,125 +52,276 @@ def collapse_multigraph_to_nx(
     return result
 
 
-def type_match(node_a, node_b):
+def type_match(graph_node, pattern_node):
     """ Checks whether the node types of the inputs match.
-        :param node_a: First node.
-        :param node_b: Second node.
+        :param graph_node: First node (in matched graph).
+        :param pattern_node: Second node (in pattern subgraph).
         :return: True if the object types of the nodes match, False otherwise.
         :raise TypeError: When at least one of the inputs is not a dictionary
                           or does not have a 'node' attribute.
         :raise KeyError: When at least one of the inputs is a dictionary,
                          but does not have a 'node' key.
     """
+    if isinstance(pattern_node['node'], xf.PatternNode):
+        return isinstance(graph_node['node'], pattern_node['node'].node)
+    return isinstance(graph_node['node'], type(pattern_node['node']))
+
+
+def type_or_class_match(node_a, node_b):
+    """
+    Checks whether `node_a` is an instance of the same type as `node_b`, or
+    if either `node_a`/`node_b` is a type and the other is an instance of that
+    type. This is used in subgraph matching to allow the subgraph pattern to
+    be either a graph of instantiated nodes, or node types.
+
+    :param node_a: First node.
+    :param node_b: Second node.
+    :return: True if the object types of the nodes match according to the
+             description, False otherwise.
+    :raise TypeError: When at least one of the inputs is not a dictionary
+                        or does not have a 'node' attribute.
+    :raise KeyError: When at least one of the inputs is a dictionary,
+                        but does not have a 'node' key.
+    :see: enumerate_matches
+    """
+    if isinstance(node_b['node'], type):
+        return issubclass(type(node_a['node']), node_b['node'])
+    elif isinstance(node_a['node'], type):
+        return issubclass(type(node_b['node']), node_a['node'])
+    elif isinstance(node_b['node'], xf.PatternNode):
+        return isinstance(node_a['node'], node_b['node'].node)
+    elif isinstance(node_a['node'], xf.PatternNode):
+        return isinstance(node_b['node'], node_a['node'].node)
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def match_pattern(state: SDFGState,
-                  pattern: Type[Transformation],
-                  sdfg: SDFG,
-                  node_match=type_match,
-                  edge_match=None,
-                  strict=False):
+def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
+                                 collapsed_graph: nx.DiGraph,
+                                 subgraph: Dict[int, int], sdfg: SDFG,
+                                 xform: Type[xf.Transformation], expr_idx: int,
+                                 nxpattern: nx.DiGraph, state_id: int,
+                                 strict: bool) -> Optional[xf.Transformation]:
+    """ 
+    Helper function that tries to instantiate a pattern match into a 
+    transformation object. 
+    """
+    subgraph = {
+        nxpattern.nodes[j]['node']:
+        graph.node_id(collapsed_graph.nodes[i]['node'])
+        for i, j in subgraph.items()
+    }
+
+    try:
+        match_found = xform.can_be_applied(graph,
+                                           subgraph,
+                                           expr_idx,
+                                           sdfg,
+                                           strict=strict)
+    except Exception as e:
+        if Config.get_bool('optimizer', 'match_exception'):
+            raise
+        print('WARNING: {p}::can_be_applied triggered a {c} exception:'
+              ' {e}'.format(p=xform.__name__, c=e.__class__.__name__, e=e))
+        return None
+
+    if match_found:
+        return xform(sdfg.sdfg_id, state_id, subgraph, expr_idx)
+
+    return None
+
+
+TransformationData = List[Tuple[Type, int, nx.DiGraph]]
+PatternMetadataType = Tuple[TransformationData, TransformationData]
+
+
+def get_transformation_metadata(
+    patterns: Union[Type[xf.Transformation], List[Type[xf.Transformation]]]
+) -> PatternMetadataType:
+    """
+    Collect all transformation expressions and metadata once, for use when
+    applying transformations repeatedly.
+    :param patterns: Transformation type (or list thereof) to compute.
+    :return: A tuple of inter-state and single-state pattern matching
+             transformations.
+    """
+    singlestate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
+    interstate_transformations: List[Tuple[Type, int, nx.DiGraph]] = []
+    ext_dict = xf.Transformation.extensions()
+    for pattern in patterns:
+        # Find if the transformation is inter-state
+        is_interstate = not ext_dict[pattern].get('singlestate', False)
+        for i, expr in enumerate(pattern.expressions()):
+            # Make a networkx-version of the match subgraph
+            nxpattern = collapse_multigraph_to_nx(expr)
+            if len(nxpattern.nodes) == 1:
+                matcher = _node_matcher
+            elif len(nxpattern.nodes) == 2 and len(nxpattern.edges) == 1:
+                matcher = _edge_matcher
+            else:
+                matcher = _subgraph_isomorphism_matcher
+
+            if is_interstate:
+                interstate_transformations.append(
+                    (pattern, i, nxpattern, matcher))
+            else:
+                singlestate_transformations.append(
+                    (pattern, i, nxpattern, matcher))
+
+    return interstate_transformations, singlestate_transformations
+
+
+def _subgraph_isomorphism_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match based on the VF2 algorithm for general SI. """
+    graph_matcher = iso.DiGraphMatcher(digraph,
+                                       nxpattern,
+                                       node_match=node_pred,
+                                       edge_match=edge_pred)
+    yield from graph_matcher.subgraph_isomorphisms_iter()
+
+
+def _node_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match individual nodes. """
+    pnid = next(iter(nxpattern))
+    pnode = nxpattern.nodes[pnid]
+
+    for nid in digraph:
+        if node_pred(digraph.nodes[nid], pnode):
+            yield {nid: pnid}
+
+
+def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
+    """ Match individual edges. """
+    pedge = next(iter(nxpattern.edges))
+    pu = nxpattern.nodes[pedge[0]]
+    pv = nxpattern.nodes[pedge[1]]
+
+    if edge_pred is None:
+        for u, v in digraph.edges:
+            if (node_pred(digraph.nodes[u], pu)
+                    and node_pred(digraph.nodes[v], pv)):
+                yield {u: pedge[0], v: pedge[1]}
+    else:
+        for u, v in digraph.edges:
+            if (node_pred(digraph.nodes[u], pu)
+                    and node_pred(digraph.nodes[v], pv)
+                    and edge_pred(digraph.edges[u, v], nxpattern.edges[pedge])):
+                yield {u: pedge[0], v: pedge[1]}
+
+
+def match_patterns(sdfg: SDFG,
+                   patterns: Union[Type[xf.Transformation],
+                                   List[Type[xf.Transformation]]],
+                   node_match: Callable[[Any, Any], bool] = type_match,
+                   edge_match: Optional[Callable[[Any, Any], bool]] = None,
+                   strict: bool = False,
+                   metadata: Optional[PatternMetadataType] = None,
+                   states: Optional[List[SDFGState]] = None):
     """ Returns a list of single-state Transformations of a certain class that
         match the input SDFG.
-        :param state: An SDFGState object to match.
-        :param pattern: Transformation type to match.
         :param sdfg: The SDFG to match in.
+        :param patterns: Transformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.
         :param edge_match: Function for checking whether two edges match.
         :param strict: Only match transformation if strict (i.e., can only
                        improve the performance/reduce complexity of the SDFG).
+        :param metadata: Transformation metadata that can be reused.
+        :param states: If given, only tries to match single-state 
+                       transformations on this list.
         :return: A list of Transformation objects that match.
     """
 
-    # Collapse multigraph into directed graph
-    # Handling VF2 in networkx for now
-    digraph = collapse_multigraph_to_nx(state)
+    if isinstance(patterns, type):
+        patterns = [patterns]
 
-    for idx, expression in enumerate(pattern.expressions()):
-        cexpr = collapse_multigraph_to_nx(expression)
-        graph_matcher = iso.DiGraphMatcher(digraph,
-                                           cexpr,
-                                           node_match=node_match,
-                                           edge_match=edge_match)
-        for subgraph in graph_matcher.subgraph_isomorphisms_iter():
-            subgraph = {
-                cexpr.nodes[j]['node']: state.node_id(digraph.nodes[i]['node'])
-                for (i, j) in subgraph.items()
-            }
-            try:
-                match_found = pattern.can_be_applied(state,
-                                                     subgraph,
-                                                     idx,
-                                                     sdfg,
-                                                     strict=strict)
-            except Exception as e:
-                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__,
-                                    e=e))
-                match_found = False
-            if match_found:
-                yield pattern(sdfg.sdfg_id, sdfg.node_id(state), subgraph, idx)
+    # Collect transformation metadata
+    if metadata is not None:
+        # Transformation metadata can be evaluated once per apply loop
+        interstate_transformations, singlestate_transformations = metadata
+    else:
+        # Otherwise, precompute all transformation data once
+        (interstate_transformations,
+         singlestate_transformations) = get_transformation_metadata(patterns)
 
-    # Recursive call for nested SDFGs
-    for node in state.nodes():
-        if isinstance(node, nd.NestedSDFG):
-            sub_sdfg = node.sdfg
-            for sub_state in sub_sdfg.nodes():
-                yield from match_pattern(sub_state,
-                                         pattern,
-                                         sub_sdfg,
-                                         strict=strict)
+    # Collect SDFG and nested SDFGs
+    sdfgs = sdfg.all_sdfgs_recursive()
+
+    # Try to find transformations on each SDFG
+    for tsdfg in sdfgs:
+        ###################################
+        # Match inter-state transformations
+        if len(interstate_transformations) > 0:
+            # Collapse multigraph into directed graph in order to use VF2
+            digraph = collapse_multigraph_to_nx(tsdfg)
+
+        for xform, expr_idx, nxpattern, matcher in interstate_transformations:
+            for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
+                match = _try_to_match_transformation(tsdfg, digraph, subgraph,
+                                                     tsdfg, xform, expr_idx,
+                                                     nxpattern, -1, strict)
+                if match is not None:
+                    yield match
+
+        ####################################
+        # Match single-state transformations
+        if len(singlestate_transformations) == 0:
+            continue
+        for state_id, state in enumerate(tsdfg.nodes()):
+            if states is not None and state not in states:
+                continue
+
+            # Collapse multigraph into directed graph in order to use VF2
+            digraph = collapse_multigraph_to_nx(state)
+
+            for xform, expr_idx, nxpattern, matcher in singlestate_transformations:
+                for subgraph in matcher(digraph, nxpattern, node_match,
+                                        edge_match):
+                    match = _try_to_match_transformation(
+                        state, digraph, subgraph, tsdfg, xform, expr_idx,
+                        nxpattern, state_id, strict)
+                    if match is not None:
+                        yield match
 
 
-def match_stateflow_pattern(sdfg,
-                            pattern,
-                            node_match=type_match,
-                            edge_match=None,
-                            strict=False):
-    """ Returns a list of multi-state Transformations of a certain class that
-        match the input SDFG.
-        :param sdfg: The SDFG to match in.
-        :param pattern: Transformation object to match.
-        :param node_match: Function for checking whether two nodes match.
-        :param edge_match: Function for checking whether two edges match.
-        :param strict: Only match transformation if strict (i.e., can only
-                       improve the performance/reduce complexity of the SDFG).
-        :return: A list of Transformation objects that match.
+def enumerate_matches(sdfg: SDFG,
+                      pattern: gr.Graph,
+                      node_match=type_or_class_match,
+                      edge_match=None) -> Iterator[gr.SubgraphView]:
     """
+    Returns a generator of subgraphs that match the given subgraph pattern.
+    :param sdfg: The SDFG to search in.
+    :param pattern: A subgraph to look for.
+    :param node_match: An optional function to use for matching nodes.
+    :param node_match: An optional function to use for matching edges.
+    :return: Yields SDFG subgraph view objects.
+    """
+    if len(pattern.nodes()) == 0:
+        raise ValueError('Subgraph pattern cannot be empty')
 
-    # Collapse multigraph into directed graph
-    # Handling VF2 in networkx for now
-    digraph = collapse_multigraph_to_nx(sdfg)
+    # Find if the subgraph is within states or SDFGs
+    is_interstate = (isinstance(pattern.node(0), SDFGState)
+                     or (isinstance(pattern.node(0), type)
+                         and pattern.node(0) is SDFGState))
 
-    for idx, expression in enumerate(pattern.expressions()):
-        cexpr = collapse_multigraph_to_nx(expression)
-        graph_matcher = iso.DiGraphMatcher(digraph,
-                                           cexpr,
-                                           node_match=node_match,
-                                           edge_match=edge_match)
-        for subgraph in graph_matcher.subgraph_isomorphisms_iter():
-            subgraph = {
-                cexpr.nodes[j]['node']: sdfg.node_id(digraph.nodes[i]['node'])
-                for (i, j) in subgraph.items()
-            }
-            try:
-                match_found = pattern.can_be_applied(sdfg, subgraph, idx, sdfg,
-                                                     strict)
-            except Exception as e:
-                print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-                      ' {e}'.format(p=pattern.__name__,
-                                    c=e.__class__.__name__,
-                                    e=e))
-                match_found = False
-            if match_found:
-                yield pattern(sdfg.sdfg_id, -1, subgraph, idx)
+    # Collapse multigraphs into directed graphs
+    pattern_digraph = collapse_multigraph_to_nx(pattern)
 
-    # Recursive call for nested SDFGs
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                yield from match_stateflow_pattern(node.sdfg,
-                                                   pattern,
-                                                   strict=strict)
+    # Find matches in all SDFGs and nested SDFGs
+    for graph in sdfg.all_sdfgs_recursive():
+        if is_interstate:
+            graph_matcher = iso.DiGraphMatcher(collapse_multigraph_to_nx(graph),
+                                               pattern_digraph,
+                                               node_match=node_match,
+                                               edge_match=edge_match)
+            for subgraph in graph_matcher.subgraph_isomorphisms_iter():
+                yield gr.SubgraphView(graph,
+                                      [graph.node(i) for i in subgraph.keys()])
+        else:
+            for state in graph.nodes():
+                graph_matcher = iso.DiGraphMatcher(
+                    collapse_multigraph_to_nx(state),
+                    pattern_digraph,
+                    node_match=node_match,
+                    edge_match=edge_match)
+                for subgraph in graph_matcher.subgraph_isomorphisms_iter():
+                    yield gr.SubgraphView(
+                        state, [state.node(i) for i in subgraph.keys()])

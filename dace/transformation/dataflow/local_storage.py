@@ -10,17 +10,17 @@ from dace import registry, symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation as xf
 
 
 @make_properties
-class LocalStorage(pattern_matching.Transformation, ABC):
+class LocalStorage(xf.Transformation, ABC):
     """ Implements the Local Storage prototype transformation, which adds a
         transient data node between two nodes.
     """
 
-    _node_a = nodes.Node()
-    _node_b = nodes.Node()
+    node_a = xf.PatternNode(nodes.Node)
+    node_b = xf.PatternNode(nodes.Node)
 
     array = Property(
         dtype=str,
@@ -36,19 +36,19 @@ class LocalStorage(pattern_matching.Transformation, ABC):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(LocalStorage._node_a, LocalStorage._node_b)
+            sdutil.node_path_graph(LocalStorage.node_a, LocalStorage.node_b)
         ]
 
     @staticmethod
     def match_to_str(graph, candidate):
-        a = candidate[LocalStorage._node_a]
-        b = candidate[LocalStorage._node_b]
+        a = candidate[LocalStorage.node_a]
+        b = candidate[LocalStorage.node_b]
         return '%s -> %s' % (a, b)
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        node_a = graph.nodes()[self.subgraph[LocalStorage._node_a]]
-        node_b = graph.nodes()[self.subgraph[LocalStorage._node_b]]
+        node_a = self.node_a(sdfg)
+        node_b = self.node_b(sdfg)
 
         # Determine direction of new memlet
         scope_dict = graph.scope_dict()
@@ -104,8 +104,8 @@ class LocalStorage(pattern_matching.Transformation, ABC):
             new_edge = graph.add_edge(data_node, None, node_b,
                                       original_edge.dst_conn, from_data_mm)
         else:
-            new_edge = graph.add_edge(node_a, original_edge.src_conn,
-                                      data_node, None, to_data_mm)
+            new_edge = graph.add_edge(node_a, original_edge.src_conn, data_node,
+                                      None, to_data_mm)
             graph.add_edge(data_node, None, node_b, original_edge.dst_conn,
                            from_data_mm)
 
@@ -113,6 +113,8 @@ class LocalStorage(pattern_matching.Transformation, ABC):
         for edge in graph.memlet_tree(new_edge):
             edge.data.subset.offset(offset, True)
             edge.data.data = new_data
+
+        return data_node
 
 
 @registry.autoregister_params(singlestate=True)
@@ -123,8 +125,8 @@ class InLocalStorage(LocalStorage):
     """
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        node_a = graph.nodes()[candidate[LocalStorage._node_a]]
-        node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+        node_a = graph.nodes()[candidate[LocalStorage.node_a]]
+        node_b = graph.nodes()[candidate[LocalStorage.node_b]]
         if (isinstance(node_a, nodes.EntryNode)
                 and isinstance(node_b, nodes.EntryNode)):
             # Empty memlets cannot match
@@ -142,8 +144,8 @@ class OutLocalStorage(LocalStorage):
     """
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        node_a = graph.nodes()[candidate[LocalStorage._node_a]]
-        node_b = graph.nodes()[candidate[LocalStorage._node_b]]
+        node_a = graph.nodes()[candidate[LocalStorage.node_a]]
+        node_b = graph.nodes()[candidate[LocalStorage.node_b]]
 
         if (isinstance(node_a, nodes.ExitNode)
                 and isinstance(node_b, nodes.ExitNode)):

@@ -38,10 +38,10 @@ class ScopeSubgraphView(StateSubgraphView):
 
     def top_level_transients(self):
         """ Iterate over top-level transients of this subgraph. """
-        sdict = self.scope_dict(node_to_children=True)
+        schildren = self.scope_children()
         sdfg = self.parent
         result = set()
-        for node in sdict[self.entry]:
+        for node in schildren[self.entry]:
             if isinstance(node, nd.AccessNode) and node.desc(sdfg).transient:
                 result.add(node.data)
         return result
@@ -51,7 +51,7 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
     if not isinstance(entry_node, nd.EntryNode):
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(
             type(entry_node).__name__))
-    node_to_children = graph.scope_dict(True)
+    node_to_children = graph.scope_children()
     if include_exit:
         children_nodes = set(node_to_children[entry_node])
     else:

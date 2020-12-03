@@ -8,6 +8,10 @@
 
 #include "types.h"
 
+#if defined(__CUDACC__) || defined(__HIPCC__)
+    #include "cuda/halfvec.cuh"
+#endif
+
 namespace dace
 {
     //////////////////////////////////////////////////////////////////
@@ -23,7 +27,7 @@ namespace dace
         typedef T aligned;
         typedef T unaligned;
     };
-    
+
 #if defined(__CUDACC__) || defined(__HIPCC__)
     // NOTE: This file is inline and MUST be included here
     #include "cuda/vectype.cuh"
@@ -179,6 +183,35 @@ namespace dace
                 return result;
             }
         };
+
+        template <typename T, int N>
+        static simplevec<T, N> operator+(const simplevec<T, N>& op1,
+                                         const T& op2) {
+            simplevec<T, N> result;
+            for (int i = 0; i < N; ++i) result.s[i] = op1.s[i] + op2;
+            return result;
+        }
+        template <typename T, int N>
+        static simplevec<T, N> operator+(const T& op1,
+                                         const simplevec<T, N>& op2) {
+            simplevec<T, N> result;
+            for (int i = 0; i < N; ++i) result.s[i] = op1 + op2.s[i];
+            return result;
+        }
+        template <typename T, int N>
+        static simplevec<T, N> operator*(const simplevec<T, N>& op1,
+                                         const T& op2) {
+            simplevec<T, N> result;
+            for (int i = 0; i < N; ++i) result.s[i] = op1.s[i] * op2;
+            return result;
+        }
+        template <typename T, int N>
+        static simplevec<T, N> operator*(const T& op1,
+                                         const simplevec<T, N>& op2) {
+            simplevec<T, N> result;
+            for (int i = 0; i < N; ++i) result.s[i] = op1 * op2.s[i];
+            return result;
+        }
 
         #define DEFINE_VECTYPE(T, BASE_SIZE, N)                             \
         template<>                                                          \

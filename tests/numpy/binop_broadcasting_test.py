@@ -1,7 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
-import pytest
 from common import compare_numpy_output
 
 ### Left, match first pos ######################################################
@@ -223,6 +221,10 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 #def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
 #    return A != B
 
+@compare_numpy_output()
+def test_regression_result_none(A: dace.int32[1, 3], B: dace.int32[3]):
+    return A + B
+
 if __name__ == '__main__':
     # generate this with
     # cat binop_broadcasting_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
@@ -261,3 +263,4 @@ if __name__ == '__main__':
     test_ltl4()
     test_multr4()
     test_bitorr4()
+    test_regression_result_none()

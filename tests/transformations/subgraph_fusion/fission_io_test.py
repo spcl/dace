@@ -40,7 +40,7 @@ def mapfission_sdfg():
     wnode = state.add_write('B')
 
     # Edges
-    state.add_nedge(ome, scalar, dace.EmptyMemlet())
+    state.add_nedge(ome, scalar, dace.Memlet())
     state.add_memlet_path(rnode,
                           ome,
                           t1,
@@ -144,6 +144,7 @@ def test_inputs_outputs():
     C_cpy = deepcopy(C)
     D_cpy = deepcopy(D)
     csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
+    del csdfg
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
 
@@ -153,6 +154,7 @@ def test_inputs_outputs():
     D_cpy = deepcopy(D)
     csdfg = sdfg.compile()
     csdfg(in1=A, in2=B, out1=C_cpy, out2=D_cpy)
+    del csdfg
     assert np.allclose(C_cpy, expected_C)
     assert np.allclose(D_cpy, expected_D)
 

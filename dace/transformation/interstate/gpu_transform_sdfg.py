@@ -4,13 +4,13 @@
 from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import Property, make_properties
 
 
 @registry.autoregister
 @make_properties
-class GPUTransformSDFG(pattern_matching.Transformation):
+class GPUTransformSDFG(transformation.Transformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
@@ -81,8 +81,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 return False
 
         for state in sdfg.nodes():
-            sdict = state.scope_dict(node_to_children=True)
-            for node in sdict[None]:
+            schildren = state.scope_children()
+            for node in schildren[None]:
                 # If two top-level tasklets are connected with a code->code
                 # memlet, they will transform into an invalid SDFG
                 if (isinstance(node, nodes.CodeNode) and any(
@@ -94,9 +94,6 @@ class GPUTransformSDFG(pattern_matching.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         return graph.label
-
-    def modifies_graph(self):
-        return True
 
     def apply(self, sdfg: sd.SDFG):
 
@@ -312,11 +309,13 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
-                    if sdict[node] is None:
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Default
+                    elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node, (nodes.EntryNode, nodes.LibraryNode))
-                          and self.sequential_innermaps):
+                else:
+                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
                         node.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################

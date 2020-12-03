@@ -7,7 +7,9 @@
 
 #include <complex>
 #include <numeric>
+#include <cmath>
 #include <cfloat>
+#include <type_traits>
 
 #ifdef __CUDACC__
     #include <thrust/complex.h>
@@ -37,9 +39,9 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val)
     return val;
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI T min(const T& a, const T& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(const T& a, const Ts&... ts)
 {
-    return (a < b) ? min(a, c...) : min(b, c...);
+    return (a < min(ts...)) ? a : min(ts...);
 }
 
 template <typename T>
@@ -48,9 +50,9 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val)
     return val;
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI T max(const T& a, const T& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts)
 {
-    return (a > b) ? max(a, c...) : max(b, c...);
+    return (a > max(ts...)) ? a : max(ts...);
 }
 
 template <typename T, typename T2>
@@ -127,18 +129,285 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const da
 
 #ifndef DACE_SYNTHESIS
 
+
+
 // Computes integer floor, rounding the remainder towards negative infinity.
-// Assuming inputs are of integer type.
-template <typename T>
+// https://stackoverflow.com/a/39304947
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
+    auto divresult = std::div(numerator, denominator);
+    T corr = (divresult.rem != 0 && ((divresult.rem < 0) != (denominator < 0)));
+    return (T)divresult.quot - corr;
+}
+template <typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI T int_floor_ni(const T& numerator, const T& denominator) {
     T quotient = numerator / denominator;
     T remainder = numerator % denominator;
-    // This doesn't work properly if both numbers have sign 0.
-    // However, in this case we crash due to division by 0.
-    if (sgn(numerator) + sgn(denominator) == 0 && remainder > 0)
-        return quotient - 1;
+    T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+    return quotient - corr;
+}
+
+// Computes Python floor division
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
+    return int_floor_ni(numerator, denominator);
+}
+template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T py_floor(const T& numerator, const T& denominator) {
+    return (T)std::floor(numerator / denominator);
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> py_floor(const std::complex<T>& numerator, const std::complex<T>& denominator) {
+    std::complex<T> quotient = numerator / denominator;
+    quotient.real(std::floor(quotient.real()));
+    quotient.imag(0);
     return quotient;
 }
+
+// Computes NumPy float power
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI double np_float_pow(const T& base, const T& exponent) {
+    return std::pow((double)base, (double)exponent);
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<double> np_float_pow(const std::complex<T>& base, const std::complex<T>& exponent) {
+    return std::pow((std::complex<double>)base, (std::complex<double>)exponent);
+}
+
+// Computes Python modulus (also NumPy remainder)
+// Formula: num - (num // den) * den
+// NOTE: This is different than Python math.remainder and C remainder, 
+// which are equaivalent to the IEEE remainder: num - round(num / den) * den
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T py_mod(const T& numerator, const T& denominator) {
+    T quotient = py_floor(numerator, denominator);
+    return (T)(numerator - quotient * denominator);
+}
+
+// Computes C/C++ modulus (operator % and fmod)
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
+    return numerator % denominator;
+}
+template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator, const T& denominator) {
+    return (T)std::fmod(numerator, denominator);
+}
+
+// Computes C/C++ divmod (std::div)
+template<typename T, std::enable_if_t<std::is_integral<T>::value && std::is_signed<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+    auto divresult = std::div(numerator, denominator);
+    quotient = (T)divresult.quot;
+    remainder = (T)divresult.rem;
+}
+template<typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+    quotient = numerator / denominator;
+    remainder = numerator % denominator;
+}
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void cpp_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+    quotient = (T)std::floor(numerator / denominator);
+    remainder = (T)std::fmod(numerator, denominator);
+}
+
+// Computes Python divmod
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+    cpp_divmod(numerator, denominator, quotient, remainder);
+    T corr = (remainder != 0 && ((remainder < 0) != (denominator < 0)));
+    quotient -= corr;
+    remainder += corr * denominator;
+}
+template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void py_divmod(const T& numerator, const T& denominator, T& quotient, T& remainder) {
+    quotient = (T)std::floor(numerator / denominator);
+    remainder = numerator - quotient * denominator;
+}
+
+// Computes absolute value (support for unsigned integers)
+template<typename T, std::enable_if_t<std::is_integral<T>::value && std::is_unsigned<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T abs(const T& a) {
+    return a;
+}
+
+// Rounds to nearest integer (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> round(const std::complex<T>& a) {
+    return std::complex<T>(round(a.real()), round(a.imag()));
+}
+
+// Returns an indication of the sign of a number
+// For non-complex numbers: -1 if x < 0, 0 if x == 0, 1 if x > 1
+// For complex numbers: sign(x.real) + 0j if x.real !=0, else sign(x.imag) + 0j
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T sign(const T& x) {
+    return T( (T(0) < x) - (x < T(0)) );
+    // return (x < 0) ? -1 : ( (x > 0) ? 1 : 0); 
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> sign(const std::complex<T>& x) {
+    return (x.real() != 0) ? std::complex<T>(sign(x.real()), 0) : std::complex<T>(sign(x.imag()), 0);
+}
+
+// Computes the Heaviside step function
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T heaviside(const T& a, const T& b) {
+    return (a < 0) ? 0 : ( (a > 0) ? 1 : b); 
+}
+
+// Computes the conjugate of a number (support for non-complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T conj(const T& a) {
+    return a;
+}
+
+// Computes 2 raised to the given power n (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> exp2(const std::complex<T>& n) {
+    return std::exp(n * std::log(T(2)));
+}
+
+// Computes the base-2 logarithm of n (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> log2(const std::complex<T>& n) {
+    T radius = std::abs(n);
+    T theta = std::arg(n);
+    return std::complex<T>(std::log2(radius), theta / std::log(T(2)));
+}
+
+// Computes the e raised to the given power n, minus 1.0 (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> expm1(const std::complex<T>& n) {
+    return std::exp(n) - T(1);
+}
+
+// Computes the base-e logarithm of 1 + n (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> log1p(const std::complex<T>& n) {
+    return std::log(n + T(1));
+}
+
+// Computes the reciprocal of a number
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T reciprocal(const T& a) {
+    return T(1) / a;
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI std::complex<T> reciprocal(const std::complex<T>& a) {
+    return T(1) / a;
+}
+
+#if __cplusplus < 201703L
+
+// Compute the greates common divisor of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T gcd(T a, T b) {
+    // Modern Euclidian algorithm
+    // (Knuth, Art of Computer Programming - Vol. 2 Seminumerical Algorithms)
+    while (b != 0) {
+        auto t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+// Compute the least common multiple of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T lcm(T a, T b) {
+    // lcm(a, b) = |a * b| / gcd(a, b)
+    // more efficient lcm(a, b) = (|a| / gcd(a, b)) * |b|
+    if (a == 0 && b == 0) // special case
+        return 0;
+    return (abs(a) / gcd(a, b)) * abs(b);
+}
+
+#else
+
+// Compute the greates common divisor of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T gcd(const T& a, const T& b) {
+    return std::gcd(a, b);
+}
+
+// Compute the least common multiple of two integers
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T lcm(const T& a, const T& b) {
+    return std::lcm(a, b);
+}
+
+#endif
+
+// Converts angles from degrees to radians
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T deg2rad(const T& a) {
+    return a * M_PI / T(180);
+}
+
+// Converts angles from radians to degrees
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI T rad2deg(const T& a) {
+    return a * T(180) / M_PI;
+}
+
+// Determines if the given (floating point) number has finite value
+// (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isfinite(const std::complex<T>& a) {
+    return std::isfinite(a.real()) && std::isfinite(a.imag());
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isfinite(const T& a) {
+    return std::isfinite(a);
+}
+
+// Determines if the given (floating point) number is a positive or negative
+// infinity (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isinf(const std::complex<T>& a) {
+    return std::isinf(a.real()) || std::isinf(a.imag());
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isinf(const T& a) {
+    return std::isinf(a);
+}
+
+// Determines if the given (floating point) number is not-a-number (NaN) value
+// (support for complex numbers)
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isnan(const std::complex<T>& a) {
+    return std::isnan(a.real()) || std::isnan(a.imag());
+}
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool isnan(const T& a) {
+    return std::isnan(a);
+}
+
+// Determines if the given floating point number a is negative
+template<typename T>
+static DACE_CONSTEXPR DACE_HDFI bool signbit(const T& a) {
+    return std::signbit(a);
+}
+
+// Computes modf (compatibility between Python tasklets and C++ modf)
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, double& integral, double& fractional) {
+    integral = double(a);
+    fractional = double(0);
+}
+template<typename T, std::enable_if_t<!std::is_integral<T>::value && std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_modf(const T& a, T& integral, T& fractional) {
+    fractional = std::modf(a, &integral);
+}
+
+// Computes frexp (compatibility between Python tasklets and C++ frexp)
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI void np_frexp(const T& a, T& mantissa, int& exponent) {
+    mantissa = std::frexp(a, &exponent);
+}
+
 
 #endif
 

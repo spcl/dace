@@ -56,7 +56,7 @@ def fibonacci(v):
     return fibonacci(v - 1) + fibonacci(v - 2)
 
 
-if __name__ == '__main__':
+def test():
     print('Fibonacci recursion using consume')
     input = np.ndarray([1], np.int32)
     output = np.ndarray([1], np.float32)
@@ -68,4 +68,7 @@ if __name__ == '__main__':
 
     diff = (regression - output[0])**2
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+if __name__ == '__main__':
+    test()

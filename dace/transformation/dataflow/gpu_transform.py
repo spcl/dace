@@ -5,13 +5,13 @@ from dace import data, dtypes, sdfg as sd, registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
-from dace.transformation import pattern_matching, helpers
+from dace.transformation import transformation, helpers
 from dace.properties import Property, make_properties
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class GPUTransformMap(pattern_matching.Transformation):
+class GPUTransformMap(transformation.Transformation):
     """ Implements the GPUTransformMap transformation.
 
         Converts a single map to a GPU-scheduled map and creates GPU arrays
@@ -70,8 +70,8 @@ class GPUTransformMap(pattern_matching.Transformation):
             for node in subgraph.nodes():
                 if (isinstance(node, nodes.AccessNode) and
                         node.desc(sdfg).storage != dtypes.StorageType.Default
-                        and node.desc(sdfg).storage !=
-                        dtypes.StorageType.Register):
+                        and
+                        node.desc(sdfg).storage != dtypes.StorageType.Register):
                     return False
 
             # If one of the outputs is a stream, do not match
@@ -102,8 +102,7 @@ class GPUTransformMap(pattern_matching.Transformation):
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
         if self.expr_index == 0:
-            map_entry = graph.nodes()[self.subgraph[
-                GPUTransformMap._map_entry]]
+            map_entry = graph.nodes()[self.subgraph[GPUTransformMap._map_entry]]
             nsdfg_node = helpers.nest_state_subgraph(
                 sdfg,
                 graph,

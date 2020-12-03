@@ -101,18 +101,33 @@ def parse_from_function(function, *compilation_args, strict=None):
                        uses configuration-defined value). 
         :return: The generated SDFG object.
     """
+    # Avoid import loop
+    from dace.sdfg.analysis import scalar_to_symbol as scal2sym
+    from dace.transformation import helpers as xfh
+
     if not isinstance(function, DaceProgram):
         raise TypeError(
             'Function must be of type dace.frontend.python.DaceProgram')
 
     # Obtain DaCe program as SDFG
-    sdfg = function.generate_pdp(*compilation_args)
+    sdfg = function.generate_pdp(*compilation_args, strict=strict)
 
     # Apply strict transformations automatically
     if (strict == True or
         (strict is None
          and Config.get_bool('optimizer', 'automatic_strict_transformations'))):
+
+        # Promote scalars to symbols as necessary
+        promoted = scal2sym.promote_scalars_to_symbols(sdfg)
+        if Config.get_bool('debugprint') and len(promoted) > 0:
+            print('Promoted scalars {%s} to symbols.' %
+                  ', '.join(p for p in sorted(promoted)))
+
         sdfg.apply_strict_transformations()
+
+        # Split back edges with assignments and conditions to allow richer
+        # control flow detection in code generation
+        xfh.split_interstate_edges(sdfg)
 
     # Save the SDFG (again)
     sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
@@ -123,16 +138,20 @@ def parse_from_function(function, *compilation_args, strict=None):
     return sdfg
 
 
-def _get_locals_and_globals():
-    """ Retrieves a list of local and global variables four steps up in the
-        stack. This is used to retrieve variables around and defined before
-        @dace.programs for adding symbols. """
-    frame = inspect.currentframe()
-    outer_frame = frame.f_back.f_back.f_back.f_back
+def _get_locals_and_globals(f):
+    """ Retrieves a list of local and global variables for the function ``f``.
+        This is used to retrieve variables around and defined before  @dace.programs for adding symbols and constants.
+    """
     result = {}
     # Update globals, then locals
-    result.update(outer_frame.f_globals)
-    result.update(outer_frame.f_locals)
+    result.update(f.__globals__)
+    # grab the free variables (i.e. locals)
+    if f.__closure__ is not None:
+        result.update({
+            k: v
+            for k, v in zip(f.__code__.co_freevars,
+                            [x.cell_contents for x in f.__closure__])
+        })
 
     return result
 
@@ -220,12 +239,11 @@ class DaceProgram:
         self._name = f.__name__
         self.argnames = _get_argnames(f)
 
-        # NOTE: Important to call this outside list/dict comprehensions
-        global_vars = _get_locals_and_globals()
+        global_vars = _get_locals_and_globals(f)
 
         self.global_vars = {
             k: v
-            for k, v in global_vars.items() if dtypes.isallowed(v)
+            for k, v in global_vars.items() if dtypes.isallowed(v, allow_recursive=True)
         }
         if self.argnames is None:
             self.argnames = []
@@ -265,9 +283,10 @@ class DaceProgram:
 
         return binaryobj(**kwargs)
 
-    def generate_pdp(self, *compilation_args):
+    def generate_pdp(self, *compilation_args, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
             :param compilation_args: Various compilation arguments e.g., dtypes.
+            :param strict: Whether to apply strict transforms when parsing nested dace programs.
             :return: A 2-tuple of (program, modules), where `program` is a
                      `dace.astnodes._ProgramNode` representing the parsed DaCe 
                      program, and `modules` is a dictionary mapping imported 
@@ -326,10 +345,15 @@ class DaceProgram:
         # NOTE: These are the globals AT THE TIME OF INVOCATION, NOT DEFINITION
         other_sdfgs = {
             k: v
-            for k, v in dace_func.__globals__.items()
+            for k, v in _get_locals_and_globals(dace_func).items()
             if isinstance(v, (SDFG, DaceProgram))
         }
 
         # Parse AST to create the SDFG
-        return newast.parse_dace_program(dace_func, argtypes, global_vars,
-                                         modules, other_sdfgs, self.kwargs)
+        return newast.parse_dace_program(dace_func,
+                                         argtypes,
+                                         global_vars,
+                                         modules,
+                                         other_sdfgs,
+                                         self.kwargs,
+                                         strict=strict)
