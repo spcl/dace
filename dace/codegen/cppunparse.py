@@ -168,7 +168,8 @@ class CPPUnparser:
                  expr_semicolon=True,
                  indent_offset=0,
                  type_inference=False,
-                 defined_symbols=None):
+                 defined_symbols=None,
+                 language=dace.dtypes.Language.CPP):
 
         self.f = file
         self.future_imports = []
@@ -181,6 +182,7 @@ class CPPUnparser:
         self.dtype = None
         self.locals = locals
         self.firstfill = True
+        self.language = language
 
         self.dispatch(tree)
         print("", file=self.f)
@@ -324,7 +326,11 @@ class CPPUnparser:
 
                     self.locals.define(target.id, t.lineno, self._indent,
                                        inferred_type)
-                    self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                    if self.language == dace.dtypes.Language.OpenCL and inferred_type.veclen > 1:
+                        # if the veclen is greater than one, this should be defined with a vector data type
+                       self.write("{}{} ".format(dace.dtypes._CTYPES[inferred_type.type],inferred_type.veclen))
+                    else:
+                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                 else:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")

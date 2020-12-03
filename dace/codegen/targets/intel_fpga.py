@@ -1115,7 +1115,8 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                        locals,
                                        result,
                                        defined_symbols=defined_symbols,
-                                       type_inference=True)
+                                       type_inference=True,
+                                       language=dtypes.Language.OpenCL)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
