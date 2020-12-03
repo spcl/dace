@@ -166,6 +166,18 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             c[0].src_conn = "_y"
             gemv = Gemv(node.name, dtype=node.dtype, location=node.location)
             return gemv
+        elif len(size_a) == 1 and len(size_b) == 2:
+            # Vector and matrix -> GEMV with transposed matrix
+            from dace.libraries.blas.nodes.gemv import Gemv
+            # Rename inputs to match dot naming
+            a[0].dst_conn = "_x"
+            b[0].dst_conn = "_a"
+            c[0].src_conn = "_y"
+            gemv = Gemv(node.name,
+                        dtype=node.dtype,
+                        location=node.location,
+                        transA=True)
+            return gemv
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
