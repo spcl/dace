@@ -130,7 +130,7 @@ def make_write_C(state):
     state.add_memlet_path(pipe,
                           mem,
                           memlet=dace.Memlet("C_device[0:N, 0:M]",
-                                             other_subset="P"))
+                                             other_subset="P - 1"))
 
 
 def make_compute(sdfg, state):
@@ -241,10 +241,8 @@ if p < P - 1:
     # Write back
     write_c_tasklet = state.add_tasklet(
         "write_c", {"buffer_in", "forward_in"}, {"c_out"}, """\
-if n1 == 0:
-    c_out = buffer_in
-elif n1 <= p:
-    c_out = forward_in""")
+if n1 <= p:
+    c_out = forward_in if p > 0 and n1 > 0 else buffer_in""")
     state.add_memlet_path(C_buffer_out,
                           entry_c,
                           write_c_tasklet,
@@ -254,13 +252,13 @@ elif n1 <= p:
                           entry_n0,
                           entry_c,
                           write_c_tasklet,
-                          memlet=dace.Memlet("C_pipe[p]", dynamic=True),
+                          memlet=dace.Memlet("C_pipe[p-1]", dynamic=True),
                           dst_conn="forward_in")
     state.add_memlet_path(write_c_tasklet,
                           exit_c,
                           exit_n0,
                           C_pipe_out,
-                          memlet=dace.Memlet("C_pipe[p+1]", dynamic=True),
+                          memlet=dace.Memlet("C_pipe[p]", dynamic=True),
                           src_conn="c_out")
 
     # Unroll processing elements
@@ -296,7 +294,7 @@ def make_fpga_state(sdfg):
     sdfg.add_stream("C_pipe",
                     dace.float32,
                     transient=True,
-                    shape=(P + 1, ),
+                    shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local)
 
     make_read_A(state)
