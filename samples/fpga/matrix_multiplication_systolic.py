@@ -241,8 +241,10 @@ if p < P - 1:
     # Write back
     write_c_tasklet = state.add_tasklet(
         "write_c", {"buffer_in", "forward_in"}, {"c_out"}, """\
-if n1 <= p:
-    c_out = buffer_in if n1 == p else forward_in""")
+if n1 == 0:
+    c_out = buffer_in
+elif n1 <= p:
+    c_out = forward_in""")
     state.add_memlet_path(C_buffer_out,
                           entry_c,
                           write_c_tasklet,
@@ -278,7 +280,7 @@ if n1 <= p:
 
 def make_fpga_state(sdfg):
 
-    state = sdfg.add_state("gemm")
+    state = sdfg.add_state("mm")
 
     sdfg.add_stream("A_pipe",
                     dace.float32,
@@ -308,11 +310,10 @@ def make_fpga_state(sdfg):
 def make_sdfg(specialized):
 
     if specialized:
-        sdfg = dace.SDFG("gemm_fpga_systolic_{}_{}x{}x{}".format(
+        sdfg = dace.SDFG("mm_fpga_systolic_{}_{}x{}x{}".format(
             P.get(), N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("gemm_fpga_systolic_{}_NxKx{}".format(
-            P.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_systolic_{}_NxKx{}".format(P.get(), M.get()))
 
     pre_state = make_copy_to_fpga_state(sdfg)
     compute_state = make_fpga_state(sdfg)
@@ -362,8 +363,8 @@ if __name__ == "__main__":
     A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)
     B = np.ndarray([K.get(), M.get()], dtype=dace.float32.type)
     C = np.ndarray([N.get(), M.get()], dtype=dace.float32.type)
-    A[:] = 1  # np.random.rand(N.get(), K.get()).astype(dace.float32.type)
-    B[:] = 1  # np.random.rand(K.get(), M.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
+    B[:] = np.random.rand(K.get(), M.get()).astype(dace.float32.type)
     C[:] = dace.float32(0)
 
     A_regression = np.ndarray([N.get(), K.get()], dtype=np.float32)

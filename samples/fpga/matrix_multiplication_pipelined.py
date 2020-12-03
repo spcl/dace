@@ -3,23 +3,23 @@ import argparse
 import dace
 import numpy as np
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K')
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K")
 
 
 def make_sdfg(specialized):
 
     if specialized:
-        sdfg = dace.SDFG("gemm_fpga_pipelined_{}x{}x{}".format(
+        sdfg = dace.SDFG("mm_fpga_pipelined_{}x{}x{}".format(
             N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("gemm_fpga_pipelined_NxKx{}".format(M.get()))
+        sdfg = dace.SDFG("mm_fpga_pipelined_NxKx{}".format(M.get()))
 
     ###########################################################################
     # Copy data to FPGA
 
-    pre_state = sdfg.add_state("pre_gemm")
+    pre_state = sdfg.add_state("pre_mm")
 
     A_host = pre_state.add_array("A", [N, K], dtype=dace.float32)
     B_host = pre_state.add_array("B", [K, M], dtype=dace.float32)
@@ -48,7 +48,7 @@ def make_sdfg(specialized):
     ###########################################################################
     # Compute
 
-    state = sdfg.add_state("gemm")
+    state = sdfg.add_state("mm")
     sdfg.add_edge(pre_state, state, dace.sdfg.InterstateEdge())
 
     A = state.add_array("A_device", [N, K],
@@ -112,32 +112,20 @@ def make_sdfg(specialized):
 
     # Add scalar I/O
     then_A_val = then_state.add_scalar(
-        "A_val",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "A_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
     then_B_val = then_state.add_scalar(
-        "B_val",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "B_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
     then_C_out = then_state.add_scalar(
-        "C_out",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "C_out", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
 
     else_A_val = else_state.add_scalar(
-        "A_val",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "A_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
     else_B_val = else_state.add_scalar(
-        "B_val",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "B_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
     else_C_in = else_state.add_scalar(
         "C_in", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
     else_C_out = else_state.add_scalar(
-        "C_out",
-        dtype=dace.float32,
-        storage=dace.dtypes.StorageType.FPGA_Local)
+        "C_out", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
 
     # Memlets
     then_a_val_memlet = dace.memlet.Memlet.simple(then_A_val, "0")
@@ -229,14 +217,13 @@ def make_sdfg(specialized):
     ###########################################################################
     # Copy back result
 
-    post_state = sdfg.add_state("post_gemm")
+    post_state = sdfg.add_state("post_mm")
     sdfg.add_edge(state, post_state, dace.sdfg.InterstateEdge())
 
-    C_device = post_state.add_array(
-        "C_device", [N, M],
-        dtype=dace.float32,
-        transient=True,
-        storage=dace.dtypes.StorageType.FPGA_Global)
+    C_device = post_state.add_array("C_device", [N, M],
+                                    dtype=dace.float32,
+                                    transient=True,
+                                    storage=dace.dtypes.StorageType.FPGA_Global)
 
     C_host = post_state.add_array("C", [N, M], dtype=dace.float32)
 
