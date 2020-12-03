@@ -1237,14 +1237,19 @@ __kernel void \\
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.volume == 1 and not memlet.dynamic):
                     #this could be a remote stream
+                    if data_desc.is_stream_array():
+                        offset = cpp.cpp_offset_expr(data_desc, memlet.subset)
+                        target = f"{data_name}[{offset}]"
+                    else:
+                        target = data_name
                     if data_desc.storage == dace.dtypes.StorageType.FPGA_Remote:
                         callsite_stream.write(
-                            f"SMI_Push(&{data_name}, &{connector});", sdfg)
+                            f"SMI_Push(&{target}, &{connector});", sdfg)
                     else:
                         if data_desc.is_stream_array():
                             offset = cpp.cpp_offset_expr(
                                 data_desc, memlet.subset)
-                            target = f"{data_name}[{offset}]"
+                            target = f"{target}[{offset}]"
                         else:
                             target = data_name
                         callsite_stream.write(
