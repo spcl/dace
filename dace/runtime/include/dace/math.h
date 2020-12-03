@@ -9,6 +9,7 @@
 #include <numeric>
 #include <cmath>
 #include <cfloat>
+#include <type_traits>
 
 #ifdef __CUDACC__
     #include <thrust/complex.h>
@@ -38,9 +39,9 @@ DACE_CONSTEXPR DACE_HDFI T min(const T& val)
     return val;
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI T min(const T& a, const T& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type min(const T& a, const Ts&... ts)
 {
-    return (a < b) ? min(a, c...) : min(b, c...);
+    return (a < min(ts...)) ? a : min(ts...);
 }
 
 template <typename T>
@@ -49,9 +50,9 @@ DACE_CONSTEXPR DACE_HDFI T max(const T& val)
     return val;
 }
 template <typename T, typename... Ts>
-DACE_CONSTEXPR DACE_HDFI T max(const T& a, const T& b, const Ts&... c)
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, Ts...>::type max(const T& a, const Ts&... ts)
 {
-    return (a > b) ? max(a, c...) : max(b, c...);
+    return (a > max(ts...)) ? a : max(ts...);
 }
 
 template <typename T, typename T2>

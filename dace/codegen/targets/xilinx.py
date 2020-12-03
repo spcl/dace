@@ -328,12 +328,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "{}.pop()".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if " " in expr:
                 expr = "(" + expr + ")"
-            read_expr = "{}[{}].pop()".format(expr, index)
+            read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -553,7 +551,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                         p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
                         p.as_arg(with_types=True, name=pname))
-                    
+
         # create a unique module name to prevent name clashes
         module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
 
