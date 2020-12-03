@@ -173,7 +173,8 @@ def make_write_C(state, sdfg, vec_width):
     entry_map, exit_map = state.add_map("write_C", {
         "n": "0:N",
         "m0": "0:M/{}".format(vec_width)
-    }, schedule=dace.ScheduleType.FPGA_Device)
+    },
+                                        schedule=dace.ScheduleType.FPGA_Device)
 
     write_map_entry, write_map_exit = state.add_map(
         "unrolled_write_B", {"m1": "0:{}".format(vec_width)},
@@ -190,9 +191,8 @@ def make_write_C(state, sdfg, vec_width):
     vect_data = state.add_access("vec_data_C")
 
     # then we transfer them to the output stream
-    copy_in_tasklet = state.add_tasklet('copy_from_stream_C',
-                                         {'in_con'}, {'out_con'},
-                                         'out_con = in_con')
+    copy_in_tasklet = state.add_tasklet('copy_from_stream_C', {'in_con'},
+                                        {'out_con'}, 'out_con = in_con')
     state.add_memlet_path(pipe,
                           entry_map,
                           copy_in_tasklet,
@@ -217,9 +217,8 @@ def make_write_C(state, sdfg, vec_width):
                           exit_map,
                           mem,
                           src_conn="to_memory",
-                          memlet=dace.Memlet("C_device[n, m0*{}+m1]".format(vec_width)))
-
-
+                          memlet=dace.Memlet(
+                              "C_device[n, m0*{}+m1]".format(vec_width)))
 
     # previous versio, direct copy
 
@@ -342,12 +341,34 @@ if p < P - 1:
     state.add_memlet_path(C_buffer_out, exit_n0, memlet=dace.Memlet())
 
     # Write back
+    #     write_c_tasklet = state.add_tasklet(
+    #         "write_c", {"buffer_in", "forward_in"}, {"c_out"}, """\
+    # if n1 == 0:
+    #     c_out = buffer_in
+    # elif n1 <= p:
+    #     c_out = forward_in""")
+    #     state.add_memlet_path(C_buffer_out,
+    #                           entry_c,
+    #                           write_c_tasklet,
+    #                           memlet=dace.Memlet("C_buffer[m]", dynamic=True),
+    #                           dst_conn="buffer_in")
+    #     state.add_memlet_path(C_pipe_in,
+    #                           entry_n0,
+    #                           entry_c,
+    #                           write_c_tasklet,
+    #                           memlet=dace.Memlet("C_pipe[p]", dynamic=True),
+    #                           dst_conn="forward_in")
+    #     state.add_memlet_path(write_c_tasklet,
+    #                           exit_c,
+    #                           exit_n0,
+    #                           C_pipe_out,
+    #                           memlet=dace.Memlet("C_pipe[p+1]", dynamic=True),
+    #                           src_conn="c_out")
+
     write_c_tasklet = state.add_tasklet(
         "write_c", {"buffer_in", "forward_in"}, {"c_out"}, """\
-if n1 == 0:
-    c_out = buffer_in
-elif n1 <= p:
-    c_out = forward_in""")
+if n1 <= p:
+    c_out = forward_in if p > 0 and n1 > 0 else buffer_in""")
     state.add_memlet_path(C_buffer_out,
                           entry_c,
                           write_c_tasklet,
@@ -406,14 +427,14 @@ def make_fpga_state(sdfg, vec_width=1):
     make_read_A(state)
     make_read_B(state, sdfg, vec_width)
     make_compute(sdfg, state, vec_width)
-    make_write_C(state,sdfg,vec_width)
+    make_write_C(state, sdfg, vec_width)
 
     return state
 
 
 def make_sdfg(specialized):
 
-    vec_width = 2
+    vec_width = 16
 
     if specialized:
         sdfg = dace.SDFG("mm_fpga_systolic_vectorized_{}_{}x{}x{}".format(
