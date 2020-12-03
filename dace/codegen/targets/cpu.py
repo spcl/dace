@@ -1393,7 +1393,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream: CodeIOStream,
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
-        self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=(not inline))
+        self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
 
         # Emit nested SDFG as a separate function
