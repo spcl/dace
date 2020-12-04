@@ -977,11 +977,13 @@ class CPUCodeGen(TargetCodeGenerator):
                           output: bool,
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
-                          allow_shadowing=False):
+                          allow_shadowing=False,
+                          codegen=None):
         # TODO: Robust rule set
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without '
                              'connector type' % local_name)
+        codegen = codegen or self
         # Convert from Data to typeclass
         if isinstance(conntype, data.Data):
             if isinstance(conntype, data.Array):
@@ -1016,8 +1018,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if expr != memlet.data:
                 expr = '%s[%s]' % (memlet.data, expr)
             # If there is a type mismatch, cast pointer
-            expr = cpp.make_ptr_vector_cast(sdfg, expr, memlet, conntype,
-                                            is_scalar, var_type)
+            expr = codegen.make_ptr_vector_cast(sdfg, expr, memlet, conntype,
+                                                is_scalar, var_type)
 
         defined = None
 
@@ -1987,3 +1989,6 @@ class CPUCodeGen(TargetCodeGenerator):
                                      after output memlets are generated.
         """
         pass
+
+    def make_ptr_vector_cast(self, *args, **kwargs):
+        return cpp.make_ptr_vector_cast(*args, **kwargs)

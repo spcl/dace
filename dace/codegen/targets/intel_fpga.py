@@ -724,11 +724,11 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']'
 
-                expr = cpp.make_ptr_vector_cast(sdfg,
-                                                in_memlet.data + offset_expr,
-                                                in_memlet,
-                                                node.in_connectors[vconn],
-                                                False, defined_type)
+                expr = self.make_ptr_vector_cast(sdfg,
+                                                 in_memlet.data + offset_expr,
+                                                 in_memlet,
+                                                 node.in_connectors[vconn],
+                                                 False, defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
                     typedef = "__global volatile  {}* restrict".format(vec_type)
                 else:
@@ -780,7 +780,7 @@ __kernel void \\
                             vec_type)
                     else:
                         typedef = "{}*".format(vec_type)
-                    expr = cpp.make_ptr_vector_cast(
+                    expr = self.make_ptr_vector_cast(
                         sdfg, out_memlet.data + offset_expr, out_memlet,
                         node.out_connectors[uconn], False, defined_type)
                     memlet_references.append((typedef, uconn, expr))

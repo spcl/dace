@@ -1320,3 +1320,6 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                 self.generate_no_dependence_post(edge.src_conn,
                                                  after_memlets_stream, sdfg,
                                                  state_id, node)
+
+    def make_ptr_vector_cast(self, *args, **kwargs):
+        return cpp.make_ptr_vector_cast(*args, **kwargs)
