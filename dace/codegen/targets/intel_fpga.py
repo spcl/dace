@@ -364,14 +364,27 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         return res
 
     @staticmethod
-    def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
-                                   node):
-        kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
-                            state_id, node)
+    def generate_no_dependence_pre(kernel_stream,
+                                   sdfg,
+                                   state_id,
+                                   node,
+                                   var_name=None):
+        '''
+            Adds pre-loop pragma for ignoring loop carried dependencies on a given variable
+            (if var_name is provided) or all variables
+        '''
+        if var_name is None:
+            kernel_stream.write("#pragma ivdep", sdfg, state_id, node)
+        else:
+            kernel_stream.write("#pragma ivdep array({})".format(var_name),
+                                sdfg, state_id, node)
 
     @staticmethod
-    def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
-                                    node):
+    def generate_no_dependence_post(kernel_stream,
+                                    sdfg,
+                                    state_id,
+                                    node,
+                                    var_name=None):
         pass
 
     def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
@@ -646,9 +659,9 @@ __kernel void \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
                    ", ".join(kernel_args_call[:-1]),
-                   AUTORUN_STR_MACRO if is_autorun else "", module_function_name,
-                   ", ".join(kernel_args_opencl[:-1]), name,
-                   ", ".join(kernel_args_call[:-1]),
+                   AUTORUN_STR_MACRO if is_autorun else "",
+                   module_function_name, ", ".join(kernel_args_opencl[:-1]),
+                   name, ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
 
             # create PE kernels by using the previously defined macro

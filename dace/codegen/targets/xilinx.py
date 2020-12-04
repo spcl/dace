@@ -276,8 +276,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
-                              sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node,
+                              memlet_references, sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
             f'{atype} {aname}' for atype, aname, _ in memlet_references
@@ -381,13 +381,20 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
-    def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
-                                   node):
+    def generate_no_dependence_pre(kernel_stream,
+                                   sdfg,
+                                   state_id,
+                                   node,
+                                   generate_no_dependence_pre,
+                                   var_name=None):
         pass
 
     @staticmethod
-    def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
-                                    node):
+    def generate_no_dependence_post(kernel_stream, sdfg, state_id, node,
+                                    var_name):
+        '''
+        Adds post loop pragma for ignoring loop carried dependencies on a given variable
+        '''
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
