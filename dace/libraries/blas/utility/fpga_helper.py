@@ -293,7 +293,7 @@ class StreamReadMatrixFull():
             colTile,
             dtype,
             bufferSize=32,
-            vecWidth=1,
+            veclen=1,
             blockByRow=True,
             tileByRow=True,
             repeat=1,
@@ -311,7 +311,7 @@ class StreamReadMatrixFull():
         self.dtype = dtype
 
         self.bufferSize = bufferSize
-        self.vecWidth = vecWidth
+        self.veclen = veclen
         self.blockByRow = blockByRow
         self.tileByRow = tileByRow
         self.repeat = repeat
@@ -329,7 +329,7 @@ class StreamReadMatrixFull():
     def __eq__(self, other):
 
         if (self.source == other.source and
-            self.dtype == other.dtype and self.vecWidth == other.vecWidth and
+            self.dtype == other.dtype and self.veclen == other.veclen and
             self.rows == other.rows and self.columns == other.columns and
             self.rowTile == other.rowTile and self.colTile == other.colTile and
             self.blockByRow == other.blockByRow and self.tileByRow == other.tileByRow and
@@ -345,10 +345,10 @@ class StreamReadMatrixFull():
 
 
 
-    def copyToFPGA(self, sdfg, preState, bank=None):
+    def copy_to_fpga(self, sdfg, preState, bank=None):
 
 
-        fpga_inputs, fpgaIn_names = memOps.fpga_copyCPUToGlobal(
+        fpga_inputs, fpgaIn_names = mem_ops.fpga_copy_cpu_to_global(
             sdfg,
             preState,
             [self.source],
@@ -361,7 +361,7 @@ class StreamReadMatrixFull():
         self.fpga_dataName = fpgaIn_names[0]
 
 
-    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+    def connect_to_lib(self, sdfg, state, libNode, libConnector, access=False):
 
         in_mem, in_name = self.stream(
             state,
@@ -371,10 +371,10 @@ class StreamReadMatrixFull():
             access=access
         )
 
+        vec_type = dtypes.vector(self.dtype, self.veclen)
         stream_inp = state.add_stream(
             in_name,
-            self.dtype,
-            veclen=self.vecWidth,
+            vec_type,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -385,7 +385,7 @@ class StreamReadMatrixFull():
             stream_inp, libNode,
             dst_conn=libConnector,
             memlet=Memlet.simple(
-                stream_inp, "0", num_accesses=self.rows*self.columns, veclen=self.vecWidth
+                stream_inp, "0", num_accesses=self.rows*self.columns#, veclen=self.veclen
             )
         )
 
@@ -416,10 +416,10 @@ class StreamReadMatrixFull():
         else:
             data_in = state.add_read(src)
 
+        vec_type = dtypes.vector(self.dtype, self.veclen)
         data_out = state.add_stream(
             dest,
-            self.dtype,
-            veclen=self.vecWidth,
+            vec_type,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -514,7 +514,7 @@ class StreamReadMatrixFull():
 
             readColTile_entry, readColTile_exit = state.add_map(
                 'streamReadColTile_{}_map'.format(dest),
-                dict(jj='0:{0}/{1}'.format(self.colTile, self.vecWidth)),
+                dict(jj='0:{0}/{1}'.format(self.colTile, self.veclen)),
                 schedule=dtypes.ScheduleType.FPGA_Device,
                 # unroll=self.tileByRow
             )
@@ -529,7 +529,7 @@ class StreamReadMatrixFull():
                         read_tasklet,
                         dst_conn='inCon',
                         memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.vecWidth), veclen=self.vecWidth)
+                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
@@ -537,7 +537,7 @@ class StreamReadMatrixFull():
                         secondDimMap_exit, rowRepeatMap_exit, firstDimMap_exit, repeatMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0', veclen=self.vecWidth)
+                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
                     )
 
                 else:
@@ -548,7 +548,7 @@ class StreamReadMatrixFull():
                         read_tasklet,
                         dst_conn='inCon',
                         memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.vecWidth), veclen=self.vecWidth)
+                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
@@ -556,7 +556,7 @@ class StreamReadMatrixFull():
                         secondDimMap_exit, rowRepeatMap_exit, firstDimMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0', veclen=self.vecWidth)
+                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
                     )
 
 
@@ -571,7 +571,7 @@ class StreamReadMatrixFull():
                         read_tasklet,
                         dst_conn='inCon',
                         memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.vecWidth), veclen=self.vecWidth)
+                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
@@ -579,7 +579,7 @@ class StreamReadMatrixFull():
                         secondDimMap_exit, firstDimMap_exit, repeatMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0', veclen=self.vecWidth)
+                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
                     )
 
                 else:
@@ -590,7 +590,7 @@ class StreamReadMatrixFull():
                         read_tasklet,
                         dst_conn='inCon',
                         memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.vecWidth), veclen=self.vecWidth)
+                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
@@ -598,12 +598,12 @@ class StreamReadMatrixFull():
                         secondDimMap_exit, firstDimMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0', veclen=self.vecWidth)
+                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
                     )
 
         else :
 
-            assert self.vecWidth == 1, "Vectorization not supported for streaming by columns, assume row-major storage"
+            assert self.veclen == 1, "Vectorization not supported for streaming by columns, assume row-major storage"
 
             readRowTile_entry, readRowTile_exit = state.add_map(
                 'streamReadRowTile_{}_map'.format(dest),
@@ -817,7 +817,7 @@ class StreamWriteMatrixFull():
             colTile,
             dtype,
             bufferSize=32,
-            vecWidth=1,
+            veclen=1,
             blockByRow=True, # TODO implement block by column
             tileByRow=True
         ):
@@ -829,7 +829,7 @@ class StreamWriteMatrixFull():
         self.colTile = colTile
         self.dtype = dtype
         self.bufferSize = bufferSize
-        self.vecWidth = vecWidth
+        self.veclen = veclen
 
         self.blockByRow = blockByRow
         self.tileByRow = tileByRow
@@ -867,7 +867,7 @@ class StreamWriteMatrixFull():
         stream_out = state.add_stream(
             out_name,
             self.dtype,
-            veclen=self.vecWidth,
+            veclen=self.veclen,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -878,7 +878,7 @@ class StreamWriteMatrixFull():
             libNode, stream_out,
             src_conn=libConnector,
             memlet=Memlet.simple(
-                stream_out, "0", num_accesses=self.rows*self.columns, veclen=self.vecWidth
+                stream_out, "0", num_accesses=self.rows*self.columns#, veclen=self.veclen
             )
         )
 
@@ -905,7 +905,7 @@ class StreamWriteMatrixFull():
         data_in = state.add_stream(
             src,
             self.dtype,
-            veclen=self.vecWidth,
+            veclen=self.veclen,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -948,7 +948,7 @@ class StreamWriteMatrixFull():
 
             readColTile_entry, readColTile_exit = state.add_map(
                 'streamReadColTile_{}_map'.format(dest),
-                dict(jj='0:{0}/{1}'.format(self.colTile, self.vecWidth)),
+                dict(jj='0:{0}/{1}'.format(self.colTile, self.veclen)),
                 schedule=dtypes.ScheduleType.FPGA_Device
             )
 
@@ -957,7 +957,7 @@ class StreamWriteMatrixFull():
                 readRowTile_entry, readColTile_entry,
                 read_tasklet,
                 dst_conn='inCon',
-                memlet=Memlet.simple(data_in.data, '0', veclen=self.vecWidth)
+                memlet=Memlet.simple(data_in.data, '0')#, veclen=self.veclen)
             )
 
             state.add_memlet_path(
@@ -966,12 +966,13 @@ class StreamWriteMatrixFull():
                 data_out,
                 src_conn='outCon',
                 memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                    self.rowTile, self.columns, self.colTile, self.vecWidth), veclen=self.vecWidth)
+                    self.rowTile, self.columns, self.colTile, self.veclen)#, veclen=self.veclen)
+                )
             )
 
-        else :
+        else:
 
-            assert self.vecWidth == 1, "Vectorization not supported for streaming by columns, assume row-major storage"
+            assert self.veclen == 1, "Vectorization not supported for streaming by columns, assume row-major storage"
 
             readRowTile_entry, readRowTile_exit = state.add_map(
                 'streamReadRowTile_{}_map'.format(dest),

@@ -26,11 +26,11 @@ from multiprocessing import Process, Queue
 def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     DATATYPE = precision
-    nRows = dace.symbol("nRows")
-    mCols = dace.symbol("mCols")
+    nRows = dace.symbol("n")
+    mCols = dace.symbol("m")
 
-    a = dace.symbol("a")
-    b = dace.symbol("b")
+    a = dace.symbol("alpha")
+    b = dace.symbol("beta")
 
     # TODO: expand tests to consider different tile size configs
     rowTile = 4
@@ -47,41 +47,41 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     if b != 0:
         test_sdfg.add_symbol(b.name, DATATYPE)
 
-    test_sdfg.add_array('A1', shape=[nRows*mCols], dtype=DATATYPE)
-    test_sdfg.add_array('x1', shape=[mCols], dtype=DATATYPE)
-    test_sdfg.add_array('y1', shape=[nRows], dtype=DATATYPE)
-    test_sdfg.add_array('res1', shape=[nRows], dtype=DATATYPE)
+    test_sdfg.add_array('A', shape=[nRows*mCols], dtype=DATATYPE)
+    test_sdfg.add_array('x', shape=[mCols], dtype=DATATYPE)
+    test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
+    #test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
 
     x_stream = streaming.StreamReadVector(
-        'x1',
+        'x',
         mCols,
         DATATYPE,
-        vecWidth=vecM,
+        veclen=vecM,
         repeat='{}/{}'.format(nRows, rowTile)
     )
 
     y_stream = None
     if b != 0:
         y_stream = streaming.StreamReadVector(
-            'y1',
+            'y',
             nRows,
             DATATYPE,
-            vecWidth=1,
+            veclen=1,
         )
 
     A_stream = streaming.StreamReadMatrixFull(
-        'A1',
+        'A',
         nRows,
         mCols,
         rowTile,
         colTile,
         DATATYPE,
         tileByRow=True,
-        vecWidth=vecM
+        veclen=vecM
     )
 
     res_stream = streaming.StreamWriteVector(
-        'res1',
+        'y',
         nRows,
         DATATYPE
     )
@@ -89,25 +89,21 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     gemv_node = blas.gemv.Gemv(
         "blas_gemv",
         dtype=DATATYPE,
-        nTile=rowTile,
-        mTile=colTile,
-        partialWidth=partialWidth,
+        n_tile=rowTile,
+        m_tile=colTile,
+        partial_width=partialWidth,
         n=nRows,
         m=mCols,
-        vecWidthM=vecM,
-        a=a, b=b
+        veclen=vecM,
+        alpha=a, beta=b
     )
     gemv_node.implementation = 'fpga_stream'
 
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
-        gemv_node,
-        [x_stream, y_stream, A_stream],
-        ['_x', '_y', '_A'],
-        gemv_node,
-        [res_stream],
-        ['_res']
+        gemv_node, [x_stream, y_stream, A_stream], ['_x', '_y', '_A'],
+        gemv_node, [res_stream], ['_y']
     )
 
     test_sdfg.expand_library_nodes()
@@ -295,8 +291,8 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=16)
-    parser.add_argument("M", type=int, nargs="?", default=16)
+    parser.add_argument("N", type=int, nargs="?", default=2)
+    parser.add_argument("M", type=int, nargs="?", default=2)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
@@ -320,6 +316,8 @@ if __name__ == "__main__":
     else:
         print("Unsupported target")
         exit(-1)
+
+    sdfg.save('aoeu.sdfg')
 
     A = np.random.rand(n, m).astype(np.float32)
     x = np.random.rand(n if transposed else m).astype(np.float32)
