@@ -260,6 +260,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             if index and index != "0":
                 read_expr = f"*({expr} + {index})"
             else:
+                if " " in expr:
+                    expr = f"({expr})"
                 read_expr = f"*{expr}"
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
@@ -283,12 +285,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
-                if index == "0":
-                    # remove "[0]" index as this is not allowed if the
-                    # subscripted values is not an array
-                    write_expr = write_expr.replace("[0]", "")
-                else:
-                    write_expr = "{}[{}]".format(write_expr, index)
+                write_expr = "{}[{}]".format(write_expr, index)
             if is_unpack:
                 return "\n".join("write_channel_intel({}, {}[{}]);".format(
                     write_expr, read_expr, i) for i in range(packing_factor))
@@ -323,7 +320,12 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                             ocltype, packing_factor, read_expr, write_expr,
                             index)
                 else:
-                    return "{}[{}] = {};".format(write_expr, index, read_expr)
+                    if " " in write_expr:
+                        write_expr = f"({write_expr})"
+                    if index and index != "0":
+                        return f"{write_expr}[{index}] = {read_expr};"
+                    else:
+                        return f"*{write_expr} = {read_expr};"
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
