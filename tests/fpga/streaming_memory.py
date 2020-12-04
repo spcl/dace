@@ -1,7 +1,9 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the StreamingMemory transformation. """
+import copy
 import dace
 import dace.libraries.blas
+import networkx as nx
 import numpy as np
 
 from dace.transformation.dataflow import streaming_memory as sm, MapExpansion
@@ -11,53 +13,161 @@ M, N, K = 64, 64, 64
 
 
 @dace.program
-def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
-    for i, j, k in dace.map[0:M, 0:N, 0:K]:
+def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
+                     C: dace.float32[M, N]):
+    C[:] = A + B
+
+
+@dace.program
+def streamingcomp(A: dace.float32[M, N], B: dace.float32[M, N]):
+    # Slightly tricky situation
+    tmp = np.ndarray((M, N), dtype=A.dtype)
+    for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
-            a << A[i, k]
-            b << B[k, j]
-            c = a * b
-            c >> C(1, lambda x, y: x + y)[i, j]
+            a << A[i, j]
+            b << B[i, j]
+            t >> tmp[i, j]
+            t = a + b
+
+    return tmp * B
 
 
-def test_matmul():
+@dace.program
+def streaming_not_composable(A: dace.float32[M, N], B: dace.float32[M, N]):
+    for i, j in dace.map[0:M, 0:N - 1]:
+        with dace.tasklet:
+            a1 << A[i, j + 1]
+            a2 << A[i, j]
+            b >> B[i, j]
+            b = (a1 + a2) / 2
+    for i, j in dace.map[0:M, 0:N - 1]:
+        with dace.tasklet:
+            a1 << B[i, j + 1]
+            a2 << B[i, j]
+            b >> A[i, j]
+            b = (a1 + a2) / 2
+
+
+def test_streaming_mem():
     # Make SDFG
-    sdfg: dace.SDFG = matmul_streaming.to_sdfg()
+    sdfg: dace.SDFG = matadd_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    sdfg.apply_transformations_repeated(sm.StreamingMemory)
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Run verification
-    A = np.random.rand(M, K).astype(np.float32)
-    B = np.random.rand(K, N).astype(np.float32)
-    C = np.zeros((M, N), dtype=np.float32)
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
 
     sdfg(A=A, B=B, C=C)
 
-    diff = np.linalg.norm(C - A@B) / (M*N)
+    diff = np.linalg.norm(C - (A + B))
     print('Difference:', diff)
     assert diff <= 1e-5
 
 
-def test_matmul_mapnests():
+def test_streaming_mem_multistream():
     # Make SDFG
-    sdfg: dace.SDFG = matmul_streaming.to_sdfg()
+    sdfg: dace.SDFG = streamingcomp.to_sdfg()
     # Transform
-    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG, MapExpansion])
-    sdfg.apply_transformations_repeated(sm.StreamingMemory)
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+
+    # Ensure only 4 connected components exist
+    mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
+    assert len(nx.weakly_connected_components(mainstate.nx)) == 4
 
     # Run verification
-    A = np.random.rand(M, K).astype(np.float32)
-    B = np.random.rand(K, N).astype(np.float32)
-    C = np.zeros((M, N), dtype=np.float32)
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+
+    C = sdfg(A=A, B=B)
+
+    diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
+    print('Difference:', diff)
+    assert diff <= 1e-5
+
+
+def test_streaming_mem_mapnests():
+    # Make SDFG
+    sdfg: dace.SDFG = matadd_streaming.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG, MapExpansion])
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+
+    # Run verification
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
 
     sdfg(A=A, B=B, C=C)
 
-    diff = np.linalg.norm(C - A @ B) / (M * N)
+    diff = np.linalg.norm(C - (A + B))
+    print('Difference:', diff)
+    assert diff <= 1e-5
+
+
+def test_streaming_composition_matching():
+    sdfg: dace.SDFG = streaming_not_composable.to_sdfg()
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition) == 0
+
+
+def test_streaming_composition():
+    # Make SDFG
+    sdfg: dace.SDFG = streamingcomp.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+
+    # Run verification
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+
+    C = sdfg(A=A, B=B)
+
+    diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
+    print('Difference:', diff)
+    assert diff <= 1e-5
+
+
+def test_streaming_composition_mapnests():
+    # Make SDFG
+    sdfg: dace.SDFG = streamingcomp.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    # Test 1 - both maps expanded
+    test1 = copy.deepcopy(sdfg)
+    assert test1.apply_transformations_repeated(MapExpansion) == 2
+    assert test1.apply_transformations_repeated(
+        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+
+    # Test 2 - one only one map expanded
+    sdfg.apply_transformations(MapExpansion)
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+
+    # Run verification
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
+
+    C = sdfg(A=A, B=B)
+
+    diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
     print('Difference:', diff)
     assert diff <= 1e-5
 
 
 if __name__ == "__main__":
-    test_matmul()
-    test_matmul_mapnests()
+    test_streaming_mem()
+    test_streaming_mem_mapnests()
+    # test_streaming_mem_multistream()
+    test_streaming_composition_matching()
+    test_streaming_composition()
+    test_streaming_composition_mapnests()
