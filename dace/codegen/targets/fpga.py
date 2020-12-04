@@ -173,7 +173,8 @@ class FPGACodeGen(TargetCodeGenerator):
             # Create a unique kernel name to avoid name clashes
             # If this kernels comes from a Nested SDFG, use that name also
             if sdfg.parent_nsdfg_node is not None:
-                kernel_name = "{}_{}_{}".format(sdfg.parent_nsdfg_node.label, state.label, sdfg.sdfg_id)
+                kernel_name = "{}_{}_{}".format(sdfg.parent_nsdfg_node.label,
+                                                state.label, sdfg.sdfg_id)
             else:
                 kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
             # Generate kernel code
@@ -1008,7 +1009,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # add pragmas
 
-
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
@@ -1028,12 +1028,13 @@ class FPGACodeGen(TargetCodeGenerator):
                         if not node.map.unroll:
                             if len(in_out_data) > 0 and is_there_a_wcr == False:
                                 # add pragma to ignore all loop carried dependencies
-                                self.generate_no_dependence_pre(result, sdfg, state_id,
-                                                                node)
+                                self.generate_no_dependence_pre(
+                                    result, sdfg, state_id, node)
                             else:
                                 # add specific pragmas
                                 for candidate in in_out_data:
-                                    self.generate_no_dependence_pre(result, sdfg, state_id, node, candidate)
+                                    self.generate_no_dependence_pre(
+                                        result, sdfg, state_id, node, candidate)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1085,21 +1086,11 @@ class FPGACodeGen(TargetCodeGenerator):
                                 cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                             sdfg, state_id, node)
 
-                    # Add pragmas
-                    if not fully_degenerate and not is_degenerate[i]:
-                        if node.map.unroll:
-                            self.generate_unroll_loop_post(
-                                result, None, sdfg, state_id, node)
-                        elif is_innermost:
-                            self.generate_pipeline_loop_post(
-                                result, sdfg, state_id, node)
-                            self.generate_flatten_loop_post(
-                                result, sdfg, state_id, node)
-                        if not node.map.unroll:
-                            # add pragmas for data read/written inside this map
-                            for candidate in in_out_data:
-                                self.generate_no_dependence_post(
-                                    result, sdfg, state_id, node, candidate)
+                    #Add unroll pragma
+                    if not fully_degenerate and not is_degenerate[
+                            i] and node.map.unroll:
+                        self.generate_unroll_loop_post(result, None, sdfg,
+                                                       state_id, node)
 
             else:
                 pipeline = node.pipeline
@@ -1117,6 +1108,19 @@ class FPGACodeGen(TargetCodeGenerator):
                         node.pipeline.drain_condition(), flat_it,
                         bound + (" - " + cpp.sym2cpp(pipeline.drain_size)
                                  if pipeline.drain_size != 0 else "")))
+
+            # Add pragmas
+            if not fully_degenerate:
+                if is_innermost:
+                    self.generate_pipeline_loop_post(result, sdfg, state_id,
+                                                     node)
+                    self.generate_flatten_loop_post(result, sdfg, state_id,
+                                                    node)
+                if not node.map.unroll:
+                    # add pragmas for data read/written inside this map
+                    for candidate in in_out_data:
+                        self.generate_no_dependence_post(
+                            result, sdfg, state_id, node, candidate)
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
