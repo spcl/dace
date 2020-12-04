@@ -15,7 +15,7 @@ def plus_1(X_in: dace.float32[N], num: dace.int32[1], X_out: dace.float32[N]):
         x_out = x_in + 1
 
 
-if __name__ == '__main__':
+def test():
     X = np.random.rand(10).astype(np.float32)
     Y = np.zeros(10).astype(np.float32)
     num = np.zeros(1).astype(np.int32)
@@ -26,6 +26,7 @@ if __name__ == '__main__':
     diff = np.linalg.norm((X[0:num[0]] + 1) - Y[0:num[0]])
     if any(abs(y - 0.0) > 1e-5 for y in Y[num[0]:]) or diff > 1e-5:
         print('Y =', Y)
-        exit(1)
-    print('Success')
-    exit(0)
+        raise AssertionError
+
+if __name__ == "__main__":
+    test()

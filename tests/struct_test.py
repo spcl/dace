@@ -46,7 +46,7 @@ def toptr(arr):
     return arr.__array_interface__['data'][0]
 
 
-if __name__ == '__main__':
+def test():
     func = sdfg.compile()
     inp = np.ndarray([5], dtype=np.dtype(csrmatrix.as_ctypes()))
     out = np.ndarray([5], dtype=np.dtype(csrmatrix.as_ctypes()))
@@ -76,4 +76,8 @@ if __name__ == '__main__':
         diff += np.linalg.norm(out_data[i] - refdata[i])
 
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

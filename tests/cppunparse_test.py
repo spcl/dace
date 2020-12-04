@@ -31,7 +31,7 @@ def gfunc(woo):
     return result
 
 
-if __name__ == '__main__':
+def test():
     print('cppunparse unit test')
     success = True
 
@@ -113,5 +113,8 @@ l = dace::math::ifloor(l / 8);""")
 }''')
 
     print('Result: %s' % ('PASSED' if success else 'FAILED'))
-    if not success:
-        exit(1)
+    assert success
+
+
+if __name__ == "__main__":
+    test()

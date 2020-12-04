@@ -4,14 +4,22 @@
 import dace
 import math
 import numpy as np
+import pytest
 from dace.transformation.dataflow import MapFusion, Vectorization
 from dace.transformation.optimizer import Optimizer
 
 N = dace.symbol('N')
 
 
+def _config():
+    # Prerequisite for test: CUDA compute capability >= 6.0
+    dace.Config.set('compiler', 'cuda', 'cuda_arch', value='60')
+
+
 def _test_half(veclen):
     """ Tests a set of elementwise operations on a vector half type. """
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N], B: dace.float16[N]):
         return A * B + A
@@ -35,18 +43,23 @@ def _test_half(veclen):
     assert np.allclose(out, A * B + A)
 
 
+@pytest.mark.gpu
 def test_half4():
     """ Tests a set of elementwise operations on half with vector length 4. """
     _test_half(4)
 
 
+@pytest.mark.gpu
 def test_half8():
     """ Tests a set of elementwise operations on half with vector length 8. """
     _test_half(8)
 
 
+@pytest.mark.gpu
 def test_exp_vec():
     """ Tests an exp operator on a vector half type. """
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
@@ -65,8 +78,11 @@ def test_exp_vec():
     assert np.allclose(out, np.exp(A))
 
 
+@pytest.mark.gpu
 def test_relu_vec():
     """ Tests a ReLU operator on a vector half type. """
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
@@ -85,8 +101,11 @@ def test_relu_vec():
     assert np.allclose(out, np.maximum(A, 0))
 
 
+@pytest.mark.gpu
 def test_dropout_vec():
     """ Tests a dropout operator on a vector half type. """
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N], mask: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
@@ -107,8 +126,10 @@ def test_dropout_vec():
     assert np.allclose(out, A * mask)
 
 
+@pytest.mark.gpu
 def test_gelu_vec():
     """ Tests a GELU operator on a vector half type. """
+    _config()
     s2pi = math.sqrt(2.0 / math.pi)
 
     @dace.program
@@ -133,9 +154,6 @@ def test_gelu_vec():
 
 
 if __name__ == '__main__':
-    # Prerequisite for test: CUDA compute capability >= 6.0
-    dace.Config.set('compiler', 'cuda', 'cuda_arch', value='60')
-
     test_half4()
     test_half8()
     test_exp_vec()

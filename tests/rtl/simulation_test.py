@@ -1,10 +1,11 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-
 import numpy as np
+import pytest
 
 
+@pytest.mark.verilator
 def test_tasklet_scalar():
     """
         Test the simple scalar execution sample.
@@ -85,6 +86,7 @@ def test_tasklet_scalar():
     assert b == 100
 
 
+@pytest.mark.verilator
 def test_tasklet_parameter():
     """
         Test the sv parameter support.
@@ -168,6 +170,7 @@ def test_tasklet_parameter():
     assert b == sdfg.constants["MAX_VAL"]
 
 
+@pytest.mark.verilator
 def test_tasklet_vector():
     """
         Test rtl tasklet vector support.
@@ -256,6 +259,7 @@ def test_tasklet_vector():
     assert b == a[0] + a[1]
 
 
+@pytest.mark.verilator
 def test_multi_tasklet():
     """
         Test multiple rtl tasklet support.

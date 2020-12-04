@@ -14,13 +14,11 @@ namespace dace {
 template <typename T, unsigned vector_length, unsigned capacity>
 class FIFO {
  public:
-  FIFO() : stream_(capacity) {
+  FIFO() : stream_() {
     #pragma HLS INLINE
-    #pragma HLS STREAM variable=stream_ depth=capacity
   }
-  FIFO(char const *const name) : stream_(name, capacity) {
+  FIFO(char const *const name) : stream_(name) {
     #pragma HLS INLINE
-    #pragma HLS STREAM variable=stream_ depth=capacity
   }
   FIFO(FIFO const&) = delete;
   FIFO(FIFO&&) = delete;

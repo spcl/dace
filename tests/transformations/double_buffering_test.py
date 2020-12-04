@@ -23,7 +23,7 @@ def mm_double_buffered(A: dace.float32[256, 256], B: dace.float32[256, 256],
                     c = a * b
 
 
-if __name__ == '__main__':
+def test_double_buffering():
     A = np.random.rand(256, 256).astype(np.float32)
     B = np.random.rand(256, 256).astype(np.float32)
     expected_C = A @ B
@@ -55,4 +55,8 @@ if __name__ == '__main__':
     diff2 = np.linalg.norm(expected_C - C) / (256 * 256)
     print('Difference (after):', diff2)
 
-    exit(1 if (diff > 1e-5 or diff2 > 1e-5) else 0)
+    assert (diff <= 1e-5 and diff2 <= 1e-5)
+
+
+if __name__ == '__main__':
+    test_double_buffering()

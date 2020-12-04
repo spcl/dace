@@ -20,6 +20,7 @@ def test_map_interchange():
     B = np.random.rand(40, 30, 20)
     expected = np.transpose(A, axes=(2, 1, 0)) + 5
 
+    oldval = dace.Config.get_bool('experimental', 'validate_undefs')
     dace.Config.set('experimental', 'validate_undefs', value=True)
 
     sdfg = miprog.to_sdfg()
@@ -36,6 +37,8 @@ def test_map_interchange():
 
     # Validate memlets
     sdfg.validate()
+
+    dace.Config.set('experimental', 'validate_undefs', value=oldval)
 
     # Validate correctness
     sdfg(A=A, B=B)

@@ -177,6 +177,14 @@ required:
                     If set to true, if multiple nested SDFGs with equivalent contents exist,
                     the code is generated only once.
 
+            inline_sdfgs:
+                type: bool
+                default: false
+                title: Inline all nested SDFGs
+                description: >
+                    If set to true, inlines all nested SDFGs upon code generation by default.
+
+
             #############################################
             # CPU compiler
             cpu:

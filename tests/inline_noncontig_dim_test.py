@@ -37,7 +37,7 @@ state.add_memlet_path(nsdfg_node,
                       src_conn='bB',
                       memlet=dace.Memlet.simple('B', '0:2, j, 0:4'))
 
-if __name__ == '__main__':
+def test():
     print('Nested SDFG with non-contiguous access test')
 
     input = np.random.rand(2, 3, 4).astype(np.float32)
@@ -55,4 +55,7 @@ if __name__ == '__main__':
     print("Difference:", diff2)
 
     print("==== Program end ====")
-    exit(0 if (diff1 <= 1e-5 and diff2 <= 1e-5) else 1)
+    assert (diff1 <= 1e-5 and diff2 <= 1e-5)
+
+if __name__ == "__main__":
+    test()

@@ -479,16 +479,11 @@ class ReduceExpansion(transformation.Transformation):
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
-        if node.schedule != dtypes.ScheduleType.Default:
-            topnodes = nstate.scope_children()[None]
-            for topnode in topnodes:
-                if isinstance(topnode, (nodes.EntryNode, nodes.LibraryNode)):
-                    topnode.schedule = node.schedule
-
         nsdfg = state.add_nested_sdfg(nsdfg,
                                       sdfg,
                                       node.in_connectors,
                                       node.out_connectors,
+                                      schedule=node.schedule,
                                       name=node.name)
 
         utils.change_edge_dest(state, node, nsdfg)

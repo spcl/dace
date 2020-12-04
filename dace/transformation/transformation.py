@@ -174,18 +174,21 @@ class Transformation(object):
     def subgraph(self):
         return self._subgraph_user
 
-    def apply_pattern(self, sdfg: SDFG) -> Union[Any, None]:
+    def apply_pattern(self, sdfg: SDFG, append: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
         memlet propagation as necessary.
         :param sdfg: The SDFG (or an SDFG in the same hierarchy) to apply the
                      transformation to.
+        :param append: If True, appends the transformation to the SDFG
+                       transformation history.
         :return: A transformation-defined return value, which could be used
                  to pass analysis data out, or nothing.
         """
         tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
-        sdfg.append_transformation(self)
+        if append:
+            sdfg.append_transformation(self)
         retval = self.apply(tsdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
@@ -250,6 +253,7 @@ class Transformation(object):
                  expr_index: int = 0,
                  verify: bool = True,
                  strict: bool = False,
+                 save: bool = True,
                  **where: Union[nd.Node, SDFGState]):
         """
         Applies this transformation to a given subgraph, defined by a set of
@@ -270,6 +274,8 @@ class Transformation(object):
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
         :param strict: Apply transformation in strict mode.
+        :param save: Save transformation as part of the SDFG file. Set to
+                     False if composing transformations.
         :param where: A dictionary of node names (from the transformation) to
                       nodes in the SDFG or a single state.
         """
@@ -324,7 +330,7 @@ class Transformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        return instance.apply_pattern(sdfg)
+        return instance.apply_pattern(sdfg, append=save)
 
     def __str__(self) -> str:
         return type(self).__name__
@@ -470,19 +476,12 @@ class ExpandTransformation(Transformation):
         node = state.nodes()[self.subgraph[type(self)._match_node]]
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
-            # Modify internal schedules according to node schedule
-            if node.schedule != ScheduleType.Default:
-                for nstate in expansion.nodes():
-                    topnodes = nstate.scope_children()[None]
-                    for topnode in topnodes:
-                        if isinstance(topnode, (nd.EntryNode, nd.LibraryNode)):
-                            topnode.schedule = node.schedule
-
             expansion = state.add_nested_sdfg(expansion,
                                               sdfg,
                                               node.in_connectors,
                                               node.out_connectors,
                                               name=node.name,
+                                              schedule=node.schedule,
                                               debuginfo=node.debuginfo)
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
@@ -493,6 +492,9 @@ class ExpandTransformation(Transformation):
                 nsdfg.parent_sdfg = sdfg
                 nsdfg.update_sdfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
+
+                # update schedule to match library node schedule
+                nsdfg.schedule = node.schedule
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
@@ -663,7 +665,7 @@ class SubgraphTransformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        instance.apply(sdfg)
+        return instance.apply(sdfg)
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
