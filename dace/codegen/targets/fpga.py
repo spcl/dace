@@ -395,8 +395,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
 
             # Language-specific implementation
-            ctype, is_global = self.define_stream(nodedesc.dtype,
-                                                  buffer_size,
+            ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
                                                   function_stream, result)
 
@@ -775,25 +774,10 @@ class FPGACodeGen(TargetCodeGenerator):
                     i, " * " + cpp.sym2cpp(stride) if stride != 1 else "")
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
-
-            pattern = re.compile(r"([^\s]+)(\s*\+\s*)?(.*)")
-
-            def sanitize_index(expr, index):
-                var_name, _, expr_index = re.match(pattern, expr).groups()
-                index = index.strip()
-                expr_index = expr_index.strip()
-                if index:
-                    if expr_index:
-                        return var_name, index + " + " + expr_index
-                    return var_name, index
-                else:
-                    if expr_index:
-                        return var_name, expr_index
-                    return var_name, "0"
-
-            # Pull out indices from expressions
-            src_expr, src_index = sanitize_index(src_expr, src_index)
-            dst_expr, dst_index = sanitize_index(dst_expr, dst_index)
+            if not src_index:
+                src_index = "0"
+            if not dst_index:
+                dst_index = "0"
 
             # Language specific
             read_expr = self.make_read(src_def_type, dtype, src_node.label,
@@ -1354,3 +1338,6 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                     and not cpp.is_write_conflicted(dfg, edge)):
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
                                                  state_id, node, edge.src_conn)
+
+    def make_ptr_vector_cast(self, *args, **kwargs):
+        return cpp.make_ptr_vector_cast(*args, **kwargs)
