@@ -506,6 +506,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
 
+        # If the kernel takes no arguments, we don't have to call it from the
+        # host
+        is_autorun = len(kernel_args_opencl) == 0
+
         # create a unique module name to prevent name clashes
         module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
         # The official limit suggested by Intel for module name is 61. However, the compiler
@@ -540,32 +544,35 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_args_call = dtypes.deduplicate(kernel_args_call)
 
         # Add kernel call host function
-        if unrolled_loop is None:
-            host_body_stream.write(
-                "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".format(
-                    module_function_name, ", ".join([""] + kernel_args_call)
-                    if len(kernel_args_call) > 0 else ""), sdfg, state_id)
-        else:
-            # We will generate a separate kernel for each PE. Adds host call
-            start, stop, skip = unrolled_loop.range.ranges[0]
-            start_idx = evaluate(start, sdfg.constants)
-            stop_idx = evaluate(stop, sdfg.constants)
-            skip_idx = evaluate(skip, sdfg.constants)
-            # Due to restrictions on channel indexing, PE IDs must start from zero
-            # and skip index must be 1
-            if start_idx != 0 or skip_idx != 1:
-                raise cgx.CodegenError(
-                    "Unrolled Map in {} should start from 0 and have skip equal to 1"
-                    .format(sdfg.name))
-            for p in range(start_idx, stop_idx + 1, skip_idx):
-                # last element in list kernel_args_call is the PE ID, but this is
-                # already written in stone in the OpenCL generated code
+        if not is_autorun:
+            if unrolled_loop is None:
                 host_body_stream.write(
-                    "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));".
+                    "kernels.emplace_back(program.MakeKernel(\"{}\"{}));".
                     format(
-                        module_function_name, p,
-                        ", ".join([""] + kernel_args_call[:-1])
-                        if len(kernel_args_call) > 1 else ""), sdfg, state_id)
+                        module_function_name, ", ".join([""] + kernel_args_call)
+                        if len(kernel_args_call) > 0 else ""), sdfg, state_id)
+            else:
+                # We will generate a separate kernel for each PE. Adds host call
+                start, stop, skip = unrolled_loop.range.ranges[0]
+                start_idx = evaluate(start, sdfg.constants)
+                stop_idx = evaluate(stop, sdfg.constants)
+                skip_idx = evaluate(skip, sdfg.constants)
+                # Due to restrictions on channel indexing, PE IDs must start
+                # from zero and skip index must be 1
+                if start_idx != 0 or skip_idx != 1:
+                    raise cgx.CodegenError(
+                        f"Unrolled Map in {sdfg.name} should start from 0 "
+                        "and have skip equal to 1")
+                for p in range(start_idx, stop_idx + 1, skip_idx):
+                    # Last element in list kernel_args_call is the PE ID, but
+                    # this is already written in stone in the OpenCL generated
+                    # code
+                    host_body_stream.write(
+                        "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
+                        .format(
+                            module_function_name, p,
+                            ", ".join([""] + kernel_args_call[:-1]) if
+                            len(kernel_args_call) > 1 else ""), sdfg, state_id)
 
         # ----------------------------------------------------------------------
         # Generate kernel code
@@ -575,11 +582,15 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         module_body_stream = CodeIOStream()
 
+        AUTORUN_STR = """\
+__attribute__((max_global_work_dim(0)))
+__attribute__((autorun))\n"""
+
         if unrolled_loop is None:
             module_body_stream.write(
-                "__kernel void {}({}) {{".format(module_function_name,
-                                                 ", ".join(kernel_args_opencl)),
-                sdfg, state_id)
+                "{}__kernel void {}({}) {{".format(
+                    AUTORUN_STR if is_autorun else "", module_function_name,
+                    ", ".join(kernel_args_opencl)), sdfg, state_id)
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
@@ -613,19 +624,26 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         module_stream.write("}\n\n")
 
         if unrolled_loop is not None:
+
+            AUTORUN_STR_MACRO = """
+__attribute__((max_global_work_dim(0))) \\
+__attribute__((autorun)) \\"""
+
             # Unrolled PEs: create as many kernels as the number of PEs
             # To avoid long and duplicated code, do it with define (gosh)
             # Since OpenCL is "funny", it does not support variadic macros
             # One of the argument is for sure the PE_ID, which is also the last one in kernel_args lists:
             # it will be not passed by the host but code-generated
-            module_stream.write("""#define _DACE_FPGA_KERNEL_{}(PE_ID{}{}) \\
+            module_stream.write("""\
+#define _DACE_FPGA_KERNEL_{}(PE_ID{}{}) \\{}
 __kernel void \\
 {}_##PE_ID({}) \\
 {{ \\
   {}_func({}{}PE_ID); \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
-                   ", ".join(kernel_args_call[:-1]), module_function_name,
+                   ", ".join(kernel_args_call[:-1]),
+                   AUTORUN_STR_MACRO if is_autorun else "", module_function_name,
                    ", ".join(kernel_args_opencl[:-1]), name,
                    ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
