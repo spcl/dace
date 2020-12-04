@@ -728,9 +728,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                 dace.StorageType.FPGA_Registers
                             ]):
                         # Language-specific
-                        self.generate_no_dependence_pre(node.data,
-                                                        callsite_stream, sdfg,
-                                                        state_id, dst_node)
+                        self.generate_no_dependence_pre(callsite_stream, sdfg,
+                                                        state_id, dst_node,
+                                                        node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
@@ -821,8 +821,9 @@ class FPGACodeGen(TargetCodeGenerator):
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
-                    self.generate_no_dependence_post(node.data, callsite_stream,
-                                                     sdfg, state_id, dst_node)
+                    self.generate_no_dependence_post(callsite_stream, sdfg,
+                                                     state_id, dst_node,
+                                                     node.data)
 
             # Loop outtro
             for _ in range(num_loops):
@@ -990,27 +991,35 @@ class FPGACodeGen(TargetCodeGenerator):
             fully_degenerate = all(is_degenerate)
 
             # Being this a map (each iteration is independent), we can add pragmas to ignore dependencies on data
-            # that is read/written inside this map
+            # that is read/written inside this map, if there are no WCR. If there are no WCR at all, we can add
+            # a more generic pragma to ignore all loop-carried dependencies.
             map_exit_node = dfg.exit_node(node)
             state = sdfg.nodes()[state_id]
             candidates_in = set()
             candidates_out = set()
+            is_there_a_wcr = False
             # get data that is read/written
             for _, _, _, _, memlet in state.in_edges(node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
                     if (isinstance(desc, dace.data.Array) and
-                        (desc.storage == dace.dtypes.StorageType.FPGA_Global or
-                         desc.storage == dace.dtypes.StorageType.FPGA_Local)):
+                        (desc.storage == dace.dtypes.StorageType.FPGA_Global
+                         or desc.storage == dace.dtypes.StorageType.FPGA_Local)
+                            and memlet.wcr is None):
                         candidates_in.add(memlet.data)
+                    elif memlet.wcr is not None:
+                        is_there_a_wcr = True
 
             for _, _, _, _, memlet in state.out_edges(map_exit_node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
                     if (isinstance(desc, dace.data.Array) and
-                        (desc.storage == dace.dtypes.StorageType.FPGA_Global or
-                         desc.storage == dace.dtypes.StorageType.FPGA_Local)):
+                        (desc.storage == dace.dtypes.StorageType.FPGA_Global
+                         or desc.storage == dace.dtypes.StorageType.FPGA_Local)
+                            and memlet.wcr is None):
                         candidates_out.add(memlet.data)
+                    elif memlet.wcr is not None:
+                        is_there_a_wcr = True
             in_out_data = candidates_in.intersection(candidates_out)
 
             # add pragmas
@@ -1033,9 +1042,14 @@ class FPGACodeGen(TargetCodeGenerator):
                             self.generate_flatten_loop_pre(
                                 result, sdfg, state_id, node)
                         if not node.map.unroll:
-                            for candidate in in_out_data:
-                                self.generate_no_dependence_pre(candidate, result, sdfg,
-                                                                state_id, node)
+                            if len(in_out_data) > 0 and is_there_a_wcr == False:
+                                # add pragma to ignore all loop carried dependencies
+                                self.generate_no_dependence_pre(result, sdfg, state_id,
+                                                                node)
+                            else:
+                                # add specific pragmas
+                                for candidate in in_out_data:
+                                    self.generate_no_dependence_pre(result, sdfg, state_id, node, candidate)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1338,6 +1352,5 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn,
-                                                 after_memlets_stream, sdfg,
-                                                 state_id, node)
+                self.generate_no_dependence_post(after_memlets_stream, sdfg,
+                                                 state_id, node, edge.src_conn)
