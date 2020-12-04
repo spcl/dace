@@ -130,7 +130,7 @@ def make_write_C(state):
     state.add_memlet_path(pipe,
                           mem,
                           memlet=dace.Memlet("C_device[0:N, 0:M]",
-                                             other_subset="P"))
+                                             other_subset="P - 1"))
 
 
 def make_compute(sdfg, state):
@@ -242,7 +242,7 @@ if p < P - 1:
     write_c_tasklet = state.add_tasklet(
         "write_c", {"buffer_in", "forward_in"}, {"c_out"}, """\
 if n1 <= p:
-    c_out = buffer_in if n1 == p else forward_in""")
+    c_out = forward_in if p > 0 and n1 > 0 else buffer_in""")
     state.add_memlet_path(C_buffer_out,
                           entry_c,
                           write_c_tasklet,
@@ -252,13 +252,13 @@ if n1 <= p:
                           entry_n0,
                           entry_c,
                           write_c_tasklet,
-                          memlet=dace.Memlet("C_pipe[p]", dynamic=True),
+                          memlet=dace.Memlet("C_pipe[p-1]", dynamic=True),
                           dst_conn="forward_in")
     state.add_memlet_path(write_c_tasklet,
                           exit_c,
                           exit_n0,
                           C_pipe_out,
-                          memlet=dace.Memlet("C_pipe[p+1]", dynamic=True),
+                          memlet=dace.Memlet("C_pipe[p]", dynamic=True),
                           src_conn="c_out")
 
     # Unroll processing elements
@@ -278,7 +278,7 @@ if n1 <= p:
 
 def make_fpga_state(sdfg):
 
-    state = sdfg.add_state("gemm")
+    state = sdfg.add_state("mm")
 
     sdfg.add_stream("A_pipe",
                     dace.float32,
@@ -294,7 +294,7 @@ def make_fpga_state(sdfg):
     sdfg.add_stream("C_pipe",
                     dace.float32,
                     transient=True,
-                    shape=(P + 1, ),
+                    shape=(P, ),
                     storage=dace.dtypes.StorageType.FPGA_Local)
 
     make_read_A(state)
@@ -308,11 +308,10 @@ def make_fpga_state(sdfg):
 def make_sdfg(specialized):
 
     if specialized:
-        sdfg = dace.SDFG("gemm_fpga_systolic_{}_{}x{}x{}".format(
+        sdfg = dace.SDFG("mm_fpga_systolic_{}_{}x{}x{}".format(
             P.get(), N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("gemm_fpga_systolic_{}_NxKx{}".format(
-            P.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_systolic_{}_NxKx{}".format(P.get(), M.get()))
 
     pre_state = make_copy_to_fpga_state(sdfg)
     compute_state = make_fpga_state(sdfg)
@@ -362,8 +361,8 @@ if __name__ == "__main__":
     A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)
     B = np.ndarray([K.get(), M.get()], dtype=dace.float32.type)
     C = np.ndarray([N.get(), M.get()], dtype=dace.float32.type)
-    A[:] = 1  # np.random.rand(N.get(), K.get()).astype(dace.float32.type)
-    B[:] = 1  # np.random.rand(K.get(), M.get()).astype(dace.float32.type)
+    A[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
+    B[:] = np.random.rand(K.get(), M.get()).astype(dace.float32.type)
     C[:] = dace.float32(0)
 
     A_regression = np.ndarray([N.get(), K.get()], dtype=np.float32)
@@ -377,32 +376,9 @@ if __name__ == "__main__":
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.abs(C_regression - C)
-    diff_total = np.sum(diff)
-    highest_diff = np.max(diff)
-    wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
-
-    print("==== Program end ====")
-
-    if diff_total >= 0.01:
-        print("Verification failed!")
-        print("Total difference: {}".format(diff_total))
-        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0],
-                                                   N.get() * M.get()))
-        print("Highest difference: {}".format(highest_diff))
-        print("** Result:\n", C)
-        print("** Reference:\n", C_regression)
-        print("Type \"debug\" to enter debugger, "
-              "or any other string to quit (timeout in 10 seconds)")
-        read, _, _ = select.select([sys.stdin], [], [], 10)
-        if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
-            print("Entering debugger...")
-            pdb.set_trace()
-        else:
-            print("Exiting...")
-        exit(1)
+    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    if diff > 1e-6:
+        raise ValueError(f"Verification failed, difference: {diff}")
     else:
-        print("Results verified successfully.")
-    exit(0)
+        print("Results successfully verified.")

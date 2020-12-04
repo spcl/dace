@@ -408,14 +408,17 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def make_read(self, defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "read_channel_intel({})".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.RemoteStream:
             return "{}".format(expr)
         elif defined_type == DefinedType.Pointer:
-            read_expr = "*({}{})".format(expr, " + " + index if index else "")
+            if index and index != "0":
+                read_expr = f"*({expr} + {index})"
+            else:
+                if " " in expr:
+                    expr = f"({expr})"
+                read_expr = f"*{expr}"
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -440,12 +443,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                 DefinedType.RemoteStream
         ]:
             if defined_type == DefinedType.StreamArray:
-                if index == "0":
-                    # remove "[0]" index as this is not allowed if the
-                    # subscripted values is not an array
-                    write_expr = write_expr.replace("[0]", "")
-                else:
-                    write_expr = "{}[{}]".format(write_expr, index)
+                write_expr = "{}[{}]".format(write_expr, index)
             elif defined_type == DefinedType.RemoteStream:
                 return "SMI_Push(&{}, &{});".format(write_expr, read_expr)
             if is_unpack:
@@ -483,11 +481,20 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     ocltype = fpga.vector_element_type_of(dtype).ocltype
                     self.converters_to_generate.add(
                         (False, ocltype, packing_factor))
-                    return "unpack_{}{}({}, &{}[{}]);".format(
-                        ocltype, packing_factor, read_expr, write_expr, index)
+                    if not index or index == "0":
+                        return "unpack_{}{}({}, {});".format(
+                            ocltype, packing_factor, read_expr, write_expr)
+                    else:
+                        return "unpack_{}{}({}, {} + {});".format(
+                            ocltype, packing_factor, read_expr, write_expr,
+                            index)
                 else:
-                    return result + "{}[{}] = {};".format(
-                        write_expr, index, read_expr)
+                    if " " in write_expr:
+                        write_expr = f"({write_expr})"
+                    if index and index != "0":
+                        return f"{write_expr}[{index}] = {read_expr};"
+                    else:
+                        return f"*{write_expr} = {read_expr};"
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -865,9 +872,9 @@ __kernel void \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
                    ", ".join(kernel_args_call[:-1]),
-                   AUTORUN_STR_MACRO if is_autorun else "", module_function_name,
-                   ", ".join(kernel_args_opencl[:-1]), name,
-                   ", ".join(kernel_args_call[:-1]),
+                   AUTORUN_STR_MACRO if is_autorun else "",
+                   module_function_name, ", ".join(kernel_args_opencl[:-1]),
+                   name, ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
 
             # create PE kernels by using the previously defined macro
@@ -937,11 +944,11 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']'
 
-                expr = cpp.make_ptr_vector_cast(sdfg,
-                                                in_memlet.data + offset_expr,
-                                                in_memlet,
-                                                node.in_connectors[vconn],
-                                                False, defined_type)
+                expr = self.make_ptr_vector_cast(sdfg,
+                                                 in_memlet.data + offset_expr,
+                                                 in_memlet,
+                                                 node.in_connectors[vconn],
+                                                 False, defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
                     typedef = "__global volatile  {}* restrict".format(vec_type)
                 else:
@@ -993,7 +1000,7 @@ __kernel void \\
                             vec_type)
                     else:
                         typedef = "{}*".format(vec_type)
-                    expr = cpp.make_ptr_vector_cast(
+                    expr = self.make_ptr_vector_cast(
                         sdfg, out_memlet.data + offset_expr, out_memlet,
                         node.out_connectors[uconn], False, defined_type)
                     memlet_references.append((typedef, uconn, expr))
@@ -1424,9 +1431,18 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                offset, inname, memlet.wcr, False, 1, None)
 
     def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
-                             var_type):
+                             defined_type):
         vtype = self.make_vector_type(conntype, False)
-        return f"{vtype}({expr})"
+        if conntype != sdfg.arrays[memlet.data].dtype:
+            if is_scalar:
+                expr = f"*({vtype} *)(&{expr})"
+            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+                expr = f"({vtype})(&{expr})"
+            elif defined_type == DefinedType.Pointer:
+                expr = "&" + expr
+        elif not is_scalar:
+            expr = "&" + expr
+        return expr
 
     def process_out_memlets(self, sdfg, state_id, node, dfg, dispatcher, result,
                             locals_defined, function_stream, **kwargs):
@@ -1551,11 +1567,11 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 updated = ast.Name(id=code_str)
             else:  # Target has no subscript
                 # If the value is a Name, we should check whether it is a remote stream and the number of accesses
-                if isinstance(node.value,
-                              ast.Name) and self.defined_vars.get_if_defined(
-                                  node.value.id
-                              ) == DefinedType.RemoteStream and self.memlets[
-                                  node.value.id][0].volume != 1:
+                if (isinstance(node.value, ast.Name)
+                        and self.defined_vars.has(node.value.id)
+                        and self.defined_vars.get(
+                            node.value.id) == DefinedType.RemoteStream
+                        and self.memlets[node.value.id][0].volume != 1):
                     # read from a remote stream in the right part of the assignment
                     # Corner case: if we are dealing with vectors, target is already a pointer
                     updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
@@ -1605,18 +1621,15 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
-            try:
-                self.defined_vars.get(node.value.id)
-                defined = True
-            except KeyError:
-                defined = False
-            if (isinstance(node.value, ast.Name)
-                    and defined == DefinedType.RemoteStream
-                    and self.memlets[node.value.id][0].volume != 1):
-                # read from a remote stream in the right part of the assignment
-                # Corner case: if we are dealing with vectors, target is already a pointer
-                updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
-                    value, "&" if veclen == 1 else "", target))
+            if isinstance(node.value, ast.Name):
+                if (self.defined_vars.has(node.value.id)
+                        and self.defined_vars.get(
+                            node.value.id) == DefinedType.RemoteStream
+                        and self.memlets[node.value.id][0].volume != 1):
+                    # read from a remote stream in the right part of the assignment
+                    # Corner case: if we are dealing with vectors, target is already a pointer
+                    updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
+                        value, "&" if veclen == 1 else "", target))
             else:
                 code_str = "{} = {};".format(target, value)
                 updated = ast.Name(id=code_str)
