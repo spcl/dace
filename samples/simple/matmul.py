@@ -2,7 +2,6 @@
 from __future__ import print_function
 
 import argparse
-from dace.jupyter import preamble
 import dace
 import numpy as np
 from typing import List
@@ -21,13 +20,17 @@ M = dace.symbol('M')
 K = dace.symbol('K')
 N = dace.symbol('N')
 
+# Define data type to use
+dtype = dace.float64
+np_dtype = np.float64
+
 #####################################################################
 # Data-centric functions
 
 
 # Map-Reduce version of matrix multiplication
 @dace.program
-def matmul(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
+def matmul(A: dtype[M, K], B: dtype[K, N], C: dtype[M, N]):
     tmp = np.ndarray([M, N, K], dtype=A.dtype)
 
     # Multiply every pair of values to a large 3D temporary array
@@ -45,7 +48,7 @@ def matmul(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
 
 # Library node version of matrix multiplication, using the numpy interface
 @dace.program
-def matmul_lib(A: dace.float64[M, K], B: dace.float64[K, N]):
+def matmul_lib(A: dtype[M, K], B: dtype[K, N]):
     return A @ B
 
 
@@ -273,9 +276,9 @@ cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
     m = args["M"]
     k = args["K"]
     n = args["N"]
-    A = np.random.rand(m, k)
-    B = np.random.rand(k, n)
-    C = np.zeros((m, n), dtype=np.float64)
+    A = np.random.rand(m, k).astype(np_dtype)
+    B = np.random.rand(k, n).astype(np_dtype)
+    C = np.zeros((m, n), dtype=np_dtype)
 
     print(f'Matrix multiplication {m}x{k}x{n} (version: {version})')
 
@@ -310,4 +313,4 @@ cublas: Use `matmul_lib` with the CUBLAS library node implementation.''')
         expected = A @ B
         diff = np.linalg.norm(C - expected) / (m * n)
         print('Difference:', diff)
-        exit(0 if diff <= 1e-7 else 1)
+        exit(0 if diff <= 1e-6 else 1)

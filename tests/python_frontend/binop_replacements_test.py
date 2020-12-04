@@ -397,7 +397,6 @@ def mixed(A: dace.int64[M, N], B:dace.int64):
     return 5j + dace.complex64(M) + A[0, 0] + 32 + A[0, 1] + B + 2 + M + N
 
 
-@pytest.mark.skip
 def test_mixed():
     A = np.random.randint(10, size=(M.get(), N.get()), dtype=np.int64)
     B = np.random.randint(10, size=(1, ), dtype=np.int64)[0]

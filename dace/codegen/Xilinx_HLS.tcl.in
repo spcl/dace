@@ -5,7 +5,6 @@ set_top ${DACE_KERNEL_NAME}
 set_part ${DACE_XILINX_PART_NAME} 
 create_clock -period ${DACE_XILINX_TARGET_CLOCK}MHz -name default
 # SDAccel default options
-config_rtl -register_reset
 config_interface -m_axi_addr64
 config_schedule -relax_ii_for_timing
 config_compile -pipeline_loops 64

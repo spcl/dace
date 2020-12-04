@@ -1,6 +1,6 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" 
-Helper functions for C++ code generation. 
+"""
+Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
 """
 import ast
@@ -204,8 +204,8 @@ def memlet_copy_to_absolute_strides(dispatcher,
 def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass) -> Tuple[str, str, str]:
-    """ 
-    Returns a tuple of three strings with a definition of a reference to an 
+    """
+    Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
     :return: A tuple of the form (type, name, value).
     """
@@ -459,7 +459,7 @@ def cpp_array_expr(sdfg,
 
 
 def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
-    """ 
+    """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
     if conntype != sdfg.arrays[memlet.data].dtype:
@@ -467,7 +467,7 @@ def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
             expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
         elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
             expr = '(%s)(&%s)' % (conntype.ctype, expr)
-        elif defined_type in [DefinedType.Pointer, DefinedType.StreamArray]:
+        elif defined_type == DefinedType.Pointer:
             expr = '&' + expr
     elif not is_scalar:
         expr = '&' + expr
@@ -750,9 +750,9 @@ def shape_to_strides(shape):
 
 
 class InterstateEdgeUnparser(cppunparse.CPPUnparser):
-    """ 
-    An extension of the Python->C++ unparser that allows including 
-    multidimensional array expressions from an existing SDFGs. Used in 
+    """
+    An extension of the Python->C++ unparser that allows including
+    multidimensional array expressions from an existing SDFGs. Used in
     inter-state edge code generation.
     """
     def __init__(self,
@@ -887,8 +887,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts
             try:
+                desc = (self.sdfg.arrays[memlet.data]
+                        if memlet and memlet.data else None)
                 if memlet and memlet.data and (memlet.dynamic or isinstance(
-                        self.sdfg.arrays[memlet.data], data.Stream)):
+                        desc, data.Stream)):
                     if wcr is not None:
                         newnode = ast.Name(
                             id=self.codegen.write_and_resolve_expr(
@@ -901,9 +903,14 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 dtype=dtype))
                         node.value = ast.copy_location(newnode, node.value)
                         return node
-                    elif isinstance(self.sdfg.arrays[memlet.data], data.Stream):
+                    elif isinstance(desc, data.Stream):
+                        if desc.is_stream_array():
+                            index = cpp_offset_expr(desc, memlet.subset)
+                            target = f"{memlet.data}[{index}]"
+                        else:
+                            target = memlet.data
                         newnode = ast.Name(id="%s.push(%s);" % (
-                            memlet.data,
+                            target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
                     else:
