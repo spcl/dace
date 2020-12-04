@@ -177,7 +177,7 @@ def make_write_C(state, sdfg, vec_width):
                                         schedule=dace.ScheduleType.FPGA_Device)
 
     write_map_entry, write_map_exit = state.add_map(
-        "unrolled_write_B", {"m1": "0:{}".format(vec_width)},
+        "unrolled_write_C", {"m1": "0:{}".format(vec_width)},
         schedule=dace.ScheduleType.FPGA_Device,
         unroll=True)
 
@@ -197,7 +197,7 @@ def make_write_C(state, sdfg, vec_width):
                           entry_map,
                           copy_in_tasklet,
                           dst_conn="in_con",
-                          memlet=dace.Memlet("C_pipe[P]"))
+                          memlet=dace.Memlet("C_pipe[P-1]"))
     # this will trigger gear boxing
     state.add_memlet_path(copy_in_tasklet,
                           vect_data,
@@ -378,13 +378,13 @@ if n1 <= p:
                           entry_n0,
                           entry_c,
                           write_c_tasklet,
-                          memlet=dace.Memlet("C_pipe[p]", dynamic=True),
+                          memlet=dace.Memlet("C_pipe[p-1]", dynamic=True),
                           dst_conn="forward_in")
     state.add_memlet_path(write_c_tasklet,
                           exit_c,
                           exit_n0,
                           C_pipe_out,
-                          memlet=dace.Memlet("C_pipe[p+1]", dynamic=True),
+                          memlet=dace.Memlet("C_pipe[p]", dynamic=True),
                           src_conn="c_out")
 
     # Unroll processing elements
