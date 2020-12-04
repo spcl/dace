@@ -82,14 +82,14 @@ run_all() {
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
-
+    run_sample blas/nodes/dot_test dot_test_x_0 1 --target xilinx
 
     #Nested SDFGs generated as FPGA kernels
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
 }
 
 # Check if xocc is vailable
-which v++ 
+which v++
 if [ $? -ne 0 ]; then
   which xocc
   if [ $? -ne 0 ]; then
