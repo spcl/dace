@@ -385,7 +385,6 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                    sdfg,
                                    state_id,
                                    node,
-                                   generate_no_dependence_pre,
                                    var_name=None):
         pass
 

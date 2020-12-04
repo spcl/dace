@@ -1099,7 +1099,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             # add pragmas for data read/written inside this map
                             for candidate in in_out_data:
                                 self.generate_no_dependence_post(
-                                    candidate, result, sdfg, state_id, node)
+                                    result, sdfg, state_id, node, candidate)
 
             else:
                 pipeline = node.pipeline
