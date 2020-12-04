@@ -1253,12 +1253,6 @@ __kernel void \\
                         callsite_stream.write(
                             f"SMI_Push(&{target}, &{connector});", sdfg)
                     else:
-                        if data_desc.is_stream_array():
-                            offset = cpp.cpp_offset_expr(
-                                data_desc, memlet.subset)
-                            target = f"{target}[{offset}]"
-                        else:
-                            target = data_name
                         callsite_stream.write(
                             f"write_channel_intel({target}, {connector});",
                             sdfg)
@@ -1564,7 +1558,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                     code_str = code_str.format(dst=target,
                                                idx=subscript,
                                                src=value)
-                updated = ast.Name(id=code_str)
             else:  # Target has no subscript
                 # If the value is a Name, we should check whether it is a remote stream and the number of accesses
                 if (isinstance(node.value, ast.Name)
@@ -1621,15 +1614,15 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             newnode = ast.Name(id="*{} = {}; ".format(target, value))
             return ast.copy_location(newnode, node)
         elif defined_type == DefinedType.Scalar:
-            if isinstance(node.value, ast.Name):
-                if (self.defined_vars.has(node.value.id)
-                        and self.defined_vars.get(
-                            node.value.id) == DefinedType.RemoteStream
-                        and self.memlets[node.value.id][0].volume != 1):
-                    # read from a remote stream in the right part of the assignment
-                    # Corner case: if we are dealing with vectors, target is already a pointer
-                    updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
-                        value, "&" if veclen == 1 else "", target))
+            if (isinstance(node.value, ast.Name)
+                    and self.defined_vars.has(node.value.id)
+                    and self.defined_vars.get(
+                        node.value.id) == DefinedType.RemoteStream
+                    and self.memlets[node.value.id][0].volume != 1):
+                # read from a remote stream in the right part of the assignment
+                # Corner case: if we are dealing with vectors, target is already a pointer
+                updated = ast.Name(id="SMI_Pop(&{},(void *){}{});".format(
+                    value, "&" if veclen == 1 else "", target))
             else:
                 code_str = "{} = {};".format(target, value)
                 updated = ast.Name(id=code_str)
