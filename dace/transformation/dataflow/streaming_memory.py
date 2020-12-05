@@ -139,6 +139,16 @@ class StreamingMemory(xf.Transformation):
             if innermost_edge.data.subset.num_elements() != 1:
                 return False
 
+            # Check if any of the maps has a dynamic range
+            # These cases can potentially work but some nodes (and perhaps
+            # tasklets) need to be replicated, which are difficult to track.
+            for pe in mpath:
+                node = pe.dst if expr_index == 0 else graph.entry_node(pe.src)
+                if isinstance(node,
+                              nodes.MapEntry) and sdutil.has_dynamic_map_inputs(
+                                  graph, node):
+                    return False
+
         # If already applied on this memlet and this is the I/O component, skip
         if expr_index == 0:
             other_node = graph.node(candidate[StreamingMemory.entry])
@@ -186,7 +196,7 @@ class StreamingMemory(xf.Transformation):
                 components_to_create[expr].append((innermost_edge, edge))
         components = list(components_to_create.values())
 
-        # Split out components that have dependencies between them to avoid 
+        # Split out components that have dependencies between them to avoid
         # deadlocks
         if self.expr_index == 0:
             ccs_to_add = []
@@ -305,7 +315,7 @@ class StreamingMemory(xf.Transformation):
                                       memlet=memlet)
             for node, cname, memlet in wmemlets:
                 state.add_memlet_path(tasklet,
-                                      *(mx for _, mx in maps),
+                                      *(mx for _, mx in reversed(maps)),
                                       node,
                                       src_conn=cname,
                                       memlet=memlet)
