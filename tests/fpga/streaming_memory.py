@@ -197,6 +197,29 @@ def test_streaming_composition_mapnests():
     assert diff <= 1e-5
 
 
+def test_streaming_and_composition():
+    # Make SDFG
+    sdfg: dace.SDFG = streamingcomp.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+
+    # Run verification
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
+
+    C = sdfg(A=A, B=B)
+
+    diff = np.linalg.norm(C - ((A + B) * B)) / (M * N)
+    print('Difference:', diff)
+    assert diff <= 1e-5
+
+
 if __name__ == "__main__":
     test_streaming_mem()
     test_streaming_mem_mapnests()
@@ -205,3 +228,4 @@ if __name__ == "__main__":
     test_streaming_composition_matching()
     test_streaming_composition()
     test_streaming_composition_mapnests()
+    test_streaming_and_composition()
