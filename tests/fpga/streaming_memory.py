@@ -19,6 +19,13 @@ def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
 
 
 @dace.program
+def matadd_multistream(A: dace.float32[M, N], B: dace.float32[M, N],
+                       C: dace.float32[M, N], D: dace.float32[M, N]):
+    C[:] = A + B
+    D[:] = A - B
+
+
+@dace.program
 def streamingcomp(A: dace.float32[M, N], B: dace.float32[M, N]):
     # Slightly tricky situation
     tmp = np.ndarray((M, N), dtype=A.dtype)
@@ -68,7 +75,33 @@ def test_streaming_mem():
     assert diff <= 1e-5
 
 
-def test_streaming_mem_multistream():
+def test_multistream():
+    # Make SDFG
+    sdfg: dace.SDFG = matadd_multistream.to_sdfg()
+    # Transform
+    sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
+    assert sdfg.apply_transformations_repeated(
+        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 4
+
+    # Ensure only 4 connected components exist
+    mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
+    assert len(list(nx.weakly_connected_components(mainstate.nx))) == 6
+
+    # Run verification
+    A = np.random.rand(M, N).astype(np.float32)
+    B = np.random.rand(M, N).astype(np.float32)
+    C = np.random.rand(M, N).astype(np.float32)
+    D = np.random.rand(M, N).astype(np.float32)
+
+    sdfg(A=A, B=B, C=C, D=D)
+
+    diff1 = np.linalg.norm(C - (A + B))
+    diff2 = np.linalg.norm(D - (A - B))
+    print('Differences:', diff1, diff2)
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
+
+
+def test_multistream_with_deps():
     # Make SDFG
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
     # Transform
@@ -78,7 +111,7 @@ def test_streaming_mem_multistream():
 
     # Ensure only 4 connected components exist
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
-    assert len(nx.weakly_connected_components(mainstate.nx)) == 4
+    assert len(list(nx.weakly_connected_components(mainstate.nx))) == 4
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -167,7 +200,8 @@ def test_streaming_composition_mapnests():
 if __name__ == "__main__":
     test_streaming_mem()
     test_streaming_mem_mapnests()
-    # test_streaming_mem_multistream()
+    test_multistream()
+    test_multistream_with_deps()
     test_streaming_composition_matching()
     test_streaming_composition()
     test_streaming_composition_mapnests()

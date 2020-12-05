@@ -160,6 +160,9 @@ class SymExpr(object):
     def match(self, *args, **kwargs):
         return self._main_expr.match(*args, **kwargs)
 
+    def __hash__(self):
+        return hash((self.expr, self.approx))
+
     def __str__(self):
         if self.expr != self.approx:
             return str(self.expr) + " (~" + str(self.approx) + ")"
