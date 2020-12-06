@@ -80,7 +80,7 @@ run_all() {
     run_sample fpga/multiple_kernels multiple_kernels 0
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd 0
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels 0
-    run_sample fpga/streaming_memory streamingcomp 0
+    run_sample fpga/streaming_memory streamingcomp_1 1
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx

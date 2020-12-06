@@ -525,7 +525,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         arrays = dtypes.deduplicate([p for p in parameters
                                      if not isinstance(p[2], dace.data.Scalar)])
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
         for is_output, pname, p, interface_id in itertools.chain(arrays, scalars):
             if isinstance(p, dace.data.Array):
