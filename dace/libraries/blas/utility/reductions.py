@@ -735,9 +735,6 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
     inner_sdfg.add_edge(init_state, read_empty_state, InterstateEdge("ii != 0"))
     inner_sdfg.add_edge(read_empty_state, compute_state, InterstateEdge(None))
 
-    inner_sdfg.add_edge(init_state, compute_state, InterstateEdge())
-
-
 
     # COMPUTE
     # -----------------------

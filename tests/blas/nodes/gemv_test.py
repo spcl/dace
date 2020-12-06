@@ -33,9 +33,9 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     b = dace.symbol("beta")
 
     # TODO: expand tests to consider different tile size configs
-    rowTile = 4
-    colTile = 4
-    partialWidth = 2
+    rowTile = 8
+    colTile = 8
+    partialWidth = 4
     vecM = veclen
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
@@ -49,21 +49,21 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     test_sdfg.add_array('A', shape=[nRows*mCols], dtype=DATATYPE)
     test_sdfg.add_array('x', shape=[mCols], dtype=DATATYPE)
-    test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
-    #test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
+    test_sdfg.add_array('yi', shape=[nRows], dtype=DATATYPE)
+    test_sdfg.add_array('yo', shape=[nRows], dtype=DATATYPE)
 
     x_stream = streaming.StreamReadVector(
         'x',
         mCols,
         DATATYPE,
-        veclen=vecM,
+        veclen=1,
         repeat='{}/{}'.format(nRows, rowTile)
     )
 
     y_stream = None
     if b != 0:
         y_stream = streaming.StreamReadVector(
-            'y',
+            'yi',
             nRows,
             DATATYPE,
             veclen=1,
@@ -81,9 +81,10 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     )
 
     res_stream = streaming.StreamWriteVector(
-        'y',
+        'yo',
         nRows,
-        DATATYPE
+        DATATYPE,
+        veclen=1
     )
 
     gemv_node = blas.gemv.Gemv(
@@ -94,7 +95,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         partial_width=partialWidth,
         n=nRows,
         m=mCols,
-        veclen=vecM,
+        veclen=1,
         alpha=a, beta=b
     )
     gemv_node.implementation = 'fpga_stream'
@@ -102,8 +103,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
-        gemv_node, [x_stream, y_stream, A_stream], ['_x', '_y', '_A'],
-        gemv_node, [res_stream], ['_y']
+        gemv_node, [x_stream, y_stream, A_stream], ['_x', '_yi', '_A'],
+        gemv_node, [res_stream], ['_yo']
     )
 
     test_sdfg.expand_library_nodes()
@@ -291,10 +292,10 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=2)
-    parser.add_argument("M", type=int, nargs="?", default=2)
+    parser.add_argument("N", type=int, nargs="?", default=128)
+    parser.add_argument("M", type=int, nargs="?", default=128)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
-    parser.add_argument("beta", type=int, nargs="?", default=0)
+    parser.add_argument("beta", type=int, nargs="?", default=1)
     parser.add_argument("--transposed",
                         action="store_true",
                         default=False,
@@ -322,15 +323,18 @@ if __name__ == "__main__":
     A = np.random.rand(n, m).astype(np.float32)
     x = np.random.rand(n if transposed else m).astype(np.float32)
     y = np.random.rand(m if transposed else n).astype(np.float32)
+    yo = np.zeros((n,)).astype(np.float32)
 
     y_copy = np.copy(y)
 
-    sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
+    sdfg(A=A, x=x, yi=y, yo=yo, n=n, m=m, alpha=alpha, beta=beta)
 
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
-    diff = np.linalg.norm(y - ref) / (m if transposed else n)
+    diff = np.linalg.norm(yo - ref) / (m if transposed else n)
     if diff >= 1e-5:
-        print("Error")
+        print("Error", diff)
+        print (ref)
+        print (yo)
     else:
         print("Ok")

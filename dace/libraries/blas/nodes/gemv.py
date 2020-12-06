@@ -161,11 +161,9 @@ class ExpandGemvFPGAStreamingRowTiles(ExpandTransformation):
 
         if b != 0:
             gemv_sdfg.add_symbol(b.name, b.dtype)
-
         gemv_state = gemv_sdfg.add_state()
+        vec_type=dace.dtypes.vector(dtype, 1)
 
-        vec_type = dace.dtypes.vector(dtype, veclen)
-        singleton_vec = dace.dtypes.vector(dtype, 1)
         A_in = gemv_state.add_stream(
             '_A',
             vec_type,
@@ -176,8 +174,8 @@ class ExpandGemvFPGAStreamingRowTiles(ExpandTransformation):
         y_in = None
         if b != 0:
             y_in = gemv_state.add_stream(
-                '_y',
-                singleton_vec,
+                '_yi',
+                vec_type,
                 buffer_size=32,
                 storage=dace.dtypes.StorageType.FPGA_Local,
                 transient=(True if b == 0 else False)
@@ -192,12 +190,11 @@ class ExpandGemvFPGAStreamingRowTiles(ExpandTransformation):
         )
 
         y_out = gemv_state.add_stream(
-            '_y',
-            singleton_vec,
+            '_yo',
+            dtype=vec_type,
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
-
 
         # ---------- ----------
         # COMPUTE
@@ -995,7 +992,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                  #beta=0,
                  n_tile=1,
                  m_tile=1,
-                 partial_width=2,
+                 partial_width=4,
                  n=dace.symbolic.symbol("n"),
                  m=dace.symbolic.symbol("m"),
                  veclen=1,
@@ -1018,8 +1015,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         super().__init__(
             name,
             location=location,
-            inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
-            outputs={"_y"})
+            inputs={"_A", "_x", "_yi"} if beta != 0 else {"_A", "_x"},
+            outputs={"_yo"})
         self.dtype = dtype
         self.transA = transA
         self.alpha = alpha
@@ -1049,7 +1046,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
                 size_x = subset.size()
-            if dst_conn == "_y":
+            if dst_conn == "_yi":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
                 size_y_in = subset.size()
