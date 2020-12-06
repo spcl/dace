@@ -689,7 +689,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
              sdfg, state, subgraphs)
 
         # Scalar parameters are never output
-        sc_parameters = [(False, pname, param)
+        sc_parameters = [(False, pname, param, None)
                          for pname, param in scalar_parameters]
 
         host_code_stream = CodeIOStream()
