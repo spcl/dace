@@ -246,7 +246,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         if isinstance(data, dace.data.Array):
             var_name += "_" + ("out" if is_output else "in")
             if interface_id is not None:
-                var_name += "_if%d" % interface_id
+                var_name += "_%d" % interface_id
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -534,7 +534,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 # arguments
                 argname = arr_name
                 if interface_id is not None:
-                    argname = arr_name + "_if%d" % interface_id
+                    argname = arr_name + "_%d" % interface_id
 
                 kernel_args_call.append(argname)
                 dtype = p.dtype
@@ -753,7 +753,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if isinstance(arg, dace.data.Array):
                 argname = name + ("_out" if is_output else "_in")
                 if if_id is not None:
-                    argname += "_if%d" % if_id
+                    argname += "_%d" % if_id
 
                 kernel_args.append(
                     arg.as_arg(with_types=True,
