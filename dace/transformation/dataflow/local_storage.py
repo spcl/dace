@@ -116,6 +116,8 @@ class LocalStorage(xf.Transformation, ABC):
         
         return data_node
 
+        return data_node
+
 
 @registry.autoregister_params(singlestate=True)
 @make_properties

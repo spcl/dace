@@ -21,7 +21,7 @@ def program_generator(size, factor):
     return program
 
 
-if __name__ == "__main__":
+def test():
     print('Reloadable DaCe program test')
 
     array_one = np.random.rand(10).astype(np.float64)
@@ -38,5 +38,8 @@ if __name__ == "__main__":
     diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
     diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
     print("Differences:", diff1, diff2)
-    print("==== Program end ====")
-    exit(0 if diff1 <= 1e-5 and diff2 <= 1e-5 else 1)
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

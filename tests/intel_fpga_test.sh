@@ -90,8 +90,8 @@ run_all() {
     # Simple reduce
     run_sample intel_fpga/vector_reduce vector_reduce "FPGATransformSDFG\$0\n"
 
-    # GEMM sample
-    run_sample ../samples/simple/gemm gemm "FPGATransformSDFG\$0\n"
+    # Matrix multiplication sample
+    run_sample ../samples/simple/matmul matmul "FPGATransformSDFG\$0\n"
 
     #### TYPE INFERENCE ####
     run_sample ../samples/simple/mandelbrot mandelbrot "FPGATransformSDFG\$0\n"

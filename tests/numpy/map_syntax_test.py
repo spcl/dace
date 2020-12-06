@@ -15,7 +15,7 @@ def copy3d(A: dace.float32[M, N, K], B: dace.float32[M, N, K]):
                 b = a
 
 
-if __name__ == '__main__':
+def test_copy3d():
     [sym.set(24) for sym in [M, N, K]]
     A = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
     B = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
@@ -23,4 +23,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(B - A) / (M.get() * N.get())
     print('Difference:', diff)
-    exit(1 if diff >= 1e-5 else 0)
+    assert diff < 1e-5
+
+
+if __name__ == '__main__':
+    test_copy3d()
