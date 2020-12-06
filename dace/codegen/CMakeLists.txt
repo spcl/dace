@@ -531,7 +531,7 @@ if(DACE_ENABLE_XILINX)
       -t hw_emu
       "${DACE_VITIS_KERNELS_HW_EMU}"
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
                      
     add_custom_command(
       OUTPUT emconfig.json  
@@ -546,7 +546,7 @@ if(DACE_ENABLE_XILINX)
       -t hw
       "${DACE_VITIS_KERNELS_HW}"
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW})
 
   endif()
 
