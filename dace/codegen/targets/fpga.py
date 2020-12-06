@@ -1258,7 +1258,8 @@ class FPGACodeGen(TargetCodeGenerator):
             [(t[0], t[1], t[2])
              for t in parameters if not isinstance(t[2], dace.data.Scalar)],
             key=lambda t: t[1])
-        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
+        scalars = [(t[0], t[1], t[2]) for t in parameters
+                   if isinstance(t[2], dace.data.Scalar)]
         scalars += ((False, k, v) for k, v in symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, argname, arg in itertools.chain(arrays, scalars):
