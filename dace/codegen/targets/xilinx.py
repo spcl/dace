@@ -377,7 +377,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor):
+                                  packing_factor, sdfg):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
