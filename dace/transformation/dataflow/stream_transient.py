@@ -209,7 +209,6 @@ class AccumulateTransient(transformation.Transformation):
 
     def apply(self, sdfg: SDFG):
         graph = sdfg.node(self.state_id)
-        tasklet = graph.nodes()[self.subgraph[AccumulateTransient._tasklet]]
         map_exit = graph.node(self.subgraph[AccumulateTransient._map_exit])
         outer_map_exit = graph.node(
             self.subgraph[AccumulateTransient._outer_map_exit])
