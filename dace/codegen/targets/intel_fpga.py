@@ -540,7 +540,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Therefore we cut down names longer than that
         module_function_name = module_function_name[0:42]
 
-
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
@@ -1083,12 +1082,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         if not node.code:
             return ''
 
-        # If raw C++ code, return the code directly
+        # If raw C++ or OpenCL code, return the code directly
         if node.language != dtypes.Language.Python:
-            if node.language != dtypes.Language.CPP:
+            if node.language != dtypes.Language.CPP and node.language != dtypes.Language.OpenCL:
                 raise ValueError(
-                    "Only Python or C++ code supported in CPU codegen, got: {}".
-                    format(node.language))
+                    "Only Python, C++ and OpenCL code are supported in Intel FPGA codegen, got: {}"
+                    .format(node.language))
             callsite_stream.write(
                 type(node).__properties__["code"].to_string(node.code), sdfg,
                 state_id, node)
