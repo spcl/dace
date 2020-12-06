@@ -8,6 +8,7 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
+from typing import Dict
 
 import dace
 from dace.codegen.targets import cpp
@@ -232,10 +233,14 @@ class FPGACodeGen(TargetCodeGenerator):
 
         global_data_parameters = []
         global_data_names = set()
+        # Count appearances of each global array to create multiple interfaces
+        global_interfaces: Dict[str, int] = collections.defaultdict(int)
+
         top_level_local_data = []
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
+
         for subgraph in subgraphs:
             data_to_node.update({
                 node.data: node
@@ -265,10 +270,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    and n.desc(scope).storage ==
+                                    dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -282,25 +287,25 @@ class FPGACodeGen(TargetCodeGenerator):
                         or isinstance(data, dace.data.Scalar)
                         or isinstance(data, dace.data.Stream)):
                     if data.storage == dace.dtypes.StorageType.FPGA_Global:
+                        # Get and update global memory interface ID
+                        interface_id = global_interfaces[dataname]
+                        global_interfaces[dataname] += 1
+
                         subgraph_parameters[subgraph].append(
-                            (is_output, dataname, data))
-                        if is_output:
-                            global_data_parameters.append(
-                                (is_output, dataname, data))
-                        else:
-                            global_data_parameters.append(
-                                (is_output, dataname, data))
+                            (is_output, dataname, data, interface_id))
+                        global_data_parameters.append(
+                            (is_output, dataname, data, interface_id))
                         global_data_names.add(dataname)
-                    elif (data.storage
-                          in (dace.dtypes.StorageType.FPGA_Local,
-                              dace.dtypes.StorageType.FPGA_Registers,
-                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage in (
+                            dace.dtypes.StorageType.FPGA_Local,
+                            dace.dtypes.StorageType.FPGA_Registers,
+                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
                             # parameters
                             subgraph_parameters[subgraph].append(
-                                (is_output, dataname, data))
+                                (is_output, dataname, data, None))
                             # Resolve the data to some corresponding node to be
                             # passed to the allocator
                             top_level_local_data.append(dataname)
@@ -453,10 +458,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
 
-            elif (nodedesc.storage
-                  in (dace.dtypes.StorageType.FPGA_Local,
-                      dace.dtypes.StorageType.FPGA_Registers,
-                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage in (
+                    dace.dtypes.StorageType.FPGA_Local,
+                    dace.dtypes.StorageType.FPGA_Registers,
+                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise cgx.CodegenError(
@@ -701,10 +706,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(
+                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage ==
+                                    dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -1250,9 +1255,11 @@ class FPGACodeGen(TargetCodeGenerator):
         kernel_args_opencl = []
         # Split into arrays and scalars
         arrays = sorted(
-            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            [(t[0], t[1], t[2])
+             for t in parameters if not isinstance(t[2], dace.data.Scalar)],
             key=lambda t: t[1])
-        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
+        scalars = [(t[0], t[1], t[2]) for t in parameters
+                   if isinstance(t[2], dace.data.Scalar)]
         scalars += ((False, k, v) for k, v in symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, argname, arg in itertools.chain(arrays, scalars):
