@@ -25,17 +25,41 @@ class Subset(object):
             except AttributeError:  # No free_symbols in expr
                 return expr
 
-        try:
-            return all([(symbolic.simplify_ext(nng(rb)) <=
-                         symbolic.simplify_ext(nng(orb))) == True
-                        and (symbolic.simplify_ext(nng(re)) >=
-                             symbolic.simplify_ext(nng(ore))) == True
-                        for rb, re, orb, ore in zip(
-                            self.min_element(), self.max_element_approx(),
-                            other.min_element(), other.max_element_approx())])
-        except TypeError:
-            return False
 
+        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+        if not symbolic_positive:
+            try:
+                return all([(symbolic.simplify_ext(nng(rb)) <=
+                            symbolic.simplify_ext(nng(orb))) == True
+                            and (symbolic.simplify_ext(nng(re)) >=
+                                symbolic.simplify_ext(nng(ore))) == True
+                            for rb, re, orb, ore in zip(
+                                self.min_element(), self.max_element_approx(),
+                                other.min_element(), other.max_element_approx())])
+            except TypeError:
+                return False
+        
+        else:
+            try:
+                for rb, re, orb, ore in zip(
+                            self.min_element_approx(), self.max_element_approx(),
+                            other.min_element_approx(), other.max_element_approx()):
+
+                    # lower bound: first check whether symbolic positive condition applies 
+                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                            return False 
+                        
+                    # upper bound: first check whether symbolic positive condition applies
+                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                            return False 
+            except TypeError:
+                return False 
+                
+            return True
+               
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
