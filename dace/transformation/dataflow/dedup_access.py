@@ -12,6 +12,8 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
 
+import warnings
+
 
 @registry.autoregister_params(singlestate=True)
 class DeduplicateAccess(xf.Transformation):
@@ -77,9 +79,17 @@ class DeduplicateAccess(xf.Transformation):
             for memlet in memlets[1:]:
                 union_subset = subsets.bounding_box_union(
                     union_subset, memlet.subset)
-            if union_subset.num_elements() < sum(m.subset.num_elements()
-                                                 for m in memlets):
-                return True
+
+            # TODO: Enhance me!
+            # NOTE: This does not always result in correct behaviour for certain 
+            # ranges whose volume is not comparable by "<", 
+            # e.g "2*K" >? "K+1" > "K-1" >? "1"
+            try:
+                if union_subset.num_elements() < sum(m.subset.num_elements()
+                                                    for m in memlets):
+                    return True
+            except TypeError:
+                pass 
 
         return False
 
@@ -91,6 +101,7 @@ class DeduplicateAccess(xf.Transformation):
     def are_subsets_contiguous(subset_a: subsets.Subset,
                                subset_b: subsets.Subset,
                                dim: int = None) -> bool:
+        
         if dim is not None:
             # A version that only checks for contiguity in certain
             # dimension (e.g., to prioritize stride-1 range)
@@ -117,8 +128,13 @@ class DeduplicateAccess(xf.Transformation):
 
         # General case
         bbunion = subsets.bounding_box_union(subset_a, subset_b)
-        return bbunion.num_elements() == (subset_a.num_elements() +
-                                          subset_b.num_elements())
+        try:
+            if bbunion.num_elements() <= (subset_a.num_elements() + subset_b.num_elements()):
+                return True 
+        except TypeError:
+            pass 
+        
+        return False 
 
     @staticmethod
     def find_contiguous_subsets(subset_list: List[subsets.Subset],
@@ -187,11 +203,10 @@ class DeduplicateAccess(xf.Transformation):
                 unique_subsets,
                 dim=next(i for i, s in enumerate(desc.strides) if s == 1))
         except (StopIteration, NotImplementedError):
+            warnings.warn("DeduplicateAcces::Not operating on Stride One Dimension!")
             contiguous_subsets = unique_subsets
-
         # Then find subsets for rest of the dimensions
         contiguous_subsets = self.find_contiguous_subsets(contiguous_subsets)
-
         # Map original edges to subsets
         edge_mapping = defaultdict(list)
         for e in edges:
