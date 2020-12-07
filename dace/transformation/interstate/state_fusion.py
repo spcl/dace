@@ -27,7 +27,7 @@ class CCDesc:
 
 
 def top_level_nodes(state: SDFGState):
-    return [k for k, v in state.scope_dict().items() if v is None]
+    return state.scope_children()[None]
 
 
 @registry.autoregister_params(strict=True)
