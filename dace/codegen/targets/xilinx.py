@@ -98,8 +98,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
-                         is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else
+                         unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -237,9 +238,15 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                              dtype.base_type.ctype, dtype.veclen)
 
     @staticmethod
-    def make_kernel_argument(data, var_name, is_output, with_vectorization):
+    def make_kernel_argument(data,
+                             var_name,
+                             is_output,
+                             with_vectorization,
+                             interface_id=None):
         if isinstance(data, dace.data.Array):
             var_name += "_" + ("out" if is_output else "in")
+            if interface_id is not None:
+                var_name += "_%d" % interface_id
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -421,9 +428,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         # Build kernel signature
         array_args = []
-        for is_output, dataname, data in arrays:
+        for is_output, dataname, data, interface in arrays:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
-                                                   True)
+                                                   True, interface)
             if kernel_arg:
                 array_args.append(kernel_arg)
         kernel_args = array_args + [
@@ -440,7 +447,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         # Insert interface pragmas
         num_mapped_args = 0
-        for arg, (_, dataname, _) in zip(array_args, arrays):
+        for arg, (_, dataname, _, _) in zip(array_args, arrays):
             var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)
@@ -487,10 +494,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             ],
                    key=lambda t: t[1]))
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
         kernel_args = []
-        for _, name, p in itertools.chain(arrays, scalars):
+        for _, name, p, _ in itertools.chain(arrays, scalars):
             if not isinstance(p, dace.data.Array) and name in added:
                 continue
             added.add(name)
@@ -521,16 +528,21 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         added = set()
 
         parameters = list(sorted(parameters, key=lambda t: t[1]))
-        arrays = [
-            p for p in parameters if not isinstance(p[2], dace.data.Scalar)
-        ]
+        arrays = dtypes.deduplicate([p for p in parameters
+                                     if not isinstance(p[2], dace.data.Scalar)])
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
-        for is_output, pname, p in itertools.chain(parameters, scalars):
+        for is_output, pname, p, interface_id in itertools.chain(arrays, scalars):
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
-                kernel_args_call.append(arr_name)
+                # Add interface ID to called module, but not to the module
+                # arguments
+                argname = arr_name
+                if interface_id is not None:
+                    argname = arr_name + "_%d" % interface_id
+
+                kernel_args_call.append(argname)
                 dtype = p.dtype
                 kernel_args_module.append("{} {}*{}".format(
                     dtype.ctype, "const " if not is_output else "", arr_name))
@@ -610,13 +622,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # to the same global array
         in_args = {
             argname
-            for out, argname, arg in parameters
+            for out, argname, arg, _ in parameters
             if isinstance(arg, dace.data.Array)
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
         }
         out_args = {
             argname
-            for out, argname, arg in parameters
+            for out, argname, arg, _ in parameters
             if isinstance(arg, dace.data.Array)
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
@@ -625,7 +637,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             # the same array
             module_body_stream.write("\n")
             interfaces_added = set()
-            for _, argname, arg in parameters:
+            for _, argname, arg, _ in parameters:
                 if argname in interfaces_added:
                     continue
                 interfaces_added.add(argname)
@@ -683,7 +695,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
              sdfg, state, subgraphs)
 
         # Scalar parameters are never output
-        sc_parameters = [(False, pname, param)
+        sc_parameters = [(False, pname, param, None)
                          for pname, param in scalar_parameters]
 
         host_code_stream = CodeIOStream()
@@ -737,17 +749,21 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         ]
         arrays = list(sorted(arrays, key=lambda t: t[1]))
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
 
         kernel_args = []
 
         seen = set()
-        for is_output, name, arg in itertools.chain(arrays, scalars):
+        for is_output, name, arg, if_id in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
+                argname = name + ("_out" if is_output else "_in")
+                if if_id is not None:
+                    argname += "_%d" % if_id
+
                 kernel_args.append(
                     arg.as_arg(with_types=True,
-                               name=name + ("_out" if is_output else "_in")))
+                               name=argname))
             else:
                 if name in seen:
                     continue

@@ -414,6 +414,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          nested_global_transients) = self.make_parameters(
              sdfg, state, subgraphs)
 
+        # Ignore interface ID in this backend
+        global_data_parameters = [tuple(p[:3]) for p in global_data_parameters]
+        subgraph_parameters = {
+            k: [tuple(vv[:3]) for vv in v]
+            for k, v in subgraph_parameters.items()
+        }
+
         # Scalar parameters are never output
         sc_parameters = [(False, pname, param)
                          for pname, param in scalar_parameters]
