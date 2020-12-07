@@ -236,12 +236,11 @@ class StripMining(transformation.Transformation):
         tile_size = self.tile_size
         divides_evenly = self.divides_evenly
         tile_stride = self.tile_stride
-        if tile_stride is None or len(tile_stride) == 0:
+        if tile_stride == 0:
             tile_stride = tile_size
         if tile_stride != tile_size:
             raise NotImplementedError
-
-        tile_size = dace.symbolic.pystr_to_symbolic(tile_size)
+       
 
         # Retrieve parameter and range of dimension to be strip-mined.
         target_dim = map_entry.map.params[dim_idx]
