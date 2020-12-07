@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import itertools
 import os
@@ -10,9 +11,11 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import nodes
 from dace.sdfg import find_input_arraynode, find_output_arraynode
+from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import make_absolute, DefinedType
+from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 
 REDUCTION_TYPE_TO_HLSLIB = {
@@ -85,7 +88,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             xcl_emulation_mode = None
             xilinx_sdx = None
         else:
-            raise dace.codegen.codegen.CodegenError(
+            raise cgx.CodegenError(
                 "Unknown Xilinx execution mode: {}".format(execution_mode))
 
         set_env_vars = ""
@@ -186,6 +189,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
                       kernel_stream):
+        """
+           Defines a stream
+           :return: a tuple containing the type of the created variable, and boolean indicating
+               whether this is a global variable or not
+           """
         ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
                                                 dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
@@ -197,8 +205,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
+        # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
-        return ctype
+        return ctype, False
 
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):
@@ -267,7 +276,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references,
                               sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
@@ -319,12 +328,10 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "{}.pop()".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if " " in expr:
                 expr = "(" + expr + ")"
-            read_expr = "{}[{}].pop()".format(expr, index)
+            read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -428,7 +435,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         # Insert interface pragmas
         num_mapped_args = 0
         for arg, (_, dataname, _) in zip(array_args, arrays):
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
@@ -437,7 +444,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                     sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                assignment = self._bank_assignments[(dataname, sdfg)]
+                assignment = self._bank_assignments[(dataname, sdfg)] if (
+                    dataname, sdfg) in self._bank_assignments else None
                 if assignment is not None:
                     mem_type, mem_bank = assignment
                     self._interface_assignments[(kernel_name,
@@ -449,7 +457,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             kernel_stream.write(
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
@@ -543,12 +551,15 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                         p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
                         p.as_arg(with_types=True, name=pname))
-        module_function_name = "module_" + name
+
+        # create a unique module name to prevent name clashes
+        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
-        scope_dict = subgraph.scope_dict(node_to_children=True)
+        scope_children = subgraph.scope_children()
         top_scopes = [
-            n for n in scope_dict[None]
+            n for n in scope_children[None]
             if isinstance(n, dace.sdfg.nodes.EntryNode)
         ]
         unrolled_loops = 0
@@ -560,8 +571,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 kernel_args_module += ["int " + p for p in scope.params]
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
-                        raise dace.codegen.codegen.CodegenError(
-                            "Strided unroll not supported")
+                        raise cgx.CodegenError("Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".format(

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the strip-mining
     transformation."""
 
@@ -9,7 +10,7 @@ from dace.properties import make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.symbolic import issymbolic, overapproximate, SymExpr
-from dace.transformation import pattern_matching
+from dace.transformation import transformation, helpers as xfh
 import sympy
 
 
@@ -117,7 +118,7 @@ def calc_set_union(set_a, set_b):
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class StripMining(pattern_matching.Transformation):
+class StripMining(transformation.Transformation):
     """ Implements the strip-mining transformation.
 
         Strip-mining takes as input a map dimension and splits it into
@@ -150,6 +151,15 @@ class StripMining(pattern_matching.Transformation):
         dtype=bool,
         default=False,
         desc="Continuous (false) or strided (true) elements in tile")
+
+    ceilrange = Property(dtype=bool,
+                         default=False,
+                         desc="Use ceiling(N/tile) in outer range")
+
+    skew = Property(
+        dtype=bool,
+        default=False,
+        desc="If True, offsets inner tile back such that it starts with zero")
 
     @staticmethod
     def annotates_memlets():
@@ -201,9 +211,6 @@ class StripMining(pattern_matching.Transformation):
         gentry = candidate[self.entry]
         return str(gentry.map.params[-1])
 
-    def modifies_graph(self):
-        return True
-
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry,
                       prefix: str, target_dim: str):
         """ Finds a variable that is not already defined in scope. """
@@ -217,10 +224,46 @@ class StripMining(pattern_matching.Transformation):
             index += 1
         return candidate
 
-    def _stripmine(self, sdfg, graph, candidate):
+    def _create_strided_range(self, sdfg: SDFG, state: SDFGState,
+                              map_entry: nodes.MapEntry):
+        map_exit = state.exit_node(map_entry)
+        dim_idx = self.dim_idx
+        new_dim_prefix = self.new_dim_prefix
+        tile_size = self.tile_size
+        divides_evenly = self.divides_evenly
+        tile_stride = self.tile_stride
+        if tile_stride is None or len(tile_stride) == 0:
+            tile_stride = tile_size
+        if tile_stride != tile_size:
+            raise NotImplementedError
 
-        # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
+        tile_size = dace.symbolic.pystr_to_symbolic(tile_size)
+
+        # Retrieve parameter and range of dimension to be strip-mined.
+        target_dim = map_entry.map.params[dim_idx]
+        td_from, td_to, td_step = map_entry.map.range[dim_idx]
+        new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
+                                     target_dim)
+        new_dim_range = (td_from, td_to, tile_size)
+        new_map = nodes.Map(map_entry.map.label, [new_dim],
+                            subsets.Range([new_dim_range]))
+
+        dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
+        td_from_new = dimsym
+        if divides_evenly:
+            td_to_new = dimsym + tile_size - 1
+        else:
+            if isinstance(td_to, dace.symbolic.SymExpr):
+                td_to = td_to.expr
+            td_to_new = dace.symbolic.SymExpr(
+                sympy.Min(dimsym + tile_size - 1, td_to),
+                dimsym + tile_size - 1)
+        td_step_new = td_step
+
+        return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
+
+    def _create_ceil_range(self, sdfg: SDFG, graph: SDFGState,
+                           map_entry: nodes.MapEntry):
         map_exit = graph.exit_node(map_entry)
 
         # Retrieve transformation properties.
@@ -252,8 +295,6 @@ class StripMining(pattern_matching.Transformation):
         new_dim_range = (nd_from, nd_to, nd_step)
         new_map = nodes.Map(new_dim + '_' + map_entry.map.label, [new_dim],
                             subsets.Range([new_dim_range]))
-        new_map_entry = nodes.MapEntry(new_map)
-        new_map_exit = nodes.MapExit(new_map)
 
         # Change the range of the selected dimension to iterate over a single
         # tile
@@ -277,8 +318,42 @@ class StripMining(pattern_matching.Transformation):
             td_to_new = td_to_new_approx
         else:
             td_to_new = dace.symbolic.SymExpr(td_to_new_exact, td_to_new_approx)
+
+        return new_dim, new_map, (td_from_new, td_to_new, td_step)
+
+    def _stripmine(self, sdfg, graph, candidate):
+        # Retrieve map entry and exit nodes.
+        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
+        map_exit = graph.exit_node(map_entry)
+
+        # Retrieve transformation properties.
+        dim_idx = self.dim_idx
+        new_dim_prefix = self.new_dim_prefix
+        tile_size = self.tile_size
+        divides_evenly = self.divides_evenly
+        strided = self.strided
+        target_dim = map_entry.map.params[dim_idx]
+
+        tile_stride = self.tile_stride
+        if tile_stride is None or len(tile_stride) == 0:
+            tile_stride = tile_size
+
+        if self.ceilrange:
+            new_dim, new_map, td_rng = self._create_ceil_range(
+                sdfg, graph, map_entry)
+        else:
+            new_dim, new_map, td_rng = self._create_strided_range(
+                sdfg, graph, map_entry)
+
+        new_map_entry = nodes.MapEntry(new_map)
+        new_map_exit = nodes.MapExit(new_map)
+
+        td_to_new_approx = td_rng[1]
+        if isinstance(td_to_new_approx, dace.symbolic.SymExpr):
+            td_to_new_approx = td_to_new_approx.approx
+
         # Special case: If range is 1 and no prefix was specified, skip range
-        if td_from_new == td_to_new_approx and target_dim == new_dim:
+        if td_rng[0] == td_to_new_approx and target_dim == new_dim:
             map_entry.map.range = subsets.Range(
                 [r for i, r in enumerate(map_entry.map.range) if i != dim_idx])
             map_entry.map.params = [
@@ -288,7 +363,7 @@ class StripMining(pattern_matching.Transformation):
                 raise ValueError('Strip-mining all dimensions of the map with '
                                  'empty tiles is disallowed')
         else:
-            map_entry.map.range[dim_idx] = (td_from_new, td_to_new, td_step)
+            map_entry.map.range[dim_idx] = td_rng
 
         # Make internal map's schedule to "not parallel"
         new_map.schedule = map_entry.map.schedule
@@ -380,8 +455,8 @@ class StripMining(pattern_matching.Transformation):
                     in_conn = 'IN_' + conn
                     out_conn = 'OUT_' + conn
                 else:
-                    in_conn = src_conn
-                    out_conn = src_conn
+                    in_conn = dst_conn
+                    out_conn = dst_conn
                 if in_conn:
                     exit_in_conn[in_conn] = None
                 if out_conn:
@@ -391,6 +466,10 @@ class StripMining(pattern_matching.Transformation):
         map_exit.out_connectors = exit_out_conn
         for (_, in_conn, out_conn), memlet in new_out_edges.items():
             graph.add_edge(map_exit, out_conn, new_map_exit, in_conn, memlet)
+
+        # Skew if necessary
+        if self.skew:
+            xfh.offset_map(sdfg, graph, map_entry, dim_idx, td_rng[0])
 
         # Return strip-mined dimension.
         return target_dim, new_dim, new_map

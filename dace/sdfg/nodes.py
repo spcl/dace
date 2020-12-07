@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -178,9 +179,17 @@ class Node(object):
                 continue
         return next_number
 
-    def next_connector(self) -> str:
-        """ Returns the next unused connector ID (as a string). Used for
-            filling connectors when adding edges to scopes. """
+    def next_connector(self, try_name: str = None) -> str:
+        """
+        Returns the next unused connector ID (as a string). Used for
+        filling connectors when adding edges to scopes.
+        :param try_name: First try the connector with this name. If already
+                         exists, use the next integer connector.
+        """
+        if (try_name and 'IN_' + try_name not in self.in_connectors
+                and 'OUT_' + try_name not in self.out_connectors):
+            return try_name
+
         return str(self._next_connector_int())
 
     def last_connector(self) -> str:
@@ -435,10 +444,11 @@ class NestedSDFG(CodeNode):
                  schedule=dtypes.ScheduleType.Default,
                  location=None,
                  debuginfo=None):
+        from dace.sdfg import SDFG
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg = sdfg
+        self.sdfg: SDFG = sdfg
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
@@ -514,6 +524,10 @@ class NestedSDFG(CodeNode):
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG: %s' %
                              (missing_symbols))
+        extra_symbols = self.symbol_mapping.keys() - symbols
+        if len(extra_symbols) > 0:
+            # TODO: Elevate to an error?
+            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -1130,9 +1144,11 @@ class LibraryNode(CodeNode):
                                                     context=context)
             return ret
 
-    def expand(self, sdfg, state, *args, **kwargs):
-        """Create and perform the expansion transformation for this library
-           node."""
+    def expand(self, sdfg, state, *args, **kwargs) -> str:
+        """ Create and perform the expansion transformation for this library
+            node.
+            :return: the name of the expanded implementation
+        """
         implementation = self.implementation
         library_name = type(self)._dace_library_name
         try:
@@ -1181,6 +1197,7 @@ class LibraryNode(CodeNode):
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
         transformation.apply(sdfg, *args, **kwargs)
+        return implementation
 
     @classmethod
     def register_implementation(cls, name, transformation_type):
@@ -1192,4 +1209,4 @@ class LibraryNode(CodeNode):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = cls(match_node_name)
+        transformation_type._match_node = cls

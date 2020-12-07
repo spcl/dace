@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -14,6 +15,8 @@ CURTEST=""
 TESTPREFIX=""
 TOTAL_TESTS=0
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
+
+DACE_optimizer_detect_control_flow=${DACE_automatic_strict_transformations}
 
 TIMEOUTCMD="timeout -s9 30"
 

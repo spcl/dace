@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
@@ -28,3 +29,8 @@ def test_output_none():
     diff = np.linalg.norm(np.log(A) - B)
     print('Difference:', diff)
     assert diff < 1e-5
+
+
+if __name__ == '__main__':
+    test_output()
+    test_output_none()

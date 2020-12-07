@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -15,17 +16,17 @@ from dace.registry import extensible_enum
 class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
-    Default = ()  # Scope-default storage location
-    Register = ()  # Local data on registers, stack, or equivalent memory
-    CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
-    CPU_Heap = ()  # Host memory allocated on heap
-    CPU_ThreadLocal = ()  # Thread-local host memory
-    GPU_Global = ()  # Global memory
-    GPU_Shared = ()  # Shared memory
-    FPGA_Global = ()  # Off-chip global memory (DRAM)
-    FPGA_Local = ()  # On-chip memory (bulk storage)
-    FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  # Only accessible at constant indices
+    Default = ()  #: Scope-default storage location
+    Register = ()  #: Local data on registers, stack, or equivalent memory
+    CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = ()  #: Host memory allocated on heap
+    CPU_ThreadLocal = ()  #: Thread-local host memory
+    GPU_Global = ()  #: Global memory
+    GPU_Shared = ()  #: Shared memory
+    FPGA_Global = ()  #: Off-chip global memory (DRAM)
+    FPGA_Local = ()  #: On-chip memory (bulk storage)
+    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
+    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
 
 
 @extensible_enum
@@ -35,13 +36,16 @@ class ScheduleType(aenum.AutoNumberEnum):
     # TODO: Add per-type properties for scope nodes. Consider TargetType enum
     #       and a MapScheduler class
 
-    Default = ()  # Scope-default parallel schedule
-    Sequential = ()  # Sequential code (single-thread)
-    MPI = ()  # MPI processes
-    CPU_Multicore = ()  # OpenMP
-    GPU_Device = ()  # Kernel
-    GPU_ThreadBlock = ()  # Thread-block code
-    GPU_ThreadBlock_Dynamic = ()  # Allows rescheduling work within a block
+    Default = ()  #: Scope-default parallel schedule
+    Sequential = ()  #: Sequential code (single-thread)
+    MPI = ()  #: MPI processes
+    CPU_Multicore = ()  #: OpenMP
+
+    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
+    GPU_Default = ()
+    GPU_Device = ()  #: Kernel
+    GPU_ThreadBlock = ()  #: Thread-block code
+    GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     FPGA_Device = ()
 
@@ -58,35 +62,35 @@ GPU_SCHEDULES = [
 class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
-    Custom = ()  # Defined by an arbitrary lambda function
-    Min = ()  # Minimum value
-    Max = ()  # Maximum value
-    Sum = ()  # Sum
-    Product = ()  # Product
-    Logical_And = ()  # Logical AND (&&)
-    Bitwise_And = ()  # Bitwise AND (&)
-    Logical_Or = ()  # Logical OR (||)
-    Bitwise_Or = ()  # Bitwise OR (|)
-    Logical_Xor = ()  # Logical XOR (!=)
-    Bitwise_Xor = ()  # Bitwise XOR (^)
-    Min_Location = ()  # Minimum value and its location
-    Max_Location = ()  # Maximum value and its location
-    Exchange = ()  # Set new value, return old value
+    Custom = ()  #: Defined by an arbitrary lambda function
+    Min = ()  #: Minimum value
+    Max = ()  #: Maximum value
+    Sum = ()  #: Sum
+    Product = ()  #: Product
+    Logical_And = ()  #: Logical AND (&&)
+    Bitwise_And = ()  #: Bitwise AND (&)
+    Logical_Or = ()  #: Logical OR (||)
+    Bitwise_Or = ()  #: Bitwise OR (|)
+    Logical_Xor = ()  #: Logical XOR (!=)
+    Bitwise_Xor = ()  #: Bitwise XOR (^)
+    Min_Location = ()  #: Minimum value and its location
+    Max_Location = ()  #: Maximum value and its location
+    Exchange = ()  #: Set new value, return old value
 
     # Only supported in OpenMP
-    Sub = ()  # Subtraction
-    Div = ()  # Division
+    Sub = ()  #: Subtraction (only supported in OpenMP)
+    Div = ()  #: Division (only supported in OpenMP)
 
 
 @extensible_enum
 class AllocationLifetime(aenum.AutoNumberEnum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
-    Scope = ()  # Allocated/Deallocated on innermost scope start/end
-    State = ()  # Allocated throughout the containing state
-    SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
-    Global = ()  # Allocated throughout the entire program (outer SDFG)
-    Persistent = ()  # Allocated throughout multiple invocations (init/exit)
+    Scope = ()  #: Allocated/Deallocated on innermost scope start/end
+    State = ()  #: Allocated throughout the containing state
+    SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
+    Global = ()  #: Allocated throughout the entire program (outer SDFG)
+    Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
 
 
 @extensible_enum
@@ -95,6 +99,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    SystemVerilog = ()
 
 
 class AccessType(aenum.AutoNumberEnum):
@@ -123,6 +128,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
+    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
@@ -136,6 +142,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
+    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
@@ -148,8 +155,10 @@ _CTYPES = {
     None: "void",
     int: "int",
     float: "float",
+    complex: "dace::complex64",
     bool: "bool",
     numpy.bool: "bool",
+    numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
     numpy.int32: "int",
@@ -172,6 +181,7 @@ _OCL_TYPES = {
     float: "float",
     bool: "bool",
     numpy.bool: "bool",
+    numpy.bool_: "bool",
     numpy.int8: "char",
     numpy.int16: "short",
     numpy.int32: "int",
@@ -208,8 +218,10 @@ _FFI_CTYPES = {
     None: ctypes.c_void_p,
     int: ctypes.c_int,
     float: ctypes.c_float,
+    complex: ctypes.c_uint64,
     bool: ctypes.c_bool,
     numpy.bool: ctypes.c_bool,
+    numpy.bool_: ctypes.c_bool,
     numpy.int8: ctypes.c_int8,
     numpy.int16: ctypes.c_int16,
     numpy.int32: ctypes.c_int32,
@@ -230,8 +242,10 @@ _BYTES = {
     None: 0,
     int: 4,
     float: 4,
+    complex: 8,
     bool: 1,
     numpy.bool: 1,
+    numpy.bool_: 1,
     numpy.int8: 1,
     numpy.int16: 2,
     numpy.int32: 4,
@@ -284,7 +298,14 @@ class typeclass(object):
                     "Unknown configuration for default_data_types: {}".format(
                         config_data_types))
         elif wrapped_type is complex:
-            wrapped_type = numpy.complex128
+            if config_data_types.lower() == 'python':
+                wrapped_type = numpy.complex128
+            elif config_data_types.lower() == 'c':
+                wrapped_type = numpy.complex64
+            else:
+                raise NameError(
+                    "Unknown configuration for default_data_types: {}".format(
+                        config_data_types))
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
@@ -403,9 +424,12 @@ def result_type_of(lhs, *rhs):
 
     rhs = rhs[0]
 
-    # Extract the type if symbolic
-    lhs = lhs.dtype if type(lhs).__name__ == 'symbol' else lhs
-    rhs = rhs.dtype if type(rhs).__name__ == 'symbol' else rhs
+    # Extract the type if symbolic or data
+    from dace.data import Data
+    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol'
+                        or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol'
+                        or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either
@@ -493,7 +517,7 @@ class pointer(typeclass):
 
     @property
     def ocltype(self):
-        return f"{self.type.ocltype}*"
+        return f"{self.base_type.ocltype}*"
 
 
 class vector(typeclass):
@@ -528,8 +552,11 @@ class vector(typeclass):
 
     @property
     def ocltype(self):
-        vectype = _OCL_VECTOR_TYPES[self.type]
-        return f"{vectype}{self.veclen}"
+        if self.veclen > 1:
+            vectype = _OCL_VECTOR_TYPES[self.type]
+            return f"{vectype}{self.veclen}"
+        else:
+            return self.base_type.ocltype
 
     @property
     def ctype_unaligned(self):
@@ -808,67 +835,15 @@ class callback(typeclass):
         return not self.__eq__(other)
 
 
-bool = typeclass(numpy.bool)
-int8 = typeclass(numpy.int8)
-int16 = typeclass(numpy.int16)
-int32 = typeclass(numpy.int32)
-int64 = typeclass(numpy.int64)
-uint8 = typeclass(numpy.uint8)
-uint16 = typeclass(numpy.uint16)
-uint32 = typeclass(numpy.uint32)
-uint64 = typeclass(numpy.uint64)
-float16 = typeclass(numpy.float16)
-float32 = typeclass(numpy.float32)
-float64 = typeclass(numpy.float64)
-complex64 = typeclass(numpy.complex64)
-complex128 = typeclass(numpy.complex128)
-
-DTYPE_TO_TYPECLASS = {
-    int: int32,
-    float: float32,
-    bool: uint8,
-    numpy.bool: uint8,
-    numpy.bool_: bool,
-    numpy.int8: int8,
-    numpy.int16: int16,
-    numpy.int32: int32,
-    numpy.int64: int64,
-    numpy.uint8: uint8,
-    numpy.uint16: uint16,
-    numpy.uint32: uint32,
-    numpy.uint64: uint64,
-    numpy.float16: float16,
-    numpy.float32: float32,
-    numpy.float64: float64,
-    numpy.complex64: complex64,
-    numpy.complex128: complex128
-}
-
-TYPECLASS_STRINGS = [
-    "int8",
-    "int16",
-    "int32",
-    "int64",
-    "uint8",
-    "uint16",
-    "uint32",
-    "uint64",
-    "float16",
-    "float32",
-    "float64",
-    "complex64",
-    "complex128",
-]
-
-#######################################################
-# Allowed types
-
 # Helper function to determine whether a global variable is a constant
 _CONSTANT_TYPES = [
+    type(None),
     int,
     float,
     complex,
     str,
+    bool,
+    numpy.bool_,
     numpy.intc,
     numpy.intp,
     numpy.int8,
@@ -890,9 +865,105 @@ _CONSTANT_TYPES = [
 
 def isconstant(var):
     """ Returns True if a variable is designated a constant (i.e., that can be
-        directly generated in code). """
+        directly generated in code).
+    """
     return type(var) in _CONSTANT_TYPES
 
+
+bool = typeclass(numpy.bool)
+bool_ = typeclass(numpy.bool_)
+int8 = typeclass(numpy.int8)
+int16 = typeclass(numpy.int16)
+int32 = typeclass(numpy.int32)
+int64 = typeclass(numpy.int64)
+uint8 = typeclass(numpy.uint8)
+uint16 = typeclass(numpy.uint16)
+uint32 = typeclass(numpy.uint32)
+uint64 = typeclass(numpy.uint64)
+float16 = typeclass(numpy.float16)
+float32 = typeclass(numpy.float32)
+float64 = typeclass(numpy.float64)
+complex64 = typeclass(numpy.complex64)
+complex128 = typeclass(numpy.complex128)
+
+DTYPE_TO_TYPECLASS = {
+    int: typeclass(int),
+    float: typeclass(float),
+    complex: typeclass(complex),
+    numpy.bool: bool,
+    numpy.bool_: bool_,
+    numpy.int8: int8,
+    numpy.int16: int16,
+    numpy.int32: int32,
+    numpy.int64: int64,
+    numpy.uint8: uint8,
+    numpy.uint16: uint16,
+    numpy.uint32: uint32,
+    numpy.uint64: uint64,
+    numpy.float16: float16,
+    numpy.float32: float32,
+    numpy.float64: float64,
+    numpy.complex64: complex64,
+    numpy.complex128: complex128,
+    # FIXME
+    numpy.longlong: int64,
+    numpy.ulonglong: uint64
+}
+
+TYPECLASS_TO_STRING = {
+    bool: "dace::bool",
+    bool_: "dace::bool_",
+    uint8: "dace::uint8",
+    uint16: "dace::uint16",
+    uint32: "dace::uint32",
+    uint64: "dace::uint64",
+    int8: "dace::int8",
+    int16: "dace::int16",
+    int32: "dace::int32",
+    int64: "dace::int64",
+    float16: "dace::float16",
+    float32: "dace::float32",
+    float64: "dace::float64",
+    complex64: "dace::complex64",
+    complex128: "dace::complex128"
+}
+
+TYPECLASS_STRINGS = [
+    "int",
+    "float",
+    "complex",
+    "bool",
+    "bool_",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float16",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128"
+]
+
+INTEGER_TYPES = [
+    bool,
+    bool_,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint8,
+    uint16,
+    uint32,
+    uint64
+]
+
+#######################################################
+# Allowed types
 
 # Lists allowed modules and maps them to C++ namespaces for code generation
 _ALLOWED_MODULES = {
@@ -938,9 +1009,17 @@ def ismodule_and_allowed(var):
     return False
 
 
-def isallowed(var):
-    """ Returns True if a given object is allowed in a DaCe program. """
+def isallowed(var, allow_recursive=False):
+    """ Returns True if a given object is allowed in a DaCe program.
+
+        :param allow_recursive: whether to allow dicts or lists containing constants.
+    """
     from dace.symbolic import symbol
+
+    if allow_recursive:
+        if isinstance(var, (list, tuple)):
+            return all(isallowed(v, allow_recursive=False) for v in var)
+
     return isconstant(var) or ismodule(var) or isinstance(
         var, symbol) or isinstance(var, typeclass)
 
@@ -1038,9 +1117,41 @@ def deduplicate(iterable):
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
+    if name in {'True', 'False', 'None'}:
+        return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
+
+
+def can_access(schedule: ScheduleType, storage: StorageType):
+    """
+    Identifies whether a container of a storage type can be accessed in a specific schedule.
+    """
+    if storage == StorageType.Register:
+        return True
+
+    if schedule in [
+            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Default,
+    ]:
+        return storage in [
+            StorageType.GPU_Global, StorageType.GPU_Shared,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+        return storage in [
+            StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned,
+            StorageType.CPU_ThreadLocal
+        ]
+    elif schedule in [ScheduleType.FPGA_Device]:
+        return storage in [
+            StorageType.FPGA_Local, StorageType.FPGA_Global,
+            StorageType.FPGA_Registers, StorageType.FPGA_ShiftRegister,
+            StorageType.CPU_Pinned
+        ]
+    elif schedule == ScheduleType.Sequential:
+        raise ValueError("Not well defined")
 
 
 def can_allocate(storage: StorageType, schedule: ScheduleType):
@@ -1077,6 +1188,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_Default
         ]
 
     # The rest (Registers) can be allocated everywhere

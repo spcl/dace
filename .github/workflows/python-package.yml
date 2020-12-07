@@ -1,0 +1,143 @@
+# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+
+name: Build and Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7]
+        strict-xforms: [1,0]
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt-get install -y libyaml-dev cmake
+        sudo apt-get install -y libblas-dev
+        sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
+        sudo apt-get install -y verilator # RTL simulation dependencies
+        python -m pip install --upgrade pip
+        pip install flake8 pytest coverage codecov
+        pip install tensorflow==1.15.0
+        pip install -e ".[testing]"
+
+    - name: Test dependencies
+      run: |
+        papi_avail
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator"
+        codecov
+    - name: Run other tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        ./tests/polybench_test.sh
+        ./tests/xform_test.sh
+        coverage combine .; coverage report; coverage xml
+        codecov
+
+  test-heterogeneous:
+    runs-on: [self-hosted, linux, gpu, intel-fpga, xilinx-fpga]
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -rf .dacecache tests/.dacecache
+        . /opt/setupenv
+        python -m pip install --upgrade pip
+        pip install flake8 pytest coverage codecov
+        pip install mpi4py
+        pip uninstall -y dace
+        pip install -e ".[testing]"
+
+    - name: Test dependencies
+      run: |
+        papi_avail
+        nvidia-smi
+
+    - name: Test with pytest
+      run: |
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        . /opt/setupenv
+        pytest --cov-report=xml --cov=dace --tb=short -m "gpu or verilator"
+        codecov
+
+    - name: Run PAPI tests
+      run: |
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        . /opt/setupenv
+        pytest --cov-report=xml --cov=dace --tb=short -m "papi"
+        codecov
+    
+    - name: Run extra GPU tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        ./tests/cuda_test.sh
+
+    - name: Run MPI tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        ./tests/mpi_test.sh
+
+    - name: Run Xilinx tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        ./tests/xilinx_test.sh 0
+    
+    - name: Run Intel FPGA tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_single_cache=1
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        . /opt/setupenv
+        export DACE_compiler_default_data_types=C
+        ./tests/intel_fpga_test.sh
+        
+    - name: Report overall coverage
+      run: |
+        export COVERAGE_RCFILE=`pwd`/.coveragerc
+        . /opt/setupenv
+        coverage combine . */; coverage report; coverage xml
+        codecov

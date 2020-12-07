@@ -4,14 +4,6 @@ dace.transformation.interstate package
 Submodules
 ----------
 
-dace.transformation.interstate.double\_buffering module
--------------------------------------------------------
-
-.. automodule:: dace.transformation.interstate.double_buffering
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.transformation.interstate.fpga\_transform\_sdfg module
 -----------------------------------------------------------
 
@@ -36,10 +28,42 @@ dace.transformation.interstate.gpu\_transform\_sdfg module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.interstate.loop\_detection module
+---------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.loop_detection
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.interstate.loop\_peeling module
+---------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.loop_peeling
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.interstate.loop\_unroll module
+---------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.loop_unroll
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.interstate.sdfg\_nesting module
 ---------------------------------------------------
 
 .. automodule:: dace.transformation.interstate.sdfg_nesting
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.interstate.state\_elimination module
+---------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.state_elimination
    :members:
    :undoc-members:
    :show-inheritance:
@@ -52,6 +76,13 @@ dace.transformation.interstate.state\_fusion module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.interstate.transient\_reuse module
+---------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.transient_reuse
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Module contents
 ---------------

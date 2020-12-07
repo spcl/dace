@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the orthogonal
     tiling transformation. """
 
@@ -5,12 +6,12 @@ from dace import registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MapTiling(pattern_matching.Transformation):
+class MapTiling(transformation.Transformation):
     """ Implements the orthogonal tiling transformation.
 
         Orthogonal tiling is a type of nested map fission that creates tiles
@@ -76,8 +77,7 @@ class MapTiling(pattern_matching.Transformation):
                 tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[-1])
                 tile_stride = symbolic.pystr_to_symbolic(tile_strides[-1])
             else:
-                tile_size = symbolic.pystr_to_symbolic(
-                    self.tile_sizes[dim_idx])
+                tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[dim_idx])
                 tile_stride = symbolic.pystr_to_symbolic(tile_strides[dim_idx])
 
             dim_idx -= removed_maps
@@ -111,8 +111,7 @@ class MapTiling(pattern_matching.Transformation):
             if last_map_entry:
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
-                    MapCollapse._outer_map_entry:
-                    graph.node_id(last_map_entry),
+                    MapCollapse._outer_map_entry: graph.node_id(last_map_entry),
                     MapCollapse._inner_map_entry: graph.node_id(new_map_entry)
                 }
                 mapcollapse = MapCollapse(sdfg_id, self.state_id,

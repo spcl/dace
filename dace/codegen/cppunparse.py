@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 # This module is derived from astunparse: https://github.com/simonpercivall/astunparse
 ##########################################################################
 ### astunparse LICENSES
@@ -77,7 +78,9 @@ import numpy as np
 import os
 import tokenize
 import dace
+from numbers import Number
 from six import StringIO
+from dace import dtypes
 from dace.codegen.tools import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -86,7 +89,8 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr",
+                  "inf": "INFINITY", "nan": "NAN"}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
@@ -533,7 +537,9 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, tuple):
+            if isinstance(value, Number):
+                self._Num(t)
+            elif isinstance(value, tuple):
                 self.write("(")
                 if len(value) == 1:
                     self._write_constant(value[0])
@@ -717,10 +723,9 @@ class CPPUnparser:
 
     def _Num(self, t):
         repr_n = repr(t.n)
-
-        # For complex values, use type of assignment (if exists), or
-        # double-complex (128-bit) otherwise
-        dtype = self.dtype or 'dace::complex128'
+        # For complex values, use DTYPE_TO_TYPECLASS dictionary
+        if isinstance(t.n, complex):
+            dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
 
         if repr_n.endswith("j"):
             self.write("%s(0, %s)" %
@@ -926,7 +931,11 @@ class CPPUnparser:
         if (isinstance(t.value, (ast.Num, ast.Constant))
                 and isinstance(t.value.n, int)):
             self.write(" ")
-        self.write(".")
+        if (isinstance(t.value, ast.Name) and
+                t.value.id in ("dace::math", "dace::cmath")):
+            self.write("::")
+        else:
+            self.write(".")
         self.write(t.attr)
 
     def _Call(self, t):

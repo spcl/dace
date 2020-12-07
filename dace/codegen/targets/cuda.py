@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from six import StringIO
 import ast
 import ctypes
@@ -11,11 +12,14 @@ from dace.frontend import operations
 from dace import registry, subsets, symbolic, dtypes, data as dt
 from dace.config import Config
 from dace.sdfg import nodes
-from dace.sdfg import ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel_gpu, is_array_stream_view, has_dynamic_map_inputs, dynamic_map_inputs
+from dace.sdfg import (ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope,
+                       is_devicelevel_gpu, is_array_stream_view,
+                       has_dynamic_map_inputs, dynamic_map_inputs)
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute, DefinedType)
+                                         make_absolute)
+from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split,
                                       cpp_array_expr, synchronize_streams,
                                       memlet_copy_to_absolute_strides,
@@ -211,6 +215,7 @@ int __dace_init_cuda({params}) {{
     // Initialize {backend} before we run the application
     float *dev_X;
     {backend}Malloc((void **) &dev_X, 1);
+    {backend}Free(dev_X);
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -569,8 +574,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if (isinstance(e.src, nodes.EntryNode)
                             and e.src.schedule in dtypes.GPU_SCHEDULES):
                         e.src._cs_childpath = False
-                    elif state.scope_dict()[e.src] is not None:
-                        parent = state.scope_dict()[e.src]
+                    elif state.entry_node(e.src) is not None:
+                        parent = state.entry_node(e.src)
                         if parent.schedule in dtypes.GPU_SCHEDULES:
                             e.src._cs_childpath = False
                 else:
@@ -604,11 +609,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     path = graph.memlet_path(e)
                     # If leading from/to a GPU memory node, keep stream
                     if ((isinstance(path[0].src, nodes.AccessNode)
-                         and path[0].src.desc(
-                             cur_sdfg).storage == dtypes.StorageType.GPU_Global)
+                         and path[0].src.desc(cur_sdfg).storage
+                         == dtypes.StorageType.GPU_Global)
                             or (isinstance(path[-1].dst, nodes.AccessNode)
-                                and path[-1].dst.desc(cur_sdfg).storage ==
-                                dtypes.StorageType.GPU_Global)):
+                                and path[-1].dst.desc(cur_sdfg).storage
+                                == dtypes.StorageType.GPU_Global)):
                         break
                     # If leading from/to a GPU tasklet, keep stream
                     if ((isinstance(path[0].src, nodes.CodeNode)
@@ -675,12 +680,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if (isinstance(src_node, nodes.AccessNode)
                 and isinstance(dst_node, nodes.AccessNode)
-                and not self._in_device_code and (src_storage in [
-                    dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
-                ] or dst_storage in [
-                    dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
-                ]) and not (src_storage in cpu_storage_types
-                            and dst_storage in cpu_storage_types)):
+                and not self._in_device_code and
+            (src_storage
+             in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
+             or dst_storage
+             in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned])
+                and not (src_storage in cpu_storage_types
+                         and dst_storage in cpu_storage_types)):
             src_location = 'Device' if src_storage == dtypes.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == dtypes.StorageType.GPU_Global else 'Host'
 
@@ -918,7 +924,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     function_stream, callsite_stream):
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
-            src_parent = dfg.scope_dict()[src_node]
+            src_parent = dfg.entry_node(src_node)
             dst_schedule = None if src_parent is None else src_parent.map.schedule
         else:
             src_storage = src_node.desc(sdfg).storage
@@ -928,12 +934,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         else:
             dst_storage = dst_node.desc(sdfg).storage
 
-        dst_parent = dfg.scope_dict()[dst_node]
+        dst_parent = dfg.entry_node(dst_node)
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
 
         # Emit actual copy
         self._emit_copy(state_id, src_node, src_storage, dst_node, dst_storage,
                         dst_schedule, memlet, sdfg, dfg, callsite_stream)
+
+    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
+                          edge, function_stream, callsite_stream):
+        self._cpu_codegen.define_out_memlet(sdfg, state_dfg, state_id, src_node,
+                                            dst_node, edge, function_stream,
+                                            callsite_stream)
+
+    def process_out_memlets(self, *args, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
 
     def generate_state(self, sdfg, state, function_stream, callsite_stream):
         # Two modes: device-level state and if this state has active streams
@@ -1603,7 +1619,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         scope_entry = dfg_scope.source_nodes()[0]
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
         allocated = set()
-        for child in dfg_scope.scope_dict(node_to_children=True)[node]:
+        for child in dfg_scope.scope_children()[node]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
@@ -1658,7 +1674,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._grid_dims = None
 
     def get_next_scope_entries(self, dfg, scope_entry):
-        parent_scope_entry = dfg.scope_dict()[scope_entry]
+        parent_scope_entry = dfg.entry_node(scope_entry)
         # We're in a nested SDFG, use full graph
         if parent_scope_entry is None:
             parent_scope = dfg
@@ -1904,7 +1920,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Emit internal array allocation (deallocation handled at MapExit)
         to_allocate = dace.sdfg.local_transients(sdfg, dfg_scope, scope_entry)
         allocated = set()
-        for child in dfg_scope.scope_dict(node_to_children=True)[scope_entry]:
+        for child in dfg_scope.scope_children()[scope_entry]:
             if not isinstance(child, nodes.AccessNode):
                 continue
             if child.data not in to_allocate or child.data in allocated:
@@ -1969,7 +1985,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Optimize conditions if they are always true
                 if i >= 3 or (dsym[i] >= minel) != True:
                     condition += '%s >= %s' % (v, _topy(minel))
-                if i >= 3 or (dsym_end[i] < maxel) != False:
+                if i >= 3 or (dsym_end[i] < maxel) != True:
                     if len(condition) > 0:
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
@@ -2064,10 +2080,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
                                         function_stream, callsite_stream)
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
-                              sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node,
+                              memlet_references, sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, state, node, memlet_references, sdfg_label)
+            sdfg, state, state_id, node, memlet_references, sdfg_label)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
                             sdfg_label):
@@ -2075,8 +2091,9 @@ void  *{kname}_args[] = {{ {kargs} }};
                                                      memlet_references,
                                                      sdfg_label)
 
-    def generate_nsdfg_arguments(self, sdfg, state, node):
-        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, node)
+    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
+        result = self._cpu_codegen.generate_nsdfg_arguments(
+            sdfg, dfg, state, node)
         if self.create_grid_barrier:
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 
@@ -2113,6 +2130,9 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
                                             function_stream, callsite_stream)
+
+    def make_ptr_vector_cast(self, *args, **kwargs):
+        return cpp.make_ptr_vector_cast(*args, **kwargs)
 
 
 ########################################################################

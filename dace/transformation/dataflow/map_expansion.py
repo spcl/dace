@@ -1,12 +1,14 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-expansion transformation. """
 
-from typing import Dict
+from dace.sdfg.utils import consolidate_edges
+from typing import Dict, List
 import dace
 from dace import dtypes, registry, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
-from dace.transformation import pattern_matching as pm
+from dace.transformation import transformation as pm
 
 
 @registry.autoregister_params(singlestate=True)
@@ -22,33 +24,33 @@ class MapExpansion(pm.Transformation):
           3. Edges for dynamic map ranges replicate until reaching range(s)
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = pm.PatternNode(nodes.MapEntry)
 
     @staticmethod
     def expressions():
-        return [sdutil.node_path_graph(MapExpansion._map_entry)]
+        return [sdutil.node_path_graph(MapExpansion.map_entry)]
 
     @staticmethod
-    def can_be_applied(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[dace.sdfg.nodes.Node, int],
+    def can_be_applied(graph: dace.SDFGState,
+                       candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
                        strict: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
-        map_entry = graph.nodes()[candidate[MapExpansion._map_entry]]
+        map_entry = graph.node(candidate[MapExpansion.map_entry])
         return map_entry.map.get_param_num() > 1
 
     @staticmethod
-    def match_to_str(graph: dace.sdfg.graph.OrderedMultiDiConnectorGraph,
-                     candidate: Dict[dace.sdfg.nodes.Node, int]):
-        map_entry = graph.nodes()[candidate[MapExpansion._map_entry]]
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
+                                                            int]) -> str:
+        map_entry = graph.node(candidate[MapExpansion.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
     def apply(self, sdfg: dace.SDFG):
         # Extract the map and its entry and exit nodes.
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[MapExpansion._map_entry]]
+        graph = sdfg.node(self.state_id)
+        map_entry = self.map_entry(sdfg)
         map_exit = graph.exit_node(map_entry)
         current_map = map_entry.map
 
@@ -107,3 +109,20 @@ class MapExpansion(pm.Transformation):
                                   memlet=edge.data,
                                   src_conn=edge.src_conn,
                                   dst_conn=edge.dst_conn)
+
+        from dace.sdfg.scope import ScopeTree
+        scope = None
+        queue: List[ScopeTree] = graph.scope_leaves()
+        while len(queue) > 0:
+            tnode = queue.pop()
+            if tnode.entry == entries[-1]:
+                scope = tnode
+                break
+            elif tnode.parent is not None:
+                queue.append(tnode.parent)
+        else:
+            raise ValueError('Cannot find scope in state')
+
+        consolidate_edges(sdfg, scope)
+
+        return [map_entry] + entries

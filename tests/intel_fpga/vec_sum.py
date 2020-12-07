@@ -1,5 +1,8 @@
-# Vector addition with explicit dataflow. Computes Z += X + Y
-# Can be used for simple vectorization test
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+""" 
+Vector addition with explicit dataflow. Computes Z += X + Y
+Can be used for simple vectorization test
+"""
 
 import dace
 import numpy as np

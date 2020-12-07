@@ -1,12 +1,22 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for half-precision syntax quirks. """
 
 import dace
 import numpy as np
+import pytest
 
 N = dace.symbol('N')
 
 
+def _config():
+    # Prerequisite for tests: CUDA compute capability >= 6.0
+    dace.Config.set('compiler', 'cuda', 'cuda_arch', value='60')
+
+
+@pytest.mark.gpu
 def test_relu():
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
@@ -24,7 +34,10 @@ def test_relu():
     assert np.allclose(out, np.maximum(A, 0))
 
 
+@pytest.mark.gpu
 def test_relu_2():
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N]):
         out = np.ndarray([N], dace.float16)
@@ -42,7 +55,10 @@ def test_relu_2():
     assert np.allclose(out, np.maximum(A, 0))
 
 
+@pytest.mark.gpu
 def test_dropout():
+    _config()
+
     @dace.program
     def halftest(A: dace.float16[N], mask: dace.int32[N]):
         out = np.ndarray([N], dace.float16)

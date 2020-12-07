@@ -1,10 +1,11 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 from copy import deepcopy as dc
 from dace.config import Config
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.transformation.pattern_matching import ExpandTransformation
+from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
 

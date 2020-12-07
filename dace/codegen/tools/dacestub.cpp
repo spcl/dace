@@ -1,6 +1,7 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 /**
  * Stub library that can load other libraries for use in as DaCe programs
-**/
+ **/
 
 #ifdef _WIN32
     #include <windows.h>

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import dace.library
 
@@ -6,7 +7,7 @@ def _find_mkl_include():
         return [os.path.join(os.environ['MKLROOT'], 'include')]
     else:
         return []
-    
+
 @dace.library.environment
 class IntelMKL:
 

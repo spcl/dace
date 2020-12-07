@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import re
 import fpga_transpose

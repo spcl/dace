@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 # Executes polybench kernels for correctness check, by default on both Xilinx and Intel FPGA
 # Tests have also a timeout time (defined in variable) TEST_TIMEOUT

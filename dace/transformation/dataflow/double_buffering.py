@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """Contains classes that implement the double buffering pattern. """
 
 import copy
@@ -7,13 +8,13 @@ from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
 @registry.autoregister_params(singlestate=True)
-class DoubleBuffering(pattern_matching.Transformation):
+class DoubleBuffering(transformation.Transformation):
     """ Implements the double buffering pattern, which pipelines reading
         and processing data by creating a second copy of the memory.
         In particular, the transformation takes a 1D map and all internal
@@ -80,8 +81,8 @@ class DoubleBuffering(pattern_matching.Transformation):
         map_rstart, map_rend, map_rstride = map_entry.map.range[0]
         map_rend = symbolic.pystr_to_symbolic('(%s) - (%s)' %
                                               (map_rend, map_rstride))
-        map_entry.map.range = subsets.Range([(map_rstart, map_rend,
-                                              map_rstride)])
+        map_entry.map.range = subsets.Range([(map_rstart, map_rend, map_rstride)
+                                             ])
 
         ##############################
         # Gather transients to modify
@@ -180,6 +181,15 @@ class DoubleBuffering(pattern_matching.Transformation):
         for e in dup_nstate.edges():
             final_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
+        # If there is a WCR output with transient, only output in last state
+        nstate: sd.SDFGState
+        for node in nstate.sink_nodes():
+            for e in list(nstate.in_edges(node)):
+                if e.data.wcr is not None:
+                    path = nstate.memlet_path(e)
+                    if isinstance(path[0].src, nodes.AccessNode):
+                        nstate.remove_memlet_path(e)
+
         ##############################
         # Add reads into next buffers to main state
         for edge in edges_to_replace:
@@ -209,6 +219,8 @@ class DoubleBuffering(pattern_matching.Transformation):
         del nsdfg_node.sdfg.symbols['__dace_db_param']
         del nsdfg_node.symbol_mapping['__dace_db_param']
 
+        return nsdfg_node
+
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):
         desc = sdfg.arrays[data_name]
@@ -216,8 +228,8 @@ class DoubleBuffering(pattern_matching.Transformation):
             # Already in the right shape, modify new dimension
             subset = list(subset)[1:]
 
-        new_subset = subsets.Range([('__dace_db_param', '__dace_db_param',
-                                     1)] + list(subset))
+        new_subset = subsets.Range([('__dace_db_param', '__dace_db_param', 1)] +
+                                   list(subset))
         return new_subset
 
     @staticmethod

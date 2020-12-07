@@ -1,3 +1,4 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #include <cuda_runtime.h>
@@ -32,7 +33,7 @@ class CublasHandle {
  public:
   /// Returns the singleton instance associated with the current thread.
   static cublasHandle_t& Get(int device) {
-    static thread_local CublasHandle singleton;
+    static /*thread_local*/ CublasHandle singleton;
     return singleton._Get(device);
   }
 

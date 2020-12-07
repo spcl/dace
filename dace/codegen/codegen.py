@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import os
 from typing import List
@@ -7,17 +8,12 @@ from dace import data
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
-from dace.sdfg.infer_types import infer_connector_types
+from dace.sdfg import infer_types
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
-
-
-class CodegenError(Exception):
-    pass
-
 
 def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
@@ -101,7 +97,10 @@ def generate_code(sdfg) -> List[CodeObject]:
         sdfg = sdfg2
 
     # Before generating the code, run type inference on the SDFG connectors
-    infer_connector_types(sdfg)
+    infer_types.infer_connector_types(sdfg)
+
+    # Set default storage/schedule types in SDFG
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     frame = framecode.DaCeCodeGenerator()
 
@@ -162,6 +161,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                        'h',
                        cpu.CPUCodeGen,
                        'CallHeader',
+                       target_type='../../include',
                        linkable=False)
     target_objects.append(dummy)
 
@@ -170,7 +170,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        generate_dummy(sdfg),
                        'cpp',
                        cpu.CPUCodeGen,
-                       'DummyMain',
+                       'SampleMain',
+                       target_type='../../sample',
                        linkable=False)
     target_objects.append(dummy)
 

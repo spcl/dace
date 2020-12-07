@@ -1,3 +1,11 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+
+//------------------------------------------------------------------------
+// Adapted from "MAPS: GPU Optimization and Memory Abstraction Framework"
+// https://github.com/maps-gpu/MAPS
+// Copyright (c) 2015, A. Barak
+// All rights reserved.
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 //
@@ -6,7 +14,7 @@
 // * Redistributions in binary form must reproduce the above copyright notice,
 //   this list of conditions and the following disclaimer in the documentation
 //   and/or other materials provided with the distribution.
-// * Neither the names of the copyright holders nor the names of its 
+// * Neither the names of the copyright holders nor the names of its
 //   contributors may be used to endorse or promote products derived from this
 //   software without specific prior written permission.
 //
@@ -21,6 +29,8 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
+//------------------------------------------------------------------------
+
 #ifndef __DACE_CUDACOPY_CUH
 #define __DACE_CUDACOPY_CUH
 
@@ -37,8 +47,6 @@
 
 namespace dace
 {
-    // Adapted from "MAPS: GPU Optimization and Memory Abstraction Framework"
-    // https://github.com/maps-gpu/MAPS
 
     // Converts from an integral amount of bytes to a type.
     template <int BYTES>

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.frontend.tensorflow import TFSession
 import numpy as np
 import tensorflow as tf

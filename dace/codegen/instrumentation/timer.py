@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, registry
 from dace.sdfg.nodes import CodeNode
 from dace.codegen.instrumentation.provider import InstrumentationProvider

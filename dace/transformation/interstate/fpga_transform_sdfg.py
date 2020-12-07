@@ -1,13 +1,14 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import networkx as nx
 
 from dace import registry
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 
 
 @registry.autoregister
-class FPGATransformSDFG(pattern_matching.Transformation):
+class FPGATransformSDFG(transformation.Transformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
     @staticmethod

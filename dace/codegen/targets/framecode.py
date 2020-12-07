@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Optional, Set, Tuple
 
 import collections
@@ -6,16 +7,17 @@ import dace
 import functools
 import re
 from dace.codegen import control_flow as cflow
+from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import codeblock_to_cpp
-from dace.codegen.targets.target import TargetCodeGenerator, TargetDispatcher
+from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.targets.cpp import unparse_interstate_edge
+from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
 
 from dace.frontend.python import wrappers
-from dace.codegen import cppunparse
 
 import networkx as nx
 import numpy as np
@@ -26,7 +28,7 @@ class DaCeCodeGenerator(object):
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
     def __init__(self, *args, **kwargs):
-        self._dispatcher = TargetDispatcher()
+        self._dispatcher = disp.TargetDispatcher()
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
@@ -56,7 +58,7 @@ class DaCeCodeGenerator(object):
             else:
                 callsite_stream.write(
                     "constexpr %s %s = %s;\n" %
-                    (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
+                    (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
     def generate_fileheader(self,
                             sdfg: SDFG,
@@ -392,9 +394,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                        global_stream)
 
     @staticmethod
-    def _generate_assignments(assignments):
+    def _generate_assignments(assignments, sdfg):
         return [
-            "{} = {}".format(variable, value)
+            "{} = {}".format(variable, unparse_interstate_edge(value, sdfg))
             for variable, value in assignments.items()
         ]
 
@@ -404,9 +406,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
     def _generate_transition(self, sdfg, sid, callsite_stream, edge,
                              assignments):
-
-        condition_string = cppunparse.cppunparse(edge.data.condition.code,
-                                                 False)
+        condition_string = unparse_interstate_edge(edge.data.condition.code[0],
+                                                   sdfg)
         always_true = self._is_always_true(condition_string)
 
         if not always_true:
@@ -416,7 +417,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         if len(assignments) > 0:
             callsite_stream.write(
                 ";\n".join(
-                    DaCeCodeGenerator._generate_assignments(assignments) +
+                    DaCeCodeGenerator._generate_assignments(assignments, sdfg) +
                     [""]), sdfg, sid)
 
         callsite_stream.write(
@@ -502,7 +503,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                                 assignment_edge = control.scope.assignment.edge
                                 init_assignments = ", ".join(
                                     DaCeCodeGenerator._generate_assignments(
-                                        assignment_edge.data.assignments))
+                                        assignment_edge.data.assignments, sdfg))
                                 generated_edges.add(assignment_edge)
                             else:
                                 init_assignments = ""
@@ -510,12 +511,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                             back_edge = control.scope.back.edge
                             continue_assignments = ", ".join(
                                 DaCeCodeGenerator._generate_assignments(
-                                    back_edge.data.assignments))
+                                    back_edge.data.assignments, sdfg))
                             generated_edges.add(back_edge)
 
                             entry_edge = control.scope.entry.edge
-                            condition = cppunparse.cppunparse(
-                                entry_edge.data.condition.code, False)
+                            condition = unparse_interstate_edge(
+                                entry_edge.data.condition.code[0], sdfg)
                             generated_edges.add(entry_edge)
 
                             if (len(init_assignments) > 0
@@ -578,8 +579,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
                             then_entry = then_scope.entry.edge
 
-                            condition = cppunparse.cppunparse(
-                                then_entry.data.condition.code, False)
+                            condition = unparse_interstate_edge(
+                                then_entry.data.condition.code[0], sdfg)
 
                             callsite_stream.write(
                                 "if ({}) {{".format(condition), sdfg, sid)
@@ -659,7 +660,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     callsite_stream.write(
                         ";\n".join(
                             DaCeCodeGenerator._generate_assignments(
-                                assignments_to_generate) + [""]), sdfg, sid)
+                                assignments_to_generate, sdfg) + [""]), sdfg,
+                        sid)
                 generated_edges.add(edge)
                 # End of out_edges loop
 
@@ -700,13 +702,17 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
 
-        # Set default storage/schedule types in SDFG
-        set_default_schedule_and_storage_types(sdfg, schedule)
-
         is_top_level = sdfg.parent is None
 
         # Generate code
         ###########################
+        
+        # Keep track of allocated variables
+        allocated = set()
+
+        # Add symbol mappings to allocated variables
+        if sdfg.parent_nsdfg_node is not None:
+            allocated |= sdfg.parent_nsdfg_node.symbol_mapping.keys()
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -715,7 +721,6 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
-        allocated = set()
         for state in sdfg.nodes():
             for node in state.data_nodes():
                 if (node.data in shared_transients
@@ -727,9 +732,17 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
+        global_symbols.update(
+            {aname: arr.dtype
+             for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
         for e in sdfg.edges():
             symbols = e.data.new_symbols(global_symbols)
+            # Inferred symbols only take precedence if global symbol not defined
+            symbols = {
+                k: v if k not in global_symbols else global_symbols[k]
+                for k, v in symbols.items()
+            }
             interstate_symbols.update(symbols)
             global_symbols.update(symbols)
 
@@ -853,6 +866,13 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if any([len(set(c) - internal_nodes) > 1 for c in cycles]):
                     continue
 
+                # Filter out loops with conditions and assignments that would
+                # generate code within the loop
+                if (entry_edge.data.assignments or exit_edge.data.assignments
+                        or not back_edge.data.is_unconditional()
+                        or not previous_edge.data.is_unconditional()):
+                    continue
+
                 # This is a loop! Generate the necessary annotation objects.
                 loop_scope = cflow.LoopScope(internal_nodes)
 
@@ -924,12 +944,14 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
+                left_nodes.add(left) # left also belong to scope
+
                 right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                all_nodes = left_nodes | right_nodes
-
+                right_nodes.add(right) # right also belong to scope
+                
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:
                     continue
