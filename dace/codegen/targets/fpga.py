@@ -723,9 +723,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                 dace.StorageType.FPGA_Registers
                             ]):
                         # Language-specific
-                        self.generate_no_dependence_pre(node.data,
-                                                        callsite_stream, sdfg,
-                                                        state_id, dst_node)
+                        self.generate_no_dependence_pre(callsite_stream, sdfg,
+                                                        state_id, dst_node,node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
@@ -801,8 +800,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
-                    self.generate_no_dependence_post(node.data, callsite_stream,
-                                                     sdfg, state_id, dst_node)
+                    self.generate_no_dependence_post(callsite_stream,
+                                                     sdfg, state_id, dst_node, node.data)
 
             # Loop outtro
             for _ in range(num_loops):

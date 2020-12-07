@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Computes C = AB + C
 # This sample build on matrix_multiplication_systolic by adding
 # vectorization. Input/output matrices use plain data types (e.g. float) , while the systolic arrays
 # used data type depends on the used vectorization width (e.g., float16 for vec_width = 16)
@@ -168,6 +169,7 @@ def make_write_C(state, sdfg, vec_width):
     # as gear boxing works on local data only (not global memory)
 
     pipe = state.add_read("C_pipe")
+    mem_read = state.add_read("C_device")
     mem = state.add_write("C_device")
 
     entry_map, exit_map = state.add_map("write_C", {
@@ -193,6 +195,7 @@ def make_write_C(state, sdfg, vec_width):
     # then we transfer them to the output stream
     copy_in_tasklet = state.add_tasklet('copy_from_stream_C', {'in_con'},
                                         {'out_con'}, 'out_con = in_con')
+
     state.add_memlet_path(pipe,
                           entry_map,
                           copy_in_tasklet,
@@ -205,13 +208,21 @@ def make_write_C(state, sdfg, vec_width):
                           memlet=dace.Memlet("vec_data_C"))
 
     #then we copy that to memory
-    tasklet = state.add_tasklet("write_C", {"from_kernel"}, {"to_memory"},
-                                "to_memory = from_kernel")
+    tasklet = state.add_tasklet("write_C", {"from_kernel", "prev_c"}, {"to_memory"},
+                                "to_memory = from_kernel + prev_c")
     state.add_memlet_path(vect_data,
                           write_map_entry,
                           tasklet,
                           dst_conn="from_kernel",
                           memlet=dace.Memlet("vec_data_C[m1]"))
+
+    state.add_memlet_path(mem_read,
+                          entry_map,
+                          write_map_entry,
+                          tasklet,
+                          dst_conn="prev_c",
+                          memlet=dace.Memlet("C_device[n, m0*{}+m1]".format(vec_width)))
+
     state.add_memlet_path(tasklet,
                           write_map_exit,
                           exit_map,
@@ -405,7 +416,7 @@ if n1 <= p:
 def make_fpga_state(sdfg, vec_width=1):
     vec_type = dace.vector(dace.float32, vec_width)
 
-    state = sdfg.add_state("mm")
+    state = sdfg.add_state("gemm")
 
     sdfg.add_stream("A_pipe",
                     dace.float32,
@@ -437,10 +448,10 @@ def make_sdfg(specialized):
     vec_width = 16
 
     if specialized:
-        sdfg = dace.SDFG("mm_fpga_systolic_vectorized_{}_{}x{}x{}".format(
+        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_{}_{}x{}x{}".format(
             P.get(), N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("mm_fpga_systolic_vectorized_{}_NxKx{}".format(
+        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_{}_NxKx{}".format(
             P.get(), M.get()))
 
     pre_state = make_copy_to_fpga_state(sdfg)
@@ -493,20 +504,19 @@ if __name__ == "__main__":
     C = np.ndarray([N.get(), M.get()], dtype=dace.float32.type)
     A[:] = np.random.rand(N.get(), K.get()).astype(dace.float32.type)
     B[:] = np.random.rand(K.get(), M.get()).astype(dace.float32.type)
-    C[:] = dace.float32(0)
+    C[:] = np.random.rand(K.get(), M.get()).astype(dace.float32.type)
 
-    A_regression = np.ndarray([N.get(), K.get()], dtype=np.float32)
-    B_regression = np.ndarray([K.get(), M.get()], dtype=np.float32)
     C_regression = np.ndarray([N.get(), M.get()], dtype=np.float32)
-    A_regression[:] = A[:]
-    B_regression[:] = B[:]
-    C_regression[:] = C[:]
+
+    # compute ground truth
+    C_regression = A@B +C
+
 
     if args["specialize"]:
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    diff = np.linalg.norm(C_regression - C) / float(M.get() * K.get())
     if diff > 1e-6:
         raise ValueError(f"Verification failed, difference: {diff}")
     else:
