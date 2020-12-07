@@ -354,13 +354,13 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor):
+                                  packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
             raise TypeError("Intel shift register must be an array: "
                             "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b,
-                                    self._global_sdfg.data(var_name).shape, 1)
+                                    sdfg.data(var_name).shape, 1)
         res = """
 #pragma unroll
 for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
@@ -413,6 +413,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          scalar_parameters, symbol_parameters,
          nested_global_transients) = self.make_parameters(
              sdfg, state, subgraphs)
+
+        # Ignore interface ID in this backend
+        global_data_parameters = [tuple(p[:3]) for p in global_data_parameters]
+        subgraph_parameters = {
+            k: [tuple(vv[:3]) for vv in v]
+            for k, v in subgraph_parameters.items()
+        }
 
         # Scalar parameters are never output
         sc_parameters = [(False, pname, param)
@@ -532,17 +539,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         is_autorun = len(kernel_args_opencl) == 0
 
         # create a unique module name to prevent name clashes
-        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
-
-        # The official limit suggested by Intel is 61. However, the compiler
+        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
+        # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
         # 61 - 15 = 46, and round down to 42 to be conservative.
-        if len(module_function_name) > 42:
-            raise NameTooLongError(
-                "Due to a bug in the Intel FPGA OpenCL compiler, "
-                "kernel names cannot be longer than 42 characters:\n\t{}".
-                format(module_function_name))
+        # Therefore we cut down names longer than that
+        module_function_name = module_function_name[0:42]
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -937,7 +940,7 @@ __kernel void \\
                                                   memlet_type)
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
-                    qualifiers = "__global volatile "
+                    qualifiers = "__global "
                 else:
                     qualifiers = ""
                 ctype = '{}{} *'.format(qualifiers, memlet_type)
@@ -1086,12 +1089,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         if not node.code:
             return ''
 
-        # If raw C++ code, return the code directly
+        # If raw C++ or OpenCL code, return the code directly
         if node.language != dtypes.Language.Python:
-            if node.language != dtypes.Language.CPP:
+            if node.language != dtypes.Language.CPP and node.language != dtypes.Language.OpenCL:
                 raise ValueError(
-                    "Only Python or C++ code supported in CPU codegen, got: {}".
-                    format(node.language))
+                    "Only Python, C++ and OpenCL code are supported in Intel FPGA codegen, got: {}"
+                    .format(node.language))
             callsite_stream.write(
                 type(node).__properties__["code"].to_string(node.code), sdfg,
                 state_id, node)

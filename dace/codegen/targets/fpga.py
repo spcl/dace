@@ -8,6 +8,7 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
+from typing import Dict
 
 import dace
 from dace.codegen.targets import cpp
@@ -171,7 +172,12 @@ class FPGACodeGen(TargetCodeGenerator):
                                                    function_stream,
                                                    callsite_stream)
             # Create a unique kernel name to avoid name clashes
-            kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
+            # If this kernels comes from a Nested SDFG, use that name also
+            if sdfg.parent_nsdfg_node is not None:
+                kernel_name = "{}_{}_{}".format(sdfg.parent_nsdfg_node.label,
+                                                state.label, sdfg.sdfg_id)
+            else:
+                kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
@@ -232,10 +238,14 @@ class FPGACodeGen(TargetCodeGenerator):
 
         global_data_parameters = []
         global_data_names = set()
+        # Count appearances of each global array to create multiple interfaces
+        global_interfaces: Dict[str, int] = collections.defaultdict(int)
+
         top_level_local_data = []
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
+
         for subgraph in subgraphs:
             data_to_node.update({
                 node.data: node
@@ -265,10 +275,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage
-                                    == dace.dtypes.StorageType.FPGA_Global
-                                    and n.data
-                                    not in nested_global_transients_seen):
+                                    and n.desc(scope).storage ==
+                                    dace.dtypes.StorageType.FPGA_Global and
+                                    n.data not in nested_global_transients_seen
+                                ):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -282,25 +292,25 @@ class FPGACodeGen(TargetCodeGenerator):
                         or isinstance(data, dace.data.Scalar)
                         or isinstance(data, dace.data.Stream)):
                     if data.storage == dace.dtypes.StorageType.FPGA_Global:
+                        # Get and update global memory interface ID
+                        interface_id = global_interfaces[dataname]
+                        global_interfaces[dataname] += 1
+
                         subgraph_parameters[subgraph].append(
-                            (is_output, dataname, data))
-                        if is_output:
-                            global_data_parameters.append(
-                                (is_output, dataname, data))
-                        else:
-                            global_data_parameters.append(
-                                (is_output, dataname, data))
+                            (is_output, dataname, data, interface_id))
+                        global_data_parameters.append(
+                            (is_output, dataname, data, interface_id))
                         global_data_names.add(dataname)
-                    elif (data.storage
-                          in (dace.dtypes.StorageType.FPGA_Local,
-                              dace.dtypes.StorageType.FPGA_Registers,
-                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage in (
+                            dace.dtypes.StorageType.FPGA_Local,
+                            dace.dtypes.StorageType.FPGA_Registers,
+                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
                             # parameters
                             subgraph_parameters[subgraph].append(
-                                (is_output, dataname, data))
+                                (is_output, dataname, data, None))
                             # Resolve the data to some corresponding node to be
                             # passed to the allocator
                             top_level_local_data.append(dataname)
@@ -453,10 +463,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
 
-            elif (nodedesc.storage
-                  in (dace.dtypes.StorageType.FPGA_Local,
-                      dace.dtypes.StorageType.FPGA_Registers,
-                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage in (
+                    dace.dtypes.StorageType.FPGA_Local,
+                    dace.dtypes.StorageType.FPGA_Registers,
+                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise cgx.CodegenError(
@@ -701,10 +711,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage
-                                    == dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(
+                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage ==
+                                    dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -724,7 +734,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             ]):
                         # Language-specific
                         self.generate_no_dependence_pre(callsite_stream, sdfg,
-                                                        state_id, dst_node,node.data)
+                                                        state_id, dst_node,
+                                                        node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
@@ -783,7 +794,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
                     dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
-                    read_expr, None, is_unpack, packing_factor)
+                    read_expr, None, is_unpack, packing_factor, sdfg)
             else:
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,
@@ -800,8 +811,9 @@ class FPGACodeGen(TargetCodeGenerator):
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
-                    self.generate_no_dependence_post(callsite_stream,
-                                                     sdfg, state_id, dst_node, node.data)
+                    self.generate_no_dependence_post(callsite_stream, sdfg,
+                                                     state_id, dst_node,
+                                                     node.data)
 
             # Loop outtro
             for _ in range(num_loops):
@@ -968,14 +980,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 degenerate_values.append(val)
             fully_degenerate = all(is_degenerate)
 
-            if not fully_degenerate:
-                if node.map.unroll:
-                    self.generate_unroll_loop_pre(result, None, sdfg, state_id,
-                                                  node)
-                elif is_innermost:
-                    self.generate_pipeline_loop_pre(result, sdfg, state_id,
-                                                    node)
-
             # Being this a map (each iteration is independent), we can add pragmas to ignore dependencies on data
             # that is read/written inside this map, if there are no WCR. If there are no WCR at all, we can add
             # a more generic pragma to ignore all loop-carried dependencies.
@@ -1009,27 +1013,33 @@ class FPGACodeGen(TargetCodeGenerator):
             in_out_data = candidates_in.intersection(candidates_out)
 
             # add pragmas
-            if not node.map.unroll:
-                if len(in_out_data) > 0 and is_there_a_wcr == False:
-                    # add pragma to ignore all loop carried dependencies
-                    self.generate_no_dependence_pre(result, sdfg, state_id,
-                                                    node)
-                else:
-                    # add specific pragmas
-                    for candidate in in_out_data:
-                        self.generate_no_dependence_pre(result, sdfg, state_id,
-                                                        node, candidate)
 
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
                 for i, r in enumerate(node.map.range):
 
-                    if is_innermost and not fully_degenerate and not is_degenerate[
-                            i]:
-                        # Do not put pragma if this is degenerate (does not exist)
-                        self.generate_flatten_loop_pre(result, sdfg, state_id,
-                                                       node)
+                    # Add pragmas
+                    if not fully_degenerate and not is_degenerate[i]:
+                        if node.map.unroll:
+                            self.generate_unroll_loop_pre(
+                                result, None, sdfg, state_id, node)
+                        elif is_innermost:
+                            self.generate_pipeline_loop_pre(
+                                result, sdfg, state_id, node)
+                            # Do not put pragma if this is degenerate (loop does not exist)
+                            self.generate_flatten_loop_pre(
+                                result, sdfg, state_id, node)
+                        if not node.map.unroll:
+                            if len(in_out_data) > 0 and is_there_a_wcr == False:
+                                # add pragma to ignore all loop carried dependencies
+                                self.generate_no_dependence_pre(
+                                    result, sdfg, state_id, node)
+                            else:
+                                # add specific pragmas
+                                for candidate in in_out_data:
+                                    self.generate_no_dependence_pre(
+                                        result, sdfg, state_id, node, candidate)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1080,6 +1090,13 @@ class FPGACodeGen(TargetCodeGenerator):
                                 loop_var_type, var, cpp.sym2cpp(begin), var,
                                 cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                             sdfg, state_id, node)
+
+                    #Add unroll pragma
+                    if not fully_degenerate and not is_degenerate[
+                            i] and node.map.unroll:
+                        self.generate_unroll_loop_post(result, None, sdfg,
+                                                       state_id, node)
+
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -1097,11 +1114,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         bound + (" - " + cpp.sym2cpp(pipeline.drain_size)
                                  if pipeline.drain_size != 0 else "")))
 
+            # Add pragmas
             if not fully_degenerate:
-                if node.map.unroll:
-                    self.generate_unroll_loop_post(result, None, sdfg, state_id,
-                                                   node)
-                elif is_innermost:
+                if is_innermost:
                     self.generate_pipeline_loop_post(result, sdfg, state_id,
                                                      node)
                     self.generate_flatten_loop_post(result, sdfg, state_id,
@@ -1263,9 +1278,11 @@ class FPGACodeGen(TargetCodeGenerator):
         kernel_args_opencl = []
         # Split into arrays and scalars
         arrays = sorted(
-            [t for t in parameters if not isinstance(t[2], dace.data.Scalar)],
+            [(t[0], t[1], t[2])
+             for t in parameters if not isinstance(t[2], dace.data.Scalar)],
             key=lambda t: t[1])
-        scalars = [t for t in parameters if isinstance(t[2], dace.data.Scalar)]
+        scalars = [(t[0], t[1], t[2]) for t in parameters
+                   if isinstance(t[2], dace.data.Scalar)]
         scalars += ((False, k, v) for k, v in symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, argname, arg in itertools.chain(arrays, scalars):
