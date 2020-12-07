@@ -356,15 +356,8 @@ class StripMining(transformation.Transformation):
 
         # Retrieve transformation properties.
         dim_idx = self.dim_idx
-        new_dim_prefix = self.new_dim_prefix
-        tile_size = self.tile_size
-        divides_evenly = self.divides_evenly
-        strided = self.strided
         target_dim = map_entry.map.params[dim_idx]
 
-        tile_stride = self.tile_stride
-        if tile_stride is None or len(tile_stride) == 0:
-            tile_stride = tile_size
 
         if self.ceilrange:
             new_dim, new_map, td_rng = self._create_ceil_range(
