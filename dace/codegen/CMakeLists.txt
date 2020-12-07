@@ -531,7 +531,7 @@ if(DACE_ENABLE_XILINX)
       -t hw_emu
       "${DACE_VITIS_KERNELS_HW_EMU}"
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
                      
     add_custom_command(
       OUTPUT emconfig.json  
@@ -546,7 +546,7 @@ if(DACE_ENABLE_XILINX)
       -t hw
       "${DACE_VITIS_KERNELS_HW}"
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW})
 
   endif()
 
@@ -656,7 +656,8 @@ if(DACE_ENABLE_INTELFPGA)
     ${DACE_AOC_BUILD_FLAGS}
     ${DACE_AOC_KERNEL_FILES}
     -rtl
-    -report)
+    -report
+    COMMAND mv ${DACE_AOC_OUTPUT_FILE} ${DACE_PROGRAM_NAME})
 
   add_custom_command(
     OUTPUT ${DACE_PROGRAM_NAME}_emulator.aocx
@@ -673,6 +674,7 @@ if(DACE_ENABLE_INTELFPGA)
     ${DACE_AOC_BUILD_FLAGS}
     ${DACE_AOC_KERNEL_FILES}
     COMMAND mv ${DACE_AOC_OUTPUT_FILE}.aocx  ${DACE_PROGRAM_NAME}_hardware.aocx
+    COMMAND mv ${DACE_AOC_OUTPUT_FILE} ${DACE_PROGRAM_NAME}
     DEPENDS ${DACE_AOC_KERNEL_FILES})
 
 endif()
