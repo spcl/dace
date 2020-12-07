@@ -172,7 +172,12 @@ class FPGACodeGen(TargetCodeGenerator):
                                                    function_stream,
                                                    callsite_stream)
             # Create a unique kernel name to avoid name clashes
-            kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
+            # If this kernels comes from a Nested SDFG, use that name also
+            if sdfg.parent_nsdfg_node is not None:
+                kernel_name = "{}_{}_{}".format(sdfg.parent_nsdfg_node.label,
+                                                state.label, sdfg.sdfg_id)
+            else:
+                kernel_name = "{}_{}".format(state.label, sdfg.sdfg_id)
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
@@ -728,9 +733,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                 dace.StorageType.FPGA_Registers
                             ]):
                         # Language-specific
-                        self.generate_no_dependence_pre(node.data,
-                                                        callsite_stream, sdfg,
-                                                        state_id, dst_node)
+                        self.generate_no_dependence_pre(callsite_stream, sdfg,
+                                                        state_id, dst_node,
+                                                        node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
@@ -789,7 +794,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
                     dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
-                    read_expr, None, is_unpack, packing_factor)
+                    read_expr, None, is_unpack, packing_factor, sdfg)
             else:
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,
@@ -806,8 +811,9 @@ class FPGACodeGen(TargetCodeGenerator):
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
-                    self.generate_no_dependence_post(node.data, callsite_stream,
-                                                     sdfg, state_id, dst_node)
+                    self.generate_no_dependence_post(callsite_stream, sdfg,
+                                                     state_id, dst_node,
+                                                     node.data)
 
             # Loop outtro
             for _ in range(num_loops):
@@ -974,54 +980,66 @@ class FPGACodeGen(TargetCodeGenerator):
                 degenerate_values.append(val)
             fully_degenerate = all(is_degenerate)
 
-            if not fully_degenerate:
-                if node.map.unroll:
-                    self.generate_unroll_loop_pre(result, None, sdfg, state_id,
-                                                  node)
-                elif is_innermost:
-                    self.generate_pipeline_loop_pre(result, sdfg, state_id,
-                                                    node)
-
             # Being this a map (each iteration is independent), we can add pragmas to ignore dependencies on data
-            # that is read/written inside this map
+            # that is read/written inside this map, if there are no WCR. If there are no WCR at all, we can add
+            # a more generic pragma to ignore all loop-carried dependencies.
             map_exit_node = dfg.exit_node(node)
             state = sdfg.nodes()[state_id]
             candidates_in = set()
             candidates_out = set()
+            is_there_a_wcr = False
             # get data that is read/written
             for _, _, _, _, memlet in state.in_edges(node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
                     if (isinstance(desc, dace.data.Array) and
-                        (desc.storage == dace.dtypes.StorageType.FPGA_Global or
-                         desc.storage == dace.dtypes.StorageType.FPGA_Local)):
+                        (desc.storage == dace.dtypes.StorageType.FPGA_Global
+                         or desc.storage == dace.dtypes.StorageType.FPGA_Local)
+                            and memlet.wcr is None):
                         candidates_in.add(memlet.data)
+                    elif memlet.wcr is not None:
+                        is_there_a_wcr = True
 
             for _, _, _, _, memlet in state.out_edges(map_exit_node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
                     if (isinstance(desc, dace.data.Array) and
-                        (desc.storage == dace.dtypes.StorageType.FPGA_Global or
-                         desc.storage == dace.dtypes.StorageType.FPGA_Local)):
+                        (desc.storage == dace.dtypes.StorageType.FPGA_Global
+                         or desc.storage == dace.dtypes.StorageType.FPGA_Local)
+                            and memlet.wcr is None):
                         candidates_out.add(memlet.data)
+                    elif memlet.wcr is not None:
+                        is_there_a_wcr = True
             in_out_data = candidates_in.intersection(candidates_out)
 
             # add pragmas
-            if not node.map.unroll:
-                for candidate in in_out_data:
-                    self.generate_no_dependence_pre(candidate, result, sdfg,
-                                                    state_id, node)
 
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
 
                 for i, r in enumerate(node.map.range):
 
-                    if is_innermost and not fully_degenerate and not is_degenerate[
-                            i]:
-                        # Do not put pragma if this is degenerate (does not exist)
-                        self.generate_flatten_loop_pre(result, sdfg, state_id,
-                                                       node)
+                    # Add pragmas
+                    if not fully_degenerate and not is_degenerate[i]:
+                        if node.map.unroll:
+                            self.generate_unroll_loop_pre(
+                                result, None, sdfg, state_id, node)
+                        elif is_innermost:
+                            self.generate_pipeline_loop_pre(
+                                result, sdfg, state_id, node)
+                            # Do not put pragma if this is degenerate (loop does not exist)
+                            self.generate_flatten_loop_pre(
+                                result, sdfg, state_id, node)
+                        if not node.map.unroll:
+                            if len(in_out_data) > 0 and is_there_a_wcr == False:
+                                # add pragma to ignore all loop carried dependencies
+                                self.generate_no_dependence_pre(
+                                    result, sdfg, state_id, node)
+                            else:
+                                # add specific pragmas
+                                for candidate in in_out_data:
+                                    self.generate_no_dependence_pre(
+                                        result, sdfg, state_id, node, candidate)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1072,6 +1090,13 @@ class FPGACodeGen(TargetCodeGenerator):
                                 loop_var_type, var, cpp.sym2cpp(begin), var,
                                 cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                             sdfg, state_id, node)
+
+                    #Add unroll pragma
+                    if not fully_degenerate and not is_degenerate[
+                            i] and node.map.unroll:
+                        self.generate_unroll_loop_post(result, None, sdfg,
+                                                       state_id, node)
+
             else:
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
@@ -1089,11 +1114,9 @@ class FPGACodeGen(TargetCodeGenerator):
                         bound + (" - " + cpp.sym2cpp(pipeline.drain_size)
                                  if pipeline.drain_size != 0 else "")))
 
+            # Add pragmas
             if not fully_degenerate:
-                if node.map.unroll:
-                    self.generate_unroll_loop_post(result, None, sdfg, state_id,
-                                                   node)
-                elif is_innermost:
+                if is_innermost:
                     self.generate_pipeline_loop_post(result, sdfg, state_id,
                                                      node)
                     self.generate_flatten_loop_post(result, sdfg, state_id,
@@ -1102,7 +1125,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # add pragmas for data read/written inside this map
                     for candidate in in_out_data:
                         self.generate_no_dependence_post(
-                            candidate, result, sdfg, state_id, node)
+                            result, sdfg, state_id, node, candidate)
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
@@ -1324,9 +1347,8 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                     and (datadesc.storage == dace.StorageType.FPGA_Local
                          or datadesc.storage == dace.StorageType.FPGA_Registers)
                     and not cpp.is_write_conflicted(dfg, edge)):
-                self.generate_no_dependence_post(edge.src_conn,
-                                                 after_memlets_stream, sdfg,
-                                                 state_id, node)
+                self.generate_no_dependence_post(after_memlets_stream, sdfg,
+                                                 state_id, node, edge.src_conn)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)

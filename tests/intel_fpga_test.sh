@@ -64,9 +64,6 @@ run_all() {
     run_sample fpga/veclen_conversion "\n"
     run_sample fpga/veclen_copy_conversion "\n"
 
-    # Throw error when kernel names are too long
-    run_sample intel_fpga/name_too_long name_too_long "\n"
-
     # Test removing degenerate loops that only have a single iteration
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test "\n" 
 

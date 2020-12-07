@@ -384,17 +384,23 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor):
+                                  packing_factor, sdfg):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
-    def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
-                                   node):
+    def generate_no_dependence_pre(kernel_stream,
+                                   sdfg,
+                                   state_id,
+                                   node,
+                                   var_name=None):
         pass
 
     @staticmethod
-    def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
-                                    node):
+    def generate_no_dependence_post(kernel_stream, sdfg, state_id, node,
+                                    var_name):
+        '''
+        Adds post loop pragma for ignoring loop carried dependencies on a given variable
+        '''
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
