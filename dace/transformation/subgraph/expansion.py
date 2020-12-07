@@ -39,7 +39,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
-        ### get lowest scope maps of subgraph
+        # get lowest scope maps of subgraph
         # grab first node and see whether all nodes are in the same graph
         # (or nested sdfgs therein)
 
@@ -101,7 +101,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
             map_base_ranges = helpers.common_map_base_ranges(maps)
             reassignments = helpers.find_reassignment(maps, map_base_ranges)
 
-            ##### first, regroup and reassign
+            # first, regroup and reassign
             # create params_dict for every map
             # first, let us define the outer iteration variable names,
             # just take the first map and their indices at common ranges

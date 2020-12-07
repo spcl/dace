@@ -88,6 +88,7 @@ def outermost_scope_from_subgraph(graph, subgraph, scope_dict=None):
     If the subgraph is not connected, there might be several
     scopes that are locally outermost. In this case, it
     throws an Exception.
+
     """
     if scope_dict is None:
         scope_dict = graph.scope_dict()
@@ -108,6 +109,7 @@ def outermost_scope_from_subgraph(graph, subgraph, scope_dict=None):
             current_scope = scope_dict[current_scope]
         if current_scope is None:
             toplevel_candidates.add(scope)
+
 
     if len(toplevel_candidates) != 1:
         raise TypeError("There are several locally top-level nodes. "
@@ -164,6 +166,7 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     if scope_dict is None:
         scope_dict = graph.scope_dict()
 
+
     # first, get the toplevel scope of the underlying subgraph
     # if not found, return empty list (ambiguous)
     try:
@@ -180,20 +183,21 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     return maps
 
 
-def subgraph_from_maps(sdfg, graph, map_entries, scope_dict=None):
+def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     """
     given a list of map entries in a single graph,
     return a subgraph view that includes all nodes
     inside these maps as well as map entries and exits
     as well as adjacent nodes
     """
-    if not scope_dict:
-        scope_dict = graph.scope_dict()
+    if not scope_children:
+        scope_children = graph.scope_children()
     nodes = set()
     for map_entry in map_entries:
-        nodes |= set(scope_dict[map_entry])
+        nodes |= set(scope_children[map_entry])
         nodes |= set(e.dst for e in graph.out_edges(graph.exit_node(map_entry)))
         nodes |= set(e.src for e in graph.in_edges(map_entry))
+        nodes.add(map_entry)
 
     return SubgraphView(graph, list(nodes))
 
