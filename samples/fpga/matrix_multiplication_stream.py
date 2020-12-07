@@ -6,9 +6,9 @@ import pdb
 import select
 import sys
 
-N = dace.symbol('N')
-M = dace.symbol('M')
-K = dace.symbol('K')
+N = dace.symbol("N")
+M = dace.symbol("M")
+K = dace.symbol("K")
 
 
 def make_copy_to_fpga_state(sdfg):
@@ -65,11 +65,9 @@ def make_copy_to_host_state(sdfg):
     return state
 
 
-
-
 def make_fpga_state(sdfg):
 
-    state = sdfg.add_state("gemm")
+    state = sdfg.add_state("mm")
 
     A = state.add_read("A_device")
     B = state.add_read("B_device")
@@ -109,8 +107,7 @@ def make_fpga_state(sdfg):
             "m": "0:M"
         },
         schedule=dace.ScheduleType.FPGA_Device)
-    read_b_tasklet = state.add_tasklet("read_b", {"mem"}, {"s"},
-                                       "s = mem")
+    read_b_tasklet = state.add_tasklet("read_b", {"mem"}, {"s"}, "s = mem")
     state.add_memlet_path(B,
                           read_b_entry,
                           read_b_tasklet,
@@ -151,8 +148,8 @@ def make_fpga_state(sdfg):
     write_a_reg = state.add_write("A_reg")
 
     tasklet = state.add_tasklet(
-        "multiply_accumulate", {"a_mem", "a_reg_in", "b", "c_in"}, {"a_reg_out", "c_out"},
-        """\
+        "multiply_accumulate", {"a_mem", "a_reg_in", "b", "c_in"},
+        {"a_reg_out", "c_out"}, """\
 a = a_mem if m == 0 else a_reg_in
 a_reg_out = a
 prev = 0 if k == 0 else c_in
@@ -212,10 +209,10 @@ c_out = prev + a * b""")
 def make_sdfg(specialized):
 
     if specialized:
-        sdfg = dace.SDFG("gemm_fpga_stream_{}x{}x{}".format(
+        sdfg = dace.SDFG("mm_fpga_stream_{}x{}x{}".format(
             N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("gemm_fpga_stream_NxKx{}".format(M.get()))
+        sdfg = dace.SDFG("mm_fpga_stream_NxKx{}".format(M.get()))
 
     pre_state = make_copy_to_fpga_state(sdfg)
     compute_state = make_fpga_state(sdfg)
@@ -276,32 +273,9 @@ if __name__ == "__main__":
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    np.dot(A_regression, B_regression, C_regression)
 
-    diff = np.abs(C_regression - C)
-    diff_total = np.sum(diff)
-    highest_diff = np.max(diff)
-    wrong_elements = np.transpose(np.nonzero(diff >= 0.01))
-
-    print("==== Program end ====")
-
-    if diff_total >= 0.01:
-        print("Verification failed!")
-        print("Total difference: {}".format(diff_total))
-        print("Incorrect elements: {} / {}".format(wrong_elements.shape[0],
-                                                   N.get() * M.get()))
-        print("Highest difference: {}".format(highest_diff))
-        print("** Result:\n", C)
-        print("** Reference:\n", C_regression)
-        print("Type \"debug\" to enter debugger, "
-              "or any other string to quit (timeout in 10 seconds)")
-        read, _, _ = select.select([sys.stdin], [], [], 10)
-        if len(read) > 0 and sys.stdin.readline().strip().lower() == "debug":
-            print("Entering debugger...")
-            pdb.set_trace()
-        else:
-            print("Exiting...")
-        exit(1)
+    diff = np.linalg.norm((A @ B) - C) / float(M.get() * K.get())
+    if diff > 1e-6:
+        raise ValueError(f"Verification failed, difference: {diff}")
     else:
-        print("Results verified successfully.")
-    exit(0)
+        print("Results successfully verified.")

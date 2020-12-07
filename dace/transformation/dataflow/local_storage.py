@@ -113,8 +113,6 @@ class LocalStorage(xf.Transformation, ABC):
         for edge in graph.memlet_tree(new_edge):
             edge.data.subset.offset(offset, True)
             edge.data.data = new_data
-        
-        return data_node
 
         return data_node
 
