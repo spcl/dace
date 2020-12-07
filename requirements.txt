@@ -22,7 +22,7 @@ requests==2.22.0
 scikit-build==0.10.0
 scipy==1.3.3
 six==1.13.0
-sympy==1.4
+sympy==1.5.1
 tqdm==4.31.1
 urllib3==1.25.7
 websockets==8.1
