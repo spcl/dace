@@ -90,7 +90,7 @@ def stencil_offset(A: dace.float64[N], B: dace.float64[N]):
         out1 = in1[1] - 0.5 * (in1[0] + in1[2])
 
 
-def test_stencil(tile_size, offset=False, unroll=False, view=False):
+def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
 
     A = np.random.rand(N.get()).astype(np.float64)
     B1 = np.zeros((N.get()), dtype=np.float64)
@@ -108,6 +108,7 @@ def test_stencil(tile_size, offset=False, unroll=False, view=False):
         sdfg.view()
     # baseline
     sdfg._name = 'baseline'
+    sdfg.save('baseline.sdfg')
     csdfg = sdfg.compile()
     csdfg(A=A, B=B1, N=N)
     del csdfg
@@ -124,6 +125,7 @@ def test_stencil(tile_size, offset=False, unroll=False, view=False):
         sdfg.view()
     sdfg._name = 'tiled'
     sdfg.validate()
+    sdfg.save('tiled.sdfg')
     csdfg = sdfg.compile()
     csdfg(A=A, B=B2, N=N)
     del csdfg
@@ -136,6 +138,7 @@ def test_stencil(tile_size, offset=False, unroll=False, view=False):
     sf.consolidate = True
     sf.apply(sdfg)
     sdfg._name = 'fused'
+    sdfg.save('fused.sdfg')
     csdfg = sdfg.compile()
     csdfg(A=A, B=B3, N=N)
     del csdfg
@@ -147,12 +150,15 @@ def test_stencil(tile_size, offset=False, unroll=False, view=False):
     print("PASS")
 
 
+def test_all():
+    invoke_stencil(1, offset=False, unroll=False)
+    invoke_stencil(8, offset=False, unroll=False)
+    invoke_stencil(1, offset=True, unroll=False)
+    invoke_stencil(8, offset=True, unroll=False)
+    invoke_stencil(1, offset=False, unroll=True)
+    invoke_stencil(8, offset=False, unroll=True)
+    invoke_stencil(1, offset=True, unroll=True)
+    invoke_stencil(8, offset=True, unroll=True)
+
 if __name__ == '__main__':
-    test_stencil(1, offset=False, unroll=False)
-    test_stencil(8, offset=False, unroll=False)
-    test_stencil(1, offset=True, unroll=False)
-    test_stencil(8, offset=True, unroll=False)
-    test_stencil(1, offset=False, unroll=True)
-    test_stencil(8, offset=False, unroll=True)
-    test_stencil(1, offset=True, unroll=True)
-    test_stencil(8, offset=True, unroll=True)
+    test_all()

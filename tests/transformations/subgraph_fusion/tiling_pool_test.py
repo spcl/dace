@@ -50,7 +50,7 @@ def stencil_offset(A: dace.float64[2 * N], B: dace.float64[N]):
         out1 = (in2 - 0.2 * in1 - 0.2 * in3)
 
 
-def test_stencil(tile_size, offset=False, unroll=False):
+def invoke_stencil(tile_size, offset=False, unroll=False):
 
     A = np.random.rand(N.get() * 2).astype(np.float64)
     B1 = np.zeros((N.get()), dtype=np.float64)
@@ -100,12 +100,15 @@ def test_stencil(tile_size, offset=False, unroll=False):
     print("PASS")
 
 
+def test_all():
+    invoke_stencil(1, offset=False, unroll=False)
+    invoke_stencil(8, offset=False, unroll=False)
+    invoke_stencil(1, offset=True, unroll=False)
+    invoke_stencil(8, offset=True, unroll=False)
+    invoke_stencil(1, offset=False, unroll=True)
+    invoke_stencil(8, offset=False, unroll=True)
+    invoke_stencil(1, offset=True, unroll=True)
+    invoke_stencil(8, offset=True, unroll=True)
+
 if __name__ == '__main__':
-    test_stencil(1, offset=False, unroll=False)
-    test_stencil(8, offset=False, unroll=False)
-    test_stencil(1, offset=True, unroll=False)
-    test_stencil(8, offset=True, unroll=False)
-    test_stencil(1, offset=False, unroll=True)
-    test_stencil(8, offset=False, unroll=True)
-    test_stencil(1, offset=True, unroll=True)
-    test_stencil(8, offset=True, unroll=True)
+    test_all()
