@@ -1134,8 +1134,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             ndrange = {k: v for k, v in ndrange}
         else:
             params = list(ndrange.keys())
-        map_range = SubsetProperty.from_string(", ".join(
-            [ndrange[p] for p in params]))
+        
+        if ndrange and isinstance(next(iter(ndrange.values())), tuple):
+            map_range = sbs.Range([ndrange[p] for p in params])
+        else:
+            map_range = SubsetProperty.from_string(", ".join(
+                [ndrange[p] for p in params]))
         return params, map_range
 
     def add_map(

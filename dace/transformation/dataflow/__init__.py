@@ -22,6 +22,7 @@ from .vectorization import Vectorization
 from .stream_transient import StreamTransient, AccumulateTransient
 from .local_storage import InLocalStorage, OutLocalStorage
 from .double_buffering import DoubleBuffering
+from .streaming_memory import StreamingMemory, StreamingComposition
 
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
