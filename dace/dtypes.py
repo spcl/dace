@@ -518,7 +518,7 @@ class pointer(typeclass):
 
     @property
     def ocltype(self):
-        return f"{self.type.ocltype}*"
+        return f"{self.base_type.ocltype}*"
 
 
 class vector(typeclass):
@@ -872,7 +872,7 @@ def isconstant(var):
 
 
 bool = typeclass(numpy.bool)
-bool_ = typeclass(numpy.int8)
+bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -909,6 +909,24 @@ DTYPE_TO_TYPECLASS = {
     # FIXME
     numpy.longlong: int64,
     numpy.ulonglong: uint64
+}
+
+TYPECLASS_TO_STRING = {
+    bool: "dace::bool",
+    bool_: "dace::bool_",
+    uint8: "dace::uint8",
+    uint16: "dace::uint16",
+    uint32: "dace::uint32",
+    uint64: "dace::uint64",
+    int8: "dace::int8",
+    int16: "dace::int16",
+    int32: "dace::int32",
+    int64: "dace::int64",
+    float16: "dace::float16",
+    float32: "dace::float32",
+    float64: "dace::float64",
+    complex64: "dace::complex64",
+    complex128: "dace::complex128"
 }
 
 TYPECLASS_STRINGS = [

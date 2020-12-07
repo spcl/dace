@@ -723,9 +723,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                 dace.StorageType.FPGA_Registers
                             ]):
                         # Language-specific
-                        self.generate_no_dependence_pre(callsite_stream, sdfg,
-                                                        state_id, dst_node,
-                                                        node.data)
+                        self.generate_no_dependence_pre(node.data,
+                                                        callsite_stream, sdfg,
+                                                        state_id, dst_node)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
@@ -775,8 +775,6 @@ class FPGACodeGen(TargetCodeGenerator):
             if not dst_index:
                 dst_index = "0"
 
-            pattern = re.compile(r"([^\s]+)(\s*\+\s*)?(.*)")
-
             # Language specific
             read_expr = self.make_read(src_def_type, dtype, src_node.label,
                                        src_expr, src_index, is_pack,
@@ -803,9 +801,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             dace.StorageType.FPGA_Registers
                         ]):
                     # Language-specific
-                    self.generate_no_dependence_post(callsite_stream, sdfg,
-                                                     state_id, dst_node,
-                                                     node.data)
+                    self.generate_no_dependence_post(node.data, callsite_stream,
+                                                     sdfg, state_id, dst_node)
 
             # Loop outtro
             for _ in range(num_loops):
@@ -1336,3 +1333,6 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
                     and not cpp.is_write_conflicted(dfg, edge)):
                 self.generate_no_dependence_post(after_memlets_stream, sdfg,
                                                  state_id, node, edge.src_conn)
+
+    def make_ptr_vector_cast(self, *args, **kwargs):
+        return cpp.make_ptr_vector_cast(*args, **kwargs)
