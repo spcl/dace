@@ -68,7 +68,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
-        self.generated_converters = set() #Keep track of generated converters
+        self.generated_converters = set(
+        )  # Keep track of generated converters to avoid multiple definition
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -1067,38 +1068,42 @@ __kernel void \\
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
                             function_stream):
+        # Get the file stream
         if "converters" not in self._other_codes:
-            self._other_codes["converters"] =  CodeIOStream()
+            self._other_codes["converters"] = CodeIOStream()
         converter_stream = self._other_codes["converters"]
 
-
         if is_unpack:
-            converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype, veclen=veclen)
-            signature = "void {name}(const {dtype}{veclen} value, {dtype} *const ptr)".format(name=converter_name, dtype=ctype, veclen=veclen)
+            converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype,
+                                                             veclen=veclen)
+            signature = "void {name}(const {dtype}{veclen} value, {dtype} *const ptr)".format(
+                name=converter_name, dtype=ctype, veclen=veclen)
             if converter_name not in self.generated_converters:
                 self.generated_converters.add(converter_name)
 
                 # create code for converter in appropriate header file
                 converter_stream.write(
-                """\
+                    """\
 {signature} {{
     #pragma unroll
     for (int u = 0; u < {veclen}; ++u) {{
         ptr[u] = value[u];
     }}
-}}\n\n""".format(signature = signature, dtype=ctype, veclen=veclen), sdfg)
+}}\n\n""".format(signature=signature, dtype=ctype, veclen=veclen), sdfg)
 
             # add forward declaration
-            function_stream.write("extern {};".format(signature),sdfg)
+            function_stream.write("extern {};".format(signature), sdfg)
 
         else:
-            converter_name = "pack_{dtype}{veclen}".format(dtype=ctype, veclen=veclen)
-            signature = "{dtype}{veclen} {name}({dtype} const *const ptr)".format(name=converter_name, dtype=ctype, veclen=veclen)
+            converter_name = "pack_{dtype}{veclen}".format(dtype=ctype,
+                                                           veclen=veclen)
+            signature = "{dtype}{veclen} {name}({dtype} const *const ptr)".format(
+                name=converter_name, dtype=ctype, veclen=veclen)
             if converter_name not in self.generated_converters:
                 self.generated_converters.add(converter_name)
                 # create code for converter in appropriate header file
                 converter_stream.write(
-                """\
+                    """\
 {signature} {{
     {dtype}{veclen} vec;
     #pragma unroll
@@ -1106,7 +1111,7 @@ __kernel void \\
         vec[u] = ptr[u];
     }}
     return vec;
-}}\n\n""".format(signature= signature,dtype=ctype, veclen=veclen), sdfg)
+}}\n\n""".format(signature=signature, dtype=ctype, veclen=veclen), sdfg)
 
             # add forward declaration
             function_stream.write("extern {};".format(signature), sdfg, self)
