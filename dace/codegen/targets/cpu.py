@@ -663,6 +663,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                     nc,
                                                     dst_expr,
                                                     '*(' + src_expr + ')',
+                                                    state_id,
                                                     dtype=dst_nodedesc.dtype) +
                         ';', sdfg, state_id, [src_node, dst_node])
                 else:
@@ -686,6 +687,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                nc,
                                outname,
                                inname,
+                               state_id,
                                indices=None,
                                dtype=None):
         """
@@ -816,6 +818,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 nc,
                                 out_local_name,
                                 in_local_name,
+                                state_id,
                                 dtype=node.out_connectors[uconn]) + ';', sdfg,
                             state_id, node)
                     else:

@@ -189,7 +189,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream):
+                      kernel_stream, sdfg_id, state_id):
         """
            Defines a stream
            :return: a tuple containing the type of the created variable, and boolean indicating
@@ -303,6 +303,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                nc,
                                outname,
                                inname,
+                               state_id,
                                indices=None,
                                dtype=None):
         """
@@ -334,7 +335,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
-                  packing_factor):
+                  packing_factor, sdfg_id, state_id):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if " " in expr:
                 expr = "(" + expr + ")"
@@ -358,7 +359,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
-                   wcr, is_unpack, packing_factor):
+                   wcr, is_unpack, packing_factor, sdfg_id, state_id):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
                 write_expr = "{}[{}]".format(write_expr,
@@ -384,7 +385,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor, sdfg):
+                                  packing_factor, sdfg, state_id):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod

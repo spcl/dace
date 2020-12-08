@@ -404,7 +404,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
-                                                  function_stream, result)
+                                                  function_stream, result, sdfg.sdfg_id, state_id)
 
             # defined type: decide whether this is a stream array or a single stream
             def_type = DefinedType.StreamArray if cpp.sym2cpp(
@@ -789,18 +789,18 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language specific
             read_expr = self.make_read(src_def_type, dtype, src_node.label,
                                        src_expr, src_index, is_pack,
-                                       packing_factor)
+                                       packing_factor, sdfg.sdfg_id, state_id)
 
             # Language specific
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
                     dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
-                    read_expr, None, is_unpack, packing_factor, sdfg)
+                    read_expr, None, is_unpack, packing_factor, sdfg, state_id)
             else:
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,
                                              dst_index, read_expr, None,
-                                             is_unpack, packing_factor)
+                                             is_unpack, packing_factor, sdfg.sdfg_id, state_id)
 
             callsite_stream.write(write_expr)
 
