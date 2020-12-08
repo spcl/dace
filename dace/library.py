@@ -214,7 +214,7 @@ def get_environments_and_dependencies(names: Set[str]) -> List:
         }
         if len(added) == 0:
             break
-        environments = environments.extend(added)
+        environments = environments.union(added)
 
     # construct dependency graph
     dep_graph = nx.DiGraph()

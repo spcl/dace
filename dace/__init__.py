@@ -15,6 +15,8 @@ from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
 from .symbolic import symbol
 
+import dace.library
+
 # Run Jupyter notebook code
 from .jupyter import *
 
