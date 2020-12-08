@@ -779,25 +779,25 @@ class DebugInfoProperty(Property):
         info_available = False
         di = None
 
-        m = re.search("file: (\w+)", s)
+        m = re.search(r"file: (\w+)", s)
         if m is not None:
             info_available = True
             f = sl = m.group(1)
-        m = re.search("from line: (\d+)", s)
+        m = re.search(r"from line: (\d+)", s)
         if m is not None:
             sl = m.group(1)
             el = sl
             info_available = True
-        m = re.search("to line: (\d+)", s)
+        m = re.search(r"to line: (\d+)", s)
         if m is not None:
             el = m.group(1)
             info_available = True
-        m = re.search("from col: (\d+)", s)
+        m = re.search(r"from col: (\d+)", s)
         if m is not None:
             sc = m.group(1)
             ec = sc
             info_available = True
-        m = re.search("to col: (\d+)", s)
+        m = re.search(r"to col: (\d+)", s)
         if m is not None:
             ec = m.group(1)
             info_available = True
@@ -849,7 +849,7 @@ class SetProperty(Property):
 
     @staticmethod
     def from_string(s):
-        return [eval(i) for i in re.sub("[\{\}\(\)\[\]]", "", s).split(",")]
+        return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
 
     def to_json(self, l):
         return list(sorted(l))
@@ -1136,10 +1136,10 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (not isinstance(val, sp.expr.Expr) and not isinstance(val, Integral)
-                and not isinstance(val, str)):
+        if (val is not None and not isinstance(val, sp.expr.Expr)
+                and not isinstance(val, Integral) and not isinstance(val, str)):
             raise TypeError(
-                "Property {} must an int or symbolic expression".format(
+                "Property {} must be a literal or symbolic expression".format(
                     self.attr_name))
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))

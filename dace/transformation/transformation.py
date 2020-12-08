@@ -174,18 +174,21 @@ class Transformation(object):
     def subgraph(self):
         return self._subgraph_user
 
-    def apply_pattern(self, sdfg: SDFG) -> Union[Any, None]:
+    def apply_pattern(self, sdfg: SDFG, append: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
         memlet propagation as necessary.
         :param sdfg: The SDFG (or an SDFG in the same hierarchy) to apply the
                      transformation to.
+        :param append: If True, appends the transformation to the SDFG
+                       transformation history.
         :return: A transformation-defined return value, which could be used
                  to pass analysis data out, or nothing.
         """
         tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
-        sdfg.append_transformation(self)
+        if append:
+            sdfg.append_transformation(self)
         retval = self.apply(tsdfg)
         if not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
@@ -250,6 +253,7 @@ class Transformation(object):
                  expr_index: int = 0,
                  verify: bool = True,
                  strict: bool = False,
+                 save: bool = True,
                  **where: Union[nd.Node, SDFGState]):
         """
         Applies this transformation to a given subgraph, defined by a set of
@@ -270,6 +274,8 @@ class Transformation(object):
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
         :param strict: Apply transformation in strict mode.
+        :param save: Save transformation as part of the SDFG file. Set to
+                     False if composing transformations.
         :param where: A dictionary of node names (from the transformation) to
                       nodes in the SDFG or a single state.
         """
@@ -324,7 +330,7 @@ class Transformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        return instance.apply_pattern(sdfg)
+        return instance.apply_pattern(sdfg, append=save)
 
     def __str__(self) -> str:
         return type(self).__name__
@@ -659,7 +665,7 @@ class SubgraphTransformation(object):
                                  'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        instance.apply(sdfg)
+        return instance.apply(sdfg)
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)

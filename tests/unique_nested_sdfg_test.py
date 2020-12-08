@@ -10,6 +10,9 @@ import subprocess
 
 from dace.memlet import Memlet
 
+size_n = 32
+size_m = 64
+
 
 def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     '''
@@ -341,7 +344,7 @@ def make_nested_nested_sdfg_cpu():
     return sdfg
 
 
-def single_state_test(size_n: int, size_m: int):
+def test_single_state():
     sdfg = make_nested_sdfg_cpu_single_state()
 
     two_axpy = sdfg.compile()
@@ -364,16 +367,10 @@ def single_state_test(size_n: int, size_m: int):
 
     # There is no need to check that the Nested SDFG has been generated only once. If this is not the case
     # the test will fail while compiling
-
-    if diff1 <= 1e-5 and diff2 <= 1e-5:
-        print("==== Program end ====")
-        return 0
-    else:
-        print("==== Program Error! ====")
-        return 1
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
 
 
-def two_states_test(size_n: int, size_m: int):
+def test_two_states():
     sdfg = make_nested_sdfg_cpu_two_states()
 
     two_axpy = sdfg.compile()
@@ -392,15 +389,10 @@ def two_states_test(size_n: int, size_m: int):
 
     diff1 = np.linalg.norm(ref1 - z) / size_n
     diff2 = np.linalg.norm(ref2 - u) / size_m
-    if diff1 <= 1e-5 and diff2 <= 1e-5:
-        print("==== Program end ====")
-        return 0
-    else:
-        print("==== Program Error! ====")
-        return 1
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
 
 
-def nested_nested_test(size_n: int, size_m: int):
+def test_nested_nested():
     sdfg = make_nested_nested_sdfg_cpu()
     two_axpy = sdfg.compile()
     x = np.random.rand(size_n).astype(np.float32)
@@ -418,25 +410,10 @@ def nested_nested_test(size_n: int, size_m: int):
 
     diff1 = np.linalg.norm(ref1 - z) / size_n
     diff2 = np.linalg.norm(ref2 - u) / size_m
-    if diff1 <= 1e-5 and diff2 <= 1e-5:
-        print("==== Program end ====")
-        return 0
-    else:
-        print("==== Program Error! ====")
-        return 1
+    assert diff1 <= 1e-5 and diff2 <= 1e-5
 
 
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=32)
-    parser.add_argument("M", type=int, nargs="?", default=64)
-    args = vars(parser.parse_args())
-
-    size_n = args["N"]
-    size_m = args["M"]
-
-    ret1 = single_state_test(size_n, size_m)
-    ret2 = two_states_test(size_n, size_m)
-    ret3 = nested_nested_test(size_n, size_m)
-    exit(ret1 != 0 or ret2 != 0 or ret3 != 0)
+    test_single_state()
+    test_two_states()
+    test_nested_nested()

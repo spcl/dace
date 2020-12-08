@@ -181,6 +181,15 @@ class DoubleBuffering(transformation.Transformation):
         for e in dup_nstate.edges():
             final_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
+        # If there is a WCR output with transient, only output in last state
+        nstate: sd.SDFGState
+        for node in nstate.sink_nodes():
+            for e in list(nstate.in_edges(node)):
+                if e.data.wcr is not None:
+                    path = nstate.memlet_path(e)
+                    if isinstance(path[0].src, nodes.AccessNode):
+                        nstate.remove_memlet_path(e)
+
         ##############################
         # Add reads into next buffers to main state
         for edge in edges_to_replace:
@@ -209,6 +218,8 @@ class DoubleBuffering(transformation.Transformation):
         # Remove symbol once done
         del nsdfg_node.sdfg.symbols['__dace_db_param']
         del nsdfg_node.symbol_mapping['__dace_db_param']
+
+        return nsdfg_node
 
     @staticmethod
     def _modify_memlet(sdfg, subset, data_name):

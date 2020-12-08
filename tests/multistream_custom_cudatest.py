@@ -2,14 +2,7 @@
 import dace as dp
 import numpy as np
 import os
-
-# First, add libraries to link (CUBLAS) to configuration
-cudaroot = os.environ['CUDA_ROOT']  # or any other environment variable
-dp.Config.append('compiler',
-                 'cpu',
-                 'libs',
-                 value='%s/lib64/libcublas.so' % cudaroot)
-######################################################################
+import pytest
 
 # Create symbols
 N = dp.symbol('N')
@@ -105,7 +98,16 @@ sdfg.validate()
 
 ######################################################################
 
-if __name__ == '__main__':
+
+@pytest.mark.gpu
+def test_multistream_custom():
+    # First, add libraries to link (CUBLAS) to configuration
+    oldconf = dp.Config.get('compiler', 'cpu', 'libs')
+    if os.name == 'nt':
+        dp.Config.append('compiler', 'cpu', 'libs', value='cublas.lib')
+    else:
+        dp.Config.append('compiler', 'cpu', 'libs', value='libcublas.so')
+
     # Initialize arrays. We are using column-major order to support CUBLAS!
     A = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
     B = np.ndarray([N.get(), N.get()], dtype=np.float64, order='F')
@@ -121,6 +123,13 @@ if __name__ == '__main__':
     # will be copied.
     sdfg(A=A, B=B, C=C, N=N)
 
+    # Revert config change
+    dp.Config.set('compiler', 'cpu', 'libs', value=oldconf)
+
     diff = np.linalg.norm(C - out_ref)
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test_multistream_custom()

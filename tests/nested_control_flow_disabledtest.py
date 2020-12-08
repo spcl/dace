@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 
 @dace.program
@@ -21,15 +22,15 @@ def nested_cflow_test(A: dace.int32[1]):
                             out_a = in_a + 2
 
 
-if __name__ == '__main__':
+@pytest.mark.skip
+def test():
     A = np.zeros(1).astype(np.int32)
     nested_cflow_test(A)
 
     expected_result = 11 * 6 * 3 + 11 * 6 * 2 * 2
 
-    if A[0] != expected_result:
-        print('ERROR: %d != %d' % (A[0], expected_result))
-        exit(1)
+    assert A[0] == expected_result
 
-    print('OK')
-    exit(0)
+
+if __name__ == "__main__":
+    test()

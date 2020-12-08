@@ -1,6 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 sdfg = dace.SDFG('multistream')
 
@@ -45,8 +46,10 @@ state.add_nedge(b2, c1, dace.Memlet.simple('gB', '1', other_subset_str='1'))
 # Validate correctness of initial SDFG
 sdfg.validate()
 
+
 ######################################
-if __name__ == '__main__':
+@pytest.mark.gpu
+def test_multistream_copy():
     print('Multi-stream copy test')
 
     a = np.random.rand(2).astype(np.float32)
@@ -58,4 +61,8 @@ if __name__ == '__main__':
     refC = np.array([a[0], b[1]], dtype=np.float32)
     diff = np.linalg.norm(c - refC)
     print('Difference:', diff)
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_multistream_copy()

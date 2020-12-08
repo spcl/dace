@@ -6,13 +6,14 @@ from dace.sdfg.graph import SubgraphView
 import dace.sdfg.nodes as nodes
 import numpy as np
 from typing import List, Union
+import pytest
 from util import fusion
 
 N = dace.symbol('N')
 
 
 @dace.program
-def test_program(A: dace.float64[N], C: dace.float64[N]):
+def program(A: dace.float64[N], C: dace.float64[N]):
     B = np.ndarray(shape=[N], dtype=np.float64)
     for i in dace.map[0:N]:
         with dace.tasklet:
@@ -27,10 +28,11 @@ def test_program(A: dace.float64[N], C: dace.float64[N]):
             out1 = in1 + 1
 
 
-if __name__ == "__main__":
+@pytest.mark.gpu
+def test():
     N.set(50)
 
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     sdfg.apply_gpu_transformations()
     state = sdfg.nodes()[0]
 
@@ -40,6 +42,7 @@ if __name__ == "__main__":
 
     csdfg = sdfg.compile()
     csdfg(A=A, C=C1, N=N)
+    del csdfg
     fusion(sdfg, state)
     csdfg = sdfg.compile()
     csdfg(A=A, C=C2, N=N)
@@ -47,3 +50,7 @@ if __name__ == "__main__":
     print(np.linalg.norm(C1))
     print(np.linalg.norm(C2))
     assert np.allclose(C1, C2)
+
+
+if __name__ == '__main__':
+    test()

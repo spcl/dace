@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #!/usr/bin/env python3
 
 import numpy as np
@@ -154,7 +155,6 @@ def test_pure():
 
     run_test(configs, "pure", "pure")
 
-    print(" --> passed")
 
 
 # ---------- ----------
