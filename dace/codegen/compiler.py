@@ -163,21 +163,7 @@ def configure_and_compile(program_folder, program_name=None,
     environments = set(l.strip() for l in open(
         os.path.join(program_folder, "dace_environments.csv"), "r"))
 
-    environments = {
-        dace.library.get_environment(env_name)
-        for env_name in environments
-    }
-
-    # add dependencies until no new dependencies are found
-    while True:
-        added = {
-            dep
-            for env in environments for dep in env.dependencies
-            if dep not in environments
-        }
-        if len(added) == 0:
-            break
-        environments = environments.union(added)
+    environments = dace.library.get_environments_and_dependencies(environments)
 
     cmake_minimum_version = [0]
     cmake_variables = dict()
