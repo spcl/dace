@@ -32,8 +32,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     a = dace.symbol("alpha")
 
     # TODO: support more tile sizes via test config
-    rowTile = 4
-    colTile = 4
+    rowTile = 2
+    colTile = 2
     vecM = veclen
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
@@ -61,14 +61,15 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     y_stream = streaming.StreamReadVector(
         'y',
         n,
-        DATATYPE
+        DATATYPE,
+        repeat='{}/{}'.format(n, 1),#colTile),
+        veclen=vecM
     )
 
     x_stream = streaming.StreamReadVector(
         'x',
         m,
         DATATYPE,
-        repeat='{}/{}'.format(n, rowTile),
         veclen=vecM
     )
 
@@ -79,7 +80,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         rowTile,
         colTile,
         DATATYPE,
-        tileByRow=True
+        tileByRow=True,
+        veclen=vecM
     )
 
 
@@ -204,6 +206,26 @@ if __name__ == "__main__":
     A[:] = np.random.rand(m, n).astype(np.float32)
     result[:] = np.zeros((m, n)).astype(np.float32)
 
+    pure_result = np.zeros((n,m)).astype(np.float32)
+    n_tile = 4
+    m_tile = 4
+    x_buf = np.ndarray((n_tile,))
+    y_buf = np.ndarray((m_tile,))
+    reads = 0
+    for ti in range(n//n_tile):
+        x_buf = x[ti*n_tile:ti*n_tile+n_tile]
+        for tj in range(m//m_tile):
+            A_buf = A[ti*n_tile:ti*n_tile+n_tile,tj*m_tile:tj*m_tile+m_tile]
+            A_tmp = np.ndarray((n_tile,m_tile), dtype=np.float32)
+            for i in range(n_tile):
+                if i == 0:
+                    y_buf = y[tj*m_tile:tj*m_tile+m_tile]
+                    reads += 1
+                for j in range(m_tile):
+                    A_tmp[i,j] = x_buf[i] * y_buf[j] + A_buf[i,j]
+            pure_result[ti*n_tile:ti*n_tile+n_tile,tj*m_tile:tj*m_tile+m_tile] = A_tmp
+    print (reads)
+
     ger(alpha=alpha, x=x, y=y, A=A, r=result, m=m, n=n)
 
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=A)
@@ -212,5 +234,6 @@ if __name__ == "__main__":
     if diff >= args.eps * n * m:
         print("Unexpected result returned from ger rank 1 operation ({}): "
             "got:\n{}\nexpected:\n{}\ndiffs:\n{}".format(diff,result, ref, ref-result))
+        print(pure_result)
     else:
         print("Ok")
