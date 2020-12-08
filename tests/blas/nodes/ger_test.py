@@ -29,7 +29,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     n = dace.symbol("n")
     m = dace.symbol("m")
-    a = dace.symbol("a")
+    a = dace.symbol("alpha")
 
     # TODO: support more tile sizes via test config
     rowTile = 4
@@ -42,30 +42,30 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    test_sdfg.add_array('A1', shape=[n*m], dtype=DATATYPE)
-    test_sdfg.add_array('x1', shape=[m], dtype=DATATYPE)
-    test_sdfg.add_array('y1', shape=[n], dtype=DATATYPE)
-    test_sdfg.add_array('res1', shape=[n*m], dtype=DATATYPE)
+    test_sdfg.add_array('A', shape=[n*m], dtype=DATATYPE)
+    test_sdfg.add_array('x', shape=[m], dtype=DATATYPE)
+    test_sdfg.add_array('y', shape=[n], dtype=DATATYPE)
+    test_sdfg.add_array('r', shape=[n*m], dtype=DATATYPE)
 
     A_stream = streaming.StreamReadMatrixFull(
-        'A1',
+        'A',
         n,
         m,
         rowTile,
         colTile,
         DATATYPE,
         tileByRow=True,
-        vecWidth=vecM
+        veclen=vecM
     )
 
     y_stream = streaming.StreamReadVector(
-        'y1',
+        'y',
         n,
         DATATYPE
     )
 
     x_stream = streaming.StreamReadVector(
-        'x1',
+        'x',
         m,
         DATATYPE,
         repeat='{}/{}'.format(n, rowTile),
@@ -73,7 +73,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     )
 
     res_stream = streaming.StreamWriteMatrixFull(
-        'res1',
+        'r',
         n,
         m,
         rowTile,
@@ -83,7 +83,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     )
 
 
-    ger_node = blas.level2.ger.Ger(
+    ger_node = blas.Ger(
         "blas_ger",
         dtype=DATATYPE,
         nTile = rowTile,
@@ -103,7 +103,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         ['_x', '_y', '_A'],
         ger_node,
         [res_stream],
-        ['_RES']
+        ['_res']
     )
 
     test_sdfg.expand_library_nodes()
@@ -171,8 +171,8 @@ def pure_graph(dtype):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=64)
-    parser.add_argument("M", type=int, nargs="?", default=64)
+    parser.add_argument("N", type=int, nargs="?", default=4)
+    parser.add_argument("M", type=int, nargs="?", default=4)
     parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--eps", type=float, default=1e-6)
@@ -192,6 +192,7 @@ if __name__ == "__main__":
         exit(-1)
 
     ger = sdfg.compile()
+    sdfg.save('aoeu.sdfg')
 
     x = np.ndarray(m, dtype=np.float32)
     y = np.ndarray(n, dtype=np.float32)
@@ -209,7 +210,7 @@ if __name__ == "__main__":
 
     diff = np.linalg.norm(np.subtract(result, ref))
     if diff >= args.eps * n * m:
-        print("Unexpected result returned from ger rank 1 operation: "
-              "got:\n{}\nexpected:\n{}".format(result, ref))
+        print("Unexpected result returned from ger rank 1 operation ({}): "
+            "got:\n{}\nexpected:\n{}\ndiffs:\n{}".format(diff,result, ref, ref-result))
     else:
         print("Ok")

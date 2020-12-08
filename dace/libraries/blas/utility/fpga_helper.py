@@ -371,7 +371,7 @@ class StreamReadMatrixFull():
             access=access
         )
 
-        vec_type = dtypes.vector(self.dtype, self.veclen)
+        vec_type = vector(self.dtype, self.veclen)
         stream_inp = state.add_stream(
             in_name,
             vec_type,
@@ -416,7 +416,7 @@ class StreamReadMatrixFull():
         else:
             data_in = state.add_read(src)
 
-        vec_type = dtypes.vector(self.dtype, self.veclen)
+        vec_type = vector(self.dtype, self.veclen)
         data_out = state.add_stream(
             dest,
             vec_type,
@@ -839,9 +839,9 @@ class StreamWriteMatrixFull():
         self.fpga_stream = None
 
 
-    def copyToCPU(self, sdfg, postState, bank=None):
+    def copy_to_cpu(self, sdfg, postState, bank=None):
 
-        fpga_outputs, fpgaOut_names = memOps.fpga_copyGlobalToCPU(
+        fpga_outputs, fpgaOut_names = mem_ops.fpga_copy_global_to_cpu(
             sdfg,
             postState,
             [self.destination],
@@ -854,7 +854,7 @@ class StreamWriteMatrixFull():
         self.fpga_dataName = fpgaOut_names[0]
 
 
-    def connectToLib(self, sdfg, state, libNode, libConnector, access=False):
+    def connect_to_lib(self, sdfg, state, libNode, libConnector, access=False):
 
         out_mem, out_name = self.stream(
             sdfg,
@@ -864,10 +864,11 @@ class StreamWriteMatrixFull():
             access=access
         )
 
+        vec_type = vector(self.dtype, self.veclen)
         stream_out = state.add_stream(
             out_name,
-            self.dtype,
-            veclen=self.veclen,
+            vec_type,
+            #veclen=self.veclen,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
@@ -883,7 +884,7 @@ class StreamWriteMatrixFull():
         )
 
 
-    def getCopySize(self):
+    def get_copy_size(self):
 
         return self.rows * self.columns
 
@@ -902,10 +903,11 @@ class StreamWriteMatrixFull():
             src += srcName + "_"
         src += "wS"
 
+        vec_type = vector(self.dtype, self.veclen)
         data_in = state.add_stream(
             src,
-            self.dtype,
-            veclen=self.veclen,
+            vec_type,
+            #veclen=self.veclen,
             buffer_size=self.bufferSize,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
