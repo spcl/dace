@@ -170,6 +170,7 @@ def environment(env):
             "headers",
             "init_code",
             "finalize_code",
+            "dependencies"
     ]:
         if not hasattr(env, field):
             raise ValueError(
