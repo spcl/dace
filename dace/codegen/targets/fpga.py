@@ -67,7 +67,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._cpu_codegen = None
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
-
+        self._kernel_count = 0
         self._global_sdfg = sdfg
         self._program_name = sdfg.name
 
@@ -404,7 +404,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
-                                                  function_stream, result, sdfg.sdfg_id, state_id)
+                                                  function_stream, result)
 
             # defined type: decide whether this is a stream array or a single stream
             def_type = DefinedType.StreamArray if cpp.sym2cpp(
@@ -789,7 +789,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language specific
             read_expr = self.make_read(src_def_type, dtype, src_node.label,
                                        src_expr, src_index, is_pack,
-                                       packing_factor, sdfg.sdfg_id, state_id)
+                                       packing_factor)
 
             # Language specific
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
@@ -800,7 +800,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,
                                              dst_index, read_expr, None,
-                                             is_unpack, packing_factor, sdfg.sdfg_id, state_id)
+                                             is_unpack, packing_factor)
 
             callsite_stream.write(write_expr)
 
@@ -1186,14 +1186,13 @@ class FPGACodeGen(TargetCodeGenerator):
             raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
         self._cpu_codegen._packed_types = True
-
         kernel_stream = CodeIOStream()
 
         # Actual kernel code generation
         self.generate_kernel_internal(sdfg, state, kernel_name, subgraphs,
                                       kernel_stream, function_stream,
                                       callsite_stream)
-
+        self._kernel_count = self._kernel_count +1
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
 
