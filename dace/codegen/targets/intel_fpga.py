@@ -202,8 +202,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         '''
         if var_name in self.channel_mangle:
             if (sdfg_id, state_id) not in self.channel_mangle[var_name]:
-                import pdb
-                pdb.set_trace()
                 return var_name
             else:
                 return self.channel_mangle[var_name][(sdfg_id, state_id)]
@@ -679,9 +677,12 @@ __attribute__((autorun))\n"""
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
+
+            # generate a unique name for this function
+            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + name+"_func"
             module_body_stream.write(
-                "inline void {}_func({}) {{".format(
-                    name, ", ".join(kernel_args_opencl)), sdfg, state_id)
+                "inline void {}({}) {{".format(
+                    pe_function_name, ", ".join(kernel_args_opencl)), sdfg, state_id)
 
         # Allocate local transients
         data_to_allocate = (set(subgraph.top_level_transients()) -
@@ -724,13 +725,13 @@ __attribute__((autorun)) \\"""
 __kernel void \\
 {}_##PE_ID({}) \\
 {{ \\
-  {}_func({}{}PE_ID); \\
+  {}({}{}PE_ID); \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
                    ", ".join(kernel_args_call[:-1]),
                    AUTORUN_STR_MACRO if is_autorun else "",
                    module_function_name, ", ".join(kernel_args_opencl[:-1]),
-                   name, ", ".join(kernel_args_call[:-1]),
+                   pe_function_name, ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
 
             # create PE kernels by using the previously defined macro
