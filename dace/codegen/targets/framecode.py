@@ -238,7 +238,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             if env.finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.init_code)
+                callsite_stream.write(env.finalize_code)
                 callsite_stream.write("}")
 
         callsite_stream.write('}\n', sdfg)
