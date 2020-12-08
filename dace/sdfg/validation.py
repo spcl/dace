@@ -475,7 +475,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # unless the memlet is empty in order to connect to a scope
         elif scope_contains_scope(scope, dst_node, src_node):
             if not isinstance(dst_node, nd.AccessNode):
-                if e.data.is_empty() and isinstance(dst_node, nd.ExitNode):
+                if e.data.is_empty():
                     pass
                 else:
                     raise InvalidSDFGEdgeError(
