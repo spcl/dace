@@ -187,3 +187,76 @@ class NestEntryAccessNode(transformation.Transformation):
             inner_connector_name = 'OUT_' + connector
             map_entry.remove_in_connector(outer_connector_name)
             map_entry.remove_out_connector(inner_connector_name)
+
+
+@registry.autoregister_params(singlestate=True)
+class RemoveUnusedAccessNode(transformation.Transformation):
+    """
+    Removes AccessNodes that are connected only to empty Memlets.
+    Each pair of input and output empty memlets through AccessNode is replaced by a single empty memlet.
+
+    +----+                      +----+                    +----+                      +----+
+    |    |                      |    |                    |    +----------+----------->    |
+    |    |        XXXXX         |    |                    |    |          |           |    |
+    |    +------->     +-------->    |            X       |    |      +--------------->    |
+    +----+      X       X       +----+            XX      +----+      |   |           +----+
+                X       X                  XXXXXXXXXX                 |   |
+    +----+      X       X       +----+            XX      +----+      |   |           +----+
+    |    +------->     +-------->    |            X       |    |      |   +----------->    |
+    |    |        XXXXX         |    |                    |    |      |               |    |
+    |    |                      |    |                    |    +------+--------------->    |
+    +----+                      +----+                    +----+                      +----+
+
+    """
+
+    access_node = transformation.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(
+                RemoveUnusedAccessNode.access_node,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg, strict=False):
+        access_node = state.nodes()[candidate[RemoveUnusedAccessNode.access_node]]
+
+        inputs_empty = all(e.data.is_empty() for e in state.in_edges(access_node))
+        outputs_empty = all(e.data.is_empty() for e in state.out_edges(access_node))
+        if inputs_empty and outputs_empty:
+            return True
+
+        return False
+
+    @staticmethod
+    def match_to_str(state, candidate):
+        access_node = state.nodes()[candidate[RemoveUnusedAccessNode.access_node]]
+
+        return access_node.label
+
+    def apply(self, sdfg: dace_sdfg.SDFG):
+
+        state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
+        candidate = self.subgraph
+        access_node = state.nodes()[candidate[RemoveUnusedAccessNode.access_node]]
+
+        initial_in_edges = state.in_edges(access_node)
+        initial_out_edges = state.out_edges(access_node)
+
+        for in_edge in initial_in_edges:
+            for out_edge in initial_out_edges:
+                state.add_nedge(in_edge.src, out_edge.dst, memlet.Memlet())
+
+        for in_edge in initial_in_edges:
+            state.remove_edge(in_edge)
+
+        for out_edge in initial_out_edges:
+            state.remove_edge(out_edge)
+
+        state.remove_node(access_node)
