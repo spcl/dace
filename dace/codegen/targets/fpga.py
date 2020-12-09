@@ -795,7 +795,7 @@ class FPGACodeGen(TargetCodeGenerator):
             if dst_storage == dace.dtypes.StorageType.FPGA_ShiftRegister:
                 write_expr = self.make_shift_register_write(
                     dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
-                    read_expr, None, is_unpack, packing_factor, sdfg, state_id)
+                    read_expr, None, is_unpack, packing_factor, sdfg)
             else:
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,

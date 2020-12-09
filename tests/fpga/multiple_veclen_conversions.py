@@ -83,13 +83,19 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
     a_in = fpga_state_0.add_read("device_a")
     b_out = fpga_state_0.add_write("device_b")
 
-    # local storage to accumulate data
+    # local storage to read and increment data
     sdfg.add_array('vec_data',
                    shape=[vec_width],
                    dtype=dtype,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Registers)
+    sdfg.add_array('inc_data',
+                   shape=[vec_width],
+                   dtype=dtype,
+                   transient=True,
+                   storage=dace.dtypes.StorageType.FPGA_Registers)
     vect_data = fpga_state_0.add_access("vec_data")
+    inc_data = fpga_state_0.add_access("inc_data")
     # Read the data
 
     map_entry, map_exit = fpga_state_0.add_map(
@@ -104,8 +110,7 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
 
     # In the innermost map we read W=vec_width data elements and we store them into `vec_data`
     tasklet = fpga_state_0.add_tasklet("read_data", {"from_memory"},
-                                       {"to_kernel"},
-                                       "to_kernel = from_memory +1 ")
+                                       {"to_kernel"}, "to_kernel = from_memory")
     fpga_state_0.add_memlet_path(a_in,
                                  map_entry,
                                  read_map_entry,
@@ -120,22 +125,35 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
                                  src_conn="to_kernel",
                                  memlet=dace.Memlet("vec_data[n1]"))
 
-    # then we have to pack  it
-    state_0_tasklet = fpga_state_0.add_tasklet('state_0_tasklet', ['inCon'],
-                                               ['outCon'], 'outCon = inCon')
+    # Increment all the elements by one
+    inc_map_entry, inc_map_exit = fpga_state_0.add_map(
+        "unrolled_inc", {"n1": "0:{}".format(vec_width)},
+        schedule=dace.ScheduleType.FPGA_Device,
+        unroll=True)
+
+    inc_tasklet = fpga_state_0.add_tasklet("increment", {"_a"}, {"_b"},
+                                           "_b = _a + 1 ")
 
     fpga_state_0.add_memlet_path(vect_data,
-                                 state_0_tasklet,
-                                 dst_conn='inCon',
-                                 memlet=dace.Memlet(f"{vect_data}[0]",
-                                                    dynamic=True))
+                                 inc_map_entry,
+                                 inc_tasklet,
+                                 dst_conn="_a",
+                                 memlet=dace.Memlet("vec_data[n1]"))
 
-    #then we write it to memory
-    fpga_state_0.add_memlet_path(state_0_tasklet,
+    fpga_state_0.add_memlet_path(inc_tasklet,
+                                 inc_map_exit,
+                                 inc_data,
+                                 src_conn="_b",
+                                 memlet=dace.Memlet("inc_data[n1]"))
+
+    # write it to memory (it wil pack it)
+    fpga_state_0.add_memlet_path(inc_data,
                                  map_exit,
                                  b_out,
                                  src_conn="outCon",
-                                 memlet=dace.Memlet(f"{b_out}[n0]"))
+                                 memlet=dace.Memlet(
+                                     f"{b_out}[n0]",
+                                     other_subset="0:{}".format(vec_width)))
 
     ########################################################################
     # FPGA, Second State:
@@ -152,6 +170,11 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
                    dtype=dtype,
                    transient=True,
                    storage=dace.dtypes.StorageType.FPGA_Registers)
+    sdfg.add_array('inc_data_B',
+                   shape=[vec_width],
+                   dtype=dtype,
+                   transient=True,
+                   storage=dace.dtypes.StorageType.FPGA_Registers)
 
     map_entry, map_exit = fpga_state_1.add_map(
         "read_B", {
@@ -160,29 +183,45 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
         schedule=dace.ScheduleType.FPGA_Device)
 
     vect_data = fpga_state_1.add_access("vec_data_B")
+    inc_data = fpga_state_1.add_access("inc_data_B")
 
-    # increment data
-    copy_in_tasklet = fpga_state_1.add_tasklet('copy_from_B', {'in_con'},
-                                               {'out_con'},
-                                               'out_con = in_con +1 ')
+    # unpack data
     fpga_state_1.add_memlet_path(b_in,
                                  map_entry,
-                                 copy_in_tasklet,
-                                 dst_conn="in_con",
-                                 memlet=dace.Memlet(f"{b_in}[n0]"))
-
-    # this will trigger gear boxing
-    fpga_state_1.add_memlet_path(copy_in_tasklet,
                                  vect_data,
-                                 src_conn="out_con",
-                                 memlet=dace.Memlet("vec_data_B"))
+                                 memlet=dace.Memlet(
+                                     "device_b[n0]",
+                                     other_subset="0:{}".format(vec_width)))
+
+    # Increment all the elements by one
+    inc_map_entry, inc_map_exit = fpga_state_1.add_map(
+        "unrolled_inc", {"n1": "0:{}".format(vec_width)},
+        schedule=dace.ScheduleType.FPGA_Device,
+        unroll=True)
+
+    inc_tasklet = fpga_state_1.add_tasklet("increment", {"_a"}, {"_b"},
+                                           "_b = _a + 1 ")
+
+    fpga_state_1.add_memlet_path(vect_data,
+                                 inc_map_entry,
+                                 inc_tasklet,
+                                 dst_conn="_a",
+                                 memlet=dace.Memlet("vec_data_B[n1]"))
+
+    fpga_state_1.add_memlet_path(inc_tasklet,
+                                 inc_map_exit,
+                                 inc_data,
+                                 src_conn="_b",
+                                 memlet=dace.Memlet("inc_data_B[n1]"))
 
     # then we copy that to C, we need other gearboxing
-    fpga_state_1.add_memlet_path(vect_data,
+    fpga_state_1.add_memlet_path(inc_data,
                                  map_exit,
                                  c_out,
                                  src_conn="to_memory",
-                                 memlet=dace.Memlet(f"{c_out.data}[n0]"))
+                                 memlet=dace.Memlet(
+                                     f"{c_out.data}[n0]",
+                                     other_subset="0:{}".format(vec_width)))
 
     ########################################################################
     # FPGA, third State, read from C, write unpacked to D
@@ -204,27 +243,18 @@ def make_sdfg(dtype=dace.float32, vec_width=4):
             "n0": "0:{}/{}".format(N, vec_width),
         },
         schedule=dace.ScheduleType.FPGA_Device)
+    vect_data = fpga_state_2.add_access("vec_data_C")
     write_map_entry, write_map_exit = fpga_state_2.add_map(
         "unrolled_reads", {"n1": "0:{}".format(vec_width)},
         schedule=dace.ScheduleType.FPGA_Device,
         unroll=True)
 
-    vect_data = fpga_state_2.add_access("vec_data_C")
-
-    # increment data
-    copy_in_tasklet = fpga_state_2.add_tasklet('copy_from_stream_C', {'in_con'},
-                                               {'out_con'}, 'out_con = in_con')
     fpga_state_2.add_memlet_path(c_in,
                                  map_entry,
-                                 copy_in_tasklet,
-                                 dst_conn="in_con",
-                                 memlet=dace.Memlet(f"{c_in}[n0]"))
-
-    # this will trigger gear boxing
-    fpga_state_2.add_memlet_path(copy_in_tasklet,
                                  vect_data,
-                                 src_conn="out_con",
-                                 memlet=dace.Memlet("vec_data_C"))
+                                 memlet=dace.Memlet(
+                                     "device_c[n0]",
+                                     other_subset="0:{}".format(vec_width)))
 
     # then we copy that to memory
     tasklet = fpga_state_2.add_tasklet("write_D", {"from_kernel"},
@@ -266,7 +296,6 @@ if __name__ == "__main__":
     size_n = args["N"]
 
     sdfg = make_sdfg()
-
     comp = sdfg.compile()
 
     a = np.random.rand(size_n).astype(np.float32)

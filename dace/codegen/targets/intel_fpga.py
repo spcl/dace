@@ -1,6 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-
 import astunparse
 import functools
 import copy
@@ -403,7 +402,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor, sdfg, state_id):
+                                  packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
             raise TypeError("Intel shift register must be an array: "
                             "{} is {}".format(var_name, defined_type))
@@ -1324,8 +1323,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, codegen):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        self.used_streams = [
-        ]  # keep track of the different streams used in a tasklet
+        # Keep track of the different streams used in a tasklet
+        self.used_streams = []
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
