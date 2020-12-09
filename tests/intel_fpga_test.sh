@@ -64,9 +64,6 @@ run_all() {
     run_sample fpga/veclen_conversion "\n"
     run_sample fpga/veclen_copy_conversion "\n"
 
-    # Throw error when kernel names are too long
-    run_sample intel_fpga/name_too_long name_too_long "\n"
-
     # Test removing degenerate loops that only have a single iteration
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test "\n" 
 
@@ -101,7 +98,7 @@ run_all() {
 
     #### SYSTOLIC ARRAY ###
     run_sample intel_fpga/simple_systolic_array simple_systolic_array_4 "\n" 128 4
-    run_sample ../samples/fpga/gemm_fpga_systolic gemm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
+    run_sample ../samples/fpga/matrix_multiplication_systolic mm_fpga_systolic_4_NxKx256 "\n" 256 256 256 4
     run_sample ../samples/fpga/jacobi_fpga_systolic jacobi_fpga_systolic_8_Hx8192xT "\n"
 
     #### MISCELLANEOUS ####
@@ -109,7 +106,7 @@ run_all() {
     # They contain streams
     run_sample intel_fpga/async async_test "\n" 
     run_sample ../samples/fpga/filter_fpga filter_fpga "\n" 1000 0.2
-    run_sample ../samples/fpga/gemm_fpga_stream gemm_fpga_stream_NxKx128 "\n" 128 128 128
+    run_sample ../samples/fpga/matrix_multiplication_stream mm_fpga_stream_NxKx128 "\n" 128 128 128
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream "\n" 128 128 64
     run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 "\n" 24
 
@@ -126,7 +123,10 @@ run_all() {
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"
 
     # Generating autorun kernels
-    run_sample intel_fpga/autorun autorun_test "\n" 
+    run_sample intel_fpga/autorun autorun_test "\n"
+
+    # Multiple gearboxing
+    run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions "\n"
 }
 
 # Check if aoc is vailable

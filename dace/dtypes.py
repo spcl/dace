@@ -99,6 +99,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    OpenCL = ()
     SystemVerilog = ()
 
 
@@ -517,7 +518,7 @@ class pointer(typeclass):
 
     @property
     def ocltype(self):
-        return f"{self.type.ocltype}*"
+        return f"{self.base_type.ocltype}*"
 
 
 class vector(typeclass):

@@ -68,6 +68,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
+        # Keep track of generated converters to avoid multiple definition
+        self.generated_converters = set()
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -162,7 +164,18 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                        target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
-        return [host_code_obj] + kernel_code_objs
+        # add the util header if present
+        other_code_objs = [
+            CodeObject(file_name,
+                       code.getvalue(),
+                       "cl",
+                       IntelFPGACodeGen,
+                       "Intel FPGA",
+                       target_type="device")
+            for (file_name, code) in self._other_codes.items()
+        ]
+
+        return [host_code_obj] + kernel_code_objs + other_code_objs
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
@@ -254,12 +267,15 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def make_read(self, defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "read_channel_intel({})".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
-            read_expr = "*({}{})".format(expr, " + " + index if index else "")
+            if index and index != "0":
+                read_expr = f"*({expr} + {index})"
+            else:
+                if " " in expr:
+                    expr = f"({expr})"
+                read_expr = f"*{expr}"
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -282,12 +298,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
-                if index == "0":
-                    # remove "[0]" index as this is not allowed if the
-                    # subscripted values is not an array
-                    write_expr = write_expr.replace("[0]", "")
-                else:
-                    write_expr = "{}[{}]".format(write_expr, index)
+                write_expr = "{}[{}]".format(write_expr, index)
             if is_unpack:
                 return "\n".join("write_channel_intel({}, {}[{}]);".format(
                     write_expr, read_expr, i) for i in range(packing_factor))
@@ -314,10 +325,20 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                     ocltype = fpga.vector_element_type_of(dtype).ocltype
                     self.converters_to_generate.add(
                         (False, ocltype, packing_factor))
-                    return "unpack_{}{}({}, &{}[{}]);".format(
-                        ocltype, packing_factor, read_expr, write_expr, index)
+                    if not index or index == "0":
+                        return "unpack_{}{}({}, {});".format(
+                            ocltype, packing_factor, read_expr, write_expr)
+                    else:
+                        return "unpack_{}{}({}, {} + {});".format(
+                            ocltype, packing_factor, read_expr, write_expr,
+                            index)
                 else:
-                    return "{}[{}] = {};".format(write_expr, index, read_expr)
+                    if " " in write_expr:
+                        write_expr = f"({write_expr})"
+                    if index and index != "0":
+                        return f"{write_expr}[{index}] = {read_expr};"
+                    else:
+                        return f"*{write_expr} = {read_expr};"
         elif defined_type == DefinedType.Scalar:
             if wcr is not None:
                 if redtype != dace.dtypes.ReductionType.Min and redtype != dace.dtypes.ReductionType.Max:
@@ -346,13 +367,13 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor):
+                                  packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
             raise TypeError("Intel shift register must be an array: "
                             "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b,
-                                    self._global_sdfg.data(var_name).shape, 1)
+                                    sdfg.data(var_name).shape, 1)
         res = """
 #pragma unroll
 for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
@@ -364,14 +385,27 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         return res
 
     @staticmethod
-    def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
-                                   node):
-        kernel_stream.write("#pragma ivdep array({})".format(var_name), sdfg,
-                            state_id, node)
+    def generate_no_dependence_pre(kernel_stream,
+                                   sdfg,
+                                   state_id,
+                                   node,
+                                   var_name=None):
+        '''
+            Adds pre-loop pragma for ignoring loop carried dependencies on a given variable
+            (if var_name is provided) or all variables
+        '''
+        if var_name is None:
+            kernel_stream.write("#pragma ivdep", sdfg, state_id, node)
+        else:
+            kernel_stream.write("#pragma ivdep array({})".format(var_name),
+                                sdfg, state_id, node)
 
     @staticmethod
-    def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
-                                    node):
+    def generate_no_dependence_post(kernel_stream,
+                                    sdfg,
+                                    state_id,
+                                    node,
+                                    var_name=None):
         pass
 
     def generate_kernel_internal(self, sdfg, state, kernel_name, subgraphs,
@@ -383,6 +417,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_header_stream = CodeIOStream()
         kernel_body_stream = CodeIOStream()
 
+        #reset list of needed converters
+        self.converters_to_generate = set()
+
         kernel_header_stream.write("#include <dace/intel_fpga/device.h>\n\n",
                                    sdfg)
         self.generate_constants(sdfg, kernel_header_stream)
@@ -392,6 +429,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
          scalar_parameters, symbol_parameters,
          nested_global_transients) = self.make_parameters(
              sdfg, state, subgraphs)
+
+        # Ignore interface ID in this backend
+        global_data_parameters = [tuple(p[:3]) for p in global_data_parameters]
+        subgraph_parameters = {
+            k: [tuple(vv[:3]) for vv in v]
+            for k, v in subgraph_parameters.items()
+        }
 
         # Scalar parameters are never output
         sc_parameters = [(False, pname, param)
@@ -511,17 +555,13 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         is_autorun = len(kernel_args_opencl) == 0
 
         # create a unique module name to prevent name clashes
-        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
-
-        # The official limit suggested by Intel is 61. However, the compiler
+        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + name
+        # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
         # 61 - 15 = 46, and round down to 42 to be conservative.
-        if len(module_function_name) > 42:
-            raise NameTooLongError(
-                "Due to a bug in the Intel FPGA OpenCL compiler, "
-                "kernel names cannot be longer than 42 characters:\n\t{}".
-                format(module_function_name))
+        # Therefore we cut down names longer than that
+        module_function_name = module_function_name[0:42]
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -646,9 +686,9 @@ __kernel void \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
                    ", ".join(kernel_args_call[:-1]),
-                   AUTORUN_STR_MACRO if is_autorun else "", module_function_name,
-                   ", ".join(kernel_args_opencl[:-1]), name,
-                   ", ".join(kernel_args_call[:-1]),
+                   AUTORUN_STR_MACRO if is_autorun else "",
+                   module_function_name, ", ".join(kernel_args_opencl[:-1]),
+                   name, ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
 
             # create PE kernels by using the previously defined macro
@@ -718,11 +758,11 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']'
 
-                expr = cpp.make_ptr_vector_cast(sdfg,
-                                                in_memlet.data + offset_expr,
-                                                in_memlet,
-                                                node.in_connectors[vconn],
-                                                False, defined_type)
+                expr = self.make_ptr_vector_cast(sdfg,
+                                                 in_memlet.data + offset_expr,
+                                                 in_memlet,
+                                                 node.in_connectors[vconn],
+                                                 False, defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
                     typedef = "__global volatile  {}* restrict".format(vec_type)
                 else:
@@ -774,7 +814,7 @@ __kernel void \\
                             vec_type)
                     else:
                         typedef = "{}*".format(vec_type)
-                    expr = cpp.make_ptr_vector_cast(
+                    expr = self.make_ptr_vector_cast(
                         sdfg, out_memlet.data + offset_expr, out_memlet,
                         node.out_connectors[uconn], False, defined_type)
                     memlet_references.append((typedef, uconn, expr))
@@ -916,7 +956,7 @@ __kernel void \\
                                                   memlet_type)
             else:
                 if data_desc.storage == dace.dtypes.StorageType.FPGA_Global:
-                    qualifiers = "__global volatile "
+                    qualifiers = "__global "
                 else:
                     qualifiers = ""
                 ctype = '{}{} *'.format(qualifiers, memlet_type)
@@ -1028,26 +1068,53 @@ __kernel void \\
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
                             function_stream):
+        # Get the file stream
+        if "converters" not in self._other_codes:
+            self._other_codes["converters"] = CodeIOStream()
+        converter_stream = self._other_codes["converters"]
+
         if is_unpack:
-            function_stream.write(
-                """\
-void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
+            converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype,
+                                                             veclen=veclen)
+            signature = "void {name}(const {dtype}{veclen} value, {dtype} *const ptr)".format(
+                name=converter_name, dtype=ctype, veclen=veclen)
+            if converter_name not in self.generated_converters:
+                self.generated_converters.add(converter_name)
+
+                # create code for converter in appropriate header file
+                converter_stream.write(
+                    """\
+{signature} {{
     #pragma unroll
     for (int u = 0; u < {veclen}; ++u) {{
         ptr[u] = value[u];
     }}
-}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
+}}\n\n""".format(signature=signature, dtype=ctype, veclen=veclen), sdfg)
+
+            # add forward declaration
+            function_stream.write("extern {};".format(signature), sdfg)
+
         else:
-            function_stream.write(
-                """\
-{dtype}{veclen} pack_{dtype}{veclen}({dtype} const *const ptr) {{
+            converter_name = "pack_{dtype}{veclen}".format(dtype=ctype,
+                                                           veclen=veclen)
+            signature = "{dtype}{veclen} {name}({dtype} const *const ptr)".format(
+                name=converter_name, dtype=ctype, veclen=veclen)
+            if converter_name not in self.generated_converters:
+                self.generated_converters.add(converter_name)
+                # create code for converter in appropriate header file
+                converter_stream.write(
+                    """\
+{signature} {{
     {dtype}{veclen} vec;
     #pragma unroll
     for (int u = 0; u < {veclen}; ++u) {{
         vec[u] = ptr[u];
     }}
     return vec;
-}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
+}}\n\n""".format(signature=signature, dtype=ctype, veclen=veclen), sdfg)
+
+            # add forward declaration
+            function_stream.write("extern {};".format(signature), sdfg, self)
 
     def generate_converters(self, sdfg, function_stream):
         for unpack, ctype, veclen in self.converters_to_generate:
@@ -1065,12 +1132,12 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         if not node.code:
             return ''
 
-        # If raw C++ code, return the code directly
+        # If raw C++ or OpenCL code, return the code directly
         if node.language != dtypes.Language.Python:
-            if node.language != dtypes.Language.CPP:
+            if node.language != dtypes.Language.CPP and node.language != dtypes.Language.OpenCL:
                 raise ValueError(
-                    "Only Python or C++ code supported in CPU codegen, got: {}".
-                    format(node.language))
+                    "Only Python, C++ and OpenCL code are supported in Intel FPGA codegen, got: {}"
+                    .format(node.language))
             callsite_stream.write(
                 type(node).__properties__["code"].to_string(node.code), sdfg,
                 state_id, node)
@@ -1133,7 +1200,8 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                        locals,
                                        result,
                                        defined_symbols=defined_symbols,
-                                       type_inference=True)
+                                       type_inference=True,
+                                       language=dtypes.Language.OpenCL)
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
@@ -1168,9 +1236,18 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
                                offset, inname, memlet.wcr, False, 1)
 
     def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
-                             var_type):
+                             defined_type):
         vtype = self.make_vector_type(conntype, False)
-        return f"{vtype}({expr})"
+        if conntype != sdfg.arrays[memlet.data].dtype:
+            if is_scalar:
+                expr = f"*({vtype} *)(&{expr})"
+            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+                expr = f"({vtype})(&{expr})"
+            elif defined_type == DefinedType.Pointer:
+                expr = "&" + expr
+        elif not is_scalar:
+            expr = "&" + expr
+        return expr
 
     def process_out_memlets(self, sdfg, state_id, node, dfg, dispatcher, result,
                             locals_defined, function_stream, **kwargs):
@@ -1206,8 +1283,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, codegen):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        self.used_streams = [
-        ]  # keep track of the different streams used in a tasklet
+        # Keep track of the different streams used in a tasklet
+        self.used_streams = []
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
