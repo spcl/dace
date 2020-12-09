@@ -123,7 +123,10 @@ run_all() {
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"
 
     # Generating autorun kernels
-    run_sample intel_fpga/autorun autorun_test "\n" 
+    run_sample intel_fpga/autorun autorun_test "\n"
+
+    # Multiple gearboxing
+    run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions "\n"
 }
 
 # Check if aoc is vailable
