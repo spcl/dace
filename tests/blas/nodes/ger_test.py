@@ -21,19 +21,18 @@ from multiprocessing import Process, Queue
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
-def fpga_graph(veclen, precision, vendor, testCase="0"):
+def fpga_graph(veclen, n_tile, m_tile, precision, vendor, testCase="0"):
 
     DATATYPE = precision
-    nRows = dace.symbol("nRows")
-    mCols = dace.symbol("mCols")
+    nRows = dace.symbol("n_tile")
+    mCols = dace.symbol("m_tile")
 
     n = dace.symbol("n")
     m = dace.symbol("m")
     a = dace.symbol("alpha")
 
-    # TODO: support more tile sizes via test config
-    rowTile = 2
-    colTile = 2
+    rowTile = n_tile
+    colTile = m_tile
     vecM = veclen
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
@@ -62,7 +61,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         'y',
         n,
         DATATYPE,
-        repeat='{}/{}'.format(n, 1),#colTile),
+        repeat='{}/{}'.format(n, colTile),
         veclen=vecM
     )
 
@@ -88,8 +87,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     ger_node = blas.Ger(
         "blas_ger",
         dtype=DATATYPE,
-        nTile = rowTile,
-        mTile = colTile,
+        n_tile = rowTile,
+        m_tile = colTile,
         n=n,
         m=m,
         vecWidthM=vecM,
@@ -173,14 +172,18 @@ def pure_graph(dtype):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=4)
-    parser.add_argument("M", type=int, nargs="?", default=4)
+    parser.add_argument("N", type=int, nargs="?", default=128)
+    parser.add_argument("M", type=int, nargs="?", default=128)
+    parser.add_argument("n_tile", type=int, nargs="?", default=16)
+    parser.add_argument("m_tile", type=int, nargs="?", default=16)
     parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--eps", type=float, default=1e-6)
     args = parser.parse_args()
     n = args.N
     m = args.M
+    n_tile = args.n_tile
+    m_tile = args.m_tile
     alpha = args.alpha
 
     if args.target == "pure":
@@ -188,13 +191,12 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
         raise NotImplementedError()
     elif args.target == "xilinx":
-        sdfg = fpga_graph(1, dace.float32, args.target, "0")
+        sdfg = fpga_graph(1, n_tile, m_tile, dace.float32, args.target, "0")
     else:
         print("Unsupported target")
         exit(-1)
 
     ger = sdfg.compile()
-    sdfg.save('aoeu.sdfg')
 
     x = np.ndarray(m, dtype=np.float32)
     y = np.ndarray(n, dtype=np.float32)
@@ -204,27 +206,7 @@ if __name__ == "__main__":
     x[:] = np.random.rand(m).astype(np.float32)
     y[:] = np.random.rand(n).astype(np.float32)
     A[:] = np.random.rand(m, n).astype(np.float32)
-    result[:] = np.zeros((m, n)).astype(np.float32)
-
-    pure_result = np.zeros((n,m)).astype(np.float32)
-    n_tile = 4
-    m_tile = 4
-    x_buf = np.ndarray((n_tile,))
-    y_buf = np.ndarray((m_tile,))
-    reads = 0
-    for ti in range(n//n_tile):
-        x_buf = x[ti*n_tile:ti*n_tile+n_tile]
-        for tj in range(m//m_tile):
-            A_buf = A[ti*n_tile:ti*n_tile+n_tile,tj*m_tile:tj*m_tile+m_tile]
-            A_tmp = np.ndarray((n_tile,m_tile), dtype=np.float32)
-            for i in range(n_tile):
-                if i == 0:
-                    y_buf = y[tj*m_tile:tj*m_tile+m_tile]
-                    reads += 1
-                for j in range(m_tile):
-                    A_tmp[i,j] = x_buf[i] * y_buf[j] + A_buf[i,j]
-            pure_result[ti*n_tile:ti*n_tile+n_tile,tj*m_tile:tj*m_tile+m_tile] = A_tmp
-    print (reads)
+    result[:] = np.zeros((n, m)).astype(np.float32)
 
     ger(alpha=alpha, x=x, y=y, A=A, r=result, m=m, n=n)
 
@@ -233,7 +215,7 @@ if __name__ == "__main__":
     diff = np.linalg.norm(np.subtract(result, ref))
     if diff >= args.eps * n * m:
         print("Unexpected result returned from ger rank 1 operation ({}): "
-            "got:\n{}\nexpected:\n{}\ndiffs:\n{}".format(diff,result, ref, ref-result))
-        print(pure_result)
+            "got:\n{}\nexpected:\n{}\ndiffs:\n{}".format(diff, result, ref, ref-result))
+        #print(pure_result)
     else:
         print("Ok")

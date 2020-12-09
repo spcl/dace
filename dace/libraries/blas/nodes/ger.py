@@ -264,7 +264,6 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
             memlet=Memlet.simple(res.data, "0:{}*{}".format(m, n))
         )
 
-        ger_sdfg.save('aoeu2.sdfg')
         return ger_sdfg
 
 
@@ -306,6 +305,9 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
             buffer_size=32,
             storage=dtypes.StorageType.FPGA_Local
         )
+
+        tile_sdfg.add_array('y_buf', shape=[m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
+        y_buf = compute_state.add_write('y_buf')
 
         #
         # Read X
@@ -364,8 +366,8 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
         nested_sdfg = compute_state.add_nested_sdfg(
             red_sdfg,
             tile_sdfg,
-            {'_A', '_x', '_y'},
-            {'_A_out'}
+            {'_A', 'x_buf', '_y'},
+            {'_A_out', 'y_buf'}
         )
 
         compute_state.add_memlet_path(
@@ -376,8 +378,8 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
 
         compute_state.add_memlet_path(
             x_in, m_map_entry, tile_n_entry, nested_sdfg,
-            dst_conn='_x',
-            memlet=Memlet.simple(x_in.data, "0:{}".format(m))
+            dst_conn='x_buf',
+            memlet=Memlet.simple(x_in.data, "0:{}".format(n_tile))
         )
 
         compute_state.add_memlet_path(
@@ -390,6 +392,12 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
             nested_sdfg, tile_n_exit, m_map_exit, A_out,
             src_conn='_A_out',
             memlet=Memlet.simple(A_out.data, "0:{}*{}".format(n, m))
+        )
+
+        compute_state.add_memlet_path(
+            nested_sdfg, tile_n_exit, y_buf,
+            src_conn='y_buf',
+            memlet=Memlet.simple(y_buf.data, "0:{}".format(m_tile))
         )
 
         return tile_sdfg
@@ -406,7 +414,7 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
         read_y_state = inner_sdfg.add_state("read_y_state")
         read_empty_state = inner_sdfg.add_state("read_empty_state")
 
-        #stream_out_state = inner_sdfg.add_state('stream_out_state')
+        stream_out_state = inner_sdfg.add_state('stream_out_state')
 
         vec_type = dtypes.vector(dtype, veclen)
         singleton_vec = dtypes.vector(dtype, 1)
@@ -424,21 +432,20 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
             storage=dtypes.StorageType.FPGA_Local
         )
 
-        #A_out = stream_out_state.add_stream(
-        A_out = compute_state.add_stream(
+        A_out = stream_out_state.add_stream(
             '_A_out',
             vec_type,
             buffer_size=32,
             storage=dtypes.StorageType.FPGA_Local
         )
 
-        inner_sdfg.add_array('_x', shape=[n_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
-        #inner_sdfg.add_array('A_buf', shape=[n_tile*m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
+        inner_sdfg.add_array('x_buf', shape=[n_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
+        inner_sdfg.add_array('A_buf', shape=[m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
 
         #
         # Read y
         #
-        inner_sdfg.add_array('y_buf', shape=[m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
+        inner_sdfg.add_array('y_buf', shape=[m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=False)
         read_y_entry, read_y_exit = read_y_state.add_map(
             'read_y_map',
             dict(k = '0:{}'.format(m_tile)),
@@ -476,15 +483,15 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
             schedule=dtypes.ScheduleType.FPGA_Device,
         )
 
-        x_in = compute_state.add_read("_x")
+        x_in = compute_state.add_read("x_buf")
         y_in = compute_state.add_read("y_buf")
-        #A_buf = compute_state.add_write("A_buf")
+        A_buf = compute_state.add_write("A_buf")
 
         compute_task = compute_state.add_tasklet(
             'compute_task',
             ['A_con', 'x_con', 'y_con'],
             ['out_con'],
-            'out_con = A_con + x_con * y_con * {}'.format(a)
+            'out_con = {} * x_con * y_con + A_con'.format(a)
         )
 
         compute_state.add_memlet_path(
@@ -506,162 +513,47 @@ class Expand_GER_FPGA_Streaming_RowTiles(ExpandTransformation):
         )
 
         compute_state.add_memlet_path(
-            compute_task, m_tile_exit, A_out,
+            compute_task, m_tile_exit, A_buf,
             src_conn='out_con',
-            memlet=Memlet.simple(A_out.data, "0")
+            memlet=Memlet.simple(A_buf.data, "j")
         )
 
         # ---------- ----------
         # STREAM RESULT
         # ---------- ---------
-        #A_buf = stream_out_state.add_read('A_buf')
+        A_buf = stream_out_state.add_read('A_buf')
 
-        #stream_out_entry, stream_out_exit = stream_out_state.add_map(
-        #    'stream_out_map',
-        #    dict(j='0:{}'.format(m_tile)),
-        #    schedule=dtypes.ScheduleType.FPGA_Device,
-        #)
-        #stream_out_task = stream_out_state.add_tasklet(
-        #    'stream_out_task',
-        #    ['in_con'],
-        #    ['out_con'],
-        #    'out_con = in_con'
-        #)
+        stream_out_entry, stream_out_exit = stream_out_state.add_map(
+            'stream_out_map',
+            dict(j='0:{}'.format(m_tile)),
+            schedule=dtypes.ScheduleType.FPGA_Device,
+        )
+        stream_out_task = stream_out_state.add_tasklet(
+            'stream_out_task',
+            ['in_con'],
+            ['out_con'],
+            'out_con = in_con'
+        )
 
-        #stream_out_state.add_memlet_path(
-        #    A_buf, stream_out_entry, stream_out_task,
-        #    dst_conn='in_con',
-        #    memlet=Memlet.simple(A_buf.data, "j")
-        #)
+        stream_out_state.add_memlet_path(
+            A_buf, stream_out_entry, stream_out_task,
+            dst_conn='in_con',
+            memlet=Memlet.simple(A_buf.data, "j")
+        )
 
-        #stream_out_state.add_memlet_path(
-        #    stream_out_task, stream_out_exit, A_out,
-        #    src_conn='out_con',
-        #    memlet=Memlet.simple(A_out.data, '0')
-        #)
+        stream_out_state.add_memlet_path(
+            stream_out_task, stream_out_exit, A_out,
+            src_conn='out_con',
+            memlet=Memlet.simple(A_out.data, '0')
+        )
 
-        #inner_sdfg.add_edge(compute_state, stream_out_state, dace.InterstateEdge(None))
+        inner_sdfg.add_edge(compute_state, stream_out_state, dace.InterstateEdge(None))
 
         return inner_sdfg
-
-
-
-    @staticmethod
-    def make_computeTileColStreamed(dtype, nTile, mTile, n, m):
-
-        tile_sdfg = dace.SDFG("tile_sdfg")
-
-        init_state = tile_sdfg.add_state('init_state_tile')
-        compute_state = tile_sdfg.add_state('copmute_state_tile')
-
-        A_in = compute_state.add_stream(
-            '_A_tile',
-            dtype,
-            veclen=1,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-
-        x_in = init_state.add_stream(
-            '_x_tile',
-            dtype,
-            veclen=1,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-
-        tile_sdfg.add_array('_a_tile', shape=[1], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers)
-        tile_sdfg.add_array('_y_tile', shape=[nTile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
-
-        tile_sdfg.add_array('x_buf', shape=[mTile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
-
-        A_out = compute_state.add_stream(
-            '_A_out_tile',
-            dtype,
-            veclen=1,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-
-
-        # ---------- ----------
-        # INIT State
-        # ---------- ----------
-        fpga_streamToLocal(
-            init_state,
-            x_in,
-            'x_buf',
-            mTile
-        )
-
-
-
-        # ---------- ----------
-        # COMPUTE
-        # ---------- ----------
-        x_in = compute_state.add_read('x_buf')
-        y_in = compute_state.add_read('_y_tile')
-        a_in = compute_state.add_read("_a_tile")
-
-        innerComputeMap_entry, innerComputeMap_exit = compute_state.add_map(
-            'outerCompute_map',
-            dict(ii = '0:{}'.format(nTile)),
-            schedule=dtypes.ScheduleType.FPGA_Device,
-            unroll=True
-        )
-
-
-        outerComputeMap_entry, outerComputeMap_exit = compute_state.add_map(
-            'outerCompute_map',
-            dict(jj = '0:{}'.format(mTile)),
-            schedule=dtypes.ScheduleType.FPGA_Device
-        )
-
-        compute_task = compute_state.add_tasklet(
-            'compute_task',
-            ['A_con', 'a_con', 'x_con', 'y_con'],
-            ['outCon'],
-            'outCon = A_con + x_con * y_con * a_con'
-        )
-
-        compute_state.add_memlet_path(
-            A_in, outerComputeMap_entry, innerComputeMap_entry, compute_task,
-            dst_conn='A_con',
-            memlet=Memlet.simple(A_in.data, "0")
-        )
-
-        compute_state.add_memlet_path(
-            x_in, outerComputeMap_entry, innerComputeMap_entry, compute_task,
-            dst_conn='x_con',
-            memlet=Memlet.simple(x_in.data, "jj")
-        )
-
-        compute_state.add_memlet_path(
-            y_in, outerComputeMap_entry, innerComputeMap_entry, compute_task,
-            dst_conn='y_con',
-            memlet=Memlet.simple(y_in.data, "ii")
-        )
-
-        compute_state.add_memlet_path(
-            a_in, outerComputeMap_entry, innerComputeMap_entry, compute_task,
-            dst_conn='a_con',
-            memlet=Memlet.simple(a_in.data, "0")
-        )
-
-        compute_state.add_memlet_path(
-            compute_task, innerComputeMap_exit, outerComputeMap_exit, A_out,
-            src_conn='outCon',
-            memlet=Memlet.simple(A_out.data, "0")
-        )
-
-        tile_sdfg.add_edge(init_state, compute_state, dace.InterstateEdge(None))
-
-        return tile_sdfg
 
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        sdfg.save('aoeu2.sdfg')
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) + ".")
         return Expand_GER_FPGA_Streaming_RowTiles.make_sdfg(
@@ -771,6 +663,7 @@ class Ger(dace.sdfg.nodes.LibraryNode):
                 subset.squeeze()
                 size_y = subset.size()
 
+        # TODO these checks aren't working with streams
         #if len(size_a) != 2:
         #    raise ValueError("A must be a matrix")
         #if len(size_x) != 1:
