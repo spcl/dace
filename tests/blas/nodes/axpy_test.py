@@ -338,6 +338,6 @@ if __name__ == "__main__":
     if args.target == "intel_fpga" or args.target == "xilinx":
         _test_fpga("fpga", args.target)
     elif args.target == "intel_fpga_dram":
-        test_fpga("intel_fpga_dram", "intel_fpga")
+        _test_fpga("intel_fpga_dram", "intel_fpga")
     else:
         test_pure()
