@@ -72,6 +72,31 @@ def _do_memlets_correspond(
     return True
 
 
+def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str,
+                         desc: data.Stream):
+    """ Helper function that changes an array in a nested SDFG to a stream. """
+    nsdfg: SDFG = node.sdfg
+    newdesc = copy.deepcopy(desc)
+    newdesc.transient = False
+    nsdfg.arrays[to_replace] = newdesc
+
+    # Replace memlets in path with stream access
+    for state in nsdfg.nodes():
+        for dnode in state.data_nodes():
+            if dnode.data != to_replace:
+                continue
+            for edge in state.all_edges(dnode):
+                mpath = state.memlet_path(edge)
+                for e in mpath:
+                    e.data = mm.Memlet(data=to_replace, subset='0')
+                    if isinstance(e.src, nodes.NestedSDFG):
+                        e.data.dynamic = True
+                        _streamify_recursive(e.src, e.src_conn, newdesc)
+                    if isinstance(e.dst, nodes.NestedSDFG):
+                        e.data.dynamic = True
+                        _streamify_recursive(e.dst, e.dst_conn, newdesc)
+
+
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class StreamingMemory(xf.Transformation):
@@ -120,6 +145,12 @@ class StreamingMemory(xf.Transformation):
         # If already a stream, skip
         if isinstance(sdfg.arrays[access.data], data.Stream):
             return False
+        # If does not exist on off-chip memory, skip
+        if sdfg.arrays[access.data].storage not in [
+                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
+                dtypes.StorageType.GPU_Global, dtypes.StorageType.FPGA_Global
+        ]:
+            return False
 
         # Only free nodes are allowed
         if graph.entry_node(access) is not None:
@@ -136,7 +167,8 @@ class StreamingMemory(xf.Transformation):
             # The innermost end of the path must have a clearly defined memory
             # access pattern
             innermost_edge = mpath[-1] if expr_index == 0 else mpath[0]
-            if innermost_edge.data.subset.num_elements() != 1:
+            if (innermost_edge.data.subset.num_elements() != 1
+                    or innermost_edge.data.dynamic):
                 return False
 
             # Check if any of the maps has a dynamic range
@@ -221,12 +253,12 @@ class StreamingMemory(xf.Transformation):
         streams = {}
         mpaths = {}
         for edge in edges:
-            name, _ = sdfg.add_stream(dnode.data,
-                                      desc.dtype,
-                                      buffer_size=self.buffer_size,
-                                      storage=self.storage,
-                                      transient=True,
-                                      find_new_name=True)
+            name, newdesc = sdfg.add_stream(dnode.data,
+                                            desc.dtype,
+                                            buffer_size=self.buffer_size,
+                                            storage=self.storage,
+                                            transient=True,
+                                            find_new_name=True)
             streams[edge] = name
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
@@ -234,6 +266,12 @@ class StreamingMemory(xf.Transformation):
             # Replace memlets in path with stream access
             for e in mpath:
                 e.data = mm.Memlet(data=name, subset='0')
+                if isinstance(e.src, nodes.NestedSDFG):
+                    e.data.dynamic = True
+                    _streamify_recursive(e.src, e.src_conn, newdesc)
+                if isinstance(e.dst, nodes.NestedSDFG):
+                    e.data.dynamic = True
+                    _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
