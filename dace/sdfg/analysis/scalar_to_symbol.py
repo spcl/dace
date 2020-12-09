@@ -12,7 +12,20 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Set, Tuple, Union
+
+
+class AttributedCallDetector(ast.NodeVisitor):
+    """ Detects attributed calls in Tasklets.
+    """
+    def __init__(self):
+        self.detected = False
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        if isinstance(node.func, ast.Attribute):
+            self.detected = True
+            return
+        return self.generic_visit(node)
 
 
 def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
@@ -143,9 +156,9 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
-                        if (isinstance(cb.code[0].value, ast.Call)
-                                and isinstance(cb.code[0].value.func,
-                                               ast.Attribute)):
+                        detector = AttributedCallDetector()
+                        detector.visit(cb.code[0].value)
+                        if detector.detected:
                             candidates.remove(candidate)
                             continue
                     elif cb.language is dtypes.Language.CPP:

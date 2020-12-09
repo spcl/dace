@@ -22,7 +22,7 @@ def program_generator(size, factor):
     return program
 
 
-if __name__ == "__main__":
+def test_reload():
     print('Reloadable DaCe program test')
 
     array_one = np.random.rand(10).astype(np.float64)
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         # On some systems (e.g., Windows), the file will be locked, so
         # compilation will fail
         print('Compilation failed due to locked file. Skipping test.')
-        exit(0)
+        return
 
     func1(input=array_one, output=output_one)
     func2(input=array_two, output=output_two)
@@ -50,4 +50,7 @@ if __name__ == "__main__":
     diff1 = np.linalg.norm(2.0 * array_one - output_one) / 10.0
     diff2 = np.linalg.norm(4.0 * array_two - output_two) / 20.0
     print("Differences:", diff1, diff2)
-    exit(0 if (diff1 < 1e-5 and diff2 < 1e-5) else 1)
+    assert (diff1 < 1e-5 and diff2 < 1e-5)
+
+if __name__ == '__main__':
+    test_reload()

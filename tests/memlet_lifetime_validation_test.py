@@ -6,7 +6,8 @@ from dace.sdfg import SDFG, InvalidSDFGError
 from dace.memlet import Memlet
 from dace.data import Scalar
 
-if __name__ == '__main__':
+
+def test():
     print('SDFG memlet lifetime validation test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
@@ -39,8 +40,7 @@ if __name__ == '__main__':
 
     try:
         sdfg1.validate()
-        print("SDFG passed validation, test FAILED")
-        exit(1)
+        raise AssertionError("SDFG passed validation, test FAILED")
     except InvalidSDFGError:
         print("Test passed, exception successfully caught")
 
@@ -75,9 +75,10 @@ if __name__ == '__main__':
 
     try:
         sdfg2.validate()
-        print("SDFG passed validation, test FAILED")
-        exit(1)
+        raise AssertionError("SDFG passed validation, test FAILED")
     except InvalidSDFGError:
         print("Test passed, exception successfully caught")
 
-    exit(0)
+
+if __name__ == '__main__':
+    test()

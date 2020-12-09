@@ -144,64 +144,9 @@ runopt() {
 
 runall() {
     echo "Running $PYTHON_BINARY"
-    runtestopt cuda_grid_test.py $1
-    runtestopt cuda_grid_test.py $1 'GPUTransformMap$0'
-
-    runtestopt cuda_grid2d_test.py $1
-    runtestopt cuda_grid2d_test.py $1 'GPUTransformMap$0'
-
-    runtestopt cuda_grid_test.py $1 'GPUTransformMap$0' 'Vectorization$0'
-    # Check that output was vectorized
-    if [ $? -eq 0 ] && [ $DACE_optimizer_automatic_strict_transformations -ne 0 ]; then
-        check_vectorization
-        if [ $? -ne 0 ]; then bail "$PYTHON_BINARY cuda_grid_test.py ($1, wideload)"; fi
-    fi
-
-    runtestopt cuda_block_test.py $1
-    runtestopt cuda_block_test.py $1 'GPUTransformMap$0'
-
-    runtestopt cuda_smem_test.py $1
-    runtestopt cuda_smem_test.py $1 'GPUTransformMap$0'
-    runtestopt cuda_smem_test.py $1 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_A")'
-
-    runtestopt cuda_smem2d_test.py $1
-    runtestopt cuda_smem2d_test.py $1 'GPUTransformMap$0'
-    runtestopt cuda_smem2d_test.py $1 'GPUTransformMap$0' 'InLocalStorage$0(array="gpu_V")'
-
-    runopt samples/simple/sum.py $1
     runopt samples/simple/sum.py $1 'GPUTransformMap$0'
-
-    runtestopt blockreduce_cudatest.py $1
-
-    runtestopt cuda_highdim_kernel_test.py $1 'GPUTransformMap$0(fullcopy=True)'
-
-    runtestopt multistream_copy_cudatest.py $1
-    runtestopt multistream_kernel_cudatest.py $1
-    runtestopt multistream_custom_cudatest.py $1
-
-    runtestopt multiprogram_cudatest.py $1
-
-    runtestopt wcr_cudatest.py $1
-
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
     runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
-
-    runtestargs instrumentation_test.py gpu
-    runtestargs library/matmul_cudatest.py
-
-    runtestargs dynamic_tb_map_cudatest.py
-    runtestargs kernel_fusion_cudatest.py
-
-    runtestargs persistent_map_cudatest.py
-    runtestargs persistent_tb_map_cudatest.py
-    runtestargs persistent_fusion_cudatest.py
-
-    runtestargs transformations/subgraph_fusion/block_allreduce_cudatest.py
-    #runtestargs transformations/sfusion_sequential1_cudatest.py
-    runtestargs transformations/subgraph_fusion/sequential2_cudatest.py
-
-    runtestargs half_cudatest.py
-    runtestargs halfvec_cudatest.py
     runopt samples/customization/tensor_cores.py $1
 }
 

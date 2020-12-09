@@ -1,14 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-try:
-    import tensorflow as tf
-except ImportError:
-    print("WARNING: Tensorflow not found, skipping test")
-    exit(0)
-
+import pytest
 import numpy as np
-from dace.frontend.tensorflow import TFSession
 
-if __name__ == '__main__':
+
+@pytest.mark.tensorflow
+def test_callback():
+    import tensorflow as tf
+    from dace.frontend.tensorflow import TFSession
+
     input_image = tf.constant(0.69, tf.float64, [2, 2, 5, 5, 2])
     conv_filter = tf.constant(0.01, tf.float64, [1, 1, 1, 2, 2])
     tests = []
@@ -37,3 +36,11 @@ if __name__ == '__main__':
         print(output_dace)
         print(output_tf)
         assert np.linalg.norm(output_dace - output_tf) < 1e-8
+
+
+if __name__ == '__main__':
+    try:
+        import tensorflow
+        test_callback()
+    except ImportError:
+        pass

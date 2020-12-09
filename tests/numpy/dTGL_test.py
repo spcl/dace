@@ -16,6 +16,9 @@ def dTGL_test(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
             dTGL[n] += trace_tmp[i, i]
 
 
-if __name__ == '__main__':
-
+def test_dTGL():
     dTGL_test.compile()
+
+
+if __name__ == '__main__':
+    test_dTGL()

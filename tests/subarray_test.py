@@ -15,7 +15,7 @@ def subarray(A, B):
         b[i] = a[i] + a2[i]
 
 
-if __name__ == '__main__':
+def test():
     W.set(3)
 
     A = dp.ndarray([W, W, W, W])
@@ -27,3 +27,7 @@ if __name__ == '__main__':
     B[:] = dp.float32(0.0)
 
     subarray(A, B, W=W)
+
+
+if __name__ == "__main__":
+    test()
