@@ -68,8 +68,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
-        self.generated_converters = set(
-        )  # Keep track of generated converters to avoid multiple definition
+        # Keep track of generated converters to avoid multiple definition
+        self.generated_converters = set()
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -1283,8 +1283,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, codegen):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        self.used_streams = [
-        ]  # keep track of the different streams used in a tasklet
+        # Keep track of the different streams used in a tasklet
+        self.used_streams = []
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
