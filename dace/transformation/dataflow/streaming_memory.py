@@ -90,8 +90,10 @@ def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str,
                 for e in mpath:
                     e.data = mm.Memlet(data=to_replace, subset='0')
                     if isinstance(e.src, nodes.NestedSDFG):
+                        e.data.dynamic = True
                         _streamify_recursive(e.src, e.src_conn, newdesc)
                     if isinstance(e.dst, nodes.NestedSDFG):
+                        e.data.dynamic = True
                         _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
 
@@ -258,8 +260,10 @@ class StreamingMemory(xf.Transformation):
             for e in mpath:
                 e.data = mm.Memlet(data=name, subset='0')
                 if isinstance(e.src, nodes.NestedSDFG):
+                    e.data.dynamic = True
                     _streamify_recursive(e.src, e.src_conn, newdesc)
                 if isinstance(e.dst, nodes.NestedSDFG):
+                    e.data.dynamic = True
                     _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
             # Replace access node and memlet tree with one access

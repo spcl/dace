@@ -728,12 +728,6 @@ __kernel void \\
             if isinstance(desc, dace.data.Stream):
                 src_node = find_input_arraynode(state, edge)
 
-                # If the internal node of the nested SDFG is also defined as a
-                # stream, all the reads will be generated from the internal
-                # stream. If it's an array, we dispatch a copy here below
-                if isinstance(node.sdfg.arrays[edge.dst_conn], dace.data.Stream):
-                    continue
-
                 self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
                                                state, state_id, None,
                                                nested_stream)
@@ -741,12 +735,6 @@ __kernel void \\
             desc = sdfg.arrays[edge.data.data]
             if isinstance(desc, dace.data.Stream):
                 dst_node = find_output_arraynode(state, edge)
-
-                # If the internal node of the nested SDFG is also defined as a
-                # stream, all the writes will be generated from the internal
-                # stream. If it's an array, we dispatch a copy here below
-                if isinstance(node.sdfg.arrays[edge.src_conn], dace.data.Stream):
-                    continue
 
                 self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
                                                state, state_id, None,
