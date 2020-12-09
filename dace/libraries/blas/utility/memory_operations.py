@@ -114,7 +114,7 @@ def fpga_map_singleton_to_stream(
         src,
         dest,
         dtype,
-        mapTasklet='outCon = inCon'
+        map_tasklet='out_con = in_con'
     ):
     """
     Copy single element from a source memory location
@@ -131,53 +131,53 @@ def fpga_map_singleton_to_stream(
     )
 
     root_tasklet = state.add_tasklet(
-        'mapToStream_task',
-        ['inCon'],
-        ['outCon'],
-        mapTasklet
+        'map_to_stream_task',
+        ['in_con'],
+        ['out_con'],
+        map_tasklet
     )
 
     state.add_memlet_path(
         buf_in, root_tasklet,
-        dst_conn='inCon',
+        dst_conn='in_con',
         memlet=Memlet.simple(buf_in.data, '0')
     )
 
     state.add_memlet_path(
         root_tasklet, result,
-        src_conn='outCon',
+        src_conn='out_con',
         memlet=Memlet.simple(result.data, '0', num_accesses=-1)
     )
 
 
 
 
-def fpga_streamToLocal(state, srcData, dest, size):
+def fpga_stream_to_local(state, src_data, dest, size):
 
     data_out = state.add_write(dest)
 
-    copyMap_entry, copyMap_exit = state.add_map(
-        'streamToLocal_map',
+    copy_map_entry, copy_map_exit = state.add_map(
+        'stream_to_local_map',
         dict(k_stream = '0:{0}'.format(size)),
         schedule=dtypes.ScheduleType.FPGA_Device,
         unroll=True
     )
 
-    copyX_task = state.add_tasklet(
-        'streamToLocal_map',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
+    copy_x_task = state.add_tasklet(
+        'stream_to_local_map',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
     )
 
     state.add_memlet_path(
-        srcData, copyMap_entry, copyX_task,
-        dst_conn='inCon',
-        memlet=Memlet.simple(srcData.data, "0")
+        src_data, copy_map_entry, copy_x_task,
+        dst_conn='in_con',
+        memlet=Memlet.simple(src_data.data, "0")
     )
 
     state.add_memlet_path(
-        copyX_task, copyMap_exit, data_out,
-        src_conn='outCon',
+        copy_x_task, copymap_exit, data_out,
+        src_conn='out_con',
         memlet=Memlet.simple(data_out.data, "k_stream")
     )

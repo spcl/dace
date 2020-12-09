@@ -5,7 +5,7 @@ Various helper functions for reduction operations
 from dace.memlet import Memlet
 from dace import dtypes
 from dace import config
-from dace import InterstateEdge
+from dace import Interstat_xeEdge
 from dace import SDFG
 from dace import vector
 
@@ -20,11 +20,11 @@ def fpga_binary_compute_partial_reduction(
         src_y,
         dest,
         dtype,
-        srcSize,
+        src_size,
         veclen,
         partial_width,
-        computeTasklet,
-        reductionLambda='lambda a, b: a + b',
+        compute_tasklet,
+        reduction_lambda='lambda a, b: a + b',
         buffer_size_x=config.Config.get(
             "library", "blas", "fpga", "default_stream_depth"),
         buffer_size_y=config.Config.get(
@@ -55,9 +55,9 @@ def fpga_binary_compute_partial_reduction(
     )
     buf_in = state.add_write(dest)
 
-    outerMap_entry, outerMap_exit = state.add_map(
-        'compRed_map',
-        dict(i="0:{0}/{1}".format(srcSize, veclen)),
+    outer_map_entry, outer_map_exit = state.add_map(
+        'comp_red_map',
+        dict(i="0:{0}/{1}".format(src_size, veclen)),
         schedule=dtypes.ScheduleType.FPGA_Device
     )
 
@@ -133,42 +133,42 @@ def fpga_binary_compute_partial_reduction(
     reg_buf = compute_state.add_write('reg_buf')
 
 
-    innerMap_entry, innerMap_exit = compute_state.add_map(
+    inner_map_entry, inner_map_exit = compute_state.add_map(
         'comp_red_inner_map',
         dict(j='0:{}'.format(veclen)),
         unroll=True,
         schedule=dtypes.ScheduleType.FPGA_Device
     )
 
-    innerTasklet = compute_state.add_tasklet(
+    inner_tasklet = compute_state.add_tasklet(
         'comp_red_task',
-        ['inCon1', 'inCon2'],
-        ['outCon'],
-        computeTasklet
+        ['in_con1', 'in_con2'],
+        ['out_con'],
+        compute_tasklet
     )
 
     compute_state.add_memlet_path(
-        x_buf, innerMap_entry, innerTasklet,
-        dst_conn='inCon1',
+        x_buf, inner_map_entry, inner_tasklet,
+        dst_conn='in_con1',
         memlet=Memlet.simple(
             x_buf.data, 'j',
         )
     )
 
     compute_state.add_memlet_path(
-        y_buf, innerMap_entry, innerTasklet,
-        dst_conn='inCon2',
+        y_buf, inner_map_entry, inner_tasklet,
+        dst_conn='in_con2',
         memlet=Memlet.simple(
             y_buf.data, 'j',
         )
     )
 
     compute_state.add_memlet_path(
-        innerTasklet, innerMap_exit, reg_buf,
-        src_conn='outCon',
+        inner_tasklet, inner_map_exit, reg_buf,
+        src_conn='out_con',
         memlet=Memlet.simple(
             reg_buf.data, '0',
-            wcr_str=reductionLambda,
+            wcr_str=reduction_lambda,
         )
     )
 
@@ -180,14 +180,14 @@ def fpga_binary_compute_partial_reduction(
 
     store_task = store_state.add_tasklet(
         'store_out_task',
-        ['inCon', 'prevCon'],
-        ['outCon'],
-        'outCon = inCon + prevCon'
+        ['in_con', 'prev_con'],
+        ['out_con'],
+        'out_con = in_con + prev_con'
     )
 
     store_state.add_memlet_path(
         reg_buf, store_task,
-        dst_conn='inCon',
+        dst_conn='in_con',
         memlet=Memlet.simple(
             reg_buf.data, '0',
         )
@@ -195,7 +195,7 @@ def fpga_binary_compute_partial_reduction(
 
     store_state.add_memlet_path(
         partial_in, store_task,
-        dst_conn='prevCon',
+        dst_conn='prev_con',
         memlet=Memlet.simple(
             partial_in.data, '0' if partial_width == 1 else 'i % {0}'.format(partial_width),
         )
@@ -203,10 +203,10 @@ def fpga_binary_compute_partial_reduction(
 
     store_state.add_memlet_path(
         store_task, partial_res,
-        src_conn='outCon',
+        src_conn='out_con',
         memlet=Memlet.simple(
             partial_res.data, '0' if partial_width == 1 else 'i % {0}'.format(partial_width),
-            # wcr_str=reductionLambda,
+            # wcr_str=reduction_lambda,
         )
     )
 
@@ -229,27 +229,27 @@ def fpga_binary_compute_partial_reduction(
     )
 
     state.add_memlet_path(
-        x_in, outerMap_entry, nested_sdfg,
+        x_in, outer_map_entry, nested_sdfg,
         dst_conn='inner_x',
         memlet=Memlet.simple(
-            x_in.data, '0:{}'.format(srcSize/veclen)
+            x_in.data, '0:{}'.format(src_size/veclen)
         )
     )
 
     state.add_memlet_path(
-        y_in, outerMap_entry, nested_sdfg,
+        y_in, outer_map_entry, nested_sdfg,
         dst_conn='inner_y',
         memlet=Memlet.simple(
-            y_in.data, '0:{}'.format(srcSize/veclen)
+            y_in.data, '0:{}'.format(src_size/veclen)
         )
     )
 
     state.add_memlet_path(
-        nested_sdfg, outerMap_exit, buf_in,
+        nested_sdfg, outer_map_exit, buf_in,
         src_conn='partial_out',
         memlet=Memlet.simple(
             buf_in.data, '0:{}'.format((max(partial_width, 2))),
-            # wcr_str=reductionLambda
+            # wcr_str=reduction_lambda
         )
     )
 
@@ -264,9 +264,9 @@ def fpga_linear_result_reduction(
         src,
         dest,
         dtype,
-        srcSize,
-        reductionLambda='lambda a, b: a + b',
-        toMem=False
+        src_size,
+        reduction_lambda='lambda a, b: a + b',
+        to_mem=False
     ):
     """
     Reduces an input array linearly into a scalar
@@ -275,7 +275,7 @@ def fpga_linear_result_reduction(
 
     red_buf = state.add_read(src)
     buf_out = 0
-    if toMem:
+    if to_mem:
         buf_out = state.add_write(dest)
     else:
         buf_out = state.add_stream(
@@ -285,34 +285,34 @@ def fpga_linear_result_reduction(
             storage=dtypes.StorageType.FPGA_Local
         )
 
-    outerMap_entry, outerMap_exit = state.add_map(
+    outer_map_entry, outer_map_exit = state.add_map(
         'reduce_map',
-        dict(i="0:{0}".format(srcSize)),
+        dict(i="0:{0}".format(src_size)),
         schedule=dtypes.ScheduleType.FPGA_Device,
         unroll=True
     )
 
-    innerTasklet = state.add_tasklet(
+    inner_tasklet = state.add_tasklet(
         'reduce_task',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
     )
 
     state.add_memlet_path(
-        red_buf, outerMap_entry, innerTasklet,
-        dst_conn='inCon',
+        red_buf, outer_map_entry, inner_tasklet,
+        dst_conn='in_con',
         memlet=Memlet.simple(
             red_buf.data, 'i'
         )
     )
 
     state.add_memlet_path(
-        innerTasklet, outerMap_exit, buf_out,
-        src_conn='outCon',
+        inner_tasklet, outer_map_exit, buf_out,
+        src_conn='out_con',
         memlet=Memlet.simple(
             buf_out.data, '0',
-            wcr_str=reductionLambda,
+            wcr_str=reduction_lambda,
         )
     )
 
@@ -320,35 +320,35 @@ def fpga_linear_result_reduction(
 
 
 
-def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, veclen, a, b):
+def fpga_make_matrix_partial_reduction(dtype, n_tile, m_tile, partial_width, n, m, veclen, a, b):
     """
     Inner reduction graph for GEMV on FPGA
     """
 
     # Assumes:
-    # i: rowBlock index
-    # j: colBlock index
-    # ii: tileRow index
+    # i: row_block index
+    # j: col_block index
+    # ii: tile_row index
     # tile row streamed
 
-    redTile_sdfg = SDFG("redTile_sdfg")
+    red_tile_sdfg = SDFG("red_tile_sdfg")
 
 
-    redTile_sdfg.add_symbol(a.name, a.dtype)
+    red_tile_sdfg.add_symbol(a.name, a.dtype)
 
     if b != 0:
-        redTile_sdfg.add_symbol(b.name, b.dtype)
+        red_tile_sdfg.add_symbol(b.name, b.dtype)
 
-    init_state = redTile_sdfg.add_state('init_reduceTile')
-    compute_state = redTile_sdfg.add_state('compute_reduceTile')
-    red_state = redTile_sdfg.add_state('red_reduceTile')
-    store_state = redTile_sdfg.add_state('store_reduceTile')
+    init_state = red_tile_sdfg.add_state('init_reduce_tile')
+    compute_state = red_tile_sdfg.add_state('compute_reduce_tile')
+    red_state = red_tile_sdfg.add_state('red_reduce_tile')
+    store_state = red_tile_sdfg.add_state('store_reduce_tile')
 
-    read_y_state = redTile_sdfg.add_state('read_y_reduceTile')
-    read_empty_state =  redTile_sdfg.add_state('read_empty_reduceTile')
-    write_y_state = redTile_sdfg.add_state('write_y_reduceTile')
-    write_empty_state =  redTile_sdfg.add_state('write_empty_reduceTile')
-    end_state = redTile_sdfg.add_state('end_reduceTile')
+    read_y_state = red_tile_sdfg.add_state('read_y_reduce_tile')
+    read_empty_state =  red_tile_sdfg.add_state('read_empty_reduce_tile')
+    write_y_state = red_tile_sdfg.add_state('write_y_reduce_tile')
+    write_empty_state =  red_tile_sdfg.add_state('write_empty_reduce_tile')
+    end_state = red_tile_sdfg.add_state('end_reduce_tile')
 
     vec_type = vector(dtype, veclen)
     singleton_vec = vector(dtype, 1)
@@ -382,17 +382,17 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
         storage=dtypes.StorageType.FPGA_Local
     )
 
-    redTile_sdfg.add_array('_y_red', shape=[nTile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
+    red_tile_sdfg.add_array('_y_red', shape=[n_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
 
-    redTile_sdfg.add_array('red_buf',
-        shape=[max(2, partialWidth)],
+    red_tile_sdfg.add_array('red_buf',
+        shape=[max(2, partial_width)],
         dtype=dtype,
-        storage=dtypes.StorageType.FPGA_Local if partialWidth > 8 else dtypes.StorageType.FPGA_Registers,
+        storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers,
         transient=True
     )
-    #redTile_sdfg.add_array('res_buf', shape=[1], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
-    redTile_sdfg.add_scalar('res_buf', dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
-    redTile_sdfg.add_array('x_buf', shape=[mTile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
+    #red_tile_sdfg.add_array('res_buf', shape=[1], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
+    red_tile_sdfg.add_scalar('res_buf', dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
+    red_tile_sdfg.add_array('x_buf', shape=[m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local, transient=True)
 
 
     # ---------- ----------
@@ -400,35 +400,35 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
     # ---------- ----------
     y_out = read_y_state.add_write("_y_red")
 
-    code = 'outCon = inCon * {}'.format(b)
+    code = 'out_con = in_con * {}'.format(b)
     if b == 0:
-        code = 'outCon = 0'
+        code = 'out_con = 0'
 
     y_read_tasklet = read_y_state.add_tasklet(
         'read_y_tasklet',
-        (['inCon'] if b != 0 else []),
-        ['outCon'],
+        (['in_con'] if b != 0 else []),
+        ['out_con'],
         code
     )
 
     if b != 0:
         read_y_state.add_memlet_path(
             y_in, y_read_tasklet,
-            dst_conn='inCon',
+            dst_conn='in_con',
             memlet=Memlet.simple(y_in.data, "0", num_accesses=-1)
         )
 
     read_y_state.add_memlet_path(
         y_read_tasklet, y_out,
-        src_conn='outCon',
+        src_conn='out_con',
         memlet=Memlet.simple(y_out.data, "ii")
     )
 
 
-    redTile_sdfg.add_edge(init_state, read_y_state, InterstateEdge("j == 0"))
-    redTile_sdfg.add_edge(read_y_state, compute_state, InterstateEdge(None))
-    redTile_sdfg.add_edge(init_state, read_empty_state, InterstateEdge("j != 0"))
-    redTile_sdfg.add_edge(read_empty_state, compute_state, InterstateEdge(None))
+    red_tile_sdfg.add_edge(init_state, read_y_state, InterstateEdge("j == 0"))
+    red_tile_sdfg.add_edge(read_y_state, compute_state, InterstateEdge(None))
+    red_tile_sdfg.add_edge(init_state, read_empty_state, InterstateEdge("j != 0"))
+    red_tile_sdfg.add_edge(read_empty_state, compute_state, InterstateEdge(None))
 
 
     # ---------- ----------
@@ -437,7 +437,7 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
     fpga_init_array(
         init_state,
         'red_buf',
-        partialWidth,
+        partial_width,
         0
     )
 
@@ -456,57 +456,56 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
     buf_in = compute_state.add_read('red_buf')
     x_buf = compute_state.add_read('x_buf')
 
-    innerComputeMap_entry, innerComputeMap_exit = compute_state.add_map(
-        'innerCompute_map',
-        dict(jj = '0:{0}/{1}'.format(mTile, veclen)),
+    inner_compute_map_entry, inner_compute_map_exit = compute_state.add_map(
+        'inner_compute_map',
+        dict(jj = '0:{0}/{1}'.format(m_tile, veclen)),
         schedule=dtypes.ScheduleType.FPGA_Device,
     )
 
-
-    red_sdfg = make_unrolledCompute(
+    red_sdfg = make_unrolled_compute(
         dtype,
-        nTile,
-        mTile,
+        n_tile,
+        m_tile,
         veclen,
-        partialWidth,
+        partial_width,
         n, m, a
     )
 
     nested_sdfg = compute_state.add_nested_sdfg(
         red_sdfg,
-        redTile_sdfg,
+        red_tile_sdfg,
         {'_A_unroll', '_x_unroll', '_buf_in_unroll'},
         {'buf_out', '_x_buf'}
     )
 
     compute_state.add_memlet_path(
-        A_in, innerComputeMap_entry, nested_sdfg,
+        A_in, inner_compute_map_entry, nested_sdfg,
         dst_conn='_A_unroll',
         memlet=Memlet.simple(A_in.data, "0:{}*{}".format(n, m))#, veclen=veclen)
     )
 
     compute_state.add_memlet_path(
-        x_in, innerComputeMap_entry, nested_sdfg,
+        x_in, inner_compute_map_entry, nested_sdfg,
         dst_conn='_x_unroll',
         memlet=Memlet.simple(x_in.data, "0:{}".format(m))#, veclen=veclen)
     )
 
     compute_state.add_memlet_path(
-        buf_in, innerComputeMap_entry, nested_sdfg,
+        buf_in, inner_compute_map_entry, nested_sdfg,
         dst_conn='_buf_in_unroll',
-        memlet=Memlet.simple(buf_in.data, "0:{}".format(max(2, partialWidth)))
+        memlet=Memlet.simple(buf_in.data, "0:{}".format(max(2, partial_width)))
     )
 
     compute_state.add_memlet_path(
-        nested_sdfg, innerComputeMap_exit, buf_out,
+        nested_sdfg, inner_compute_map_exit, buf_out,
         src_conn='buf_out',
-        memlet=Memlet.simple(buf_out.data, "0:{}".format(max(2, partialWidth)))
+        memlet=Memlet.simple(buf_out.data, "0:{}".format(max(2, partial_width)))
     )
 
     compute_state.add_memlet_path(
-        nested_sdfg, innerComputeMap_exit, x_buf,
+        nested_sdfg, inner_compute_map_exit, x_buf,
         src_conn='_x_buf',
-        memlet=Memlet.simple(x_buf.data, "0:{}".format(mTile))#, veclen=veclen)
+        memlet=Memlet.simple(x_buf.data, "0:{}".format(m_tile))#, veclen=veclen)
     )
 
 
@@ -517,13 +516,13 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
     buf_in = red_state.add_read('red_buf')
     buf_res = red_state.add_write('res_buf')
 
-    task, mapEn, mapEx = red_state.add_mapped_tasklet(
-        'finalReduction',
-        dict(k='0:{}'.format(partialWidth)),
-        dict(inCon=Memlet.simple(buf_in.data, 'k')),
-        'outCon = inCon',
+    task, map_en, map_ex = red_state.add_mapped_tasklet(
+        'final_reduction',
+        dict(k='0:{}'.format(partial_width)),
+        dict(in_con=Memlet.simple(buf_in.data, 'k')),
+        'out_con = in_con',
         dict(
-            outCon=Memlet.simple(
+            out_con=Memlet.simple(
                 buf_res.data, '0',
                 wcr_str='lambda a, b: a + b'
             )
@@ -532,12 +531,12 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
 
     red_state.add_edge(
         buf_in, None,
-        mapEn, None,
-        memlet=Memlet.simple(buf_in.data, "0:{}".format(partialWidth))
+        map_en, None,
+        memlet=Memlet.simple(buf_in.data, "0:{}".format(partial_width))
     )
 
     red_state.add_edge(
-        mapEx, None,
+        map_ex, None,
         buf_res, None,
         memlet=Memlet.simple(
             buf_res.data,
@@ -554,21 +553,21 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
     out = store_state.add_write('_y_red')
 
     store_task = store_state.add_tasklet(
-        'storeRed_task',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
+        'store_red_task',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
     )
 
     store_state.add_memlet_path(
         res, store_task,
-        dst_conn='inCon',
+        dst_conn='in_con',
         memlet=Memlet.simple(res.data, '0')
     )
 
     store_state.add_memlet_path(
         store_task, out,
-        src_conn='outCon',
+        src_conn='out_con',
         memlet=Memlet.simple(
             out.data,
             "ii",
@@ -587,22 +586,22 @@ def fpga_make_matrixPartialReduction(dtype, nTile, mTile, partialWidth, n, m, ve
     )
 
 
-    redTile_sdfg.add_edge(store_state, write_y_state, InterstateEdge("j == ({0}/{1}) - 1".format(m, mTile)))
-    redTile_sdfg.add_edge(write_y_state, end_state, InterstateEdge(None))
-    redTile_sdfg.add_edge(store_state, write_empty_state, InterstateEdge("j != ({0}/{1}) - 1".format(m, mTile)))
-    redTile_sdfg.add_edge(write_empty_state, end_state, InterstateEdge(None))
+    red_tile_sdfg.add_edge(store_state, write_y_state, InterstateEdge("j == ({0}/{1}) - 1".format(m, m_tile)))
+    red_tile_sdfg.add_edge(write_y_state, end_state, InterstateEdge(None))
+    red_tile_sdfg.add_edge(store_state, write_empty_state, InterstateEdge("j != ({0}/{1}) - 1".format(m, m_tile)))
+    red_tile_sdfg.add_edge(write_empty_state, end_state, InterstateEdge(None))
 
-    redTile_sdfg.add_edge(compute_state, red_state, InterstateEdge(None))
-    redTile_sdfg.add_edge(red_state, store_state, InterstateEdge(None))
+    red_tile_sdfg.add_edge(compute_state, red_state, InterstateEdge(None))
+    red_tile_sdfg.add_edge(red_state, store_state, InterstateEdge(None))
 
-    redTile_sdfg.fill_scope_connectors()
+    red_tile_sdfg.fill_scope_connectors()
 
-    return redTile_sdfg
-
-
+    return red_tile_sdfg
 
 
-def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
+
+
+def make_unrolled_compute(dtype, n_tile, m_tile, veclen, partial_width, n, m, a):
 
     inner_sdfg = SDFG("partial_reduction_inner")
 
@@ -612,8 +611,8 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
     compute_state = inner_sdfg.add_state('compute_state')
     write_state = inner_sdfg.add_state("write_state")
 
-    read_x_state = inner_sdfg.add_state("readX_state")
-    read_empty_state = inner_sdfg.add_state("readEmpty_state")
+    read_x_state = inner_sdfg.add_state("read_x_state")
+    read_empty_state = inner_sdfg.add_state("read_empty_state")
 
     vec_type = vector(dtype, veclen)
     singleton_vec = vector(dtype, 1)
@@ -631,20 +630,20 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
         storage=dtypes.StorageType.FPGA_Local
     )
 
-    inner_sdfg.add_array('_buf_in_unroll', shape=[max(2, partialWidth)], dtype=dtype,
-        storage=dtypes.StorageType.FPGA_Local if partialWidth > 8 else dtypes.StorageType.FPGA_Registers
+    inner_sdfg.add_array('_buf_in_unroll', shape=[max(2, partial_width)], dtype=dtype,
+        storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers
     )
-    inner_sdfg.add_array('buf_out', shape=[max(2, partialWidth)], dtype=dtype,
-        storage=dtypes.StorageType.FPGA_Local if partialWidth > 8 else dtypes.StorageType.FPGA_Registers
+    inner_sdfg.add_array('buf_out', shape=[max(2, partial_width)], dtype=dtype,
+        storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers
     )
 
-    inner_sdfg.add_array('_x_buf', shape=[mTile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
-    inner_sdfg.add_array('vecBuf_x', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
-    inner_sdfg.add_array('memBuf_x', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
+    inner_sdfg.add_array('_x_buf', shape=[m_tile], dtype=dtype, storage=dtypes.StorageType.FPGA_Local)
+    inner_sdfg.add_array('vec_buf_x', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
+    inner_sdfg.add_array('mem_buf_x', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
 
 
-    inner_sdfg.add_array('vecBuf_A', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
-    inner_sdfg.add_array('memBuf_A', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
+    inner_sdfg.add_array('vec_buf_A', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
+    inner_sdfg.add_array('mem_buf_A', shape=[veclen], dtype=dtype, storage=dtypes.StorageType.FPGA_Registers, transient=True)
 
 
 
@@ -667,38 +666,38 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
         0
     )
 
-    vecBuf_A = init_state.add_access("vecBuf_A")
-    memBuf_A = init_state.add_write("memBuf_A")
+    vec_buf_A = init_state.add_access("vec_buf_A")
+    mem_buf_A = init_state.add_write("mem_buf_A")
 
-    copyMap_entry, copyMap_exit = init_state.add_map(
-        'streamToLocalA_map',
+    copy_map_entry, copy_map_exit = init_state.add_map(
+        'stream_to_local_a_map',
         dict(k_stream = '0:{0}'.format(veclen)),
         schedule=dtypes.ScheduleType.FPGA_Device,
         unroll=True
     )
 
     copy_task = init_state.add_tasklet(
-        'streamToLocalA_map',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
+        'stream_to_local_a_map',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
     )
 
     init_state.add_memlet_path(
-        A_in, vecBuf_A,
-        memlet=Memlet.simple(vecBuf_A.data, "0")#, veclen=veclen)
+        A_in, vec_buf_A,
+        memlet=Memlet.simple(vec_buf_A.data, "0")#, veclen=veclen)
     )
 
     init_state.add_memlet_path(
-        vecBuf_A, copyMap_entry, copy_task,
-        dst_conn='inCon',
-        memlet=Memlet.simple(vecBuf_A.data, "k_stream")
+        vec_buf_A, copy_map_entry, copy_task,
+        dst_conn='in_con',
+        memlet=Memlet.simple(vec_buf_A.data, "k_stream")
     )
 
     init_state.add_memlet_path(
-        copy_task, copyMap_exit, memBuf_A,
-        src_conn='outCon',
-        memlet=Memlet.simple(memBuf_A.data, "k_stream")
+        copy_task, copy_map_exit, mem_buf_A,
+        src_conn='out_con',
+        memlet=Memlet.simple(mem_buf_A.data, "k_stream")
     )
 
 
@@ -707,23 +706,23 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
     data_out = read_x_state.add_write('_x_buf')
 
 
-    copyX_task = read_x_state.add_tasklet(
-        'streamToLocal_map',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
+    copy_x_task = read_x_state.add_tasklet(
+        'stream_to_local_map',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
     )
 
 
     read_x_state.add_memlet_path(
-        x_in, copyX_task,
-        dst_conn='inCon',
+        x_in, copy_x_task,
+        dst_conn='in_con',
         memlet=Memlet.simple(x_in.data, "0")#, veclen=veclen)
     )
 
     read_x_state.add_memlet_path(
-        copyX_task, data_out,
-        src_conn='outCon',
+        copy_x_task, data_out,
+        src_conn='out_con',
         memlet=Memlet.simple(data_out.data, "jj * {}".format(veclen))#, veclen=veclen)
     )
 
@@ -741,67 +740,67 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
     inner_buf_reg = compute_state.add_write('buf_reg')
     x_in = compute_state.add_read('_x_buf')
 
-    vecBuf = compute_state.add_access('vecBuf_x')
-    memBuf = compute_state.add_access('memBuf_x')
+    vec_buf = compute_state.add_access('vec_buf_x')
+    mem_buf = compute_state.add_access('mem_buf_x')
 
-    copyX_task = compute_state.add_tasklet(
-        'streamToLocal_map',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
+    copy_x_task = compute_state.add_tasklet(
+        'stream_to_local_map',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
     )
 
     compute_state.add_memlet_path(
-        x_in, copyX_task,
-        dst_conn="inCon",
+        x_in, copy_x_task,
+        dst_conn="in_con",
         memlet=Memlet.simple(x_in.data, "jj * {}".format(veclen))#, veclen=veclen)
     )
 
     compute_state.add_memlet_path(
-        copyX_task, vecBuf,
-        src_conn="outCon",
-        memlet=Memlet.simple(vecBuf.data, "0")#, veclen=veclen)
+        copy_x_task, vec_buf,
+        src_conn="out_con",
+        memlet=Memlet.simple(vec_buf.data, "0")#, veclen=veclen)
     )
 
     compute_state.add_memlet_path(
-        vecBuf, memBuf,
-        memlet=Memlet.simple(memBuf.data, "0")#, veclen=veclen)
+        vec_buf, mem_buf,
+        memlet=Memlet.simple(mem_buf.data, "0")#, veclen=veclen)
     )
 
 
-    innerMap_entry, innerMap_exit = compute_state.add_map(
-        'compRed_innerMap',
+    inner_map_entry, inner_map_exit = compute_state.add_map(
+        'comp_red_inner_map',
         dict(j_inner='0:{}'.format(veclen)),
         unroll=True,
         schedule=dtypes.ScheduleType.FPGA_Device
     )
 
-    innerTasklet = compute_state.add_tasklet(
+    inner_tasklet = compute_state.add_tasklet(
         'compute_task',
         ['A_con', 'x_con'],
-        ['outCon'],
-        'outCon = {} * A_con * x_con'.format(a)
+        ['out_con'],
+        'out_con = {} * A_con * x_con'.format(a)
     )
 
     compute_state.add_memlet_path(
-        memBuf_A, innerMap_entry, innerTasklet,
+        mem_buf_A, inner_map_entry, inner_tasklet,
         dst_conn='A_con',
         memlet=Memlet.simple(
-            memBuf_A.data, 'j_inner'
+            mem_buf_A.data, 'j_inner'
         )
     )
 
     compute_state.add_memlet_path(
-        memBuf, innerMap_entry, innerTasklet,
+        mem_buf, inner_map_entry, inner_tasklet,
         dst_conn='x_con',
         memlet=Memlet.simple(
-            memBuf.data, 'j_inner'
+            mem_buf.data, 'j_inner'
         )
     )
 
     compute_state.add_memlet_path(
-        innerTasklet, innerMap_exit, inner_buf_reg,
-        src_conn='outCon',
+        inner_tasklet, inner_map_exit, inner_buf_reg,
+        src_conn='out_con',
         memlet=Memlet.simple(
             inner_buf_reg.data, '0',
             wcr_str='lambda a, b: a + b',
@@ -816,27 +815,27 @@ def make_unrolledCompute(dtype, nTile, mTile, veclen, partialWidth, n, m, a):
 
     write_task = write_state.add_tasklet(
         'write_out_task',
-        ['inCon', 'prevCon'],
-        ['outCon'],
-        'outCon = prevCon + inCon'
+        ['in_con', 'prev_con'],
+        ['out_con'],
+        'out_con = prev_con + in_con'
     )
 
     write_state.add_memlet_path(
         inner_buf_reg, write_task,
-        dst_conn='inCon',
+        dst_conn='in_con',
         memlet=Memlet.simple(inner_buf_reg.data, '0')
     )
 
     write_state.add_memlet_path(
         partial_in, write_task,
-        dst_conn='prevCon',
-        memlet=Memlet.simple(partial_in.data, 'jj % {0}'.format(partialWidth))
+        dst_conn='prev_con',
+        memlet=Memlet.simple(partial_in.data, 'jj % {0}'.format(partial_width))
     )
 
     write_state.add_memlet_path(
         write_task, partial_out,
-        src_conn='outCon',
-        memlet=Memlet.simple(partial_out.data, 'jj % {0}'.format(partialWidth))
+        src_conn='out_con',
+        memlet=Memlet.simple(partial_out.data, 'jj % {0}'.format(partial_width))
     )
 
     inner_sdfg.fill_scope_connectors()

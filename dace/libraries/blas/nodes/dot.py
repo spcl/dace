@@ -163,7 +163,7 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
+class expand_dot_fpga_streaming(ExpandTransformation):
 
     environments = []
 
@@ -182,7 +182,7 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
         # --------------------------
         vec_type = dace.vector(dtype, veclen)
 
-        dot_sdfg = dace.SDFG('dot_linearReduction')
+        dot_sdfg = dace.SDFG('dot_linear_reduction')
 
         init_state = dot_sdfg.add_state('init_state')
         compute_state = dot_sdfg.add_state('compute_state')
@@ -228,7 +228,7 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
             n,
             veclen,
             partial_width,
-            'outCon = inCon1 * inCon2',
+            'out_con = in_con1 * in_con2',
             vec_type=vec_type
         )
 
@@ -241,7 +241,7 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
             'res_buf',
             dtype,
             partial_width,
-            toMem=True
+            to_mem=True
         )
 
         # -----
@@ -281,7 +281,7 @@ class ExpandDOTFPGAStreamingLinearReduction(ExpandTransformation):
             elif e.dst_conn == "_y":
                 buffer_size_y = sdfg.arrays[e.data.data].buffer_size
 
-        return ExpandDOTFPGAStreamingLinearReduction.make_sdfg(
+        return expand_dot_fpga_streaming.make_sdfg(
             node.dtype,
             node.partial_width,
             int(node.veclen),
@@ -563,7 +563,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
-        "fpga_stream": ExpandDOTFPGAStreamingLinearReduction,
+        "fpga_stream": expand_dot_fpga_streaming,
         "IntelFPGA": ExpandDOTIntelFPGAVectorized
     }
     default_implementation = None
