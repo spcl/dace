@@ -81,6 +81,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
+        self._other_codes = {}       # any other kind of generated file if any (name, code object)
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
 
         # Register additional FPGA dispatchers
