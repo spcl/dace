@@ -110,6 +110,7 @@ class DaCeCodeGenerator(object):
             :param callsite_stream: Stream to write to (at call site).
         """
 
+        import dace.library
         environments = dace.library.get_environments_and_dependencies(
             used_environments)
 
@@ -144,6 +145,7 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
+        import dace.library
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
