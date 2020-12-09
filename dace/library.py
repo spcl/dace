@@ -187,15 +187,6 @@ def environment(env):
     return env
 
 
-# Mapping from string to DaCe environment
-def get_environment(env_name):
-    try:
-        env = dace.library._DACE_REGISTERED_ENVIRONMENTS[env_name]
-    except KeyError:
-        raise KeyError("Undefined DaCe environment {}.".format(env_name))
-    return env
-
-
 def get_environments_and_dependencies(names: Set[str]) -> List:
     """ Get the environment objects from names. Also resolve the dependencies.
 
@@ -228,6 +219,15 @@ def get_environments_and_dependencies(names: Set[str]) -> List:
         return list(nx.topological_sort(dep_graph))
     except nx.NetworkXUnfeasible:
         raise ValueError("Detected cycle in dependency graph.")
+
+
+# Mapping from string to DaCe environment
+def get_environment(env_name):
+    try:
+        env = dace.library._DACE_REGISTERED_ENVIRONMENTS[env_name]
+    except KeyError:
+        raise KeyError("Undefined DaCe environment {}.".format(env_name))
+    return env
 
 
 # Mapping from string to library
