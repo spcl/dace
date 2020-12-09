@@ -4,7 +4,6 @@ import numpy as np
 
 import argparse
 import scipy
-import random
 
 import dace
 from dace.memlet import Memlet
@@ -12,13 +11,6 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 
 import dace.libraries.blas.utility.fpga_helper as streaming
-from dace.libraries.blas.utility import memory_operations as mem_ops
-from dace.transformation.interstate import GPUTransformSDFG
-
-from dace.libraries.standard.memory import aligned_ndarray
-
-from multiprocessing import Process, Queue
-
 
 # ---------- ----------
 # FPGA graph program
