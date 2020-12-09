@@ -129,7 +129,7 @@ run_all() {
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions "\n"
 
     # Channels mangling
-    run_sample fpga/channels_mangling channels_mangling "\n"
+    run_sample intel_fpga/channels_mangling channels_mangling "\n"
 }
 
 # Check if aoc is vailable
