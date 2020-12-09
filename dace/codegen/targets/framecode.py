@@ -110,10 +110,9 @@ class DaCeCodeGenerator(object):
             :param callsite_stream: Stream to write to (at call site).
         """
 
-        environments = [
-            dace.library.get_environment(env_name)
-            for env_name in used_environments
-        ]
+        import dace.library
+        environments = dace.library.get_environments_and_dependencies(
+            used_environments)
 
         # Write frame code - header
         global_stream.write(
@@ -146,13 +145,12 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
+        import dace.library
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
-        environments = [
-            dace.library.get_environment(env_name)
-            for env_name in used_environments
-        ]
+        environments = dace.library.get_environments_and_dependencies(
+            used_environments)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -234,11 +232,11 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 callsite_stream.write(
                     '__dace_exit_%s(%s);' % (target.target_name, paramnames),
                     sdfg)
-        for env in environments:
+        for env in reversed(environments):
             if env.finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.init_code)
+                callsite_stream.write(env.finalize_code)
                 callsite_stream.write("}")
 
         callsite_stream.write('}\n', sdfg)
@@ -706,7 +704,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Generate code
         ###########################
-        
+
         # Keep track of allocated variables
         allocated = set()
 
@@ -951,7 +949,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     # Not all paths lead to the next dominator
                     continue
                 right_nodes.add(right) # right also belong to scope
-                
+
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:
                     continue
