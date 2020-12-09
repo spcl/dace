@@ -385,7 +385,7 @@ class ExpandDOTIntelFPGAVectorized(ExpandTransformation):
                                   res_write,
                                   src_conn='nested_res',
                                   memlet=dace.Memlet.simple(
-                                      res_write.data, "0"))
+                                      res_write.data, "0", dynamic=True))
         parent_sdfg.validate()
         return parent_sdfg
 
