@@ -17,3 +17,4 @@ class CUDA:
     headers = []
     init_code = ""
     finalize_code = ""
+    dependencies = []

@@ -100,6 +100,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    OpenCL = ()
     SystemVerilog = ()
 
 
