@@ -6,6 +6,11 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
+from dace import dtypes
+
+from dace.libraries.blas.utility.initialization import fpga_init_array
+from dace.libraries.blas.utility.reductions import fpga_binary_compute_partial_reduction, fpga_linear_result_reduction
+from dace.libraries.blas.utility.memory_operations import fpga_map_singleton_to_stream
 
 
 @dace.library.expansion
@@ -153,6 +158,111 @@ class ExpandDotCuBLAS(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
 
         return tasklet
+
+
+@dace.library.expansion
+class expand_dot_fpga_streaming(ExpandTransformation):
+
+    environments = []
+
+    @staticmethod
+    def make_sdfg(dtype, partial_width, veclen, n, buffer_size_x,
+                  buffer_size_y):
+
+        # --------------------------
+        # Setup
+        # --------------------------
+        vec_type = dace.vector(dtype, veclen)
+
+        dot_sdfg = dace.SDFG('dot_linear_reduction')
+
+        init_state = dot_sdfg.add_state('init_state')
+        compute_state = dot_sdfg.add_state('compute_state')
+        red_state = dot_sdfg.add_state('reduction_state')
+        final_state = dot_sdfg.add_state('final_state')
+
+        # --------------------------
+        # Memory
+        # --------------------------
+        dot_sdfg.add_array(
+            'red_buf',
+            shape=[(max(partial_width, 2))],
+            dtype=dtype,
+            transient=True,
+            storage=dtypes.StorageType.FPGA_Local
+        )
+
+        dot_sdfg.add_scalar('res_buf',
+                            dtype=dtype,
+                            transient=True,
+                            storage=dtypes.StorageType.FPGA_Registers)
+
+        # --------------------------
+        # Init State
+        # --------------------------
+        fpga_init_array(init_state, 'red_buf', partial_width, 0)
+        fpga_init_array(init_state, 'res_buf', 1, 0)
+
+        # --------------------------
+        # Compute State
+        # --------------------------
+        fpga_binary_compute_partial_reduction(dot_sdfg,
+                                              compute_state,
+                                              '_x',
+                                              '_y',
+                                              'red_buf',
+                                              dtype,
+                                              n,
+                                              veclen,
+                                              partial_width,
+                                              'out_con = in_con1 * in_con2',
+                                              vec_type=vec_type)
+
+        # --------------------------
+        # Reduction State
+        # --------------------------
+        fpga_linear_result_reduction(red_state,
+                                     'red_buf',
+                                     'res_buf',
+                                     dtype,
+                                     partial_width,
+                                     to_mem=True)
+
+        # -----
+        # Write to stream State
+        # -----
+        fpga_map_singleton_to_stream(final_state, 'res_buf', '_result',
+                                     dace.vector(dtype, 1))
+
+        # --------------------------
+        # Connect States
+        # --------------------------
+        dot_sdfg.add_edge(init_state, compute_state, dace.InterstateEdge())
+        dot_sdfg.add_edge(init_state, red_state, dace.InterstateEdge())
+        dot_sdfg.add_edge(compute_state, red_state, dace.InterstateEdge())
+        dot_sdfg.add_edge(red_state, final_state, dace.InterstateEdge())
+
+        dot_sdfg.fill_scope_connectors()
+
+        return dot_sdfg
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        if node.dtype is None:
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
+
+        for e in state.in_edges(node):
+            if e.dst_conn == "_x":
+                buffer_size_x = sdfg.arrays[e.data.data].buffer_size
+            elif e.dst_conn == "_y":
+                buffer_size_y = sdfg.arrays[e.data.data].buffer_size
+
+        return expand_dot_fpga_streaming.make_sdfg(node.dtype,
+                                                   node.partial_width,
+                                                   int(node.veclen), node.n,
+                                                   buffer_size_x, buffer_size_y)
 
 
 @dace.library.expansion
@@ -427,21 +537,44 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
+        "fpga_stream": expand_dot_fpga_streaming,
         "IntelFPGA": ExpandDOTIntelFPGAVectorized
     }
     default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    vec_width = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    vec_width = dace.properties.SymbolicProperty(
+        allow_none=False,
+        default=1,
+    )
 
-    def __init__(self, name, dtype=None, vec_width=1, *args, **kwargs):
+    partial_width = dace.properties.SymbolicProperty(allow_none=False,
+        desc='Parameter for adjusting the width of the inner reduction buffer',
+                                                     default=8)
+    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
+
+    n = dace.properties.SymbolicProperty(allow_none=False,
+                                         default=dace.symbolic.symbol("n"))
+
+    def __init__(self,
+                 name,
+                 dtype=None,
+                 partial_width=8,
+                 veclen=1,
+                 n=None,
+                 vec_width=1,
+                 *args,
+                 **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
                          outputs={"_result"},
                          **kwargs)
         self.dtype = dtype
+        self.veclen = veclen
+        self.partial_width = partial_width
+        self.n = n or dace.symbolic.symbol("n")
         self.vec_width = vec_width
 
     def validate(self, sdfg, state):
