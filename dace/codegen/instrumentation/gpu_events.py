@@ -20,9 +20,11 @@ class GPUEventProvider(InstrumentationProvider):
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
+        global_stream.write('#include <chrono>')
         global_stream.write('#include <%s>' % header_name)
 
         # For other file headers
+        sdfg.append_global_code('\n#include <chrono>', None)
         sdfg.append_global_code('\n#include <%s>' % header_name, None)
 
     def _get_sobj(self, node):
@@ -47,11 +49,22 @@ class GPUEventProvider(InstrumentationProvider):
     def _report(self, timer_name: str, sdfg=None, state=None, node=None):
         idstr = self._idstr(sdfg, state, node)
 
+        state_id = -1
+        node_id = -1
+        if state is not None:
+            state_id = sdfg.node_id(state)
+            if node is not None:
+                node_id = state.node_id(node)
+
         return '''float __dace_ms_{id} = -1.0f;
 {backend}EventSynchronize(__dace_ev_e{id});
 {backend}EventElapsedTime(&__dace_ms_{id}, __dace_ev_b{id}, __dace_ev_e{id});
-dace::perf::report.add("gpuev_{timer_name}", __dace_ms_{id});'''.format(
-            id=idstr, timer_name=timer_name, backend=self.backend)
+int __dace_micros_{id} = (int) __dace_ms_{id} * 1000;
+unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+unsigned long int __dace_ts_start_{id} = __dace_ts_end_{id} - __dace_micros_{id};
+dace::perf::report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.format(
+            id=idstr, timer_name=timer_name, backend=self.backend,
+            sdfg_id=sdfg.sdfg_id, state_id=state_id, node_id=node_id)
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
