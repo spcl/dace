@@ -152,9 +152,16 @@ class StreamingMemory(xf.Transformation):
         ]:
             return False
 
-        # Only free nodes are allowed
-        if graph.entry_node(access) is not None:
-            return False
+        # Only free nodes are allowed (search up the SDFG tree)
+        curstate = graph
+        node = access
+        while curstate is not None:
+            if curstate.entry_node(node) is not None:
+                return False
+            if curstate.parent.parent_nsdfg_node is None:
+                break
+            node = curstate.parent.parent_nsdfg_node
+            curstate = curstate.parent.parent
 
         # Only one memlet path is allowed per outgoing/incoming edge
         edges = (graph.out_edges(access)
@@ -168,7 +175,8 @@ class StreamingMemory(xf.Transformation):
             # access pattern
             innermost_edge = mpath[-1] if expr_index == 0 else mpath[0]
             if (innermost_edge.data.subset.num_elements() != 1
-                    or innermost_edge.data.dynamic):
+                    or innermost_edge.data.dynamic
+                    or innermost_edge.data.volume != 1):
                 return False
 
             # Check if any of the maps has a dynamic range
@@ -409,9 +417,17 @@ class StreamingComposition(xf.Transformation):
         if isinstance(sdfg.arrays[access.data], data.Stream):
             return False
 
-        # Only free nodes are allowed
-        if graph.entry_node(access) is not None:
-            return False
+        # Only free nodes are allowed (search up the SDFG tree)
+        curstate = graph
+        node = access
+        while curstate is not None:
+            if curstate.entry_node(node) is not None:
+                return False
+            if curstate.parent.parent_nsdfg_node is None:
+                break
+            node = curstate.parent.parent_nsdfg_node
+            curstate = curstate.parent.parent
+
 
         # Array must not be used anywhere else in the state
         if any(n is not access and n.data == access.data

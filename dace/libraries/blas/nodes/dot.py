@@ -359,7 +359,7 @@ class ExpandDOTIntelFPGAVectorized(ExpandTransformation):
                                   dst_conn="nested_x",
                                   memlet=dace.Memlet.simple(
                                       x_read,
-                                      "i*{}".format(vec_width),
+                                      "i*{v}:i*{v}+{v}".format(v=vec_width),
                                       num_accesses=vec_width))
         dot_state.add_memlet_path(y_read,
                                   dotMap_entry,
@@ -367,7 +367,7 @@ class ExpandDOTIntelFPGAVectorized(ExpandTransformation):
                                   dst_conn="nested_y",
                                   memlet=dace.Memlet.simple(
                                       y_read,
-                                      "i*{}".format(vec_width),
+                                      "i*{v}:i*{v}+{v}".format(v=vec_width),
                                       num_accesses=vec_width))
         dot_state.add_memlet_path(accum_init,
                                   dotMap_entry,
