@@ -264,8 +264,9 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if desc.storage == dace.StorageType.FPGA_Global:
-        # This is a device buffer.
+    if (defined_type != DefinedType.ArrayInterface
+            and desc.storage == dace.StorageType.FPGA_Global):
+        # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
                 offset, str) and offset.isnumeric() and int(offset) != 0):
