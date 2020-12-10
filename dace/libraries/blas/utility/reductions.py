@@ -5,7 +5,7 @@ Various helper functions for reduction operations
 from dace.memlet import Memlet
 from dace import dtypes
 from dace import config
-from dace import Interstat_xeEdge
+from dace import InterstateEdge
 from dace import SDFG
 from dace import vector
 
