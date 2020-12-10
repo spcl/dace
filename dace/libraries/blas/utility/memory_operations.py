@@ -106,78 +106,61 @@ def fpga_copy_global_to_cpu(sdfg,
     return (outputs, names)
 
 
-
-
-
-def fpga_map_singleton_to_stream(
-        state,
-        src,
-        dest,
-        dtype,
-        mapTasklet='outCon = inCon'
-    ):
+def fpga_map_singleton_to_stream(state,
+                                 src,
+                                 dest,
+                                 dtype,
+                                 map_tasklet='out_con = in_con'):
     """
     Copy single element from a source memory location
     into a stream
     """
 
     buf_in = state.add_read(src)
-    result = state.add_stream(
-        dest,
-        dtype,
-        buffer_size=config.Config.get(
-            "library", "blas", "fpga", "default_stream_depth"),
-        storage=dtypes.StorageType.FPGA_Local
-    )
+    result = state.add_stream(dest,
+                              dtype,
+                              buffer_size=config.Config.get(
+                                  "library", "blas", "fpga",
+                                  "default_stream_depth"),
+                              storage=dtypes.StorageType.FPGA_Local)
 
-    root_tasklet = state.add_tasklet(
-        'mapToStream_task',
-        ['inCon'],
-        ['outCon'],
-        mapTasklet
-    )
+    root_tasklet = state.add_tasklet('map_to_stream_task', ['in_con'],
+                                     ['out_con'], map_tasklet)
 
-    state.add_memlet_path(
-        buf_in, root_tasklet,
-        dst_conn='inCon',
-        memlet=Memlet.simple(buf_in.data, '0')
-    )
+    state.add_memlet_path(buf_in,
+                          root_tasklet,
+                          dst_conn='in_con',
+                          memlet=Memlet.simple(buf_in.data, '0'))
 
-    state.add_memlet_path(
-        root_tasklet, result,
-        src_conn='outCon',
-        memlet=Memlet.simple(result.data, '0', num_accesses=-1)
-    )
+    state.add_memlet_path(root_tasklet,
+                          result,
+                          src_conn='out_con',
+                          memlet=Memlet.simple(result.data,
+                                               '0',
+                                               num_accesses=-1))
 
 
-
-
-def fpga_streamToLocal(state, srcData, dest, size):
+def fpga_stream_to_local(state, src_data, dest, size):
 
     data_out = state.add_write(dest)
 
-    copyMap_entry, copyMap_exit = state.add_map(
-        'streamToLocal_map',
-        dict(k_stream = '0:{0}'.format(size)),
+    copy_map_entry, copy_map_exit = state.add_map(
+        'stream_to_local_map',
+        dict(k_stream='0:{0}'.format(size)),
         schedule=dtypes.ScheduleType.FPGA_Device,
-        unroll=True
-    )
+        unroll=True)
 
-    copyX_task = state.add_tasklet(
-        'streamToLocal_map',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon'
-    )
+    copy_x_task = state.add_tasklet('stream_to_local_map', ['in_con'],
+                                    ['out_con'], 'out_con = in_con')
 
-    state.add_memlet_path(
-        srcData, copyMap_entry, copyX_task,
-        dst_conn='inCon',
-        memlet=Memlet.simple(srcData.data, "0")
-    )
+    state.add_memlet_path(src_data,
+                          copy_map_entry,
+                          copy_x_task,
+                          dst_conn='in_con',
+                          memlet=Memlet.simple(src_data.data, "0"))
 
-    state.add_memlet_path(
-        copyX_task, copyMap_exit, data_out,
-        src_conn='outCon',
-        memlet=Memlet.simple(data_out.data, "k_stream")
-    )
+    state.add_memlet_path(copy_x_task,
+                          copymap_exit,
+                          data_out,
+                          src_conn='out_con',
+                          memlet=Memlet.simple(data_out.data, "k_stream"))

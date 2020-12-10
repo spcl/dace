@@ -4,7 +4,6 @@ import numpy as np
 
 import argparse
 import scipy
-import random
 
 import dace
 from dace.memlet import Memlet
@@ -12,18 +11,12 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 
 import dace.libraries.blas.utility.fpga_helper as streaming
-from dace.libraries.blas.utility import memory_operations as memOps
-from dace.transformation.interstate import GPUTransformSDFG
-
-from dace.libraries.standard.memory import aligned_ndarray
-
-from multiprocessing import Process, Queue
 
 
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
-def fpga_graph(veclen, precision, vendor, testCase="0"):
+def fpga_graph(veclen, precision, vendor, test_case="0"):
 
     DATATYPE = precision
 
@@ -31,13 +24,13 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     a = dace.symbol("a")
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
-    test_sdfg = dace.SDFG("dot_test_" + vendor_mark + "_" + testCase)
+    test_sdfg = dace.SDFG("dot_test_" + vendor_mark + "_" + test_case)
     test_state = test_sdfg.add_state("test_state")
 
-    vecType = dace.vector(precision, veclen)
+    vec_type = dace.vector(precision, veclen)
 
-    test_sdfg.add_array('x', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('y', shape=[n / veclen], dtype=vecType)
+    test_sdfg.add_array('x', shape=[n / veclen], dtype=vec_type)
+    test_sdfg.add_array('y', shape=[n / veclen], dtype=vec_type)
     test_sdfg.add_array('r', shape=[1], dtype=precision)
 
     dot_node = blas.Dot("dot", DATATYPE, veclen=veclen, partial_width=16, n=n)
@@ -49,7 +42,7 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
 
     z_stream = streaming.StreamWriteVector('r', 1, DATATYPE)
 
-    preState, postState = streaming.fpga_setup_connect_streamers(
+    pre_state, post_state = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
         dot_node, [x_stream, y_stream], ['_x', '_y'],
@@ -66,7 +59,6 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     test_sdfg.fill_scope_connectors()
 
     return test_sdfg
-
 
 
 # ---------- ----------
@@ -203,6 +195,7 @@ def intel_fpga_graph(dtype, vec_width=4):
     sdfg.validate()
     return sdfg
 
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -216,7 +209,7 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
         sdfg = intel_fpga_graph(dace.float32)
     elif args.target == "xilinx":
-        sdfg = fpga_graph(1, dace.float32, args.target, "0")
+        sdfg = fpga_graph(4, dace.float32, args.target, "0")
     else:
         print("Unsupported target")
         exit(-1)

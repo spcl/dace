@@ -26,6 +26,10 @@ class CCDesc:
         self.second_input_nodes = second_input_nodes
 
 
+def top_level_nodes(state: SDFGState):
+    return state.scope_children()[None]
+
+
 @registry.autoregister_params(strict=True)
 class StateFusion(transformation.Transformation):
     """ Implements the state-fusion transformation.
@@ -433,6 +437,8 @@ class StateFusion(transformation.Transformation):
             if isinstance(node, nodes.AccessNode)
         ]
 
+        top2 = top_level_nodes(second_state)
+
         # first input = first input - first output
         first_input = [
             node for node in first_input
@@ -451,10 +457,18 @@ class StateFusion(transformation.Transformation):
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
+        top = top_level_nodes(first_state)
+
         # Merge common (data) nodes
         for node in second_input:
+
+            # merge only top level nodes, skip everything else
+            if node not in top2:
+                continue
+
             if first_state.in_degree(node) == 0:
-                candidates = [x for x in order if x.data == node.data]
+                candidates = [x for x in order
+                              if x.data == node.data and x in top]
                 if len(candidates) == 0:
                     continue
                 elif len(candidates) == 1:

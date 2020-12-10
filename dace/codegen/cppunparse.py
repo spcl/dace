@@ -80,6 +80,7 @@ import tokenize
 import dace
 from numbers import Number
 from six import StringIO
+from dace import dtypes
 from dace.codegen.tools import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -88,7 +89,8 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr"}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr",
+                  "inf": "INFINITY", "nan": "NAN"}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
@@ -168,7 +170,8 @@ class CPPUnparser:
                  expr_semicolon=True,
                  indent_offset=0,
                  type_inference=False,
-                 defined_symbols=None):
+                 defined_symbols=None,
+                 language=dace.dtypes.Language.CPP):
 
         self.f = file
         self.future_imports = []
@@ -181,6 +184,7 @@ class CPPUnparser:
         self.dtype = None
         self.locals = locals
         self.firstfill = True
+        self.language = language
 
         self.dispatch(tree)
         print("", file=self.f)
@@ -324,7 +328,11 @@ class CPPUnparser:
 
                     self.locals.define(target.id, t.lineno, self._indent,
                                        inferred_type)
-                    self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                    if self.language == dace.dtypes.Language.OpenCL and inferred_type.veclen > 1:
+                        # if the veclen is greater than one, this should be defined with a vector data type
+                        self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],inferred_type.veclen))
+                    else:
+                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                 else:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")
@@ -721,10 +729,9 @@ class CPPUnparser:
 
     def _Num(self, t):
         repr_n = repr(t.n)
-
-        # For complex values, use type of assignment (if exists), or
-        # double-complex (128-bit) otherwise
-        dtype = self.dtype or 'dace::complex128'
+        # For complex values, use DTYPE_TO_TYPECLASS dictionary
+        if isinstance(t.n, complex):
+            dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
 
         if repr_n.endswith("j"):
             self.write("%s(0, %s)" %
@@ -930,7 +937,11 @@ class CPPUnparser:
         if (isinstance(t.value, (ast.Num, ast.Constant))
                 and isinstance(t.value.n, int)):
             self.write(" ")
-        self.write(".")
+        if (isinstance(t.value, ast.Name) and
+                t.value.id in ("dace::math", "dace::cmath")):
+            self.write("::")
+        else:
+            self.write(".")
         self.write(t.attr)
 
     def _Call(self, t):

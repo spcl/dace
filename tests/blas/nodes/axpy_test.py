@@ -314,7 +314,7 @@ def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
     return test_sdfg.compile()
 
 
-def test_fpga(type, vendor):
+def _test_fpga(type, vendor):
 
     print("Run BLAS test: AXPY fpga", vendor + "...")
 
@@ -336,8 +336,8 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "intel_fpga" or args.target == "xilinx":
-        test_fpga("fpga", args.target)
+        _test_fpga("fpga", args.target)
     elif args.target == "intel_fpga_dram":
-        test_fpga("intel_fpga_dram", "intel_fpga")
+        _test_fpga("intel_fpga_dram", "intel_fpga")
     else:
         test_pure()
