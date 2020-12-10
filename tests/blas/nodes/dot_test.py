@@ -33,7 +33,7 @@ def fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.add_array('y', shape=[n / veclen], dtype=vec_type)
     test_sdfg.add_array('r', shape=[1], dtype=precision)
 
-    dot_node = blas.Dot("dot", DATATYPE, veclen=veclen, partial_width=16, n=n)
+    dot_node = blas.Dot("dot", DATATYPE, veclen=veclen, partial_width=8, n=n)
     dot_node.implementation = 'fpga_stream'
 
     x_stream = streaming.StreamReadVector('x', n, DATATYPE, veclen=veclen)
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
         sdfg = intel_fpga_graph(dace.float32)
     elif args.target == "xilinx":
-        sdfg = fpga_graph(4, dace.float32, args.target, "0")
+        sdfg = fpga_graph(16, dace.float32, args.target, "0")
     else:
         print("Unsupported target")
         exit(-1)

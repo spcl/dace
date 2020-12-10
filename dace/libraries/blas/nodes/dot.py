@@ -190,7 +190,7 @@ class expand_dot_fpga_streaming(ExpandTransformation):
             dtype=dtype,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
-            if partial_width > 8 else dtypes.StorageType.FPGA_Registers)
+        )
 
         dot_sdfg.add_scalar('res_buf',
                             dtype=dtype,
@@ -547,10 +547,11 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     vec_width = dace.properties.SymbolicProperty(
         allow_none=False,
         default=1,
-        desc='Parameter for adjusting the width of the inner reduction buffer')
+    )
 
     partial_width = dace.properties.SymbolicProperty(allow_none=False,
-                                                     default=2)
+        desc='Parameter for adjusting the width of the inner reduction buffer',
+                                                     default=8)
     veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     n = dace.properties.SymbolicProperty(allow_none=False,
@@ -559,7 +560,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     def __init__(self,
                  name,
                  dtype=None,
-                 partial_width=2,
+                 partial_width=8,
                  veclen=1,
                  n=None,
                  vec_width=1,
