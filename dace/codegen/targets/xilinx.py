@@ -233,8 +233,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}".format("const " if is_const else "",
-                             dtype.base_type.ctype, dtype.veclen)
+        return "{}{}".format("const " if is_const else "", dtype.ctype)
 
     @staticmethod
     def make_kernel_argument(data,
