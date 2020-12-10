@@ -1,5 +1,5 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -49,20 +49,26 @@ def run_test(configs, target, implementation, overwrite_y=False):
 
         program = None
         if target == "fpga":
-            program = fpga_graph(config[1],
-                                 config[2],
-                                 implementation,
-                                 testCase=config[3])
-        elif target == "intel_fpga_dram":
-            program = intel_fpga_graph(config[1],
+            program = stream_fpga_graph(config[1],
+                                        config[2],
+                                        implementation,
+                                        test_case=config[3])
+        elif target == "fpga_array":
+            program = array_fpga_graph(config[1],
                                        config[2],
                                        implementation,
-                                       testCase=config[3])
+                                       test_case=config[3],
+                                       expansion="fpga")
+        elif target == "intel_fpga_dram":
+            program = array_fpga_graph(config[1],
+                                       config[2],
+                                       implementation,
+                                       test_case=config[3])
         else:
-            program = pure_graph(config[1], config[2], testCase=config[3])
+            program = pure_graph(config[1], config[2], test_case=config[3])
 
         ref_norm = 0
-        if target == "fpga" or target == "intel_fpga_dram":
+        if target in ["fpga", "intel_fpga_dram", "fpga_array"]:
 
             # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
             queue = Queue()
@@ -84,8 +90,8 @@ def run_test(configs, target, implementation, overwrite_y=False):
 
         if not passed:
             raise RuntimeError(
-                'AXPY {} implementation wrong test results on config: '.format(
-                    implementation), config)
+                'AXPY {} implementation on target {} wrong test results on config: '
+                .format(implementation, target), config)
 
 
 # ---------- ----------
@@ -98,23 +104,23 @@ def reference_result(x_in, y_in, alpha):
 # ---------- ----------
 # Pure graph program
 # ---------- ----------
-def pure_graph(veclen, precision, implementation="pure", testCase="0"):
+def pure_graph(veclen, precision, implementation="pure", test_case="0"):
 
     n = dace.symbol("n")
     a = dace.symbol("a")
 
     prec = "single" if precision == dace.float32 else "double"
     test_sdfg = dace.SDFG("axpy_test_" + prec + "_v" + str(veclen) + "_" +
-                          implementation + "_" + testCase)
+                          implementation + "_" + test_case)
     test_state = test_sdfg.add_state("test_state")
 
-    vecType = dace.vector(precision, veclen)
+    vec_type = dace.vector(precision, veclen)
 
     test_sdfg.add_symbol(a.name, precision)
 
-    test_sdfg.add_array('x1', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[n / veclen], dtype=vecType)
+    test_sdfg.add_array('x1', shape=[n / veclen], dtype=vec_type)
+    test_sdfg.add_array('y1', shape=[n / veclen], dtype=vec_type)
+    test_sdfg.add_array('z1', shape=[n / veclen], dtype=vec_type)
 
     x_in = test_state.add_read('x1')
     y_in = test_state.add_read('y1')
@@ -156,11 +162,10 @@ def test_pure():
     run_test(configs, "pure", "pure")
 
 
-
 # ---------- ----------
 # FPGA graph programs
 # ---------- ----------
-def fpga_graph(veclen, precision, vendor, testCase="0"):
+def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
 
     DATATYPE = precision
 
@@ -168,19 +173,19 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     a = dace.symbol("a")
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
-    test_sdfg = dace.SDFG("axpy_test_" + vendor_mark + "_" + testCase)
+    test_sdfg = dace.SDFG("axpy_test_" + vendor_mark + "_" + test_case)
     test_state = test_sdfg.add_state("test_state")
 
-    vecType = dace.vector(precision, veclen)
+    vec_type = dace.vector(precision, veclen)
 
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    test_sdfg.add_array('x1', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('y1', shape=[n / veclen], dtype=vecType)
-    test_sdfg.add_array('z1', shape=[n / veclen], dtype=vecType)
+    test_sdfg.add_array('x1', shape=[n / veclen], dtype=vec_type)
+    test_sdfg.add_array('y1', shape=[n / veclen], dtype=vec_type)
+    test_sdfg.add_array('z1', shape=[n / veclen], dtype=vec_type)
 
     saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, veclen=veclen, n=n, a=a)
-    saxpy_node.implementation = 'fpga_stream'
+    saxpy_node.implementation = 'fpga'
 
     x_stream = streaming.StreamReadVector('x1', n, DATATYPE, veclen=veclen)
 
@@ -205,19 +210,31 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     return test_sdfg.compile()
 
 
-def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
+def array_fpga_graph(veclen,
+                     precision,
+                     vendor,
+                     test_case="0",
+                     expansion='Intel_FPGA_DRAM'):
 
     DATATYPE = precision
 
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    test_sdfg = dace.SDFG("axpy_test_intel_" + testCase)
+    test_name = "array_axpy_test_" + vendor + "_" + test_case
+    if expansion == 'Intel_FPGA_DRAM':
+        test_name = "axpy_test_intel_" + test_case
+
+    test_sdfg = dace.SDFG(test_name)
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    test_sdfg.add_array('x1', shape=[n], dtype=DATATYPE)
-    test_sdfg.add_array('y1', shape=[n], dtype=DATATYPE)
-    test_sdfg.add_array('z1', shape=[n], dtype=DATATYPE)
+    vec_type = precision if expansion == 'Intel_FPGA_DRAM' else dace.vector(
+        precision, veclen)
+    n_adj = n if expansion == 'Intel_FPGA_DRAM' else n / veclen
+
+    test_sdfg.add_array('x1', shape=[n_adj], dtype=vec_type)
+    test_sdfg.add_array('y1', shape=[n_adj], dtype=vec_type)
+    test_sdfg.add_array('z1', shape=[n_adj], dtype=vec_type)
 
     ###########################################################################
     # Copy data to FPGA
@@ -228,13 +245,13 @@ def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
     in_host_y = copy_in_state.add_read("y1")
 
     test_sdfg.add_array("device_x",
-                        shape=[n],
-                        dtype=precision,
+                        shape=[n_adj],
+                        dtype=vec_type,
                         storage=dace.dtypes.StorageType.FPGA_Global,
                         transient=True)
     test_sdfg.add_array("device_y",
-                        shape=[n],
-                        dtype=precision,
+                        shape=[n_adj],
+                        dtype=vec_type,
                         storage=dace.dtypes.StorageType.FPGA_Global,
                         transient=True)
 
@@ -244,19 +261,19 @@ def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
     copy_in_state.add_memlet_path(in_host_x,
                                   in_device_x,
                                   memlet=Memlet.simple(in_host_x,
-                                                       "0:{}".format(n)))
+                                                       "0:{}".format(n_adj)))
     copy_in_state.add_memlet_path(in_host_y,
                                   in_device_y,
                                   memlet=Memlet.simple(in_host_y,
-                                                       "0:{}".format(n)))
+                                                       "0:{}".format(n_adj)))
 
     ###########################################################################
     # Copy data from FPGA
     copy_out_state = test_sdfg.add_state("copy_to_host")
 
     test_sdfg.add_array("device_z",
-                        shape=[n],
-                        dtype=precision,
+                        shape=[n_adj],
+                        dtype=vec_type,
                         storage=dace.dtypes.StorageType.FPGA_Global,
                         transient=True)
 
@@ -266,7 +283,7 @@ def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
     copy_out_state.add_memlet_path(out_device,
                                    out_host,
                                    memlet=Memlet.simple(out_host,
-                                                        "0:{}".format(n)))
+                                                        "0:{}".format(n_adj)))
 
     ########################################################################
     # FPGA State
@@ -278,20 +295,20 @@ def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
     z = fpga_state.add_write("device_z")
 
     saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, veclen=veclen, n=n, a=a)
-    saxpy_node.implementation = 'Intel_FPGA_DRAM'
+    saxpy_node.implementation = expansion
 
     fpga_state.add_memlet_path(x,
                                saxpy_node,
                                dst_conn="_x",
-                               memlet=Memlet.simple(x, "0:{}".format(n)))
+                               memlet=Memlet.simple(x, "0:{}".format(n_adj)))
     fpga_state.add_memlet_path(y,
                                saxpy_node,
                                dst_conn="_y",
-                               memlet=Memlet.simple(y, "0:{}".format(n)))
+                               memlet=Memlet.simple(y, "0:{}".format(n_adj)))
     fpga_state.add_memlet_path(saxpy_node,
                                z,
                                src_conn="_res",
-                               memlet=Memlet.simple(z, "0:{}".format(n)))
+                               memlet=Memlet.simple(z, "0:{}".format(n_adj)))
 
     ######################################
     # Interstate edges
@@ -314,7 +331,7 @@ def intel_fpga_graph(veclen, precision, vendor, testCase="0"):
     return test_sdfg.compile()
 
 
-def _test_fpga(type, vendor):
+def test_fpga(type, vendor):
 
     print("Run BLAS test: AXPY fpga", vendor + "...")
 
@@ -336,8 +353,9 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "intel_fpga" or args.target == "xilinx":
-        _test_fpga("fpga", args.target)
+        test_fpga("fpga", args.target)
+        test_fpga("fpga_array", args.target)
     elif args.target == "intel_fpga_dram":
-        _test_fpga("intel_fpga_dram", "intel_fpga")
+        test_fpga("intel_fpga_dram", "intel_fpga")
     else:
         test_pure()

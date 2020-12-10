@@ -87,7 +87,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
 
     @staticmethod
     def make_sdfg(dtype, veclen, n, a, buffer_size_x, buffer_size_y,
-                  buffer_size_res):
+                  buffer_size_res, streaming):
 
         # ---------- ----------
         # SETUP GRAPH
@@ -95,27 +95,38 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         vec_type = dace.vector(dtype, veclen)
 
         vec_add_sdfg = dace.SDFG('vec_add_graph')
-        vec_add_state = vec_add_sdfg.add_state()
+        vec_add_state = vec_add_sdfg.add_state("axpy_compute_state")
 
         vec_add_sdfg.add_symbol(a.name, dtype)
 
         # ---------- ----------
         # MEMORY LOCATIONS
         # ---------- ----------
-        # vec_add_sdfg.add_scalar('_a', dtype=dtype, storage=dtypes.StorageType.FPGA_Global)
 
-        x_in = vec_add_state.add_stream('_x',
-                                        vec_type,
-                                        buffer_size=buffer_size_x,
-                                        storage=dtypes.StorageType.FPGA_Local)
-        y_in = vec_add_state.add_stream('_y',
-                                        vec_type,
-                                        buffer_size=buffer_size_y,
-                                        storage=dtypes.StorageType.FPGA_Local)
-        z_out = vec_add_state.add_stream('_res',
-                                         vec_type,
-                                         buffer_size=buffer_size_res,
-                                         storage=dtypes.StorageType.FPGA_Local)
+        if streaming:
+            x_in = vec_add_state.add_stream(
+                '_x',
+                vec_type,
+                buffer_size=buffer_size_x,
+                storage=dtypes.StorageType.FPGA_Local)
+            y_in = vec_add_state.add_stream(
+                '_y',
+                vec_type,
+                buffer_size=buffer_size_y,
+                storage=dtypes.StorageType.FPGA_Local)
+            z_out = vec_add_state.add_stream(
+                '_res',
+                vec_type,
+                buffer_size=buffer_size_res,
+                storage=dtypes.StorageType.FPGA_Local)
+        else:
+            vec_add_sdfg.add_array('_x', shape=[n / veclen], dtype=vec_type)
+            vec_add_sdfg.add_array('_y', shape=[n / veclen], dtype=vec_type)
+            vec_add_sdfg.add_array('_res', shape=[n / veclen], dtype=vec_type)
+
+            x_in = vec_add_state.add_read('_x')
+            y_in = vec_add_state.add_read('_y')
+            z_out = vec_add_state.add_write('_res')
 
         # ---------- ----------
         # COMPUTE
@@ -129,24 +140,27 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             'axpy_task', ['x_con', 'y_con'], ['z_con'],
             'z_con = {} * x_con + y_con'.format(a))
 
+        access_vol = '0' if streaming else 'i'
         vec_add_state.add_memlet_path(x_in,
                                       vec_map_entry,
                                       axpy_tasklet,
                                       dst_conn='x_con',
-                                      memlet=dace.Memlet.simple(x_in.data, '0'))
+                                      memlet=dace.Memlet.simple(
+                                          x_in.data, '{}'.format(access_vol)))
 
         vec_add_state.add_memlet_path(y_in,
                                       vec_map_entry,
                                       axpy_tasklet,
                                       dst_conn='y_con',
-                                      memlet=dace.Memlet.simple(y_in.data, '0'))
+                                      memlet=dace.Memlet.simple(
+                                          y_in.data, '{}'.format(access_vol)))
 
         vec_add_state.add_memlet_path(axpy_tasklet,
                                       vec_map_exit,
                                       z_out,
                                       src_conn='z_con',
                                       memlet=dace.Memlet.simple(
-                                          z_out.data, '0'))
+                                          z_out.data, '{}'.format(access_vol)))
 
         return vec_add_sdfg
 
@@ -156,17 +170,44 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
+
+        buffer_size_x = 0
+        buffer_size_y = 0
+        buffer_size_res = 0
+
+        streaming = False
+        streaming_nodes = 0
+
         for e in state.in_edges(node):
-            if e.dst_conn == "_x":
+
+            if isinstance(sdfg.arrays[e.data.data],
+                          dace.data.Stream) and e.dst_conn == "_x":
                 buffer_size_x = sdfg.arrays[e.data.data].buffer_size
-            elif e.dst_conn == "_y":
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
+            elif isinstance(sdfg.arrays[e.data.data],
+                            dace.data.Stream) and e.dst_conn == "_y":
                 buffer_size_y = sdfg.arrays[e.data.data].buffer_size
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
         for e in state.out_edges(node):
-            if e.src_conn == "_res":
+            if isinstance(sdfg.arrays[e.data.data],
+                          dace.data.Stream) and e.src_conn == "_res":
                 buffer_size_res = sdfg.arrays[e.data.data].buffer_size
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
+        if streaming and streaming_nodes < 3:
+            raise ValueError(
+                "All input and outputs must be of same type either Array or Stream"
+            )
+
         return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
                                                  node.n, node.a, buffer_size_x,
-                                                 buffer_size_y, buffer_size_res)
+                                                 buffer_size_y, buffer_size_res,
+                                                 streaming)
 
 
 @dace.library.expansion
@@ -272,13 +313,13 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
         Implementations:
         pure: dace primitive based implementation
-        fpga_stream: FPGA implementation optimized for streaming
+        fpga: FPGA implementation optimized for both streaming and array based inputs
     """
 
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
-        "fpga_stream": ExpandAxpyFPGAStreaming,
+        "fpga": ExpandAxpyFPGAStreaming,
         "Intel_FPGA_DRAM": ExpandAxpyIntelFPGAVectorized
     }
     default_implementation = 'pure'
