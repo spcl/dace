@@ -181,7 +181,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
-    def set_mangled_channel_name(self, var_name, kernel_id):
+    def create_mangled_channel_name(self, var_name, kernel_id):
         '''
         Memorize and returns  the mangled name of a global channel
         The dictionary is organized as (var_name) : {kernel_id: mangled_name)
@@ -223,7 +223,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         else:
             size_str = ""
         # mangle name
-        chan_name = self.set_mangled_channel_name(var_name, self._kernel_count)
+        chan_name = self.create_mangled_channel_name(var_name, self._kernel_count)
         kernel_stream.write("channel {} {}{}{};".format(vec_type, chan_name,
                                                         size_str,
                                                         depth_attribute))
