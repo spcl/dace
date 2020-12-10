@@ -12,6 +12,7 @@ import dace.libraries.blas as blas
 
 import dace.libraries.blas.utility.fpga_helper as streaming
 
+
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
@@ -58,7 +59,6 @@ def fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.fill_scope_connectors()
 
     return test_sdfg
-
 
 
 # ---------- ----------
@@ -194,6 +194,7 @@ def intel_fpga_graph(dtype, vec_width=4):
     sdfg.fill_scope_connectors()
     sdfg.validate()
     return sdfg
+
 
 if __name__ == "__main__":
 

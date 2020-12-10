@@ -160,22 +160,14 @@ class ExpandDotCuBLAS(ExpandTransformation):
         return tasklet
 
 
-
-
 @dace.library.expansion
 class expand_dot_fpga_streaming(ExpandTransformation):
 
     environments = []
 
     @staticmethod
-    def make_sdfg(
-            dtype,
-            partial_width,
-            veclen,
-            n,
-            buffer_size_x,
-            buffer_size_y
-        ):
+    def make_sdfg(dtype, partial_width, veclen, n, buffer_size_x,
+                  buffer_size_y):
 
         # --------------------------
         # Setup
@@ -198,16 +190,12 @@ class expand_dot_fpga_streaming(ExpandTransformation):
             dtype=dtype,
             transient=True,
             storage=dtypes.StorageType.FPGA_Local
-                if partial_width > 8 else
-                dtypes.StorageType.FPGA_Registers
-        )
+            if partial_width > 8 else dtypes.StorageType.FPGA_Registers)
 
-        dot_sdfg.add_scalar(
-            'res_buf',
-            dtype=dtype,
-            transient=True,
-            storage=dtypes.StorageType.FPGA_Registers
-        )
+        dot_sdfg.add_scalar('res_buf',
+                            dtype=dtype,
+                            transient=True,
+                            storage=dtypes.StorageType.FPGA_Registers)
 
         # --------------------------
         # Init State
@@ -218,41 +206,33 @@ class expand_dot_fpga_streaming(ExpandTransformation):
         # --------------------------
         # Compute State
         # --------------------------
-        fpga_binary_compute_partial_reduction(
-            dot_sdfg,
-            compute_state,
-            '_x',
-            '_y',
-            'red_buf',
-            dtype,
-            n,
-            veclen,
-            partial_width,
-            'out_con = in_con1 * in_con2',
-            vec_type=vec_type
-        )
+        fpga_binary_compute_partial_reduction(dot_sdfg,
+                                              compute_state,
+                                              '_x',
+                                              '_y',
+                                              'red_buf',
+                                              dtype,
+                                              n,
+                                              veclen,
+                                              partial_width,
+                                              'out_con = in_con1 * in_con2',
+                                              vec_type=vec_type)
 
         # --------------------------
         # Reduction State
         # --------------------------
-        fpga_linear_result_reduction(
-            red_state,
-            'red_buf',
-            'res_buf',
-            dtype,
-            partial_width,
-            to_mem=True
-        )
+        fpga_linear_result_reduction(red_state,
+                                     'red_buf',
+                                     'res_buf',
+                                     dtype,
+                                     partial_width,
+                                     to_mem=True)
 
         # -----
         # Write to stream State
         # -----
-        fpga_map_singleton_to_stream(
-            final_state,
-            'res_buf',
-            '_result',
-            dace.vector(dtype, 1)
-        )
+        fpga_map_singleton_to_stream(final_state, 'res_buf', '_result',
+                                     dace.vector(dtype, 1))
 
         # --------------------------
         # Connect States
@@ -262,18 +242,16 @@ class expand_dot_fpga_streaming(ExpandTransformation):
         dot_sdfg.add_edge(compute_state, red_state, dace.InterstateEdge())
         dot_sdfg.add_edge(red_state, final_state, dace.InterstateEdge())
 
-
         dot_sdfg.fill_scope_connectors()
 
-        return  dot_sdfg
+        return dot_sdfg
 
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         if node.dtype is None:
-            raise ValueError(
-                    "Data type must be set to expand " + str(node) + "."
-                )
+            raise ValueError("Data type must be set to expand " + str(node) +
+                             ".")
 
         for e in state.in_edges(node):
             if e.dst_conn == "_x":
@@ -281,14 +259,10 @@ class expand_dot_fpga_streaming(ExpandTransformation):
             elif e.dst_conn == "_y":
                 buffer_size_y = sdfg.arrays[e.data.data].buffer_size
 
-        return expand_dot_fpga_streaming.make_sdfg(
-            node.dtype,
-            node.partial_width,
-            int(node.veclen),
-            node.n,
-            buffer_size_x,
-            buffer_size_y
-        )
+        return expand_dot_fpga_streaming.make_sdfg(node.dtype,
+                                                   node.partial_width,
+                                                   int(node.veclen), node.n,
+                                                   buffer_size_x, buffer_size_y)
 
 
 @dace.library.expansion
@@ -573,22 +547,21 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     vec_width = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     partial_width = dace.properties.SymbolicProperty(allow_none=False,
-            default=2)
+                                                     default=2)
     veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     n = dace.properties.SymbolicProperty(allow_none=False,
-            default=dace.symbolic.symbol("n"))
-
+                                         default=dace.symbolic.symbol("n"))
 
     def __init__(self,
-                name,
-                dtype=None,
-                partial_width=2,
-                veclen=1,
-                n=None,
-                vec_width=1,
-                *args,
-                **kwargs):
+                 name,
+                 dtype=None,
+                 partial_width=2,
+                 veclen=1,
+                 n=None,
+                 vec_width=1,
+                 *args,
+                 **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
