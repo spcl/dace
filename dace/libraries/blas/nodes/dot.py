@@ -544,7 +544,10 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    vec_width = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    vec_width = dace.properties.SymbolicProperty(
+        allow_none=False,
+        default=1,
+        desc='Parameter for adjusting the width of the inner reduction buffer')
 
     partial_width = dace.properties.SymbolicProperty(allow_none=False,
                                                      default=2)
