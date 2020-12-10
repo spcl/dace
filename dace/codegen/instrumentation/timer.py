@@ -30,11 +30,20 @@ class TimerProvider(InstrumentationProvider):
                 node=None):
         idstr = self._idstr(sdfg, state, node)
 
+        state_id = -1
+        node_id = -1
+        if state is not None:
+            state_id = sdfg.node_id(state)
+            if node is not None:
+                node_id = state.node_id(node)
+
         stream.write(
             '''auto __dace_tend_{id} = std::chrono::high_resolution_clock::now();
-std::chrono::duration<double, std::milli> __dace_tdiff_{id} = __dace_tend_{id} - __dace_tbegin_{id};
-dace::perf::report.add("timer_{timer_name}", __dace_tdiff_{id}.count());'''.
-            format(timer_name=timer_name, id=idstr))
+unsigned long int __dace_ts_start_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tbegin_{id}.time_since_epoch()).count();
+unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tend_{id}.time_since_epoch()).count();
+dace::perf::report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.
+            format(timer_name=timer_name, id=idstr,
+                   sdfg_id=sdfg.sdfg_id, state_id=state_id, node_id=node_id))
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
