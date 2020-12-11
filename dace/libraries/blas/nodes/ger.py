@@ -2,10 +2,13 @@
 from dace.symbolic import symstr
 from dace.properties import Property
 from dace.transformation.transformation import ExpandTransformation
+from dace.frontend.common import op_repository as oprepo
 from dace.sdfg.nodes import LibraryNode
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 import dace.sdfg.nodes
 import dace.library as library
+from dace.sdfg import SDFG, SDFGState
+from dace import memlet as mm
 import copy
 import numpy as np
 
@@ -217,3 +220,25 @@ class Ger(LibraryNode):
             raise ValueError(
                 "Output matrix must match input matrix a and outer product x*yT."
             )
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.ger')
+@oprepo.replaces('dace.libraries.blas.Ger')
+def ger_libnode(sdfg: SDFG, state: SDFGState, A, x, y, output, alpha):
+    # Add nodes
+    A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
+    out = state.add_write(output)
+
+    libnode = Ger('ger',
+                   dtype=sdfg.arrays[A].dtype,
+                   alpha=alpha)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
+    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
+    state.add_edge(libnode, '_res', out, None, mm.Memlet(output))
+
+    return []
