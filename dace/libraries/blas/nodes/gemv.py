@@ -158,8 +158,9 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
         # ---------- ----------
 
         # get input sizes
-        n = parent_state.in_edges(node)[0].data.subset.size()[0]
-        m = parent_state.in_edges(node)[0].data.subset.size()[1]
+        in_edge = next(parent_state.in_edges_by_connector(node, '_A'))
+        n = in_edge.data.subset.size()[0]
+        m = in_edge.data.subset.size()[1]
         alpha = node.alpha
         beta = node.beta
         transposed = node.transA
