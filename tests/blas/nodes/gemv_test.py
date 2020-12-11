@@ -23,7 +23,7 @@ from multiprocessing import Process, Queue
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
-def fpga_graph(veclen, precision, vendor, testCase="0"):
+def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
 
     DATATYPE = precision
     nRows = dace.symbol("n")
@@ -33,10 +33,9 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
     b = dace.symbol("beta")
 
     # TODO: expand tests to consider different tile size configs
-    rowTile = 8
-    colTile = 8
-    partialWidth = 4
-    vecM = veclen
+    rowTile = 4
+    colTile = 4
+    partialWidth = 1
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
     test_sdfg = dace.SDFG("gemv_test_" + vendor_mark + "_" + testCase)
@@ -56,8 +55,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         'x',
         mCols,
         DATATYPE,
-        veclen=1,
-        repeat='{}/{}'.format(nRows, rowTile)
+        veclen=veclen,
+        #repeat='{}/{}'.format(nRows, rowTile)
     )
 
     y_stream = None
@@ -66,7 +65,8 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
             'yi',
             nRows,
             DATATYPE,
-            veclen=1,
+            veclen=veclen,
+            repeat='{}/{}'.format(nRows,rowTile)
         )
 
     A_stream = streaming.StreamReadMatrixFull(
@@ -77,17 +77,17 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         colTile,
         DATATYPE,
         tileByRow=True,
-        veclen=vecM
+        veclen=veclen
     )
 
     res_stream = streaming.StreamWriteVector(
         'yo',
         nRows,
         DATATYPE,
-        veclen=1
+        veclen=veclen
     )
 
-    gemv_node = blas.gemv.Gemv(
+    gemv_node = blas.Gemv(
         "blas_gemv",
         dtype=DATATYPE,
         n_tile=rowTile,
@@ -95,8 +95,9 @@ def fpga_graph(veclen, precision, vendor, testCase="0"):
         partial_width=partialWidth,
         n=nRows,
         m=mCols,
-        veclen=1,
-        alpha=a, beta=b
+        veclen=veclen,
+        alpha=a, beta=b,
+        transA=transposed
     )
     gemv_node.implementation = 'fpga_stream'
 
@@ -292,10 +293,10 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=128)
-    parser.add_argument("M", type=int, nargs="?", default=128)
+    parser.add_argument("N", type=int, nargs="?", default=8)
+    parser.add_argument("M", type=int, nargs="?", default=8)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
-    parser.add_argument("beta", type=int, nargs="?", default=1)
+    parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
                         action="store_true",
                         default=False,
@@ -308,10 +309,11 @@ if __name__ == "__main__":
     alpha = args.alpha
     beta = args.beta
     transposed = args.transposed
+    veclen = 1
     if args.target == "pure":
         sdfg = pure_graph(dace.float32, transposed)
     elif args.target == "xilinx":
-        sdfg = fpga_graph(1, dace.float32, args.target, "0")
+        sdfg = fpga_graph(veclen, dace.float32, args.target, transposed, "0")
     elif args.target == "intel_fpga":
         sdfg = intel_fpga_graph(dace.float32, transposed)
     else:
@@ -322,19 +324,49 @@ if __name__ == "__main__":
 
     A = np.random.rand(n, m).astype(np.float32)
     x = np.random.rand(n if transposed else m).astype(np.float32)
-    y = np.random.rand(m if transposed else n).astype(np.float32)
+    #y = np.random.rand(m if transposed else n).astype(np.float32)
+    y = np.ones((m,) if transposed else (n,)).astype(np.float32)
     yo = np.zeros((n,)).astype(np.float32)
 
     y_copy = np.copy(y)
+    tmpy = np.copy(y)
 
     sdfg(A=A, x=x, yi=y, yo=yo, n=n, m=m, alpha=alpha, beta=beta)
 
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
+    # Naive implementation of GEMV v4 row_streamed
+    lenx = n
+    leny = m
+    tilex = 4
+    tiley = 4
+    blocksx = n//4
+    blocksy = m//4
+    coll = tiley / veclen
+    ryoll = tiley / veclen
+    rxoll = tilex / veclen
+    maxsize = max(tilex, tiley)
+    tmpy = np.copy(y)
+    naive = np.zeros((m,))
+    for ti in range(blocksx):
+        localx = x[ti*tiley:ti*tiley+tiley]*alpha
+        for tj in range(blocksy):
+            localy = tmpy[tj*tilex:tj*tilex+tilex]*beta
+            for i in range(tilex):
+                for j in range(tiley):
+                    localA = A[ti*tiley:ti*tiley+tiley,tj*tilex:tj*tilex+tilex]
+                    localy += localA[i] * localx[i]
+            if ti == blocksx-1:
+                naive[tj*tilex:tj*tilex+tilex] = localy
+            else:
+                tmpy[tj*tilex:tj*tilex+tilex] = localy
+    #
+
     diff = np.linalg.norm(yo - ref) / (m if transposed else n)
     if diff >= 1e-5:
         print("Error", diff)
-        print (ref)
-        print (yo)
+        print ('ref', ref)
+        print ('out', yo)
+        print ('nai', naive)
     else:
         print("Ok")
