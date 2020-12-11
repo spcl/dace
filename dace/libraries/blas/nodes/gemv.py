@@ -177,6 +177,10 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
         x_size = n if transposed else m
         y_size = m if transposed else n
 
+        # Tiling in transposed GEMV for FPGA depends on vector length
+        if transposed and (vec_width > tile_m_size) != False:
+            tile_m_size = vec_width
+
         gemv_sdfg.add_array('_A',
                             shape=[A_rows, A_cols],
                             dtype=dtype,
