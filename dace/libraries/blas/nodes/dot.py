@@ -6,7 +6,8 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
-from dace import dtypes
+from dace import dtypes, memlet as mm, SDFG, SDFGState, symbolic
+from dace.frontend.common import op_repository as oprepo
 
 from dace.libraries.blas.utility.initialization import fpga_init_array
 from dace.libraries.blas.utility.reductions import fpga_binary_compute_partial_reduction, fpga_linear_result_reduction
@@ -184,13 +185,11 @@ class expand_dot_fpga_streaming(ExpandTransformation):
         # --------------------------
         # Memory
         # --------------------------
-        dot_sdfg.add_array(
-            'red_buf',
-            shape=[(max(partial_width, 2))],
-            dtype=dtype,
-            transient=True,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+        dot_sdfg.add_array('red_buf',
+                           shape=[(max(partial_width, 2))],
+                           dtype=dtype,
+                           transient=True,
+                           storage=dtypes.StorageType.FPGA_Local)
 
         dot_sdfg.add_scalar('res_buf',
                             dtype=dtype,
@@ -247,7 +246,18 @@ class expand_dot_fpga_streaming(ExpandTransformation):
         return dot_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node,
+                  state,
+                  sdfg,
+                  n=symbolic.symbol('n'),
+                  partial_width=8,
+                  vec_width=1):
+        """
+        Expand Dot library node for FPGA with streams as inputs/outputs.
+        :param n: Total size of buffer (can be symbolic).
+        :param partial_width: Width of the inner reduction buffer.
+        :param vec_width: Number of elements in vector type to use.
+        """
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -259,10 +269,9 @@ class expand_dot_fpga_streaming(ExpandTransformation):
             elif e.dst_conn == "_y":
                 buffer_size_y = sdfg.arrays[e.data.data].buffer_size
 
-        return expand_dot_fpga_streaming.make_sdfg(node.dtype,
-                                                   node.partial_width,
-                                                   int(node.veclen), node.n,
-                                                   buffer_size_x, buffer_size_y)
+        return expand_dot_fpga_streaming.make_sdfg(node.dtype, partial_width,
+                                                   vec_width, n, buffer_size_x,
+                                                   buffer_size_y)
 
 
 @dace.library.expansion
@@ -494,31 +503,32 @@ class ExpandDOTIntelFPGAVectorized(ExpandTransformation):
                                   dotMap_exit,
                                   res_write,
                                   src_conn='nested_res',
-                                  memlet=dace.Memlet.simple(
-                                      res_write.data, "0", dynamic=True))
+                                  memlet=dace.Memlet.simple(res_write.data,
+                                                            "0",
+                                                            dynamic=True))
         parent_sdfg.validate()
         return parent_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, vec_width=1):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
         node_sdfg = ExpandDOTIntelFPGAVectorized.make_sdfg(
-            node.dtype, int(node.vec_width), node, state, sdfg)
+            node.dtype, int(vec_width), node, state, sdfg)
 
         # Modify internal schedules according to node schedule
         if node.schedule != dace.ScheduleType.Default:
             for nstate in node_sdfg.nodes():
-                topnodes = nstate.scope_dict(node_to_children=True)[None]
+                topnodes = nstate.scope_children()[None]
                 for topnode in topnodes:
                     if isinstance(
                             topnode,
                         (dace.nodes.EntryNode, dace.nodes.LibraryNode)):
                         topnode.schedule = node.schedule
         # nest and map symbol
-        symbol_mapping = {}  #{"n": node.n}
+        symbol_mapping = {}
         expansion = state.add_nested_sdfg(node_sdfg,
                                           sdfg,
                                           node.in_connectors,
@@ -544,38 +554,14 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    vec_width = dace.properties.SymbolicProperty(
-        allow_none=False,
-        default=1,
-    )
 
-    partial_width = dace.properties.SymbolicProperty(allow_none=False,
-        desc='Parameter for adjusting the width of the inner reduction buffer',
-                                                     default=8)
-    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
-
-    n = dace.properties.SymbolicProperty(allow_none=False,
-                                         default=dace.symbolic.symbol("n"))
-
-    def __init__(self,
-                 name,
-                 dtype=None,
-                 partial_width=8,
-                 veclen=1,
-                 n=None,
-                 vec_width=1,
-                 *args,
-                 **kwargs):
+    def __init__(self, name, dtype=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
                          outputs={"_result"},
                          **kwargs)
         self.dtype = dtype
-        self.veclen = veclen
-        self.partial_width = partial_width
-        self.n = n or dace.symbolic.symbol("n")
-        self.vec_width = vec_width
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
@@ -597,3 +583,22 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
                 or out_memlet.wcr is not None):
             raise ValueError("WCR on dot product memlets not supported")
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.dot')
+@oprepo.replaces('dace.libraries.blas.Dot')
+def ger_libnode(sdfg: SDFG, state: SDFGState, x, y, result):
+    # Add nodes
+    x_in, y_in = (state.add_read(name) for name in (x, y))
+    res = state.add_write(result)
+
+    libnode = Dot('dot', dtype=sdfg.arrays[x].dtype)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
+    state.add_edge(libnode, '_result', res, None, mm.Memlet(result))
+
+    return []
