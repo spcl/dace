@@ -59,7 +59,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
                                        implementation,
                                        test_case=config[3],
                                        expansion="fpga")
-        elif target == "intel_fpga_dram":
+        elif target == "intel_fpga_unroll":
             program = array_fpga_graph(config[1],
                                        config[2],
                                        implementation,
@@ -68,7 +68,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
             program = pure_graph(config[1], config[2], test_case=config[3])
 
         ref_norm = 0
-        if target in ["fpga", "intel_fpga_dram", "fpga_array"]:
+        if target in ["fpga", "intel_fpga_unroll", "fpga_array"]:
 
             # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
             queue = Queue()
@@ -216,7 +216,7 @@ def array_fpga_graph(veclen,
                      precision,
                      vendor,
                      test_case="0",
-                     expansion='Intel_FPGA_DRAM'):
+                     expansion='IntelFPGA'):
 
     DATATYPE = precision
 
@@ -224,15 +224,15 @@ def array_fpga_graph(veclen,
     a = dace.symbol("a")
 
     test_name = "array_axpy_test_" + vendor + "_" + test_case
-    if expansion == 'Intel_FPGA_DRAM':
+    if expansion == 'IntelFPGA':
         test_name = "axpy_test_intel_" + test_case
 
     test_sdfg = dace.SDFG(test_name)
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    vec_type = precision if expansion == 'Intel_FPGA_DRAM' else dace.vector(
+    vec_type = precision if expansion == 'IntelFPGA' else dace.vector(
         precision, veclen)
-    n_adj = n if expansion == 'Intel_FPGA_DRAM' else n / veclen
+    n_adj = n if expansion == 'IntelFPGA' else n / veclen
 
     test_sdfg.add_array('x1', shape=[n_adj], dtype=vec_type)
     test_sdfg.add_array('y1', shape=[n_adj], dtype=vec_type)
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     if args.target == "intel_fpga" or args.target == "xilinx":
         test_fpga("fpga", args.target)
         test_fpga("fpga_array", args.target)
-    elif args.target == "intel_fpga_dram":
-        test_fpga("intel_fpga_dram", "intel_fpga")
+    elif args.target == "intel_fpga_unroll":
+        test_fpga("intel_fpga_unroll", "intel_fpga")
     else:
         test_pure()
