@@ -2,9 +2,12 @@
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 from dace.data import Array
+from dace import memlet as mm
 from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
+from dace import SDFG, SDFGState
+from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
@@ -458,3 +461,33 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError(
                 "Output to matrix-matrix product must agree in the m and n "
                 "dimensions")
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.gemm')
+@oprepo.replaces('dace.libraries.blas.Gemm')
+def gemv_libnode(sdfg: SDFG, state: SDFGState, A, B, C, alpha, beta, trans_a=False, trans_b=False):
+    # Add nodes
+    A_in, B_in = (state.add_read(name) for name in (A, B))
+    C_out = state.add_write(C)
+
+    libnode = Gemm('gemm',
+                   dtype=sdfg.arrays[A].dtype,
+                   transA=trans_a,
+                   transB=trans_b,
+                   alpha=alpha,
+                   beta=beta)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(A_in, None, libnode, '_a', mm.Memlet(A))
+    state.add_edge(B_in, None, libnode, '_b', mm.Memlet(B))
+    state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
+
+    # TODO: Bring back C as input connector if beta is not 0
+    # if beta != 0:
+    #     C_in = state.add_read(C)
+    #     state.add_edge(C_in, None, libnode, '_c', mm.Memlet(C))
+
+    return []
+
