@@ -4,8 +4,8 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
-from dace import dtypes
-from dace import config
+from dace import config, symbolic, SDFG, SDFGState, memlet as mm
+from dace.frontend.common import op_repository as oprepo
 
 from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
 
@@ -26,7 +26,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         vec_add_sdfg = dace.SDFG('vec_add_graph')
         vec_add_state = vec_add_sdfg.add_state()
 
-        vec_add_sdfg.add_symbol(a.name, dtype)
+        vec_add_sdfg.add_symbol('a', dtype)
 
         # ---------- ----------
         # MEMORY LOCATIONS
@@ -71,12 +71,13 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state: SDFGState, sdfg, vec_width=1):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
-        return ExpandAxpyVectorized.make_sdfg(node.dtype, node.veclen, node.n,
+        n = state.out_edges(node)[0].data.subset.size()[0]
+        return ExpandAxpyVectorized.make_sdfg(node.dtype, vec_width, n,
                                               node.a)
 
 
@@ -97,7 +98,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         vec_add_sdfg = dace.SDFG('vec_add_graph')
         vec_add_state = vec_add_sdfg.add_state()
 
-        vec_add_sdfg.add_symbol(a.name, dtype)
+        vec_add_sdfg.add_symbol('a', dtype)
 
         # ---------- ----------
         # MEMORY LOCATIONS
@@ -151,7 +152,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, vec_width=1, n=symbolic.symbol('n')):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -164,8 +165,8 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         for e in state.out_edges(node):
             if e.src_conn == "_res":
                 buffer_size_res = sdfg.arrays[e.data.data].buffer_size
-        return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a, buffer_size_x,
+        return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(vec_width),
+                                                 n, node.a, buffer_size_x,
                                                  buffer_size_y, buffer_size_res)
 
 
@@ -253,14 +254,14 @@ class ExpandAxpyIntelFPGAVectorized(ExpandTransformation):
         return axpy_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, vec_width=1):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
 
         node_sdfg = ExpandAxpyIntelFPGAVectorized.make_sdfg(
-            node.dtype, int(node.veclen), node.a)
+            node.dtype, int(vec_width), node.a)
 
         return node_sdfg
 
@@ -279,23 +280,18 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandAxpyVectorized,
         "fpga_stream": ExpandAxpyFPGAStreaming,
-        "Intel_FPGA_DRAM": ExpandAxpyIntelFPGAVectorized
+        "IntelFPGA": ExpandAxpyIntelFPGAVectorized
     }
     default_implementation = 'pure'
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    n = dace.properties.SymbolicProperty(allow_none=False,
-                                         default=dace.symbolic.symbol("n"))
     a = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("a"))
 
     def __init__(self,
                  name,
                  dtype=dace.float32,
-                 veclen=1,
-                 n=None,
                  a=None,
                  *args,
                  **kwargs):
@@ -305,8 +301,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
                          outputs={"_res"},
                          **kwargs)
         self.dtype = dtype
-        self.veclen = veclen
-        self.n = n or dace.symbolic.symbol("n")
         self.a = a or dace.symbolic.symbol("a")
 
     def compare(self, other):
@@ -317,12 +311,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             return True
         else:
             return False
-
-    def stream_production_latency(self):
-        return 0
-
-    def stream_consumption_latency(self):
-        return {"_x": 0, "_y": 0}
 
     def validate(self, sdfg, state):
 
@@ -353,6 +341,13 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
         return True
 
+    # TODO: Do these methods belong here?
+    def stream_production_latency(self):
+        return 0
+
+    def stream_consumption_latency(self):
+        return {"_x": 0, "_y": 0}
+
     def make_stream_reader(self):
         return {
             "_x": StreamReadVector('-',
@@ -370,3 +365,22 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             "_res":
             StreamWriteVector('-', self.n, self.dtype, veclen=int(self.veclen))
         }
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.axpy')
+@oprepo.replaces('dace.libraries.blas.Axpy')
+def ger_libnode(sdfg: SDFG, state: SDFGState, a, x, y, result):
+    # Add nodes
+    x_in, y_in = (state.add_read(name) for name in (x, y))
+    res = state.add_write(result)
+
+    libnode = Axpy('axpy', dtype=sdfg.arrays[x].dtype, a=a)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
+    state.add_edge(libnode, '_res', res, None, mm.Memlet(result))
+
+    return []
