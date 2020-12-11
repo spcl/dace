@@ -141,27 +141,24 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             'axpy_task', ['x_con', 'y_con'], ['z_con'],
             'z_con = {} * x_con + y_con'.format(a))
 
-        access_vol = '0' if streaming else 'i'
+        index = '0' if streaming else 'i'
         vec_add_state.add_memlet_path(x_in,
                                       vec_map_entry,
                                       axpy_tasklet,
                                       dst_conn='x_con',
-                                      memlet=dace.Memlet.simple(
-                                          x_in.data, '{}'.format(access_vol)))
+                                      memlet=dace.Memlet(f"{x_in.data}[{index}]"))
 
         vec_add_state.add_memlet_path(y_in,
                                       vec_map_entry,
                                       axpy_tasklet,
                                       dst_conn='y_con',
-                                      memlet=dace.Memlet.simple(
-                                          y_in.data, '{}'.format(access_vol)))
+                                      memlet=dace.Memlet(f"{y_in.data}[{index}]"))
 
         vec_add_state.add_memlet_path(axpy_tasklet,
                                       vec_map_exit,
                                       z_out,
                                       src_conn='z_con',
-                                      memlet=dace.Memlet.simple(
-                                          z_out.data, '{}'.format(access_vol)))
+                                      memlet=dace.Memlet(f"{z_out.data}[{index}]"))
 
         return vec_add_sdfg
 
