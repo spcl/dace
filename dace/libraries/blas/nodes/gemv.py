@@ -753,9 +753,10 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemv')
 @oprepo.replaces('dace.libraries.blas.Gemv')
-def gemv_libnode(sdfg: SDFG, state: SDFGState, A, x, y, alpha, beta):
+def gemv_libnode(sdfg: SDFG, state: SDFGState, A, x, y, alpha, beta, trans=None):
     # Get properties
-    transposed = (sdfg.arrays[x].shape[0] == sdfg.arrays[A].shape[0])
+    if trans is None:
+        trans = (sdfg.arrays[x].shape[0] == sdfg.arrays[A].shape[0])
 
     # Add nodes
     A_in, x_in = (state.add_read(name) for name in (A, x))
@@ -763,7 +764,7 @@ def gemv_libnode(sdfg: SDFG, state: SDFGState, A, x, y, alpha, beta):
 
     libnode = Gemv('gemv',
                    dtype=sdfg.arrays[A].dtype,
-                   transA=transposed,
+                   transA=trans,
                    alpha=alpha,
                    beta=beta)
     state.add_node(libnode)
