@@ -318,7 +318,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandAxpyVectorized,
         "fpga": ExpandAxpyFPGAStreaming,
-        "Intel_FPGA_DRAM": ExpandAxpyIntelFPGAVectorized
+        "IntelFPGA": ExpandAxpyIntelFPGAVectorized
     }
     default_implementation = 'pure'
 

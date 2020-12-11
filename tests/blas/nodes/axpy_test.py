@@ -152,7 +152,7 @@ def pure_graph(veclen, precision, implementation="pure", test_case="0"):
     return test_sdfg.compile()
 
 
-def test_pure():
+def _test_pure():
 
     print("Run BLAS test: AXPY pure...")
 
@@ -334,7 +334,7 @@ def array_fpga_graph(veclen,
     return test_sdfg.compile()
 
 
-def test_fpga(type, vendor):
+def _test_fpga(type, vendor):
 
     print("Run BLAS test: AXPY fpga", vendor + "...")
 
@@ -356,9 +356,9 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "intel_fpga" or args.target == "xilinx":
-        test_fpga("fpga", args.target)
-        test_fpga("fpga_array", args.target)
+        _test_fpga("fpga", args.target)
+        _test_fpga("fpga_array", args.target)
     elif args.target == "intel_fpga_unroll":
-        test_fpga("intel_fpga_unroll", "intel_fpga")
+        _test_fpga("intel_fpga_unroll", "intel_fpga")
     else:
-        test_pure()
+        _test_pure()
