@@ -411,7 +411,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.axpy')
 @oprepo.replaces('dace.libraries.blas.Axpy')
-def ger_libnode(sdfg: SDFG, state: SDFGState, a, x, y, result):
+def axpy_libnode(sdfg: SDFG, state: SDFGState, a, x, y, result):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)
