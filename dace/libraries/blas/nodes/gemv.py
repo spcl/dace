@@ -334,7 +334,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
             # copy the result out
             write_tasklet = dot_write_result.add_tasklet(
                 'mapToStream_task', ['inCon', 'p_y'], ['outCon'],
-                'outCon = inCon + p_y * {} '.format(beta))
+                f'outCon = {alpha} * inCon + {beta} * p_y')
 
             dot_write_result.add_memlet_path(nested_res,
                                              write_tasklet,
@@ -564,7 +564,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
             compute_tasklet = gemv_state.add_tasklet(
                 'gemv_tasklet', ['A_con', 'x_con', 'y_in', 'tile_y_in'],
                 ['y_out', 'tile_y_out'], f'if i == 0: tile_y_in = {beta}*y_in \n'
-                'tile_y_out = tile_y_in + A_con * x_con\n'
+                f'tile_y_out = tile_y_in + {alpha} * A_con * x_con\n'
                 'if i==n-1: y_out = tile_y_out')
 
             # Add memlets
