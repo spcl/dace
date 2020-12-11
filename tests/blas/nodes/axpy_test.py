@@ -216,7 +216,7 @@ def array_fpga_graph(veclen,
                      precision,
                      vendor,
                      test_case="0",
-                     expansion='IntelFPGA'):
+                     expansion='IntelFPGAUnrolled'):
 
     DATATYPE = precision
 
@@ -224,15 +224,15 @@ def array_fpga_graph(veclen,
     a = dace.symbol("a")
 
     test_name = "array_axpy_test_" + vendor + "_" + test_case
-    if expansion == 'IntelFPGA':
+    if expansion == 'IntelFPGAUnrolled':
         test_name = "axpy_test_intel_" + test_case
 
     test_sdfg = dace.SDFG(test_name)
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    vec_type = precision if expansion == 'IntelFPGA' else dace.vector(
+    vec_type = precision if expansion == 'IntelFPGAUnrolled' else dace.vector(
         precision, veclen)
-    n_adj = n if expansion == 'IntelFPGA' else n / veclen
+    n_adj = n if expansion == 'IntelFPGAUnrolled' else n / veclen
 
     test_sdfg.add_array('x1', shape=[n_adj], dtype=vec_type)
     test_sdfg.add_array('y1', shape=[n_adj], dtype=vec_type)
