@@ -8,11 +8,12 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 import dace.sdfg.nodes
 import dace.library as library
 from dace.sdfg import SDFG, SDFGState
-from dace import memlet as mm
+from dace import memlet as mm, subsets as sbs
+import dace
 import copy
 import numpy as np
 
-
+            
 @library.expansion
 class ExpandGerPure(ExpandTransformation):
 
@@ -20,116 +21,35 @@ class ExpandGerPure(ExpandTransformation):
 
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
+        inputs = ('_A', '_x', '_y')
+        outputs = ('_res',)
+        in_edges = [next(parent_state.in_edges_by_connector(node, conn)) for conn in inputs]
+        out_edges = [next(parent_state.out_edges_by_connector(node, conn)) for conn in outputs]
+        arrays = {}
+        arrays.update({inp: parent_sdfg.arrays[e.data.data] for inp, e in zip(inputs, in_edges)})
+        arrays.update({out: parent_sdfg.arrays[e.data.data] for out, e in zip(outputs, out_edges)})
 
-        sdfg = dace.SDFG(node.label + "_sdfg")
+        # TODO: Support memlet subsets
+        if any(e.data.subset != sbs.Range.from_array(arrays[a]) for a, e in zip(inputs, in_edges)):
+            raise NotImplementedError
+        if any(e.data.subset != sbs.Range.from_array(arrays[a]) for a, e in zip(outputs, out_edges)):
+            raise NotImplementedError
+        
+        alpha = dace.symbol('alpha', arrays['_A'].dtype)
+        m, n = arrays['_A'].shape
+        @dace.program
+        def ger(_A: arrays['_A'], _x: arrays['_x'], _y: arrays['_y'], _res: arrays['_res']):
+            for i,j in dace.map[0:m, 0:n]:
+                with dace.tasklet:
+                    a << _A[i, j]
+                    xin << _x[i]
+                    yin << _y[j]
+        
+                    aout = alpha * xin * yin + a
+        
+                    aout >> _res[i, j]
 
-        ((edge_x, outer_array_x, shape_x, strides_x), (edge_y, outer_array_y,
-                                                       shape_y, strides_y),
-         cdata) = _get_matmul_operands(node,
-                                       parent_state,
-                                       parent_sdfg,
-                                       name_lhs="_x",
-                                       name_rhs="_y",
-                                       name_out="_res")
-
-        dtype_x = outer_array_x.dtype.type
-        dtype_y = outer_array_y.dtype.type
-        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_x, dtype_y).type]
-
-        if (len(shape_x) != 1 or len(shape_y) != 1):
-            raise SyntaxError("Vectors must have single dimension")
-
-        M, N = shape_x[0], shape_y[0]
-        shape_c = (M, N)
-
-        if outer_array_x.storage != outer_array_y.storage:
-            raise ValueError("Input vectors must have same storage.")
-        storage = outer_array_x.storage
-
-        _, array_x = sdfg.add_array("_x",
-                                    shape_x,
-                                    dtype_x,
-                                    strides=strides_x,
-                                    storage=storage)
-        _, array_y = sdfg.add_array("_y",
-                                    shape_y,
-                                    dtype_y,
-                                    strides=strides_y,
-                                    storage=storage)
-        _, array_a = sdfg.add_array("_A", shape_c, dtype_c, storage=storage)
-        _, array_res = sdfg.add_array("_res", shape_c, dtype_c, storage=storage)
-
-        if node.alpha == 1.0:
-            mul_program = "__out = __x * __y"
-        else:
-            mul_program = "__out = {} * __x * __y".format(node.alpha)
-
-        init_state = sdfg.add_state(node.label + "_initstate")
-        state = sdfg.add_state_after(init_state, node.label + "_state")
-
-        # prepare beta*C
-        mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-            shape_c, dtype_c, storage=storage)
-        access_tmp = state.add_read(tmp)
-        output_nodes = {mul_out: access_tmp}
-
-        # init map
-        init_state.add_mapped_tasklet(
-            '_GER_init',
-            {'_o%d' % i: '0:%s' % symstr(d)
-             for i, d in enumerate(shape_c)}, {},
-            'out = 0', {
-                'out':
-                dace.Memlet.simple(
-                    mul_out, ','.join(['_o%d' % i
-                                       for i in range(len(shape_c))]))
-            },
-            external_edges=True)
-
-        # outer product map
-        state.add_mapped_tasklet(
-            "_GER_outer_",
-            {"__i%d" % i: "0:%s" % s
-             for i, s in enumerate([M, N])}, {
-                 "__x": dace.Memlet.simple("_x", "__i0"),
-                 "__y": dace.Memlet.simple("_y", "__i1")
-             },
-            mul_program, {
-                "__out":
-                dace.Memlet.simple(
-                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
-            },
-            external_edges=True,
-            output_nodes=output_nodes)
-
-        add_program = "__res = __A + __tmp"
-
-        # manually broadcasting C to [M, N]
-        if list(shape_c) == [M, N]:
-            memlet_idx = '__i0, __i1'
-        elif list(shape_c) == [1, N]:
-            memlet_idx = '0, __i1'
-        elif list(shape_c) == [M, 1]:
-            memlet_idx = '__i0, 0'
-        elif list(shape_c) == [N]:
-            memlet_idx = '__i1'
-        else:
-            raise ValueError(
-                "Could not broadcast input _res to ({}, {})".format(M, N))
-
-        # addition map
-        state.add_mapped_tasklet(
-            "_GER_add_",
-            {"__i%d" % i: "0:%s" % s
-             for i, s in enumerate([M, N])}, {
-                 "__A": dace.Memlet.simple("_A", memlet_idx),
-                 "__tmp": dace.Memlet.simple(mul_out, "__i0, __i1"),
-             },
-            add_program, {"__res": dace.Memlet.simple("_res", "__i0, __i1")},
-            external_edges=True,
-            input_nodes={mul_out: access_tmp})
-
-        return sdfg
+        return ger.to_sdfg()
 
     @staticmethod
     def expansion(node, state, sdfg):
