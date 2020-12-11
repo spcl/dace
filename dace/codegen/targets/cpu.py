@@ -1364,7 +1364,7 @@ class CPUCodeGen(TargetCodeGenerator):
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         memlet_references = []
-        for _, _, _, vconn, in_memlet in state.in_edges(node):
+        for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn):
             if vconn in inout or in_memlet.data is None:
                 continue
             memlet_references.append(
@@ -1374,7 +1374,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           vconn,
                                           conntype=node.in_connectors[vconn]))
 
-        for _, uconn, _, _, out_memlet in state.out_edges(node):
+        for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn):
             if out_memlet.data is not None:
                 memlet_references.append(
                     cpp.emit_memlet_reference(
