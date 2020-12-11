@@ -69,12 +69,6 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
     n = dace.symbol("n")
     m = dace.symbol("m")
 
-
-
-    if transposed:
-        tile_m_size = dace.symbol("tile_m_size")
-    sdfg = dace.SDFG("gemv")
-    sdfg.add_symbol("tile_m_size", int)
     # alpha and beta are symbols
     sdfg.add_symbol("alpha", dtype)
     sdfg.add_symbol("beta", dtype)
