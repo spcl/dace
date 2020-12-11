@@ -152,7 +152,7 @@ def pure_graph(veclen, precision, implementation="pure", test_case="0"):
     return test_sdfg.compile()
 
 
-def _test_pure():
+def test_pure():
 
     print("Run BLAS test: AXPY pure...")
 
@@ -361,4 +361,4 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga_unroll":
         _test_fpga("intel_fpga_unroll", "intel_fpga")
     else:
-        _test_pure()
+        test_pure()
