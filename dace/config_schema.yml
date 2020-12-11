@@ -366,6 +366,14 @@ required:
                         title: Target platform for Xilinx
                         description: Platform name of Vitis/SDx/SDAccel target.
 
+                    frequency:
+                        type: str 
+                        default: '' 
+                        title: Target frequency for Xilinx kernels
+                        description: >
+                            Target frequency when compiling kernels for Xilinx.
+                            Will not necessarily be achieved in practice.
+
                     enable_debugging:
                         type: bool
                         default: false

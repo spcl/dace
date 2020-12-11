@@ -68,6 +68,10 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         if Config.get("compiler", "xilinx", "path"):
             options.append("-DVITIS_ROOT_DIR=\"{}\"".format(
                 Config.get("compiler", "xilinx", "path").replace("\\", "/")))
+        frequency = Config.get("compiler", "xilinx", "frequency")
+        if frequency.strip():
+            frequency = int(frequency)
+            options.append(f"-DDACE_XILINX_TARGET_CLOCK={frequency}")
         return options
 
     def get_generated_codeobjects(self):
