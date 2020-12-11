@@ -4,7 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
-from dace import config, symbolic, SDFG, SDFGState, memlet as mm
+from dace import config, symbolic, SDFG, SDFGState, dtypes, memlet as mm
 from dace.frontend.common import op_repository as oprepo
 
 from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
@@ -43,7 +43,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # COMPUTE
         # ---------- ----------
         vec_map_entry, vec_map_exit = vec_add_state.add_map(
-            'axpy_map', dict(i='0:{0}/{1}'.format(n, veclen)))
+            'axpy_map', dict(i='0:{0}'.format(n)))
 
         axpy_tasklet = vec_add_state.add_tasklet(
             'axpy_task', ['x_con', 'y_con'], ['z_con'],
@@ -205,8 +205,8 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
                 "All input and outputs must be of same type either Array or Stream"
             )
 
-        return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a, buffer_size_x,
+        return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(vec_width),
+                                                 n, node.a, buffer_size_x,
                                                  buffer_size_y, buffer_size_res,
                                                  streaming)
 

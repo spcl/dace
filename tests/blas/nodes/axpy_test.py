@@ -126,7 +126,7 @@ def pure_graph(veclen, precision, implementation="pure", test_case="0"):
     y_in = test_state.add_read('y1')
     z_out = test_state.add_write('z1')
 
-    saxpy_node = blas.axpy.Axpy("axpy", precision, veclen=veclen)
+    saxpy_node = blas.axpy.Axpy("axpy", precision)
     saxpy_node.implementation = implementation
 
     test_state.add_memlet_path(x_in,
@@ -146,7 +146,8 @@ def pure_graph(veclen, precision, implementation="pure", test_case="0"):
                                memlet=Memlet.simple(z_out,
                                                     "0:n/{}".format(veclen)))
 
-    test_sdfg.expand_library_nodes()
+    # test_sdfg.expand_library_nodes()
+    saxpy_node.expand(test_sdfg, test_state, vec_width=veclen)
 
     return test_sdfg.compile()
 
@@ -184,7 +185,7 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.add_array('y1', shape=[n / veclen], dtype=vec_type)
     test_sdfg.add_array('z1', shape=[n / veclen], dtype=vec_type)
 
-    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, veclen=veclen, n=n, a=a)
+    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, a=a)
     saxpy_node.implementation = 'fpga'
 
     x_stream = streaming.StreamReadVector('x1', n, DATATYPE, veclen=veclen)
@@ -201,7 +202,8 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
         input_memory_banks=[0, 1],
         output_memory_banks=[2])
 
-    test_sdfg.expand_library_nodes()
+    # test_sdfg.expand_library_nodes()
+    saxpy_node.expand(test_sdfg, test_state, vec_width=veclen)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
@@ -294,7 +296,7 @@ def array_fpga_graph(veclen,
     y = fpga_state.add_read("device_y")
     z = fpga_state.add_write("device_z")
 
-    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, veclen=veclen, n=n, a=a)
+    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, a=a)
     saxpy_node.implementation = expansion
 
     fpga_state.add_memlet_path(x,
@@ -322,7 +324,8 @@ def array_fpga_graph(veclen,
     test_sdfg.fill_scope_connectors()
     test_sdfg.validate()
 
-    test_sdfg.expand_library_nodes()
+    # test_sdfg.~~~()
+    saxpy_node.expand(test_sdfg, fpga_state, vec_width=veclen)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
