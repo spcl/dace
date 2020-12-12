@@ -6,7 +6,7 @@ from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from .. import environments
-from dace import dtypes, memlet as mm, SDFG, SDFGState, symbolic
+from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
 
 from dace.libraries.blas.utility.initialization import fpga_init_array
@@ -162,96 +162,202 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class expand_dot_fpga_streaming(ExpandTransformation):
+class ExpandDotFPGA(ExpandTransformation):
 
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, partial_width, veclen, n, buffer_size_x,
-                  buffer_size_y):
+    def make_sdfg(dtype, partial_width, n, desc_x, desc_y, desc_res):
 
-        # --------------------------
-        # Setup
-        # --------------------------
-        vec_type = dace.vector(dtype, veclen)
+        sdfg = dace.SDFG("dot")
 
-        dot_sdfg = dace.SDFG('dot_linear_reduction')
+        stream_state = sdfg.add_state("stream")
 
-        init_state = dot_sdfg.add_state('init_state')
-        compute_state = dot_sdfg.add_state('compute_state')
-        red_state = dot_sdfg.add_state('reduction_state')
-        final_state = dot_sdfg.add_state('final_state')
+        dtype = desc_x.dtype.base_type
+        veclen = desc_x.veclen
+        vtype = dtypes.vector(dtype, veclen)
 
-        # --------------------------
-        # Memory
-        # --------------------------
-        dot_sdfg.add_array('red_buf',
-                           shape=[(max(partial_width, 2))],
-                           dtype=dtype,
-                           transient=True,
-                           storage=dtypes.StorageType.FPGA_Local)
+        desc_x = desc_x.clone()
+        desc_x.transient = False
+        desc_y = desc_y.clone()
+        desc_y.transient = False
+        desc_res = desc_res.clone()
+        desc_res.transient = False
+        sdfg.add_datadesc("_x", desc_x)
+        sdfg.add_datadesc("_y", desc_y)
+        sdfg.add_datadesc("_result", desc_res)
 
-        dot_sdfg.add_scalar('res_buf',
-                            dtype=dtype,
-                            transient=True,
-                            storage=dtypes.StorageType.FPGA_Registers)
+        x_read = stream_state.add_read("_x")
+        y_read = stream_state.add_read("_y")
+        res_write = stream_state.add_write("_result")
 
-        # --------------------------
-        # Init State
-        # --------------------------
-        fpga_init_array(init_state, 'red_buf', partial_width, 0)
-        fpga_init_array(init_state, 'res_buf', 1, 0)
+        input_x_name = "input_x"
+        sdfg.add_array(input_x_name, (1, ),
+                       vtype,
+                       transient=True,
+                       storage=dtypes.StorageType.FPGA_Local)
+        input_x_access = stream_state.add_access(input_x_name)
 
-        # --------------------------
-        # Compute State
-        # --------------------------
-        fpga_binary_compute_partial_reduction(dot_sdfg,
-                                              compute_state,
-                                              '_x',
-                                              '_y',
-                                              'red_buf',
-                                              dtype,
-                                              n,
-                                              veclen,
-                                              partial_width,
-                                              'out_con = in_con1 * in_con2',
-                                              vec_type=vec_type)
+        input_y_name = "input_y"
+        sdfg.add_array(input_y_name, (1, ),
+                       vtype,
+                       transient=True,
+                       storage=dtypes.StorageType.FPGA_Local)
+        input_y_access = stream_state.add_access(input_y_name)
 
-        # --------------------------
-        # Reduction State
-        # --------------------------
-        fpga_linear_result_reduction(red_state,
-                                     'red_buf',
-                                     'res_buf',
-                                     dtype,
-                                     partial_width,
-                                     to_mem=True)
+        entry, exit = stream_state.add_map(
+            "stream", {"i": f"0:{n}/{veclen}"},
+            schedule=dtypes.ScheduleType.FPGA_Device)
 
-        # -----
-        # Write to stream State
-        # -----
-        fpga_map_singleton_to_stream(final_state, 'res_buf', '_result',
-                                     dace.vector(dtype, 1))
+        index_x = "0" if isinstance(desc_x, dt.Stream) else "i"
+        index_y = "0" if isinstance(desc_y, dt.Stream) else "i"
 
-        # --------------------------
-        # Connect States
-        # --------------------------
-        dot_sdfg.add_edge(init_state, compute_state, dace.InterstateEdge())
-        dot_sdfg.add_edge(init_state, red_state, dace.InterstateEdge())
-        dot_sdfg.add_edge(compute_state, red_state, dace.InterstateEdge())
-        dot_sdfg.add_edge(red_state, final_state, dace.InterstateEdge())
+        stream_state.add_memlet_path(x_read,
+                                     entry,
+                                     input_x_access,
+                                     memlet=dace.Memlet(f"{x_read.data}[{index_x}]",
+                                                        other_subset="0",
+                                                        dynamic=False))
+        stream_state.add_memlet_path(y_read,
+                                     entry,
+                                     input_y_access,
+                                     memlet=dace.Memlet(f"{y_read.data}[{index_y}]",
+                                                        other_subset="0",
+                                                        dynamic=False))
 
-        dot_sdfg.fill_scope_connectors()
+        tasklet = stream_state.add_tasklet("multiply", {"__x", "__y"},
+                                           {f"_product": vtype}, f"_product = __x * __y")
 
-        return dot_sdfg
+        stream_state.add_memlet_path(input_x_access,
+                                     tasklet,
+                                     dst_conn="__x",
+                                     memlet=dace.Memlet(f"{input_x_name}[0]"))
+        stream_state.add_memlet_path(input_y_access,
+                                     tasklet,
+                                     dst_conn="__y",
+                                     memlet=dace.Memlet(f"{input_y_name}[0]"))
+
+        product_name = "product"
+        sdfg.add_array(product_name, (veclen, ),
+                       dtype,
+                       transient=True,
+                       storage=dtypes.StorageType.FPGA_Local)
+        product_access = stream_state.add_access(product_name)
+
+        stream_state.add_memlet_path(tasklet,
+                                     product_access,
+                                     src_conn="_product",
+                                     memlet=dace.Memlet(f"{product_name}[0:{veclen}]"))
+
+        collapse_name = "reduce_vector"
+        sdfg.add_array(collapse_name, (1, ),
+                       dtype,
+                       transient=True,
+                       storage=dtypes.StorageType.FPGA_Local)
+        collapse_read = stream_state.add_read(collapse_name)
+        collapse_access = stream_state.add_access(collapse_name)
+
+        unroll_entry, unroll_exit = stream_state.add_map(
+            "unroll", {"j": f"0:{veclen}"},
+            unroll=True,
+            schedule=dtypes.ScheduleType.FPGA_Device)
+
+        collapse_tasklet = stream_state.add_tasklet(
+            "reduce_vector", {"val_in", "reduce_in"}, {"reduce_out"}, """\
+prev = reduce_in if j > 0 else 0
+reduce_out = prev + val_in""")
+
+        stream_state.add_memlet_path(collapse_read,
+                                     unroll_entry,
+                                     collapse_tasklet,
+                                     dst_conn="reduce_in",
+                                     memlet=dace.Memlet(f"{collapse_name}[0]"))
+        stream_state.add_memlet_path(entry, collapse_read, memlet=dace.Memlet())
+        stream_state.add_memlet_path(collapse_tasklet,
+                                     unroll_exit,
+                                     collapse_access,
+                                     src_conn="reduce_out",
+                                     memlet=dace.Memlet(f"{collapse_name}[0]"))
+        stream_state.add_memlet_path(product_access,
+                                     unroll_entry,
+                                     collapse_tasklet,
+                                     dst_conn="val_in",
+                                     memlet=dace.Memlet(f"{product_name}[j]"))
+
+        buffer_name = "partial_sums"
+        sdfg.add_array(buffer_name, (partial_width, ),
+                       dtype,
+                       transient=True,
+                       storage=dtypes.StorageType.FPGA_Local)
+        buffer_read = stream_state.add_read(buffer_name)
+        buffer_write = stream_state.add_write(buffer_name)
+
+        partial_sum_tasklet = stream_state.add_tasklet("partial_sum", {"result_in", "buffer_in"}, {"buffer_out"}, """\
+prev = buffer_in if i > 0 else 0
+buffer_out = prev + result_in""")
+
+        stream_state.add_memlet_path(
+            collapse_access,
+            partial_sum_tasklet,
+            dst_conn="result_in",
+            memlet=dace.Memlet(f"{collapse_access.data}[0]"))
+        stream_state.add_memlet_path(
+            buffer_read,
+            entry,
+            partial_sum_tasklet,
+            dst_conn=f"buffer_in",
+            memlet=dace.Memlet(f"{buffer_name}[i%{partial_width}]"))
+        stream_state.add_memlet_path(
+            partial_sum_tasklet,
+            exit,
+            buffer_write,
+            src_conn=f"buffer_out",
+            memlet=dace.Memlet(f"{buffer_name}[i%{partial_width}]"))
+
+        reduce_entry, reduce_exit = stream_state.add_map(
+            "reduce", {"i": f"0:{partial_width}"},
+            schedule=dtypes.ScheduleType.FPGA_Device,
+            unroll=True)
+
+        reduce_tasklet = stream_state.add_tasklet("reduce", {"reduce_in", "result_in"},
+                                                  {"reduce_out"}, """\
+prev = reduce_in if i > 0 else 0
+reduce_out = prev + result_in""")
+
+        stream_state.add_memlet_path(buffer_write,
+                                     reduce_entry,
+                                     reduce_tasklet,
+                                     dst_conn="result_in",
+                                     memlet=dace.Memlet(f"{buffer_name}[i]"))
+
+        reduce_name = "reduce"
+        sdfg.add_array(reduce_name, (1, ),
+                       dtype,
+                       transient=True,
+                       storage=dtypes.StorageType.FPGA_Local)
+        reduce_read = stream_state.add_read(reduce_name)
+        reduce_access = stream_state.add_access(reduce_name)
+
+        stream_state.add_memlet_path(reduce_read,
+                                     reduce_entry,
+                                     reduce_tasklet,
+                                     dst_conn="reduce_in",
+                                     memlet=dace.Memlet(f"{reduce_name}[0]"))
+        stream_state.add_memlet_path(reduce_tasklet,
+                                     reduce_exit,
+                                     reduce_access,
+                                     src_conn="reduce_out",
+                                     memlet=dace.Memlet(f"{reduce_name}[0]"))
+
+        stream_state.add_memlet_path(reduce_access,
+                                     res_write,
+                                     memlet=dace.Memlet(f"{reduce_name}[0]",
+                                                        other_subset="0"))
+
+        return sdfg
 
     @staticmethod
-    def expansion(node,
-                  state,
-                  sdfg,
-                  n=symbolic.symbol('n'),
-                  partial_width=8,
-                  vec_width=1):
+    def expansion(node, state, sdfg, n=symbolic.symbol('n'), partial_width=8):
         """
         Expand Dot library node for FPGA with streams as inputs/outputs.
         :param n: Total size of buffer (can be symbolic).
@@ -265,13 +371,15 @@ class expand_dot_fpga_streaming(ExpandTransformation):
 
         for e in state.in_edges(node):
             if e.dst_conn == "_x":
-                buffer_size_x = sdfg.arrays[e.data.data].buffer_size
+                desc_x = sdfg.arrays[e.data.data]
             elif e.dst_conn == "_y":
-                buffer_size_y = sdfg.arrays[e.data.data].buffer_size
+                desc_y = sdfg.arrays[e.data.data]
+        for e in state.out_edges(node):
+            if e.src_conn == "_result":
+                desc_res = sdfg.arrays[e.data.data]
 
-        return expand_dot_fpga_streaming.make_sdfg(node.dtype, partial_width,
-                                                   vec_width, n, buffer_size_x,
-                                                   buffer_size_y)
+        return ExpandDotFPGA.make_sdfg(node.dtype, partial_width, n, desc_x,
+                                       desc_y, desc_res)
 
 
 @dace.library.expansion
@@ -547,7 +655,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
-        "fpga_stream": expand_dot_fpga_streaming,
+        "FPGA": ExpandDotFPGA,
         "IntelFPGA": ExpandDOTIntelFPGAVectorized
     }
     default_implementation = None
