@@ -75,7 +75,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state: SDFGState, sdfg, vec_width=1):
+    def expansion(node, state: SDFGState, sdfg, vec_width=1, **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -184,7 +184,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, vec_width=None, n=symbolic.symbol('n')):
+    def expansion(node, state, sdfg, vec_width=None, n=symbolic.symbol('n'), **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -329,7 +329,7 @@ class ExpandAxpyIntelFPGAVectorized(ExpandTransformation):
         return axpy_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, vec_width=1):
+    def expansion(node, state, sdfg, vec_width=1, **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
