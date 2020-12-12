@@ -33,8 +33,8 @@ def fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.add_array('y', shape=[n / veclen], dtype=vec_type)
     test_sdfg.add_array('r', shape=[1], dtype=precision)
 
-    dot_node = blas.Dot("dot", DATATYPE, veclen=veclen, partial_width=8, n=n)
-    dot_node.implementation = 'fpga_stream'
+    dot_node = blas.Dot("dot", DATATYPE)
+    dot_node.implementation = 'FPGA'
 
     x_stream = streaming.StreamReadVector('x', n, DATATYPE, veclen=veclen)
 
