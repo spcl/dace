@@ -4,8 +4,11 @@ from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
 import dace.sdfg.nodes
+from dace.sdfg import SDFG, SDFGState
+from dace import memlet as mm
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.frontend.common import op_repository as oprepo
 from .. import environments
 import numpy as np
 
@@ -107,16 +110,16 @@ class ExpandGemvPure(ExpandTransformation):
         memlet_idx = "__i"
 
         # addition map
-        state.add_mapped_tasklet("_Add_", {"__i": "0:{}".format(N)}, {
-            "__y_in": dace.Memlet.simple("_y", memlet_idx),
-            "__tmp": dace.Memlet.simple(mul_out, "__i"),
-        },
-                                 add_program,
-                                 {"__y_out": dace.Memlet.simple("_y", "__i")},
-                                 external_edges=True,
-                                 input_nodes={mul_out: access_tmp})
+        if node.beta != 0:
+            state.add_mapped_tasklet(
+                "_Add_", {"__i": "0:{}".format(N)}, {
+                    "__y_in": dace.Memlet.simple("_y", memlet_idx),
+                    "__tmp": dace.Memlet.simple(mul_out, "__i"),
+                },
+                add_program, {"__y_out": dace.Memlet.simple("_y", "__i")},
+                external_edges=True,
+                input_nodes={mul_out: access_tmp})
 
-        sdfg.save('/tmp/expansion.sdfg')
         return sdfg
 
     @staticmethod
@@ -137,7 +140,8 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(node, dtype, parent_state, parent_sdfg):
+    def make_sdfg(node, dtype, parent_state, parent_sdfg, vec_width,
+                  tile_m_size, tile_n_size):
 
         # This expansion accepts plain data type and it is internally vectorized
         # It supports both A non transposed and A transposed, with different expansion
@@ -152,18 +156,16 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
         # ---------- ----------
         # SETUP GRAPH
-        # ---------- ----------       
+        # ---------- ----------
 
         # get input sizes
-        n = parent_state.in_edges(node)[0].data.subset.size()[0]
-        m = parent_state.in_edges(node)[0].data.subset.size()[1]
+        in_edge = next(parent_state.in_edges_by_connector(node, '_A'))
+        n = in_edge.data.subset.size()[0]
+        m = in_edge.data.subset.size()[1]
         alpha = node.alpha
         beta = node.beta
-        vec_width = node.vec_width
         transposed = node.transA
-        tile_m_size = node.tile_m_size
-        gemv_sdfg = dace.SDFG(
-            "gemv{}_sdfg".format("_t_" if transposed else ""))
+        gemv_sdfg = dace.SDFG("gemv{}_sdfg".format("_t_" if transposed else ""))
 
         gemv_state = gemv_sdfg.add_state(
             "gemv{}_state".format("_t" if transposed else ""))
@@ -175,6 +177,14 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
         x_size = n if transposed else m
         y_size = m if transposed else n
 
+        # Tiling in transposed GEMV for FPGA depends on vector length
+        if transposed and (vec_width > tile_m_size) != False:
+            tile_m_size = vec_width
+
+        gemv_sdfg.add_symbol("alpha", dtype)
+        gemv_sdfg.add_symbol("beta", dtype)
+
+            
         gemv_sdfg.add_array('_A',
                             shape=[A_rows, A_cols],
                             dtype=dtype,
@@ -189,7 +199,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                             storage=dace.dtypes.StorageType.FPGA_Global)
         if transposed:
             gemv_sdfg.add_array('tile_y',
-                                shape=[node.tile_m_size],
+                                shape=[tile_m_size],
                                 dtype=dtype,
                                 storage=dace.dtypes.StorageType.FPGA_Local,
                                 transient=True)
@@ -253,7 +263,8 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
             nested_dot = dace.SDFG("dot_compute")
             nested_dot.add_symbol("j", dace.int32)
-            nested_dot.add_symbol("m", dace.int32)
+            nested_dot.add_symbol("alpha", dtype)
+            nested_dot.add_symbol("beta", dtype)
 
             nested_dot.add_array('dot_x',
                                  shape=[vec_width],
@@ -332,7 +343,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
             # copy the result out
             write_tasklet = dot_write_result.add_tasklet(
                 'mapToStream_task', ['inCon', 'p_y'], ['outCon'],
-                'outCon = inCon + p_y * {} '.format(beta))
+                f'outCon = alpha * inCon + beta * p_y')
 
             dot_write_result.add_memlet_path(nested_res,
                                              write_tasklet,
@@ -419,13 +430,13 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                       nested_sdfg,
                                       dst_conn="dot_x",
                                       memlet=dace.Memlet.simple(
-                                          A_in.data, "j*{}".format(vec_width)))
+                                          A_in.data, "j*{v}:j*{v}+{v}".format(v=vec_width)))
             dot_state.add_memlet_path(x_in,
                                       dotMap_entry,
                                       nested_sdfg,
                                       dst_conn="dot_y",
                                       memlet=dace.Memlet.simple(
-                                          x_in.data, "j*{}".format(vec_width)))
+                                          x_in.data, "j*{v}:j*{v}+{v}".format(v=vec_width)))
             dot_state.add_memlet_path(prev_y,
                                       dotMap_entry,
                                       nested_sdfg,
@@ -449,8 +460,9 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                       dotMap_exit,
                                       res_write,
                                       src_conn='dot_res',
-                                      memlet=dace.Memlet.simple(
-                                          res_write.data, "0"))
+                                      memlet=dace.Memlet.simple(res_write.data,
+                                                                "0",
+                                                                dynamic=True))
 
             # ###################################################
             # END of DOT product
@@ -513,9 +525,8 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                        gemvMap_exit,
                                        y_write,
                                        src_conn='nested_res',
-                                       memlet=dace.Memlet.simple(y_write.data,
-                                                            "i",
-                                                            num_accesses=1))
+                                       memlet=dace.Memlet.simple(
+                                           y_write.data, "i", num_accesses=1))
 
         else:
             #######################################################
@@ -543,7 +554,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
             row_map_entry, row_map_exit = gemv_state.add_map(
                 'gemv_row_map',
-                dict(i='0:n'),
+                dict(i='0:{}'.format(n)),
                 schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
             # Column map
@@ -561,11 +572,9 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
             compute_tasklet = gemv_state.add_tasklet(
                 'gemv_tasklet', ['A_con', 'x_con', 'y_in', 'tile_y_in'],
-                ['y_out', 'tile_y_out'],
-                'if i == 0: tile_y_in[(({} * j) + jj)] = {}*y_in \n'
-                'tile_y_out = tile_y_in + A_con * x_con\n'
-                'if i==n-1: y_out = tile_y_out'.format(vec_width, beta, vec_width,
-                                                       vec_width))
+                ['y_out', 'tile_y_out'], f'if i == 0: tile_y_in = beta * y_in \n'
+                f'tile_y_out = tile_y_in + alpha * A_con * x_con\n'
+                f'if i==({n}-1): y_out = tile_y_out')
 
             # Add memlets
 
@@ -600,18 +609,17 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                        tile_y_read,
                                        memlet=dace.Memlet())
 
-            gemv_state.add_memlet_path(
-                y_in,
-                col_tile_map_entry,
-                row_map_entry,
-                col_map_entry,
-                compute_map_entry,
-                compute_tasklet,
-                dst_conn='y_in',
-                memlet=dace.Memlet("_y[tj*{} + j*{} + jj]".format(
-                    tile_m_size, vec_width),
-                                   dynamic=True)
-            )
+            gemv_state.add_memlet_path(y_in,
+                                       col_tile_map_entry,
+                                       row_map_entry,
+                                       col_map_entry,
+                                       compute_map_entry,
+                                       compute_tasklet,
+                                       dst_conn='y_in',
+                                       memlet=dace.Memlet(
+                                           "_y[tj*{} + j*{} + jj]".format(
+                                               tile_m_size, vec_width),
+                                           dynamic=True))
             gemv_state.add_memlet_path(tile_y_read,
                                        row_map_entry,
                                        col_map_entry,
@@ -620,7 +628,8 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                        dst_conn='tile_y_in',
                                        memlet=dace.Memlet.simple(
                                            tile_y_read.data,
-                                           'j*{}+jj'.format(vec_width)))
+                                           'j*{}+jj'.format(vec_width),
+                                           dynamic=True))
 
             ## update tile_y
             gemv_state.add_memlet_path(compute_tasklet,
@@ -631,7 +640,8 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                        src_conn='tile_y_out',
                                        memlet=dace.Memlet.simple(
                                            tile_y_write.data,
-                                           'j*{}+jj'.format(vec_width)))
+                                           'j*{}+jj'.format(vec_width),
+                                           dynamic=True))
 
             #add tile_y outgoing memlet
             gemv_state.add_memlet_path(tile_y_write,
@@ -646,11 +656,10 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                                        y_out,
                                        src_conn='y_out',
                                        memlet=dace.Memlet.simple(
-                                           y_out.data, 'tj*{}+j*{}+jj'.format(
-                                               tile_m_size, vec_width)))
-
-
-
+                                           y_out.data,
+                                           'tj*{}+j*{}+jj'.format(
+                                               tile_m_size, vec_width),
+                                           dynamic=True))
 
         gemv_sdfg.fill_scope_connectors()
         gemv_sdfg.validate()
@@ -658,12 +667,30 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
         return gemv_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, vec_width=1, tile_m_size=1, tile_n_size=1):
+        """
+        Expand this node with an Intel FPGA vectorized version.
+        :param vec_width: Vector width to use.
+        :param tile_m_size: Tile size along A columns
+        :param tile_n_size: Tile size along A rows
+        """
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
-        return ExpandGEMVIntelFPGAVectorized.make_sdfg(node, node.dtype, state, sdfg)
+        nsdfg = ExpandGEMVIntelFPGAVectorized.make_sdfg(node, node.dtype, state,
+                                                       sdfg, vec_width,
+                                                       tile_m_size, tile_n_size)
+
+        in_edge = next(state.in_edges_by_connector(node, '_A'))
+        n = in_edge.data.subset.size()[0]
+        m = in_edge.data.subset.size()[1]
+
+        nsdfg_node = dace.sdfg.nodes.NestedSDFG(
+            node.label, nsdfg, set(node.in_connectors.keys()),
+            set(node.out_connectors.keys()),
+            {'n': n, 'm': m, 'alpha': node.alpha, 'beta': node.beta})
+        return nsdfg_node
 
 
 @dace.library.node
@@ -679,28 +706,20 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
     alpha = dace.properties.SymbolicProperty(
-        allow_none=False, default=dace.symbolic.symbol("alpha"))
+        allow_none=False, default=1)
     beta = dace.properties.SymbolicProperty(
-        allow_none=False, default=dace.symbolic.symbol("beta"))
-    vec_width = dace.properties.SymbolicProperty(allow_none=False, default=1)
-
+        allow_none=False, default=0)
 
     transA = Property(dtype=bool,
                       desc="Whether to transpose A before multiplying")
-
-    tile_n_size = dace.properties.Property(
-        dtype=int, desc="Tile size along A rows")
-    tile_m_size = dace.properties.Property(
-        dtype=int, desc="Tile size along A columns")
 
     def __init__(self,
                  name,
                  dtype=None,
                  location=None,
                  transA=False,
-                 vec_width = 1,
-                 alpha=dace.symbolic.symbol("alpha"),
-                 beta=dace.symbolic.symbol("beta")):
+                 alpha=1,
+                 beta=0):
         super().__init__(
             name,
             location=location,
@@ -754,3 +773,41 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Input y-vector must match output y-vector.")
         if (len(size_y_out) != 1 or size_y_out[0] != size_a[0]):
             raise ValueError("Vector input to GEMV must match matrix rows.")
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.gemv')
+@oprepo.replaces('dace.libraries.blas.Gemv')
+def gemv_libnode(sdfg: SDFG,
+                 state: SDFGState,
+                 A,
+                 x,
+                 y,
+                 alpha,
+                 beta,
+                 trans=None):
+    # Get properties
+    if trans is None:
+        trans = (sdfg.arrays[x].shape[0] == sdfg.arrays[A].shape[0])
+
+    # Add nodes
+    A_in, x_in = (state.add_read(name) for name in (A, x))
+    y_out = state.add_write(y)
+
+    libnode = Gemv('gemv',
+                   dtype=sdfg.arrays[A].dtype,
+                   transA=trans,
+                   alpha=alpha,
+                   beta=beta)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
+    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
+    state.add_edge(libnode, '_y', y_out, None, mm.Memlet(y))
+
+    if beta != 0:
+        y_in = state.add_read(y)
+        state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
+
+    return []

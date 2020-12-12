@@ -4,8 +4,8 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
-from dace import dtypes
-from dace import config
+from dace import config, symbolic, SDFG, SDFGState, dtypes, memlet as mm
+from dace.frontend.common import op_repository as oprepo
 
 from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
 
@@ -16,7 +16,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, veclen, n, a):
+    def make_sdfg(dtype, veclen):
 
         # ---------- ----------
         # SETUP GRAPH
@@ -26,7 +26,11 @@ class ExpandAxpyVectorized(ExpandTransformation):
         vec_add_sdfg = dace.SDFG('vec_add_graph')
         vec_add_state = vec_add_sdfg.add_state()
 
-        vec_add_sdfg.add_symbol(a.name, dtype)
+        n = dace.symbol('n')
+        a = dace.symbol('a', dtype)
+
+        vec_add_sdfg.add_symbol('a', dtype)
+        vec_add_sdfg.add_symbol('n', n.dtype)
 
         # ---------- ----------
         # MEMORY LOCATIONS
@@ -43,7 +47,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         # COMPUTE
         # ---------- ----------
         vec_map_entry, vec_map_exit = vec_add_state.add_map(
-            'axpy_map', dict(i='0:{0}/{1}'.format(n, veclen)))
+            'axpy_map', dict(i='0:{0}'.format(n)))
 
         axpy_tasklet = vec_add_state.add_tasklet(
             'axpy_task', ['x_con', 'y_con'], ['z_con'],
@@ -71,13 +75,25 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state: SDFGState, sdfg, vec_width=1):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
-        return ExpandAxpyVectorized.make_sdfg(node.dtype, node.veclen, node.n,
-                                              node.a)
+
+        nsdfg = ExpandAxpyVectorized.make_sdfg(node.dtype, vec_width)
+
+        n = next(state.in_edges_by_connector(node, '_x')).data.subset.size()[0]
+        return dace.sdfg.nodes.NestedSDFG(
+            node.label,
+            nsdfg,
+            set(node.in_connectors.keys()),
+            set(node.out_connectors.keys()),
+            {
+                'n': n,
+                'a': node.a
+            },
+        )
 
 
 @dace.library.expansion
@@ -86,8 +102,8 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, veclen, n, a, buffer_size_x, buffer_size_y,
-                  buffer_size_res):
+    def make_sdfg(dtype, veclen, buffer_size_x, buffer_size_y,
+                  buffer_size_res, streaming):
 
         # ---------- ----------
         # SETUP GRAPH
@@ -95,27 +111,41 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         vec_type = dace.vector(dtype, veclen)
 
         vec_add_sdfg = dace.SDFG('vec_add_graph')
-        vec_add_state = vec_add_sdfg.add_state()
+        vec_add_state = vec_add_sdfg.add_state("axpy_compute_state")
 
-        vec_add_sdfg.add_symbol(a.name, dtype)
+        n = dace.symbol('n')
+        a = dace.symbol('a', dtype)
+        vec_add_sdfg.add_symbol('n', n.dtype)
+        vec_add_sdfg.add_symbol('a', dtype)
 
         # ---------- ----------
         # MEMORY LOCATIONS
         # ---------- ----------
-        # vec_add_sdfg.add_scalar('_a', dtype=dtype, storage=dtypes.StorageType.FPGA_Global)
 
-        x_in = vec_add_state.add_stream('_x',
-                                        vec_type,
-                                        buffer_size=buffer_size_x,
-                                        storage=dtypes.StorageType.FPGA_Local)
-        y_in = vec_add_state.add_stream('_y',
-                                        vec_type,
-                                        buffer_size=buffer_size_y,
-                                        storage=dtypes.StorageType.FPGA_Local)
-        z_out = vec_add_state.add_stream('_res',
-                                         vec_type,
-                                         buffer_size=buffer_size_res,
-                                         storage=dtypes.StorageType.FPGA_Local)
+        if streaming:
+            x_in = vec_add_state.add_stream(
+                '_x',
+                vec_type,
+                buffer_size=buffer_size_x,
+                storage=dtypes.StorageType.FPGA_Local)
+            y_in = vec_add_state.add_stream(
+                '_y',
+                vec_type,
+                buffer_size=buffer_size_y,
+                storage=dtypes.StorageType.FPGA_Local)
+            z_out = vec_add_state.add_stream(
+                '_res',
+                vec_type,
+                buffer_size=buffer_size_res,
+                storage=dtypes.StorageType.FPGA_Local)
+        else:
+            vec_add_sdfg.add_array('_x', shape=[n / veclen], dtype=vec_type)
+            vec_add_sdfg.add_array('_y', shape=[n / veclen], dtype=vec_type)
+            vec_add_sdfg.add_array('_res', shape=[n / veclen], dtype=vec_type)
+
+            x_in = vec_add_state.add_read('_x')
+            y_in = vec_add_state.add_read('_y')
+            z_out = vec_add_state.add_write('_res')
 
         # ---------- ----------
         # COMPUTE
@@ -129,44 +159,84 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             'axpy_task', ['x_con', 'y_con'], ['z_con'],
             'z_con = {} * x_con + y_con'.format(a))
 
-        vec_add_state.add_memlet_path(x_in,
-                                      vec_map_entry,
-                                      axpy_tasklet,
-                                      dst_conn='x_con',
-                                      memlet=dace.Memlet.simple(x_in.data, '0'))
+        index = '0' if streaming else 'i'
+        vec_add_state.add_memlet_path(
+            x_in,
+            vec_map_entry,
+            axpy_tasklet,
+            dst_conn='x_con',
+            memlet=dace.Memlet(f"{x_in.data}[{index}]"))
 
-        vec_add_state.add_memlet_path(y_in,
-                                      vec_map_entry,
-                                      axpy_tasklet,
-                                      dst_conn='y_con',
-                                      memlet=dace.Memlet.simple(y_in.data, '0'))
+        vec_add_state.add_memlet_path(
+            y_in,
+            vec_map_entry,
+            axpy_tasklet,
+            dst_conn='y_con',
+            memlet=dace.Memlet(f"{y_in.data}[{index}]"))
 
-        vec_add_state.add_memlet_path(axpy_tasklet,
-                                      vec_map_exit,
-                                      z_out,
-                                      src_conn='z_con',
-                                      memlet=dace.Memlet.simple(
-                                          z_out.data, '0'))
+        vec_add_state.add_memlet_path(
+            axpy_tasklet,
+            vec_map_exit,
+            z_out,
+            src_conn='z_con',
+            memlet=dace.Memlet(f"{z_out.data}[{index}]"))
 
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, vec_width=1, n=symbolic.symbol('n')):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
+
+        buffer_size_x = 0
+        buffer_size_y = 0
+        buffer_size_res = 0
+
+        streaming = False
+        streaming_nodes = 0
+
         for e in state.in_edges(node):
-            if e.dst_conn == "_x":
+
+            if isinstance(sdfg.arrays[e.data.data],
+                          dace.data.Stream) and e.dst_conn == "_x":
                 buffer_size_x = sdfg.arrays[e.data.data].buffer_size
-            elif e.dst_conn == "_y":
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
+            elif isinstance(sdfg.arrays[e.data.data],
+                            dace.data.Stream) and e.dst_conn == "_y":
                 buffer_size_y = sdfg.arrays[e.data.data].buffer_size
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
         for e in state.out_edges(node):
-            if e.src_conn == "_res":
+            if isinstance(sdfg.arrays[e.data.data],
+                          dace.data.Stream) and e.src_conn == "_res":
                 buffer_size_res = sdfg.arrays[e.data.data].buffer_size
-        return ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(node.veclen),
-                                                 node.n, node.a, buffer_size_x,
-                                                 buffer_size_y, buffer_size_res)
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
+        if streaming and streaming_nodes < 3:
+            raise ValueError(
+                "All input and outputs must be of same type either Array or Stream"
+            )
+
+        nsdfg = ExpandAxpyFPGAStreaming.make_sdfg(node.dtype, int(vec_width),
+                                                  buffer_size_x,
+                                                  buffer_size_y,
+                                                  buffer_size_res, streaming)
+        return dace.sdfg.nodes.NestedSDFG(
+            node.label,
+            nsdfg,
+            set(node.in_connectors.keys()),
+            set(node.out_connectors.keys()),
+            {
+                'n': n,
+                'a': node.a
+            },
+        )
 
 
 @dace.library.expansion
@@ -178,14 +248,16 @@ class ExpandAxpyIntelFPGAVectorized(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, vec_width, a):
+    def make_sdfg(dtype, vec_width):
 
         # --------------------
         # SETUP GRAPH
         # --------------------
         n = dace.symbol("n")
+        a = dace.symbol("a", dtype)
 
         axpy_sdfg = dace.SDFG('axpy_graph')
+        axpy_sdfg.add_symbol('a', dtype)
         axpy_state = axpy_sdfg.add_state()
 
         # ---------- ----------
@@ -253,15 +325,25 @@ class ExpandAxpyIntelFPGAVectorized(ExpandTransformation):
         return axpy_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, vec_width=1):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
 
         node_sdfg = ExpandAxpyIntelFPGAVectorized.make_sdfg(
-            node.dtype, int(node.veclen), node.a)
-
+            node.dtype, int(vec_width))
+        n = next(state.in_edges_by_connector(node, '_x')).data.subset.size()[0]
+        return dace.sdfg.nodes.NestedSDFG(
+            node.label,
+            nsdfg,
+            set(node.in_connectors.keys()),
+            set(node.out_connectors.keys()),
+            {
+                'n': n,
+                'a': node.a
+            },
+        )
         return node_sdfg
 
 
@@ -272,41 +354,29 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
         Implementations:
         pure: dace primitive based implementation
-        fpga_stream: FPGA implementation optimized for streaming
+        fpga: FPGA implementation optimized for both streaming and array based inputs
     """
 
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
-        "fpga_stream": ExpandAxpyFPGAStreaming,
-        "Intel_FPGA_DRAM": ExpandAxpyIntelFPGAVectorized
+        "fpga": ExpandAxpyFPGAStreaming,
+        "IntelFPGAUnrolled": ExpandAxpyIntelFPGAVectorized
     }
     default_implementation = 'pure'
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
-    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    n = dace.properties.SymbolicProperty(allow_none=False,
-                                         default=dace.symbolic.symbol("n"))
     a = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("a"))
 
-    def __init__(self,
-                 name,
-                 dtype=dace.float32,
-                 veclen=1,
-                 n=None,
-                 a=None,
-                 *args,
-                 **kwargs):
+    def __init__(self, name, dtype=dace.float32, a=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
                          outputs={"_res"},
                          **kwargs)
         self.dtype = dtype
-        self.veclen = veclen
-        self.n = n or dace.symbolic.symbol("n")
         self.a = a or dace.symbolic.symbol("a")
 
     def compare(self, other):
@@ -317,12 +387,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             return True
         else:
             return False
-
-    def stream_production_latency(self):
-        return 0
-
-    def stream_consumption_latency(self):
-        return {"_x": 0, "_y": 0}
 
     def validate(self, sdfg, state):
 
@@ -353,6 +417,13 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
         return True
 
+    # TODO: Do these methods belong here?
+    def stream_production_latency(self):
+        return 0
+
+    def stream_consumption_latency(self):
+        return {"_x": 0, "_y": 0}
+
     def make_stream_reader(self):
         return {
             "_x": StreamReadVector('-',
@@ -370,3 +441,22 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
             "_res":
             StreamWriteVector('-', self.n, self.dtype, veclen=int(self.veclen))
         }
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.axpy')
+@oprepo.replaces('dace.libraries.blas.Axpy')
+def axpy_libnode(sdfg: SDFG, state: SDFGState, a, x, y, result):
+    # Add nodes
+    x_in, y_in = (state.add_read(name) for name in (x, y))
+    res = state.add_write(result)
+
+    libnode = Axpy('axpy', dtype=sdfg.arrays[x].dtype, a=a)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
+    state.add_edge(y_in, None, libnode, '_y', mm.Memlet(y))
+    state.add_edge(libnode, '_res', res, None, mm.Memlet(result))
+
+    return []
