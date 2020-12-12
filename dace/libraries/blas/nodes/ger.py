@@ -87,7 +87,7 @@ class ExpandGerPure(ExpandTransformation):
         return nsdfg_node
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -101,6 +101,7 @@ class Ger(LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandGerPure,
+        "IntelFPGA": ExpandGerPure
     }
     default_implementation = None
 

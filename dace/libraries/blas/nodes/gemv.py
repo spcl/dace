@@ -259,7 +259,6 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
             nested_dot = dace.SDFG("dot_compute")
             nested_dot.add_symbol("j", dace.int32)
-            nested_dot.add_symbol("m", dace.int32)
 
             nested_dot.add_array('dot_x',
                                  shape=[vec_width],
@@ -549,7 +548,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
             row_map_entry, row_map_exit = gemv_state.add_map(
                 'gemv_row_map',
-                dict(i='0:n'),
+                dict(i='0:{}'.format(n)),
                 schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
             # Column map
@@ -569,7 +568,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
                 'gemv_tasklet', ['A_con', 'x_con', 'y_in', 'tile_y_in'],
                 ['y_out', 'tile_y_out'], f'if i == 0: tile_y_in = {beta}*y_in \n'
                 f'tile_y_out = tile_y_in + {alpha} * A_con * x_con\n'
-                'if i==n-1: y_out = tile_y_out')
+                f'if i==({n}-1): y_out = tile_y_out')
 
             # Add memlets
 
