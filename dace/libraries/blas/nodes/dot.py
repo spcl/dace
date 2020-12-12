@@ -88,7 +88,7 @@ class ExpandDotPure(ExpandTransformation):
         return sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -102,7 +102,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         dtype = node.dtype
         if dtype == dace.float32:
@@ -127,7 +127,7 @@ class ExpandDotMKL(ExpandTransformation):
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, **kwargs):
         return ExpandDotOpenBLAS.expansion(node, state, sdfg)
 
 
@@ -137,7 +137,7 @@ class ExpandDotCuBLAS(ExpandTransformation):
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
-    def expansion(node, state, sdfg):
+    def expansion(node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         dtype = node.dtype
         if dtype == dace.float32:
@@ -357,7 +357,7 @@ reduce_out = prev + result_in""")
         return sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, n=symbolic.symbol('n'), partial_width=8):
+    def expansion(node, state, sdfg, n=symbolic.symbol('n'), partial_width=8, **kwargs):
         """
         Expand Dot library node for FPGA with streams as inputs/outputs.
         :param n: Total size of buffer (can be symbolic).
@@ -618,7 +618,7 @@ class ExpandDOTIntelFPGAVectorized(ExpandTransformation):
         return parent_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, vec_width=1):
+    def expansion(node, state, sdfg, vec_width=1, **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
