@@ -528,7 +528,7 @@ class StreamReadMatrixFull():
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}'.format(
                             self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
@@ -547,7 +547,7 @@ class StreamReadMatrixFull():
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}'.format(
                             self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
@@ -570,7 +570,7 @@ class StreamReadMatrixFull():
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}'.format(
                             self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
@@ -589,7 +589,7 @@ class StreamReadMatrixFull():
                         readRowTile_entry, readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}'.format(
                             self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
                     )
 
@@ -971,7 +971,7 @@ class StreamWriteMatrixFull():
                     readCols_exit, readRows_exit,
                     data_out,
                     src_conn='outCon',
-                    memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                    memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}'.format(
                         self.rowTile, self.columns, self.colTile, self.veclen)#, veclen=self.veclen)
                     )
                 )
@@ -991,7 +991,7 @@ class StreamWriteMatrixFull():
                     readRows_exit, readCols_exit, 
                     data_out,
                     src_conn='outCon',
-                    memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                    memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}'.format(
                         self.rowTile, self.columns, self.colTile, self.veclen)#, veclen=self.veclen)
                     )
                 )

@@ -186,20 +186,20 @@ def run_test(ger, target):
 
     # x = np.array([1, 2, 3, 4]).astype(np.float32)
     # y = np.array([1, 1, 1, 1]).astype(np.float32)
-    y = aligned_ndarray(np.ones(n).astype(np.float32), alignment=256)
-    x = aligned_ndarray(np.ones(m).astype(np.float32), alignment=256)
+    # y = aligned_ndarray(np.ones(n).astype(np.float32), alignment=256)
+    # x = aligned_ndarray(np.ones(m).astype(np.float32), alignment=256)
     # A = np.random.randint(low=0, high=10, size=n*m).reshape((n,m)).astype(np.float32)
 
-    A = aligned_ndarray(np.array([
-        [1,2,3,4],
-        [5,6,7,8],
-        [9,10,11,12],
-        [13,14,15,16]
-    ]).astype(np.float32), alignment=256)
+    # A = aligned_ndarray(np.array([
+    #     [1,2,3,4],
+    #     [5,6,7,8],
+    #     [9,10,11,12],
+    #     [13,14,15,16]
+    # ]).astype(np.float32), alignment=256)
 
     # A = np.zeros(n*m).reshape(n,m).astype(np.float32)
 
-    result[:] = aligned_ndarray(np.zeros((m, n)).astype(np.float32), alignment=256)
+    # result[:] = aligned_ndarray(np.zeros((m, n)).astype(np.float32), alignment=256)
 
     ger(alpha=alpha, x=x, y=y, A=A, r=result, m=m, n=n)
 
@@ -238,8 +238,8 @@ if __name__ == "__main__":
         sdfg = fpga_graph_column(1, n_tile, m_tile, dace.float32, args.target, "0")
         run_test(sdfg.compile(), args.target)
     elif args.target == "xilinx":
-        sdfg = fpga_graph_column(2, n_tile, m_tile, dace.float32, args.target, "0")
-        dace.config.Config.set("compiler", "use_cache", value="true")
+        sdfg = fpga_graph_column(4, n_tile, m_tile, dace.float32, args.target, "0")
+        # dace.config.Config.set("compiler", "use_cache", value="true")
         run_test(sdfg.compile(), args.target)
     else:
         print("Unsupported target")
