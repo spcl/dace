@@ -201,6 +201,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=64)
     parser.add_argument("--target", dest="target", default="pure")
+    parser.add_argument("--vector-length", type=int, default=16)
     args = parser.parse_args()
     size = args.N
 
@@ -209,7 +210,7 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
         sdfg = intel_fpga_graph(dace.float32)
     elif args.target == "xilinx":
-        sdfg = fpga_graph(16, dace.float32, args.target, "0")
+        sdfg = fpga_graph(args.vector_length, dace.float32, args.target, "0")
     else:
         print("Unsupported target")
         exit(-1)
