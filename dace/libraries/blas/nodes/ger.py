@@ -561,7 +561,7 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, n_tile, m_tile, n, m, veclen, a):
+    def make_sdfg(dtype, n_tile, m_tile, n, m, veclen, a, streaming):
 
         # ---------- ----------
         # SETUP GRAPH
@@ -575,34 +575,46 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         ger_sdfg.add_symbol(a.name, a.dtype)
         ger_state = ger_sdfg.add_state('ger_compute')
 
-        A_in = ger_state.add_stream(
-            '_A',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+        if streaming:
+            A_in = ger_state.add_stream(
+                '_A',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        y_in = ger_state.add_stream(
-            '_y',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            y_in = ger_state.add_stream(
+                '_y',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        # Must be received n/n_tiles times
-        x_in = ger_state.add_stream(
-            '_x',
-            single_vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            # Must be received n/n_tiles times
+            x_in = ger_state.add_stream(
+                '_x',
+                single_vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        res = ger_state.add_stream(
-            '_res',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            res = ger_state.add_stream(
+                '_res',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
+
+        else:
+            ger_sdfg.add_array("_A", shape=[n*m / veclen], dtype=vec_type)
+            ger_sdfg.add_array("_y", shape=[n / veclen], dtype=vec_type)
+            ger_sdfg.add_array("_x", shape=[m], dtype=single_vec_type)
+            ger_sdfg.add_array("_res", shape=[n*m / veclen], dtype=vec_type)
+
+            A_in = ger_state.add_read("_A")
+            y_in = ger_state.add_read("_y")
+            x_in = ger_state.add_read("_x")
+            res = ger_state.add_write("_res")
 
 
         ger_sdfg.add_array('y_buf_row', shape=[n_tile/veclen], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
@@ -645,7 +657,8 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
             m_tile,
             n, m,
             veclen,
-            a
+            a,
+            streaming
         )
 
         nested_sdfg = ger_state.add_nested_sdfg(
@@ -694,117 +707,9 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         return ger_sdfg
 
 
-
-    @staticmethod
-    def make_computeTileRowStreamed(dtype, n_tile, m_tile, n, m, veclen, a):
-
-        tile_sdfg = dace.SDFG("tile_sdfg")
-        tile_sdfg.add_symbol(a.name, a.dtype)
-
-        compute_state = tile_sdfg.add_state('copmute_state_tile')
-
-        vec_type = dace.vector(dtype, veclen)
-        single_vec_type = dace.vector(dtype, 1)
-
-        A_in = compute_state.add_stream(
-            '_A_tile',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-
-        x_in = compute_state.add_stream(
-            '_x_tile',
-            single_vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-
-        y_in = compute_state.add_stream(
-            '_y_tile',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-        
-        tile_sdfg.add_array('_y_buf_tile', shape=[n_tile], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local)
-
-
-        A_out = compute_state.add_stream(
-            '_A_out_tile',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
-
-
-        # ---------- ----------
-        # COMPUTE
-        # ---------- ----------
-        y_buf = compute_state.add_read('_y_buf_tile')
-        x_buf = compute_state.add_write('x_buf')
-
-
-
-        red_sdfg = Expand_GER_FPGA_Streaming_Col_tiles.make_unrolledCompute(
-            dtype,
-            n_tile,
-            m_tile,
-            n, m,
-            veclen,
-            a
-        )
-
-        nested_sdfg = compute_state.add_nested_sdfg(
-            red_sdfg,
-            tile_sdfg,
-            {'_A_unroll', '_x_unroll', '_y_stream'},
-            {'_A_out_unroll', '_x_buf_unroll', '_y_unroll'}
-        )
-
-        compute_state.add_memlet_path(
-            A_in, innerComputeMap_entry, nested_sdfg,
-            dst_conn='_A_unroll',
-            memlet=Memlet.simple(A_in.data, "0:{}*{}".format(n, m))
-        )
-
-        compute_state.add_memlet_path(
-            x_in, innerComputeMap_entry, nested_sdfg,
-            dst_conn='_x_unroll',
-            memlet=Memlet.simple(x_in.data, "0:{}".format(m))
-        )
-
-        compute_state.add_memlet_path(
-            y_in, innerComputeMap_entry, nested_sdfg,
-            dst_conn='_y_stream',
-            memlet=Memlet.simple(y_in.data, "0:{}".format(n))
-        )
-
-        compute_state.add_memlet_path(
-            nested_sdfg, innerComputeMap_entry, y_buf,
-            src_conn='_y_unroll',
-            memlet=Memlet.simple(y_buf.data, "0:{}".format(n_tile))
-        )
-
-        compute_state.add_memlet_path(
-            nested_sdfg, innerComputeMap_exit, A_out,
-            src_conn='_A_out_unroll',
-            memlet=Memlet.simple(A_out.data, "0:{}*{}".format(n ,m))
-        )
-
-        compute_state.add_memlet_path(
-            nested_sdfg, innerComputeMap_exit, x_buf,
-            src_conn='_x_buf_unroll',
-            memlet=Memlet.simple(x_buf.data, "0:{}".format(m_tile))
-        )
-
-
-        return tile_sdfg
-
-
     
     @staticmethod
-    def make_unrolledCompute(dtype, n_tile, m_tile, n, m, veclen, a):
+    def make_unrolledCompute(dtype, n_tile, m_tile, n, m, veclen, a, streaming):
 
         inner_sdfg = dace.SDFG("vectorize_inner_graph")
         inner_sdfg.add_symbol(a.name, a.dtype)
@@ -831,47 +736,53 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         # ---------- ----------
         # DATA DEFN
         # ---------- ----------
-        # A_in = init_state.add_stream(
-        #     '_A_unroll',
-        #     dtype,
-        #     veclen=veclen,
-        #     buffer_size=32,
-        #     storage=dtypes.StorageType.FPGA_Local
-        # )
+        if streaming:
+            A_in = compute_state.add_stream(
+                '_A_unroll',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        A_in = compute_state.add_stream(
-            '_A_unroll',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            y_in = read_y_state.add_stream(
+                '_y_stream',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        y_in = read_y_state.add_stream(
-            '_y_stream',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            x_in = read_x_state.add_stream(
+                '_x_stream',
+                single_vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        x_in = read_x_state.add_stream(
-            '_x_stream',
-            single_vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            A_out = stream_out_state.add_stream(
+                '_A_out_unroll',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local
+            )
 
-        A_out = stream_out_state.add_stream(
-            '_A_out_unroll',
-            vec_type,
-            buffer_size=32,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+        else:
+
+            inner_sdfg.add_array("_A_unroll", shape=[n*m / veclen], dtype=vec_type)
+            inner_sdfg.add_array("_y_stream", shape=[n / veclen], dtype=vec_type)
+            inner_sdfg.add_array("_x_stream", shape=[m], dtype=single_vec_type)
+            inner_sdfg.add_array("_A_out_unroll", shape=[n*m / veclen], dtype=vec_type)
+
+            A_in = compute_state.add_read("_A_unroll")
+            y_in = read_y_state.add_read("_y_stream")
+            x_in = read_x_state.add_read("_x_stream")
+            A_out = stream_out_state.add_write("_A_out_unroll")
+
+
 
         inner_sdfg.add_array('_y_unroll', shape=[n_tile/veclen], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local)
         inner_sdfg.add_array('_x_buf_unroll', shape=[m_tile], dtype=single_vec_type, storage=dtypes.StorageType.FPGA_Local)
 
         inner_sdfg.add_array('A_out_buf', shape=[1], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
-        # inner_sdfg.add_array('A_buf', shape=[veclen], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
         inner_sdfg.add_array('x_vecbuf', shape=[veclen], dtype=single_vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
         inner_sdfg.add_array('x_membuf', shape=[veclen], dtype=single_vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
 
@@ -892,16 +803,16 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         read_x_state.add_memlet_path(
             x_in, copy_x_task,
             dst_conn="inCon",
-            memlet=Memlet.simple(x_in.data, "0")
+            memlet=Memlet.simple(x_in.data,
+                "0" if streaming else "j * {} + jj".format(m_tile)
+            )
         )
 
         read_x_state.add_memlet_path(
             copy_x_task, data_out,
             src_conn="outCon",
-            memlet=Memlet.simple(data_out.data, "jj")
+            memlet=Memlet.simple(data_out.data,"jj")
         )
-
-        
 
         inner_sdfg.add_edge(init_state, read_x_state, dace.InterstateEdge("ii == 0"))
         inner_sdfg.add_edge(read_x_state, init_state_y, dace.InterstateEdge(None))   
@@ -916,21 +827,13 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         # Get data y
         # ---------- ----------
         y_out = read_y_state.add_write("_y_unroll")
-        # y_buf = read_y_state.add_access("y_buf")
-
-        # read_y_state.add_memlet_path(
-        #     y_in, y_buf,
-        #     memlet=Memlet.simple(y_buf.data, "0")
-        # )
-
-        # read_y_state.add_memlet_path(
-        #     y_buf, y_out,
-        #     memlet=Memlet.simple(y_buf.data, "0", other_subset_str="ii")
-        # )
 
         read_y_state.add_memlet_path(
             y_in, y_out,
-            memlet=Memlet.simple(y_in.data, "0", other_subset_str="ii")
+            memlet=Memlet.simple(y_in.data,
+                "0" if streaming else "(i * {} / {} + ii)".format(n_tile, veclen),
+                other_subset_str="ii"
+            )
         )
 
         inner_sdfg.add_edge(init_state_y, read_y_state, dace.InterstateEdge("j == 0 and jj == 0"))
@@ -958,7 +861,10 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         compute_state.add_memlet_path(
             A_in, compute_task,
             dst_conn='A_con',
-            memlet=Memlet.simple(A_in.data, "0")
+            memlet=Memlet.simple(A_in.data,
+                "0" if streaming else '(j *{0} + jj) * {1} / {3} + (i * {2} + ii * {3}) / {3}'.format(
+                        m_tile, n, n_tile, veclen)
+            )
         )
 
         compute_state.add_memlet_path(
@@ -986,7 +892,11 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         
         stream_out_state.add_memlet_path(
             A_out_buf, A_out,
-            memlet=Memlet.simple(A_out.data, "0", other_subset_str="0")
+            memlet=Memlet.simple(A_out.data,
+                "0" if streaming else '(j *{0} + jj) * {1} / {3} + (i * {2} + ii * {3}) / {3}'.format(
+                        m_tile, n, n_tile, veclen),
+                other_subset_str= "0"
+            )
         )
 
         inner_sdfg.add_edge(compute_state, stream_out_state, dace.InterstateEdge(None))
@@ -999,6 +909,29 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) + ".")
+
+        streaming = False
+        streaming_nodes = 0
+
+        for e in state.in_edges(node):
+
+            if isinstance(sdfg.arrays[e.data.data],
+                          dace.data.Stream) and e.dst_conn in ["_x", "_y", "_A"]:
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
+
+        for e in state.out_edges(node):
+            if isinstance(sdfg.arrays[e.data.data],
+                          dace.data.Stream) and e.src_conn == "_res":
+                streaming = True
+                streaming_nodes = streaming_nodes + 1
+
+        if streaming and streaming_nodes < 4:
+            raise ValueError(
+                "All inputs and outputs must be of same type either Array or Stream"
+            )
+
         return Expand_GER_FPGA_Streaming_Col_tiles.make_sdfg(
             node.dtype,
             node.n_tile,
@@ -1006,7 +939,8 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
             node.n,
             node.m,
             int(node.veclen),
-            node.a
+            node.alpha,
+            streaming
         )
 
 
@@ -1020,7 +954,7 @@ class Ger(LibraryNode):
     implementations = {
         "pure": ExpandGerPure,
         # "fpga_stream_row": Expand_GER_FPGA_Streaming_Row_tiles,
-        "fpga_stream_column": Expand_GER_FPGA_Streaming_Col_tiles,
+        "fpga_column": Expand_GER_FPGA_Streaming_Col_tiles,
         "IntelFPGA": ExpandGerPure
     }
     default_implementation = None
@@ -1033,7 +967,6 @@ class Ger(LibraryNode):
 
     n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
     m = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("m"))
-    a = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("a"))
 
     veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
@@ -1048,7 +981,6 @@ class Ger(LibraryNode):
         n_tile=1, m_tile=1,
         n=dace.symbolic.symbol("n"),
         m=dace.symbolic.symbol("m"),
-        a=dace.symbolic.symbol("a"),
         veclen=1,
         alpha=1,
         location=None,
@@ -1067,7 +999,6 @@ class Ger(LibraryNode):
 
         self.n = n
         self.m = m
-        self.a = a
 
         self.alpha = alpha
 

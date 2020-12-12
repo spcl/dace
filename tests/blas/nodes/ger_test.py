@@ -95,9 +95,9 @@ def fpga_graph_column(veclen, n_tile, m_tile, precision, vendor, testCase="0"):
         n=n,
         m=m,
         veclen=veclen,
-        a=a
+        alpha=a
     )
-    ger_node.implementation = 'fpga_stream_column'
+    ger_node.implementation = 'fpga_columns'
 
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
@@ -111,6 +111,148 @@ def fpga_graph_column(veclen, n_tile, m_tile, precision, vendor, testCase="0"):
     )
 
     test_sdfg.expand_library_nodes()
+
+    mode = "simulation" if vendor == "xilinx" else "emulator"
+    dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
+    dace.config.Config.set("compiler", vendor, "mode", value=mode)
+
+    return test_sdfg
+
+
+def fpga_graph_array_column(veclen, n_tile, m_tile, precision, vendor, testCase="0"):
+
+    DATATYPE = precision
+
+    n = dace.symbol("n")
+    m = dace.symbol("m")
+    a = dace.symbol("alpha")
+
+    vendor_mark = "x" if vendor == "xilinx" else "i"
+    test_sdfg = dace.SDFG("ger_test_array_" + vendor_mark + "_" + testCase)
+
+    test_sdfg.add_symbol(a.name, DATATYPE)
+
+    vec_type = dace.vector(precision, veclen)
+    single_vec_type = dace.vector(precision, 1)
+
+    test_sdfg.add_array('A', shape=[n*m/veclen], dtype=vec_type)
+    test_sdfg.add_array('x', shape=[m], dtype=single_vec_type)
+    test_sdfg.add_array('y', shape=[n/veclen], dtype=vec_type)
+    test_sdfg.add_array('r', shape=[n*m/veclen], dtype=vec_type)
+
+    ###########################################################################
+    # Copy data to FPGA
+
+    copy_in_state = test_sdfg.add_state("copy_to_device")
+
+    in_host_x = copy_in_state.add_read("x")
+    in_host_y = copy_in_state.add_read("y")
+    in_host_A = copy_in_state.add_read("A")
+
+    test_sdfg.add_array("device_x",
+                        shape=[m],
+                        dtype=single_vec_type,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+    test_sdfg.add_array("device_y",
+                        shape=[n/veclen],
+                        dtype=vec_type,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+    test_sdfg.add_array("device_A",
+                        shape=[n*m/veclen],
+                        dtype=vec_type,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+
+    in_device_x = copy_in_state.add_write("device_x")
+    in_device_y = copy_in_state.add_write("device_y")
+    in_device_A = copy_in_state.add_write("device_A")
+
+    copy_in_state.add_memlet_path(in_host_x,
+                                  in_device_x,
+                                  memlet=Memlet.simple(in_host_x,
+                                                       "0:{}".format(m)))
+    copy_in_state.add_memlet_path(in_host_y,
+                                  in_device_y,
+                                  memlet=Memlet.simple(in_host_y,
+                                                       "0:{}".format(n/veclen)))
+    copy_in_state.add_memlet_path(in_host_A,
+                                  in_device_A,
+                                  memlet=Memlet.simple(in_host_A,
+                                                       "0:{}".format(n*m/veclen)))
+
+    ###########################################################################
+    # Copy data from FPGA
+    copy_out_state = test_sdfg.add_state("copy_to_host")
+
+    test_sdfg.add_array("device_r",
+                        shape=[n*m/veclen],
+                        dtype=vec_type,
+                        storage=dace.dtypes.StorageType.FPGA_Global,
+                        transient=True)
+
+    out_device = copy_out_state.add_read("device_r")
+    out_host = copy_out_state.add_write("r")
+
+    copy_out_state.add_memlet_path(out_device,
+                                   out_host,
+                                   memlet=Memlet.simple(out_host,
+                                                        "0:{}".format(n*m/veclen)))
+
+    ########################################################################
+    # FPGA State
+
+    fpga_state = test_sdfg.add_state("fpga_state")
+
+    x = fpga_state.add_read("device_x")
+    y = fpga_state.add_read("device_y")
+    A = fpga_state.add_read("device_A")
+    z = fpga_state.add_write("device_r")
+
+    ger_node = blas.Ger(
+        "blas_ger",
+        dtype=DATATYPE,
+        n_tile = n_tile,
+        m_tile = m_tile,
+        n=n,
+        m=m,
+        veclen=veclen,
+        alpha=a
+    )
+    ger_node.implementation = 'fpga_columns'
+
+    fpga_state.add_memlet_path(x,
+                               ger_node,
+                               dst_conn="_x",
+                               memlet=Memlet.simple(x, "0:{}".format(m)))
+    fpga_state.add_memlet_path(y,
+                               ger_node,
+                               dst_conn="_y",
+                               memlet=Memlet.simple(y, "0:{}".format(n/veclen)))
+    fpga_state.add_memlet_path(A,
+                               ger_node,
+                               dst_conn="_A",
+                               memlet=Memlet.simple(A, "0:{}".format(n*m/veclen)))
+    fpga_state.add_memlet_path(ger_node,
+                               z,
+                               src_conn="_res",
+                               memlet=Memlet.simple(z, "0:{}".format(n*m/veclen)))
+
+    ######################################
+    # Interstate edges
+    test_sdfg.add_edge(copy_in_state, fpga_state,
+                       dace.sdfg.sdfg.InterstateEdge())
+    test_sdfg.add_edge(fpga_state, copy_out_state,
+                       dace.sdfg.sdfg.InterstateEdge())
+
+    #########
+    # Validate
+    test_sdfg.fill_scope_connectors()
+    test_sdfg.validate()
+
+    # test_sdfg.~~~()
+    ger_node.expand(test_sdfg, fpga_state)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
@@ -184,7 +326,7 @@ def run_test(ger, target):
     y[:] = np.random.rand(n).astype(np.float32)
     A[:] = np.random.rand(m, n).astype(np.float32)
 
-    # x = np.array([1, 2, 3, 4]).astype(np.float32)
+    # y = np.array([1, 2, 3, 4]).astype(np.float32)
     # y = np.array([1, 1, 1, 1]).astype(np.float32)
     # y = aligned_ndarray(np.ones(n).astype(np.float32), alignment=256)
     # x = aligned_ndarray(np.ones(m).astype(np.float32), alignment=256)
@@ -224,23 +366,41 @@ if __name__ == "__main__":
     parser.add_argument("alpha", type=np.float32, nargs="?", default=1.0)
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--eps", type=float, default=1e-6)
+    parser.add_argument("--veclen", type=int, default=2)
     args = parser.parse_args()
     n = args.N
     m = args.M
     n_tile = args.n_tile
     m_tile = args.m_tile
     alpha = args.alpha
+    veclen = args.veclen
 
     if args.target == "pure":
         sdfg = pure_graph(dace.float32)
         run_test(sdfg.compile(), args.target)
     elif args.target == "intel_fpga":
-        sdfg = fpga_graph_column(1, n_tile, m_tile, dace.float32, args.target, "0")
+
+        # Test streaming
+        # sdfg = fpga_graph_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
+        # run_test(sdfg.compile(), args.target)
+
+        # TODO: for Intel need to run multiple tests in different processes, see e.g. axpy_tests
+        # else beatiful Intel tools will crash
+
+        # Test array based
+        sdfg = fpga_graph_array_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
         run_test(sdfg.compile(), args.target)
+
     elif args.target == "xilinx":
-        sdfg = fpga_graph_column(4, n_tile, m_tile, dace.float32, args.target, "0")
-        # dace.config.Config.set("compiler", "use_cache", value="true")
+
+        # Test streaming
+        sdfg = fpga_graph_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
         run_test(sdfg.compile(), args.target)
+
+        # Test array based
+        sdfg = fpga_graph_array_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
+        run_test(sdfg.compile(), args.target)
+
     else:
         print("Unsupported target")
         exit(-1)
