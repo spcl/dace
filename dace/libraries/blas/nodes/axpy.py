@@ -184,7 +184,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
         return vec_add_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, vec_width=1, n=symbolic.symbol('n')):
+    def expansion(node, state, sdfg, vec_width=None, n=symbolic.symbol('n')):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
@@ -202,6 +202,7 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
             if isinstance(sdfg.arrays[e.data.data],
                           dace.data.Stream) and e.dst_conn == "_x":
                 buffer_size_x = sdfg.arrays[e.data.data].buffer_size
+                _x = sdfg.arrays[e.data.data]
                 streaming = True
                 streaming_nodes = streaming_nodes + 1
 
@@ -217,6 +218,9 @@ class ExpandAxpyFPGAStreaming(ExpandTransformation):
                 buffer_size_res = sdfg.arrays[e.data.data].buffer_size
                 streaming = True
                 streaming_nodes = streaming_nodes + 1
+
+        if vec_width is None:
+            vec_width = _x.dtype.veclen
 
         if streaming and streaming_nodes < 3:
             raise ValueError(
@@ -360,10 +364,10 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandAxpyVectorized,
-        "fpga": ExpandAxpyFPGAStreaming,
+        "FPGA": ExpandAxpyFPGAStreaming,
         "IntelFPGAUnrolled": ExpandAxpyIntelFPGAVectorized
     }
-    default_implementation = 'pure'
+    default_implementation = None
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)

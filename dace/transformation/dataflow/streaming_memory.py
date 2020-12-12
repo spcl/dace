@@ -88,7 +88,9 @@ def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str,
             for edge in state.all_edges(dnode):
                 mpath = state.memlet_path(edge)
                 for e in mpath:
-                    e.data = mm.Memlet(data=to_replace, subset='0')
+                    e.data = mm.Memlet(data=to_replace,
+                                       subset='0',
+                                       other_subset=e.data.other_subset)
                     if isinstance(e.src, nodes.NestedSDFG):
                         e.data.dynamic = True
                         _streamify_recursive(e.src, e.src_conn, newdesc)
@@ -273,7 +275,9 @@ class StreamingMemory(xf.Transformation):
 
             # Replace memlets in path with stream access
             for e in mpath:
-                e.data = mm.Memlet(data=name, subset='0')
+                e.data = mm.Memlet(data=name,
+                                   subset='0',
+                                   other_subset=e.data.other_subset)
                 if isinstance(e.src, nodes.NestedSDFG):
                     e.data.dynamic = True
                     _streamify_recursive(e.src, e.src_conn, newdesc)
@@ -300,6 +304,7 @@ class StreamingMemory(xf.Transformation):
             innermost_edge, outermost_edge = component[0]
             mpath = mpaths[outermost_edge]
             mapname = streams[outermost_edge]
+            innermost_edge.data.other_subset = None
 
             # Get edge data and streams
             if self.expr_index == 0:
@@ -427,7 +432,6 @@ class StreamingComposition(xf.Transformation):
                 break
             node = curstate.parent.parent_nsdfg_node
             curstate = curstate.parent.parent
-
 
         # Array must not be used anywhere else in the state
         if any(n is not access and n.data == access.data
