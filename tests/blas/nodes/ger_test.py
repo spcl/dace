@@ -381,15 +381,15 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
 
         # Test streaming
-        # sdfg = fpga_graph_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
-        # run_test(sdfg.compile(), args.target)
+        sdfg = fpga_graph_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
+        run_test(sdfg.compile(), args.target)
 
         # TODO: for Intel need to run multiple tests in different processes, see e.g. axpy_tests
         # else beatiful Intel tools will crash
 
         # Test array based
-        sdfg = fpga_graph_array_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
-        run_test(sdfg.compile(), args.target)
+        # sdfg = fpga_graph_array_column(veclen, n_tile, m_tile, dace.float32, args.target, "0")
+        # run_test(sdfg.compile(), args.target)
 
     elif args.target == "xilinx":
 
