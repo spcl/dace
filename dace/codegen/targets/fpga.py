@@ -1117,12 +1117,12 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Add pragmas
             if not fully_degenerate:
-                if is_innermost:
-                    self.generate_pipeline_loop_post(result, sdfg, state_id,
-                                                     node)
-                    self.generate_flatten_loop_post(result, sdfg, state_id,
-                                                    node)
                 if not node.map.unroll:
+                    if is_innermost:
+                        self.generate_pipeline_loop_post(result, sdfg, state_id,
+                                                         node)
+                        self.generate_flatten_loop_post(result, sdfg, state_id,
+                                                        node)
                     # add pragmas for data read/written inside this map
                     for candidate in in_out_data:
                         self.generate_no_dependence_post(
