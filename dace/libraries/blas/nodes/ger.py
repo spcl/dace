@@ -916,7 +916,7 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         inner_sdfg.add_array('_x_buf_unroll', shape=[m_tile], dtype=single_vec_type, storage=dtypes.StorageType.FPGA_Local)
 
         inner_sdfg.add_array('A_out_buf', shape=[1], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
-        inner_sdfg.add_array('A_buf', shape=[veclen], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
+        # inner_sdfg.add_array('A_buf', shape=[veclen], dtype=vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
         inner_sdfg.add_array('x_vecbuf', shape=[veclen], dtype=single_vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
         inner_sdfg.add_array('x_membuf', shape=[veclen], dtype=single_vec_type, storage=dtypes.StorageType.FPGA_Local, transient=True)
 
@@ -1031,7 +1031,7 @@ class Expand_GER_FPGA_Streaming_Col_tiles(ExpandTransformation):
         
         stream_out_state.add_memlet_path(
             A_out_buf, A_out,
-            memlet=Memlet.simple(A_out.data, "0")
+            memlet=Memlet.simple(A_out.data, "0", other_subset_str="0")
         )
 
         inner_sdfg.add_edge(compute_state, stream_out_state, dace.InterstateEdge(None))

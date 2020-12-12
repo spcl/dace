@@ -239,7 +239,7 @@ if __name__ == "__main__":
         run_test(sdfg.compile(), args.target)
     elif args.target == "xilinx":
         sdfg = fpga_graph_column(2, n_tile, m_tile, dace.float32, args.target, "0")
-        dace.config.Config.set("compiler", "use_cache", value="true")
+        # dace.config.Config.set("compiler", "use_cache", value="true")
         run_test(sdfg.compile(), args.target)
     else:
         print("Unsupported target")
