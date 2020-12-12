@@ -15,6 +15,7 @@ from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
 
+
 def generate_headers(sdfg) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
@@ -115,9 +116,11 @@ def generate_code(sdfg) -> List[CodeObject]:
 
     # Instantiate the rest of the targets
     targets.update({
-        v['name']: k(frame, sdfg)
+        v['name'][0] if isinstance(v['name'], list) else v['name']:
+        k(frame, sdfg)
         for k, v in target.TargetCodeGenerator.extensions().items()
-        if v['name'] not in targets
+        if (v['name'][0] if isinstance(v['name'], list) else v['name']
+            ) not in targets
     })
 
     # Instantiate all instrumentation providers in SDFG
@@ -148,6 +151,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                    'cpp',
                    cpu.CPUCodeGen,
                    'Frame',
+                   target_name="cpu",
                    environments=used_environments)
     ]
 
@@ -161,6 +165,7 @@ def generate_code(sdfg) -> List[CodeObject]:
                        'h',
                        cpu.CPUCodeGen,
                        'CallHeader',
+                       target_name="cpu",
                        target_type='../../include',
                        linkable=False)
     target_objects.append(dummy)
@@ -170,7 +175,8 @@ def generate_code(sdfg) -> List[CodeObject]:
                        generate_dummy(sdfg),
                        'cpp',
                        cpu.CPUCodeGen,
-                       'SampleMain',
+                       'DummyMain',
+                       target_name="cpu",
                        target_type='../../sample',
                        linkable=False)
     target_objects.append(dummy)

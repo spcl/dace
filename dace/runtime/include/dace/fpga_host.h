@@ -18,13 +18,19 @@ class Context {
   ~Context() = default;
 
   inline hlslib::ocl::Context &Get(int device_id = 0) {
-    auto c = contexts_.find(device_id);
+    /*auto c = contexts_.find(device_id);
     if (c != contexts_.end()) {
       return c->second;
     } else {
       contexts_.emplace(device_id, device_id);
       return contexts_.at(device_id);
-    }
+    }*/
+    // TODO: provisional hack for handling multi contexts when using SMI
+    // the desired context is created in the __dace_init_intel_fpga function, which is the first point of contact
+    // with FPGA world
+    static hlslib::ocl::Context context(device_id);
+    return context;
+
   }
 
  private:

@@ -150,8 +150,9 @@ class Scalar(Data):
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage, location,
-                                     lifetime, debuginfo)
+        location = location or {}
+        super(Scalar, self).__init__(dtype, shape, transient, storage,
+                                     location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -273,6 +274,7 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
+        location = location or {}
         super(Array, self).__init__(dtype, shape, transient, storage, location,
                                     lifetime, debuginfo)
 
@@ -447,12 +449,14 @@ class Stream(Data):
                  location=None,
                  offset=None,
                  lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+                 debuginfo=None,
+                 remote=False):
 
         if shape is None:
             shape = (1, )
 
         self.buffer_size = buffer_size
+        location = location or {}
 
         if offset is not None:
             if len(offset) != len(shape):

@@ -142,6 +142,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                    "cpp",
                                    XilinxCodeGen,
                                    "Xilinx",
+                                   target_name=self.target_name,
                                    target_type="host")
 
         kernel_code_objs = [
@@ -150,6 +151,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                        "cpp",
                        XilinxCodeGen,
                        "Xilinx",
+                       target_name=self.target_name,
                        target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
@@ -184,18 +186,23 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                            "csv",
                            XilinxCodeGen,
                            "Xilinx",
+                           target_name=self.target_name,
                            target_type="device"))
 
         return [host_code_obj] + kernel_code_objs
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream):
+                      kernel_stream, storage, sdfg, dfg, node):
         """
            Defines a stream
            :return: a tuple containing the type of the created variable, and boolean indicating
                whether this is a global variable or not
            """
+        if storage == dace.dtypes.StorageType.FPGA_Remote:
+            raise dace.codegen.codegen.CodegenError(
+                "Remote streams are not supported in Xilinx")
+
         ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
                                                 dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
@@ -358,7 +365,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
-                   wcr, is_unpack, packing_factor):
+                   wcr, is_unpack, packing_factor, src_node_desc):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
                 write_expr = "{}[{}]".format(write_expr,

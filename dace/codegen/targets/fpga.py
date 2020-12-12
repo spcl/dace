@@ -35,7 +35,8 @@ _CPU_STORAGE_TYPES = {
 _FPGA_STORAGE_TYPES = {
     dace.dtypes.StorageType.FPGA_Global, dace.dtypes.StorageType.FPGA_Local,
     dace.dtypes.StorageType.FPGA_Registers,
-    dace.dtypes.StorageType.FPGA_ShiftRegister
+    dace.dtypes.StorageType.FPGA_ShiftRegister,
+    dace.dtypes.StorageType.FPGA_Remote
 }
 
 
@@ -103,19 +104,13 @@ class FPGACodeGen(TargetCodeGenerator):
         self._dispatcher.register_node_dispatcher(
             self, predicate=lambda *_: self._in_device_code)
 
-        fpga_storage = [
-            dace.dtypes.StorageType.FPGA_Global,
-            dace.dtypes.StorageType.FPGA_Local,
-            dace.dtypes.StorageType.FPGA_Registers,
-            dace.dtypes.StorageType.FPGA_ShiftRegister,
-        ]
-        self._dispatcher.register_array_dispatcher(fpga_storage, self)
+        self._dispatcher.register_array_dispatcher(_FPGA_STORAGE_TYPES, self)
 
         # Register permitted copies
-        for storage_from in itertools.chain(fpga_storage,
+        for storage_from in itertools.chain(_FPGA_STORAGE_TYPES,
                                             [dace.dtypes.StorageType.Register]):
             for storage_to in itertools.chain(
-                    fpga_storage, [dace.dtypes.StorageType.Register]):
+                    _FPGA_STORAGE_TYPES, [dace.dtypes.StorageType.Register]):
                 if (storage_from == dace.dtypes.StorageType.Register
                         and storage_to == dace.dtypes.StorageType.Register):
                     continue
@@ -315,6 +310,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             # Resolve the data to some corresponding node to be
                             # passed to the allocator
                             top_level_local_data.append(dataname)
+                    elif data.storage == dace.dtypes.StorageType.FPGA_Remote:
+                        continue
                     else:
                         raise ValueError("Unsupported storage type: {}".format(
                             data.storage))
@@ -404,7 +401,9 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
-                                                  function_stream, result)
+                                                  function_stream, result,
+                                                  nodedesc.storage, sdfg, dfg,
+                                                  node)
 
             # defined type: decide whether this is a stream array or a single stream
             def_type = DefinedType.StreamArray if cpp.sym2cpp(
@@ -800,7 +799,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 write_expr = self.make_write(dst_def_type, dtype,
                                              dst_node.label, dst_expr,
                                              dst_index, read_expr, None,
-                                             is_unpack, packing_factor)
+                                             is_unpack, packing_factor,
+                                             src_node.desc(sdfg))
 
             callsite_stream.write(write_expr)
 
