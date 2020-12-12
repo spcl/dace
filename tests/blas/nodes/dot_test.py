@@ -16,7 +16,7 @@ import dace.libraries.blas.utility.fpga_helper as streaming
 # ---------- ----------
 # FPGA graph program
 # ---------- ----------
-def fpga_graph(veclen, precision, vendor, test_case="0"):
+def fpga_graph(veclen, precision, vendor, test_case, expansion):
 
     DATATYPE = precision
 
@@ -34,7 +34,7 @@ def fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.add_array('r', shape=[1], dtype=precision)
 
     dot_node = blas.Dot("dot", DATATYPE)
-    dot_node.implementation = 'FPGA'
+    dot_node.implementation = expansion
 
     x_stream = streaming.StreamReadVector('x', n, DATATYPE, veclen=veclen)
 
@@ -208,9 +208,9 @@ if __name__ == "__main__":
     if args.target == "pure":
         sdfg = pure_graph(dace.float32)
     elif args.target == "intel_fpga":
-        sdfg = intel_fpga_graph(dace.float32)
+        sdfg = fpga_graph(args.vector_length, dace.float32, args.target, "0", expansion="FPGAAccumulate")
     elif args.target == "xilinx":
-        sdfg = fpga_graph(args.vector_length, dace.float32, args.target, "0")
+        sdfg = fpga_graph(args.vector_length, dace.float32, args.target, "0", expansion="FPGA")
     else:
         print("Unsupported target")
         exit(-1)
