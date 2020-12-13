@@ -245,8 +245,9 @@ if p < P - 1:
     # Compute and forward B
     compute_tasklet = state.add_tasklet(
         "multiply_add", {"a_in", "b_in", "c_in"}, {"b_out", "c_out"}, """\
-c_prev = 0 if k == 0 else c_in
-c_out = c_prev + a_in * b_in
+c_prev = c_in
+if k == 0:
+    c_prev = 0
 if p < P - 1:
     b_out = b_in""")
 
