@@ -36,8 +36,9 @@ def _collect_map_ranges(
 
 
 def _canonicalize_memlet(
-    memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.Range]]
-) -> Tuple[symbolic.SymbolicType]:
+        memlet: mm.Memlet,
+        mapranges: List[Tuple[str,
+                              subsets.Range]]) -> Tuple[symbolic.SymbolicType]:
     """ 
     Turn a memlet subset expression (of a single element) into an expression 
     that does not depend on the map symbol names.
@@ -498,12 +499,12 @@ class StreamingComposition(xf.Transformation):
 
         # Create new stream of shape 1
         desc = sdfg.arrays[access.data]
-        name, _ = sdfg.add_stream(access.data,
-                                  desc.dtype,
-                                  buffer_size=self.buffer_size,
-                                  storage=self.storage,
-                                  transient=True,
-                                  find_new_name=True)
+        name, newdesc = sdfg.add_stream(access.data,
+                                        desc.dtype,
+                                        buffer_size=self.buffer_size,
+                                        storage=self.storage,
+                                        transient=True,
+                                        find_new_name=True)
 
         # Remove transient array if possible
         for ostate in sdfg.nodes():
@@ -517,8 +518,20 @@ class StreamingComposition(xf.Transformation):
         # Replace memlets in path with stream access
         for e in first_mpath:
             e.data = mm.Memlet(data=name, subset='0')
+            if isinstance(e.src, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.src, e.src_conn, newdesc)
+            if isinstance(e.dst, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.dst, e.dst_conn, newdesc)
         for e in second_mpath:
             e.data = mm.Memlet(data=name, subset='0')
+            if isinstance(e.src, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.src, e.src_conn, newdesc)
+            if isinstance(e.dst, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
         # Replace array access node with two stream access nodes
         wnode = state.add_write(name)
