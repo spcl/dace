@@ -1274,10 +1274,10 @@ class Expand_GEMV_FPGA_Streaming_RowTiles(ExpandTransformation):
             storage=dtypes.StorageType.FPGA_Local
         )
 
-        inner_sdfg.add_array('_buf_in_unroll', shape=[max(2, partial_width)], dtype=single_vec_type,
+        inner_sdfg.add_array('_buf_in_unroll', shape=[max(2, partial_width)], dtype=dtype,
             storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers
         )
-        inner_sdfg.add_array('buf_out', shape=[max(2, partial_width)], dtype=single_vec_type,
+        inner_sdfg.add_array('buf_out', shape=[max(2, partial_width)], dtype=dtype,
             storage=dtypes.StorageType.FPGA_Local if partial_width > 8 else dtypes.StorageType.FPGA_Registers
         )
 
