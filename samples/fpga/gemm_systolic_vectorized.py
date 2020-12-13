@@ -248,6 +248,7 @@ if p < P - 1:
 c_prev = c_in
 if k == 0:
     c_prev = 0
+c_out = c_prev + a_in * b_in
 if p < P - 1:
     b_out = b_in""")
 
