@@ -567,6 +567,12 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
+        store_true_buf = store_true_state.add_stream(
+            '_y_buffer',
+            dtype=vec_type,
+            buffer_size=32,
+            storage=dace.dtypes.StorageType.FPGA_Local
+        )
         store_true_entry, store_true_exit = store_true_state.add_map(
             'story_true_map',
             {
@@ -578,8 +584,8 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         store_true_task = store_true_state.add_tasklet(
             'store_true_task',
             ['in_con'],
-            ['out_con'],
-            'out_con = in_con'
+            ['out_con', 'buf_out'],
+            'out_con = in_con\nbuf_out=in_con'
         )
         store_true_state.add_memlet_path(
             store_true_in, store_true_entry, store_true_task,
@@ -590,6 +596,11 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             store_true_task, store_true_exit, store_true_out,
             src_conn='out_con',
             memlet=dace.Memlet.simple(store_true_out.data, '0')
+        )
+        store_true_state.add_memlet_path(
+            store_true_task, store_true_exit, store_true_buf,
+            src_conn='buf_out',
+            memlet=dace.Memlet.simple(store_true_buf.data, '0')
         )
 
         # TODO handle writing y back?

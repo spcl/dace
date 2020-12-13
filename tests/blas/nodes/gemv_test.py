@@ -94,41 +94,77 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         'y_map',
         dict(i='0:{}/{}'.format(nRows, rowTile)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device)
-    y_map_inner_entry, y_map_inner_exit = test_state.add_map(
-        'y_inner',
+    y_map_inner_r_entry, y_map_inner_r_exit = test_state.add_map(
+        'y_inner_r',
         dict(j='0:{}'.format(nRows)),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        schedule=dace.dtypes.ScheduleType.FPGA_Device
+    )
+    y_map_inner_w_entry, y_map_inner_w_exit = test_state.add_map(
+        'y_inner_w',
+        dict(j='0:{}'.format(nRows)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device
+    )
 
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
         gemv_node, [x_stream, A_stream], ['_x', '_A'],
-        gemv_node, [res_stream], ['res'],
-        entry_nodes=[y_map_entry, y_map_inner_entry],
-        exit_nodes=[y_map_inner_exit, y_map_exit])
+        gemv_node, [res_stream], ['res'])#,
+        #entry_nodes=[y_map_entry, y_map_inner_entry],
+        #exit_nodes=[y_map_inner_exit, y_map_exit])
 
     memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE])
+
+    rytask = test_state.add_tasklet(
+        'rytask',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
+    )
+    rwtask = test_state.add_tasklet(
+        'rwtask',
+        ['in_con'],
+        ['out_con'],
+        'out_con = in_con'
+    )
+    vec_type = dace.dtypes.vector(DATATYPE, veclen)
 
     y_buf_in = test_state.add_read('f_y')
     y_buf_out = test_state.add_write('f_y')
     yi = test_state.add_stream(
         '_yi',
-        DATATYPE,
+        vec_type,
         buffer_size=32,
         storage=dace.dtypes.StorageType.FPGA_Local,
+        transient=True
     )
     yo = test_state.add_stream(
         '_yo',
-        DATATYPE,
+        vec_type,
         buffer_size=32,
         storage=dace.dtypes.StorageType.FPGA_Local,
+        transient=True
     )
 
     test_state.add_memlet_path(
-        y_buf_in, y_map_entry, y_map_inner_entry, yi,
+        y_buf_in, y_map_entry, y_map_inner_r_entry, rytask,
+        dst_conn='in_con',
         memlet=dace.Memlet.simple(y_buf_in.data, 'j')
     )
 
+    test_state.add_memlet_path(
+        rytask, y_map_inner_r_exit, y_map_exit, yi,
+        src_conn='out_con',
+        memlet=dace.Memlet.simple(yi.data, '0')
+    )
+
+    yi = test_state.add_stream(
+        '_yi',
+        vec_type,
+        buffer_size=32,
+        storage=dace.dtypes.StorageType.FPGA_Local,
+        transient=True
+    )
     test_state.add_memlet_path(
         yi, gemv_node,
         dst_conn='_y',
@@ -141,8 +177,22 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         memlet=dace.Memlet.simple(yo.data, '0')
     )
 
+    yo = test_state.add_stream(
+        '_yo',
+        vec_type,
+        buffer_size=32,
+        storage=dace.dtypes.StorageType.FPGA_Local,
+        transient=True
+    )
     test_state.add_memlet_path(
-        yo, y_map_inner_exit, y_map_exit, y_buf_out,
+        yo, y_map_entry, y_map_inner_w_entry, rwtask,
+        dst_conn='in_con',
+        memlet=dace.Memlet.simple(yo.data, '0')
+    )
+
+    test_state.add_memlet_path(
+        rwtask, y_map_inner_w_exit, y_map_exit, y_buf_out,
+        src_conn='out_con',
         memlet=dace.Memlet.simple(y_buf_out.data, 'j')
     )
 
