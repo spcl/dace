@@ -551,7 +551,7 @@ buffer_out = prev + result_in""")
         return sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, n=symbolic.symbol('n'), partial_width=8):
+    def expansion(node, state, sdfg, n=symbolic.symbol('n'), partial_width=8, **kwargs):
         node.validate(sdfg, state)
         if node.dtype is None:
             raise ValueError("Data type must be set to expand " + str(node) +
