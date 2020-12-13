@@ -90,16 +90,27 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     )
     gemv_node.implementation = 'fpga_stream'
 
+    y_map_entry, y_map_exit = test_state.add_map(
+        'y_map',
+        dict(i='0:{}/{}'.format(nRows, rowTile)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    y_map_inner_entry, y_map_inner_exit = test_state.add_map(
+        'y_inner',
+        dict(j='0:{}'.format(nRows)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device)
+
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
         gemv_node, [x_stream, A_stream], ['_x', '_A'],
-        gemv_node, [res_stream], ['res']
-    )
+        gemv_node, [res_stream], ['res'],
+        entry_nodes=[y_map_entry, y_map_inner_entry],
+        exit_nodes=[y_map_inner_exit, y_map_exit])
 
     memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE])
 
-    y_buf = test_state.add_access('y')
+    y_buf_in = test_state.add_read('y')
+    y_buf_out = test_state.add_write('y')
     yi = test_state.add_stream(
         '_yi',
         DATATYPE,
@@ -113,20 +124,9 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         storage=dace.dtypes.StorageType.FPGA_Local,
     )
 
-    y_map_entry, y_map_exit = test_state.add_map(
-        'y_map',
-        dict(i='0:{}/{}'.format(nRows,rowTile)),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device
-    )
-    y_map_inner_entry, y_map_inner_exit = test_state.add_map(
-        'y_inner',
-        dict(j='0:{}'.format(nRows)),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device
-    )
-
     test_state.add_memlet_path(
-        y_buf, y_map_entry, y_map_inner_entry, yi,
-        memlet=dace.Memlet.simple(y_buf.data, 'j')
+        y_buf_in, y_map_entry, y_map_inner_entry, yi,
+        memlet=dace.Memlet.simple(y_buf_in.data, 'j')
     )
 
     test_state.add_memlet_path(
@@ -142,8 +142,8 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     )
 
     test_state.add_memlet_path(
-        yo, y_map_inner_exit, y_map_exit, y_buf,
-        memlet=dace.Memlet.simple(y_buf.data, 'j')
+        yo, y_map_inner_exit, y_map_exit, y_buf_out,
+        memlet=dace.Memlet.simple(y_buf_out.data, 'j')
     )
 
     test_sdfg.expand_library_nodes()

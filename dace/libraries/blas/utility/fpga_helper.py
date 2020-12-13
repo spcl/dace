@@ -42,7 +42,9 @@ def fpga_setup_connect_streamers(sdfg,
                                  output_streams,
                                  lib_node_out_cons,
                                  input_memory_banks=None,
-                                 output_memory_banks=None):
+                                 output_memory_banks=None,
+                                 entry_nodes=None,
+                                 exit_nodes=None):
     """
     Add states for copying data from and to the FPGA
     and connect the given streaming classes with their
@@ -59,7 +61,11 @@ def fpga_setup_connect_streamers(sdfg,
                             bank=(None if input_memory_banks is None else
                                   input_memory_banks[i]))
 
-        stream.connect_to_lib(sdfg, state, lib_nodeIn, libCon)
+        stream.connect_to_lib(sdfg,
+                              state,
+                              lib_nodeIn,
+                              libCon,
+                              entry_nodes=entry_nodes)
 
     for i, stream, libCon in zip(range(len(lib_node_out_cons)), output_streams,
                                  lib_node_out_cons):
@@ -69,7 +75,11 @@ def fpga_setup_connect_streamers(sdfg,
                            bank=(None if output_memory_banks is None else
                                  output_memory_banks[i]))
 
-        stream.connect_to_lib(sdfg, state, lib_nodeOut, libCon)
+        stream.connect_to_lib(sdfg,
+                              state,
+                              lib_nodeOut,
+                              libCon,
+                              exit_nodes=exit_nodes)
 
     return pre_state, post_state
 
@@ -181,7 +191,9 @@ class StreamReadVector():
                        state,
                        lib_node,
                        lib_connector,
-                       access=False):
+                       access=False,
+                       entry_nodes=None,
+                       exit_nodes=None):
 
         vec_type = vector(self.dtype, self.veclen)
 
@@ -199,6 +211,7 @@ class StreamReadVector():
         self.fpga_stream = stream_inp
 
         state.add_memlet_path(stream_inp,
+                              *(entry_nodes if entry_nodes else []),
                               lib_node,
                               dst_conn=lib_connector,
                               memlet=Memlet.simple(stream_inp,
@@ -281,27 +294,25 @@ class StreamReadVector():
         return data_out, dest
 
 
-
 class StreamReadMatrixFull():
-
     def __init__(
-            self,
-            source,
-            rows,
-            columns,
-            rowTile,
-            colTile,
-            dtype,
-            bufferSize=32,
-            veclen=1,
-            blockByRow=True,
-            tileByRow=True,
-            repeat=1,
-            rowRepeat=1,
-            increasedRowRepeat=False,
-            rowPyramid=False,
-            reverse=False, # applies to increasedRowRepeat and rowPyramid
-        ):
+        self,
+        source,
+        rows,
+        columns,
+        rowTile,
+        colTile,
+        dtype,
+        bufferSize=32,
+        veclen=1,
+        blockByRow=True,
+        tileByRow=True,
+        repeat=1,
+        rowRepeat=1,
+        increasedRowRepeat=False,
+        rowPyramid=False,
+        reverse=False,  # applies to increasedRowRepeat and rowPyramid
+    ):
 
         self.source = source
         self.rows = rows
@@ -317,98 +328,86 @@ class StreamReadMatrixFull():
         self.repeat = repeat
         self.rowRepeat = rowRepeat
         self.increasedRowRepeat = increasedRowRepeat
-        self.rowPyramid = rowPyramid # only for blocks by Row
+        self.rowPyramid = rowPyramid  # only for blocks by Row
         self.reverse = reverse
 
         self.fpga_data = None
         self.fpga_dataName = None
         self.fpga_stream = None
 
-
-
     def __eq__(self, other):
 
-        if (self.source == other.source and
-            self.dtype == other.dtype and self.veclen == other.veclen and
-            self.rows == other.rows and self.columns == other.columns and
-            self.rowTile == other.rowTile and self.colTile == other.colTile and
-            self.blockByRow == other.blockByRow and self.tileByRow == other.tileByRow and
-            self.repeat == other.repeat and self.rowRepeat == other.rowRepeat and
-            self.increasedRowRepeat == other.increasedRowRepeat and self.rowPyramid == other.rowPyramid and
-            self.reverse == other.reverse):
-
+        if (self.source == other.source and self.dtype == other.dtype
+                and self.veclen == other.veclen and self.rows == other.rows
+                and self.columns == other.columns
+                and self.rowTile == other.rowTile
+                and self.colTile == other.colTile
+                and self.blockByRow == other.blockByRow
+                and self.tileByRow == other.tileByRow
+                and self.repeat == other.repeat
+                and self.rowRepeat == other.rowRepeat
+                and self.increasedRowRepeat == other.increasedRowRepeat
+                and self.rowPyramid == other.rowPyramid
+                and self.reverse == other.reverse):
 
             return True
         else:
             return False
 
-
-
-
     def copy_to_fpga(self, sdfg, preState, bank=None):
-
 
         fpga_inputs, fpgaIn_names = mem_ops.fpga_copy_cpu_to_global(
             sdfg,
-            preState,
-            [self.source],
-            [self.rows * self.columns],
-            [self.dtype],
-            bank=bank
-        )
+            preState, [self.source], [self.rows * self.columns], [self.dtype],
+            bank=bank)
 
         self.fpga_data = fpga_inputs[0]
         self.fpga_dataName = fpgaIn_names[0]
 
+    def connect_to_lib(self,
+                       sdfg,
+                       state,
+                       libNode,
+                       libConnector,
+                       access=False,
+                       entry_nodes=None,
+                       exit_nodes=None):
 
-    def connect_to_lib(self, sdfg, state, libNode, libConnector, access=False):
-
-        in_mem, in_name = self.stream(
-            state,
-            self.fpga_data.data,
-            self.rows * self.columns,
-            destName=libConnector,
-            access=access
-        )
+        in_mem, in_name = self.stream(state,
+                                      self.fpga_data.data,
+                                      self.rows * self.columns,
+                                      destName=libConnector,
+                                      access=access)
 
         vec_type = vector(self.dtype, self.veclen)
-        stream_inp = state.add_stream(
-            in_name,
-            vec_type,
-            buffer_size=self.bufferSize,
-            transient=True,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+        stream_inp = state.add_stream(in_name,
+                                      vec_type,
+                                      buffer_size=self.bufferSize,
+                                      transient=True,
+                                      storage=dtypes.StorageType.FPGA_Local)
         self.fpga_stream = stream_inp
 
         state.add_memlet_path(
-            stream_inp, libNode,
+            stream_inp,
+            *(entry_nodes if entry_nodes else []),
+            libNode,
             dst_conn=libConnector,
             memlet=Memlet.simple(
-                stream_inp, "0", num_accesses=self.rows*self.columns#, veclen=self.veclen
-            )
-        )
-
+                stream_inp,
+                "0",
+                num_accesses=self.rows * self.columns  #, veclen=self.veclen
+            ))
 
     def getCopySize(self):
 
         return self.rows * self.columns
 
-
-    def stream(
-            self,
-            state,
-            src,
-            memSize,
-            destName='',
-            access=False
-        ):
+    def stream(self, state, src, memSize, destName='', access=False):
 
         dest = src + "_"
         if destName != '':
             dest += destName + "_"
         dest += "rS"
-
 
         data_in = None
         if access:
@@ -417,20 +416,14 @@ class StreamReadMatrixFull():
             data_in = state.add_read(src)
 
         vec_type = vector(self.dtype, self.veclen)
-        data_out = state.add_stream(
-            dest,
-            vec_type,
-            buffer_size=self.bufferSize,
-            transient=True,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+        data_out = state.add_stream(dest,
+                                    vec_type,
+                                    buffer_size=self.bufferSize,
+                                    transient=True,
+                                    storage=dtypes.StorageType.FPGA_Local)
 
-        read_tasklet = state.add_tasklet(
-            'sR_{}'.format(dest),
-            ['inCon'],
-            ['outCon'],
-            'outCon = inCon'
-        )
+        read_tasklet = state.add_tasklet('sR_{}'.format(dest), ['inCon'],
+                                         ['outCon'], 'outCon = inCon')
 
         firstDimMap_entry = None
         firstDimMap_exit = None
@@ -444,8 +437,7 @@ class StreamReadMatrixFull():
             repeatMap_entry, repeatMap_exit = state.add_map(
                 'repeat_{}_map'.format(dest),
                 dict(r='0:{0}'.format(self.repeat)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
         range = '0:{0}'.format(self.rowRepeat)
         if self.increasedRowRepeat:
@@ -460,14 +452,13 @@ class StreamReadMatrixFull():
             rowRepeatMap_entry, rowRepeatMap_exit = state.add_map(
                 'rowRepeat_{}_map'.format(dest),
                 dict(r_row=range),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
         # Block ordering
         # ---------- ----------
         if self.blockByRow:
 
-            range = '0:{0}'.format(self.rows/self.rowTile)
+            range = '0:{0}'.format(self.rows / self.rowTile)
             if self.rowPyramid:
                 if self.reverse:
                     range = 'r:{0}/{1}'.format(self.rows, self.rowTile)
@@ -477,29 +468,24 @@ class StreamReadMatrixFull():
             firstDimMap_entry, firstDimMap_exit = state.add_map(
                 'streamfirstDimMap_{}_map'.format(dest),
                 dict(i=range),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
             secondDimMap_entry, secondDimMap_exit = state.add_map(
                 'streamsecondDimMap_{}_map'.format(dest),
-                dict(j='0:{0}'.format(self.columns/self.colTile)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                dict(j='0:{0}'.format(self.columns / self.colTile)),
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
         else:
 
             secondDimMap_entry, secondDimMap_exit = state.add_map(
                 'streamfirstDimMap_{}_map'.format(dest),
-                dict(i='0:{0}'.format(self.rows/self.rowTile)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                dict(i='0:{0}'.format(self.rows / self.rowTile)),
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
             firstDimMap_entry, firstDimMap_exit = state.add_map(
                 'streamsecondDimMap_{}_map'.format(dest),
-                dict(j='0:{0}'.format(self.columns/self.colTile)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
-
+                dict(j='0:{0}'.format(self.columns / self.colTile)),
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
         # Tile ordering
         # ---------- ----------
@@ -524,84 +510,130 @@ class StreamReadMatrixFull():
                 if self.repeat != 1:
 
                     state.add_memlet_path(
-                        data_in, repeatMap_entry, firstDimMap_entry, rowRepeatMap_entry, secondDimMap_entry,
-                        readRowTile_entry, readColTile_entry,
+                        data_in,
+                        repeatMap_entry,
+                        firstDimMap_entry,
+                        rowRepeatMap_entry,
+                        secondDimMap_entry,
+                        readRowTile_entry,
+                        readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
+                        memlet=Memlet.simple(
+                            data_in.data,
+                            '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                                self.rowTile, self.columns, self.colTile,
+                                self.veclen))  #, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
-                        read_tasklet, readColTile_exit, readRowTile_exit,
-                        secondDimMap_exit, rowRepeatMap_exit, firstDimMap_exit, repeatMap_exit,
+                        read_tasklet,
+                        readColTile_exit,
+                        readRowTile_exit,
+                        secondDimMap_exit,
+                        rowRepeatMap_exit,
+                        firstDimMap_exit,
+                        repeatMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
+                        memlet=Memlet.simple(data_out.data,
+                                             '0')  #, veclen=self.veclen)
                     )
 
                 else:
 
                     state.add_memlet_path(
-                        data_in, firstDimMap_entry, rowRepeatMap_entry, secondDimMap_entry,
-                        readRowTile_entry, readColTile_entry,
+                        data_in,
+                        firstDimMap_entry,
+                        rowRepeatMap_entry,
+                        secondDimMap_entry,
+                        readRowTile_entry,
+                        readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
+                        memlet=Memlet.simple(
+                            data_in.data,
+                            '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                                self.rowTile, self.columns, self.colTile,
+                                self.veclen))  #, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
-                        read_tasklet, readColTile_exit, readRowTile_exit,
-                        secondDimMap_exit, rowRepeatMap_exit, firstDimMap_exit,
+                        read_tasklet,
+                        readColTile_exit,
+                        readRowTile_exit,
+                        secondDimMap_exit,
+                        rowRepeatMap_exit,
+                        firstDimMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
+                        memlet=Memlet.simple(data_out.data,
+                                             '0')  #, veclen=self.veclen)
                     )
-
-
 
             else:
 
                 if self.repeat != 1:
 
                     state.add_memlet_path(
-                        data_in, repeatMap_entry, firstDimMap_entry, secondDimMap_entry,
-                        readRowTile_entry, readColTile_entry,
+                        data_in,
+                        repeatMap_entry,
+                        firstDimMap_entry,
+                        secondDimMap_entry,
+                        readRowTile_entry,
+                        readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
+                        memlet=Memlet.simple(
+                            data_in.data,
+                            '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                                self.rowTile, self.columns, self.colTile,
+                                self.veclen))  #, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
-                        read_tasklet, readColTile_exit, readRowTile_exit,
-                        secondDimMap_exit, firstDimMap_exit, repeatMap_exit,
+                        read_tasklet,
+                        readColTile_exit,
+                        readRowTile_exit,
+                        secondDimMap_exit,
+                        firstDimMap_exit,
+                        repeatMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
+                        memlet=Memlet.simple(data_out.data,
+                                             '0')  #, veclen=self.veclen)
                     )
 
                 else:
 
                     state.add_memlet_path(
-                        data_in, firstDimMap_entry, secondDimMap_entry,
-                        readRowTile_entry, readColTile_entry,
+                        data_in,
+                        firstDimMap_entry,
+                        secondDimMap_entry,
+                        readRowTile_entry,
+                        readColTile_entry,
                         read_tasklet,
                         dst_conn='inCon',
-                        memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                            self.rowTile, self.columns, self.colTile, self.veclen))#, veclen=self.veclen)
+                        memlet=Memlet.simple(
+                            data_in.data,
+                            '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                                self.rowTile, self.columns, self.colTile,
+                                self.veclen))  #, veclen=self.veclen)
                     )
 
                     state.add_memlet_path(
-                        read_tasklet, readColTile_exit, readRowTile_exit,
-                        secondDimMap_exit, firstDimMap_exit,
+                        read_tasklet,
+                        readColTile_exit,
+                        readRowTile_exit,
+                        secondDimMap_exit,
+                        firstDimMap_exit,
                         data_out,
                         src_conn='outCon',
-                        memlet=Memlet.simple(data_out.data, '0')#, veclen=self.veclen)
+                        memlet=Memlet.simple(data_out.data,
+                                             '0')  #, veclen=self.veclen)
                     )
 
-        else :
+        else:
 
             assert self.veclen == 1, "Vectorization not supported for streaming by columns, assume row-major storage"
 
@@ -622,46 +654,54 @@ class StreamReadMatrixFull():
             if self.repeat > 1:
 
                 state.add_memlet_path(
-                    data_in, repeatMap_entry, firstDimMap_entry, secondDimMap_entry,
-                    readColTile_entry, readRowTile_entry,
+                    data_in,
+                    repeatMap_entry,
+                    firstDimMap_entry,
+                    secondDimMap_entry,
+                    readColTile_entry,
+                    readRowTile_entry,
                     read_tasklet,
                     dst_conn='inCon',
-                    memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(self.rowTile, self.columns, self.colTile))
-                )
+                    memlet=Memlet.simple(
+                        data_in.data,
+                        '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(
+                            self.rowTile, self.columns, self.colTile)))
 
-                state.add_memlet_path(
-                    read_tasklet, readRowTile_exit, readColTile_exit,
-                    firstDimMap_exit, secondDimMap_exit, repeatMap_exit,
-                    data_out,
-                    src_conn='outCon',
-                    memlet=Memlet.simple(data_out.data, '0')
-                )
+                state.add_memlet_path(read_tasklet,
+                                      readRowTile_exit,
+                                      readColTile_exit,
+                                      firstDimMap_exit,
+                                      secondDimMap_exit,
+                                      repeatMap_exit,
+                                      data_out,
+                                      src_conn='outCon',
+                                      memlet=Memlet.simple(data_out.data, '0'))
 
             else:
 
                 state.add_memlet_path(
-                    data_in, firstDimMap_entry, secondDimMap_entry,
-                    readColTile_entry, readRowTile_entry,
+                    data_in,
+                    firstDimMap_entry,
+                    secondDimMap_entry,
+                    readColTile_entry,
+                    readRowTile_entry,
                     read_tasklet,
                     dst_conn='inCon',
-                    memlet=Memlet.simple(data_in.data, '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(self.rowTile, self.columns, self.colTile))
-                )
+                    memlet=Memlet.simple(
+                        data_in.data,
+                        '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(
+                            self.rowTile, self.columns, self.colTile)))
 
-                state.add_memlet_path(
-                    read_tasklet, readRowTile_exit, readColTile_exit,
-                    firstDimMap_exit, secondDimMap_exit,
-                    data_out,
-                    src_conn='outCon',
-                    memlet=Memlet.simple(data_out.data, '0')
-                )
-
-
+                state.add_memlet_path(read_tasklet,
+                                      readRowTile_exit,
+                                      readColTile_exit,
+                                      firstDimMap_exit,
+                                      secondDimMap_exit,
+                                      data_out,
+                                      src_conn='outCon',
+                                      memlet=Memlet.simple(data_out.data, '0'))
 
         return data_out, dest
-
-
-
-
 
 
 # ---------- ---------- ---------- ----------
@@ -675,17 +715,15 @@ class StreamWriteVector():
     and streams the data in a contiguous fashion with veclen sized chunks from the connected
     operator to the on-device memory and handles copying back to the host.
     """
-    def __init__(
-        self,
-        destination,
-        mem_size,
-        dtype,
-        buffer_size=None,
-        veclen=1,
-        unroll=False,
-        unroll_width=1,
-        repeat=1
-    ):
+    def __init__(self,
+                 destination,
+                 mem_size,
+                 dtype,
+                 buffer_size=None,
+                 veclen=1,
+                 unroll=False,
+                 unroll_width=1,
+                 repeat=1):
 
         if not (unroll == False and unroll_width == 1):
             raise NotImplementedError(
@@ -722,8 +760,9 @@ class StreamWriteVector():
                        state,
                        lib_node,
                        lib_connector,
-                       access=False):
-
+                       access=False,
+                       entry_nodes=None,
+                       exit_nodes=None):
 
         vec_type = vector(self.dtype, self.veclen)
 
@@ -743,6 +782,7 @@ class StreamWriteVector():
         self.fpga_stream = stream_out
 
         state.add_memlet_path(lib_node,
+                              *(exit_nodes if exit_nodes else []),
                               stream_out,
                               src_conn=lib_connector,
                               memlet=Memlet.simple(stream_out,
@@ -829,24 +869,19 @@ class StreamWriteVector():
         return data_in, src
 
 
-
-
-
 class StreamWriteMatrixFull():
-
     def __init__(
-            self,
-            destination,
-            rows,
-            columns,
-            rowTile,
-            colTile,
-            dtype,
-            bufferSize=32,
-            veclen=1,
-            blockByRow=True, # TODO implement block by column
-            tileByRow=True
-        ):
+        self,
+        destination,
+        rows,
+        columns,
+        rowTile,
+        colTile,
+        dtype,
+        bufferSize=32,
+        veclen=1,
+        blockByRow=True,  # TODO implement block by column
+        tileByRow=True):
 
         self.destination = destination
         self.rows = rows
@@ -864,31 +899,26 @@ class StreamWriteMatrixFull():
         self.fpga_dataName = None
         self.fpga_stream = None
 
-
     def copy_to_cpu(self, sdfg, postState, bank=None):
 
         fpga_outputs, fpgaOut_names = mem_ops.fpga_copy_global_to_cpu(
             sdfg,
-            postState,
-            [self.destination],
-            [self.rows * self.columns],
+            postState, [self.destination], [self.rows * self.columns],
             [self.dtype],
-            bank=bank
-        )
+            bank=bank)
 
         self.fpga_data = fpga_outputs[0]
         self.fpga_dataName = fpgaOut_names[0]
 
+    def connect_to_lib(self, sdfg, state, libNode, libConnector, access=False,
+                       entry_nodes=None,
+                       exit_nodes=None):
 
-    def connect_to_lib(self, sdfg, state, libNode, libConnector, access=False):
-
-        out_mem, out_name = self.stream(
-            sdfg,
-            state,
-            self.fpga_data.data,
-            srcName=libConnector,
-            access=access
-        )
+        out_mem, out_name = self.stream(sdfg,
+                                        state,
+                                        self.fpga_data.data,
+                                        srcName=libConnector,
+                                        access=access)
 
         vec_type = vector(self.dtype, self.veclen)
         stream_out = state.add_stream(
@@ -897,32 +927,25 @@ class StreamWriteMatrixFull():
             #veclen=self.veclen,
             buffer_size=self.bufferSize,
             transient=True,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            storage=dtypes.StorageType.FPGA_Local)
         self.fpga_stream = stream_out
 
         state.add_memlet_path(
-            libNode, stream_out,
+            libNode,
+            *(exit_nodes if exit_nodes else []),
+            stream_out,
             src_conn=libConnector,
             memlet=Memlet.simple(
-                stream_out, "0", num_accesses=self.rows*self.columns#, veclen=self.veclen
-            )
-        )
-
+                stream_out,
+                "0",
+                num_accesses=self.rows * self.columns  #, veclen=self.veclen
+            ))
 
     def get_copy_size(self):
 
         return self.rows * self.columns
 
-
-    def stream(
-            self,
-            sdfg,
-            state,
-            dest,
-            srcName='',
-            access=False
-        ):
+    def stream(self, sdfg, state, dest, srcName='', access=False):
 
         src = dest + "_"
         if srcName != '':
@@ -936,8 +959,7 @@ class StreamWriteMatrixFull():
             #veclen=self.veclen,
             buffer_size=self.bufferSize,
             transient=True,
-            storage=dtypes.StorageType.FPGA_Local
-        )
+            storage=dtypes.StorageType.FPGA_Local)
 
         data_out = None
         if access:
@@ -947,56 +969,54 @@ class StreamWriteMatrixFull():
 
         readRows_entry, readRows_exit = state.add_map(
             'streamReadRows_{}_map'.format(dest),
-            dict(i='0:{0}'.format(self.rows/self.rowTile)),
-            schedule=dtypes.ScheduleType.FPGA_Device
-        )
+            dict(i='0:{0}'.format(self.rows / self.rowTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device)
 
         readCols_entry, readCols_exit = state.add_map(
             'streamReadCols_{}_map'.format(dest),
-            dict(j='0:{0}'.format(self.columns/self.colTile)),
-            schedule=dtypes.ScheduleType.FPGA_Device
-        )
+            dict(j='0:{0}'.format(self.columns / self.colTile)),
+            schedule=dtypes.ScheduleType.FPGA_Device)
 
-
-
-        read_tasklet = state.add_tasklet(
-            'sW_{}'.format(dest),
-            ['inCon'],
-            ['outCon'],
-            'outCon = inCon'
-        )
+        read_tasklet = state.add_tasklet('sW_{}'.format(dest), ['inCon'],
+                                         ['outCon'], 'outCon = inCon')
 
         if self.tileByRow:
 
             readRowTile_entry, readRowTile_exit = state.add_map(
                 'streamReadRowTile_{}_map'.format(dest),
                 dict(ii='0:{0}'.format(self.rowTile)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
             readColTile_entry, readColTile_exit = state.add_map(
                 'streamReadColTile_{}_map'.format(dest),
                 dict(jj='0:{0}/{1}'.format(self.colTile, self.veclen)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
             state.add_memlet_path(
-                data_in, readRows_entry, readCols_entry,
-                readRowTile_entry, readColTile_entry,
+                data_in,
+                readRows_entry,
+                readCols_entry,
+                readRowTile_entry,
+                readColTile_entry,
                 read_tasklet,
                 dst_conn='inCon',
-                memlet=Memlet.simple(data_in.data, '0')#, veclen=self.veclen)
+                memlet=Memlet.simple(data_in.data, '0')  #, veclen=self.veclen)
             )
 
             state.add_memlet_path(
-                read_tasklet, readColTile_exit, readRowTile_exit,
-                readCols_exit, readRows_exit,
+                read_tasklet,
+                readColTile_exit,
+                readRowTile_exit,
+                readCols_exit,
+                readRows_exit,
                 data_out,
                 src_conn='outCon',
-                memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
-                    self.rowTile, self.columns, self.colTile, self.veclen)#, veclen=self.veclen)
-                )
-            )
+                memlet=Memlet.simple(
+                    data_out.data,
+                    '(i *{0} + ii) * {1} + (j * {2} + jj * {3})'.format(
+                        self.rowTile, self.columns, self.colTile,
+                        self.veclen)  #, veclen=self.veclen)
+                ))
 
         else:
 
@@ -1005,36 +1025,32 @@ class StreamWriteMatrixFull():
             readRowTile_entry, readRowTile_exit = state.add_map(
                 'streamReadRowTile_{}_map'.format(dest),
                 dict(ii='0:{0}'.format(self.rowTile)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
 
             readColTile_entry, readColTile_exit = state.add_map(
                 'streamReadColTile_{}_map'.format(dest),
                 dict(jj='0:{0}'.format(self.colTile)),
-                schedule=dtypes.ScheduleType.FPGA_Device
-            )
+                schedule=dtypes.ScheduleType.FPGA_Device)
+
+            state.add_memlet_path(data_in,
+                                  readRows_entry,
+                                  readCols_entry,
+                                  readColTile_entry,
+                                  readRowTile_entry,
+                                  read_tasklet,
+                                  dst_conn='inCon',
+                                  memlet=Memlet.simple(data_in.data, '0'))
 
             state.add_memlet_path(
-                data_in, readRows_entry, readCols_entry,
-                readColTile_entry, readRowTile_entry,
                 read_tasklet,
-                dst_conn='inCon',
-                memlet=Memlet.simple(data_in.data, '0')
-            )
-
-            state.add_memlet_path(
-                read_tasklet, readRowTile_exit, readColTile_exit,
-                readRows_exit, readCols_exit,
+                readRowTile_exit,
+                readColTile_exit,
+                readRows_exit,
+                readCols_exit,
                 data_out,
                 src_conn='outCon',
-                memlet=Memlet.simple(data_out.data, '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(self.rowTile, self.columns, self.colTile))
-            )
-
+                memlet=Memlet.simple(
+                    data_out.data, '(i *{0} + ii) * {1} + (j * {2} +jj)'.format(
+                        self.rowTile, self.columns, self.colTile)))
 
         return data_in, src
-
-
-
-
-
-
