@@ -684,6 +684,7 @@ class StreamWriteVector():
         veclen=1,
         unroll=False,
         unroll_width=1,
+        repeat=1
     ):
 
         if not (unroll == False and unroll_width == 1):
@@ -699,6 +700,7 @@ class StreamWriteVector():
         self.veclen = veclen
         self.unroll = unroll
         self.unroll_width = unroll_width
+        self.repeat = repeat
 
         self.fpga_data = None
         self.fpga_dataName = None
@@ -779,6 +781,15 @@ class StreamWriteVector():
         else:
             data_out = state.add_write(dest)
 
+        repeat_map_entry = None
+        repeat_map_exit = None
+
+        if self.repeat != 1:
+            repeat_map_entry, repeat_map_exit = state.add_map(
+                'streamRepeat_{}_map'.format(dest),
+                dict(r='0:{}'.format(self.repeat)),
+                schedule=dtypes.ScheduleType.FPGA_Device)
+
         write_map_entry, write_map_exit = state.add_map(
             'streamWrite_{}_map'.format(src),
             dict(i='0:{0}/{1}'.format(self.mem_size, self.veclen)),
@@ -788,17 +799,32 @@ class StreamWriteVector():
         write_tasklet = state.add_tasklet('sW_{}'.format(dest), ['inCon'],
                                           ['outCon'], 'outCon = inCon')
 
-        state.add_memlet_path(data_in,
-                              write_map_entry,
-                              write_tasklet,
-                              dst_conn='inCon',
-                              memlet=Memlet.simple(data_in.data, '0'))
+        if self.repeat != 1:
+            state.add_memlet_path(data_in,
+                                  repeat_map_entry,
+                                  write_map_entry,
+                                  write_tasklet,
+                                  dst_conn='inCon',
+                                  memlet=Memlet.simple(data_in.data, '0'))
 
-        state.add_memlet_path(write_tasklet,
-                              write_map_exit,
-                              data_out,
-                              src_conn='outCon',
-                              memlet=Memlet.simple(data_out.data, 'i'))
+            state.add_memlet_path(write_tasklet,
+                                  write_map_exit,
+                                  repeat_map_exit,
+                                  data_out,
+                                  src_conn='outCon',
+                                  memlet=Memlet.simple(data_out.data, 'i'))
+        else:
+            state.add_memlet_path(data_in,
+                                  write_map_entry,
+                                  write_tasklet,
+                                  dst_conn='inCon',
+                                  memlet=Memlet.simple(data_in.data, '0'))
+
+            state.add_memlet_path(write_tasklet,
+                                  write_map_exit,
+                                  data_out,
+                                  src_conn='outCon',
+                                  memlet=Memlet.simple(data_out.data, 'i'))
 
         return data_in, src
 

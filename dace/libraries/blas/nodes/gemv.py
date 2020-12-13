@@ -234,11 +234,10 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
 
         # TODO this can be removed, if b == 0
         y_in = gemv_state.add_stream(
-            '_yi',
+            '_y',
             vec_type,
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local,
-            transient=(True if b == 0 else False)
         )
 
         x_in = gemv_state.add_stream(
@@ -249,11 +248,19 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         )
 
         y_out = gemv_state.add_stream(
-            '_yo',
+            'res',
             dtype=vec_type,
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
+
+        y_buffer = gemv_state.add_stream(
+            '_y_buffer',
+            dtype=vec_type,
+            buffer_size=32,
+            storage=dace.dtypes.StorageType.FPGA_Local
+        )
+
 
         # Start defining the graph
 
@@ -351,13 +358,9 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             storage=dace.dtypes.StorageType.FPGA_Local
         )
 
-
-
-
         #
         # Read y state
         #
-        # Wow, nesting!
         read_y_state = inner_sdfg.add_state('read_y')
         read_y_sdfg = dace.SDFG('read_y_sdfg')
         read_y_init_state  = read_y_sdfg.add_state('read_y_init')
@@ -404,7 +407,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             'read_y_false_task',
             ['in_con'],
             ['out_con'],
-            'out_con = in_con'
+            'out_con = in_con * beta'
         )
         read_y_false_state.add_memlet_path(
             read_y_false_in, read_y_false_entry, read_y_false_task,
@@ -590,8 +593,39 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         )
 
         # TODO handle writing y back?
-        #store_false_local_y = store_false_state.add_read('local_y')
-        #store_false_out = store_false_state.add_write('_y_out')
+        store_false_in = store_false_state.add_read('local_y')
+        store_false_out = store_false_state.add_stream(
+            '_y_buffer',
+            dtype=vec_type,
+            buffer_size=32,
+            storage=dace.dtypes.StorageType.FPGA_Local
+        )
+
+        store_false_entry, store_false_exit = store_false_state.add_map(
+            'story_true_map',
+            {
+                'i' : '0:{}'.format(computing_outer_loop_limit),
+                'ii' : '0:{}'.format(veclen)
+            },
+            schedule=dace.dtypes.ScheduleType.FPGA_Device
+        )
+        store_false_task = store_false_state.add_tasklet(
+            'store_false_task',
+            ['in_con'],
+            ['out_con'],
+            'out_con = in_con'
+        )
+        store_false_state.add_memlet_path(
+            store_false_in, store_false_entry, store_false_task,
+            dst_conn='in_con',
+            memlet=dace.Memlet.simple(store_false_in.data, 'i*{}+ii'.format(veclen))
+        )
+        store_false_state.add_memlet_path(
+            store_false_task, store_false_exit, store_false_out,
+            src_conn='out_con',
+            memlet=dace.Memlet.simple(store_false_out.data, '0')
+        )
+
 
         inner_sdfg.add_edge(read_y_state, compute_state, dace.InterstateEdge(None))
         inner_sdfg.add_edge(compute_state, store_init_state, dace.InterstateEdge(None))
@@ -604,7 +638,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             inner_sdfg,
             gemv_sdfg,
             {'local_x', '_y', '_A'},
-            {'_y_out'}
+            {'_y_out', '_y_buffer'}
         )
 
         gemv_state.add_memlet_path(
@@ -630,6 +664,12 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             nested_inner, block_y_map_exit, block_x_map_exit, y_out,
             src_conn='_y_out',
             memlet=dace.Memlet.simple(y_out.data, '0')
+        )
+
+        gemv_state.add_memlet_path(
+            nested_inner, block_y_map_exit, block_x_map_exit, y_buffer,
+            src_conn='_y_buffer',
+            memlet=dace.Memlet.simple(y_buffer.data, '0')
         )
 
         return gemv_sdfg
@@ -1492,8 +1532,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         super().__init__(
             name,
             location=location,
-            inputs={"_A", "_x", "_yi"} if beta != 0 else {"_A", "_x"},
-            outputs={"_yo"})
+            inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
+            outputs={"res", '_y_buffer'})
         self.dtype = dtype
         self.transA = transA
         self.alpha = alpha
@@ -1540,9 +1580,9 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         #                     "must agree in the k-dimension")
 
         out_edges = state.out_edges(self)
-        if len(out_edges) != 1:
-            raise ValueError(
-                "Expected exactly one output from matrix-vector product")
+        #if len(out_edges) != 1:
+        #    raise ValueError(
+        #        "Expected exactly one output from matrix-vector product")
         out_memlet = out_edges[0].data
 
         out_subset = copy.deepcopy(out_memlet.subset)

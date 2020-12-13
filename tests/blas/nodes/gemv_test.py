@@ -48,26 +48,15 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
 
     test_sdfg.add_array('A', shape=[nRows*mCols], dtype=DATATYPE)
     test_sdfg.add_array('x', shape=[mCols], dtype=DATATYPE)
-    test_sdfg.add_array('yi', shape=[nRows], dtype=DATATYPE)
-    test_sdfg.add_array('yo', shape=[nRows], dtype=DATATYPE)
+    test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
+    test_sdfg.add_array('res', shape=[nRows], dtype=DATATYPE)
 
     x_stream = streaming.StreamReadVector(
         'x',
         mCols,
         DATATYPE,
-        veclen=veclen,
-        #repeat='{}/{}'.format(nRows, rowTile)
+        veclen=veclen
     )
-
-    y_stream = None
-    if b != 0:
-        y_stream = streaming.StreamReadVector(
-            'yi',
-            nRows,
-            DATATYPE,
-            veclen=veclen,
-            repeat='{}/{}'.format(nRows,rowTile)
-        )
 
     A_stream = streaming.StreamReadMatrixFull(
         'A',
@@ -81,7 +70,7 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     )
 
     res_stream = streaming.StreamWriteVector(
-        'yo',
+        'res',
         nRows,
         DATATYPE,
         veclen=veclen
@@ -104,8 +93,57 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
-        gemv_node, [x_stream, y_stream, A_stream], ['_x', '_yi', '_A'],
-        gemv_node, [res_stream], ['_yo']
+        gemv_node, [x_stream, A_stream], ['_x', '_A'],
+        gemv_node, [res_stream], ['res']
+    )
+
+    memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE])
+
+    y_buf = test_state.add_access('y')
+    yi = test_state.add_stream(
+        '_yi',
+        DATATYPE,
+        buffer_size=32,
+        storage=dace.dtypes.StorageType.FPGA_Local,
+    )
+    yo = test_state.add_stream(
+        '_yo',
+        DATATYPE,
+        buffer_size=32,
+        storage=dace.dtypes.StorageType.FPGA_Local,
+    )
+
+    y_map_entry, y_map_exit = test_state.add_map(
+        'y_map',
+        dict(i='0:{}/{}'.format(nRows,rowTile)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device
+    )
+    y_map_inner_entry, y_map_inner_exit = test_state.add_map(
+        'y_inner',
+        dict(j='0:{}'.format(nRows)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device
+    )
+
+    test_state.add_memlet_path(
+        y_buf, y_map_entry, y_map_inner_entry, yi,
+        memlet=dace.Memlet.simple(y_buf.data, 'j')
+    )
+
+    test_state.add_memlet_path(
+        yi, gemv_node,
+        dst_conn='_y',
+        memlet=dace.Memlet.simple(yi.data, '0')
+    )
+
+    test_state.add_memlet_path(
+        gemv_node, yo,
+        src_conn='_y_buffer',
+        memlet=dace.Memlet.simple(yo.data, '0')
+    )
+
+    test_state.add_memlet_path(
+        yo, y_map_inner_exit, y_map_exit, y_buf,
+        memlet=dace.Memlet.simple(y_buf.data, 'j')
     )
 
     test_sdfg.expand_library_nodes()
@@ -115,9 +153,6 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
 
     return test_sdfg
-
-
-
 
 # ---------- ----------
 # Pure graph program (CPU)
@@ -296,7 +331,7 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=8)
     parser.add_argument("M", type=int, nargs="?", default=8)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
-    parser.add_argument("beta", type=int, nargs="?", default=0)
+    parser.add_argument("beta", type=int, nargs="?", default=1)
     parser.add_argument("--transposed",
                         action="store_true",
                         default=False,
@@ -323,50 +358,55 @@ if __name__ == "__main__":
     sdfg.save('aoeu.sdfg')
 
     A = np.random.rand(n, m).astype(np.float32)
+    #A = np.ones((n,m)).astype(np.float32)
     x = np.random.rand(n if transposed else m).astype(np.float32)
-    #y = np.random.rand(m if transposed else n).astype(np.float32)
-    y = np.ones((m,) if transposed else (n,)).astype(np.float32)
+    #x = np.ones((m,) if transposed else (n,)).astype(np.float32)
+    y = np.random.rand(m if transposed else n).astype(np.float32)
+    #y = np.ones((m,) if transposed else (n,)).astype(np.float32)
     yo = np.zeros((n,)).astype(np.float32)
 
     y_copy = np.copy(y)
     tmpy = np.copy(y)
 
-    sdfg(A=A, x=x, yi=y, yo=yo, n=n, m=m, alpha=alpha, beta=beta)
+    sdfg(A=A, x=x, y=y, res=yo, n=n, m=m, alpha=alpha, beta=beta)
 
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
     # Naive implementation of GEMV v4 row_streamed
     lenx = n
     leny = m
-    tilex = 4
-    tiley = 4
-    blocksx = n//4
-    blocksy = m//4
+    tilex = 8
+    tiley = 8
+    blocksx = n//tilex
+    blocksy = m//tiley
     coll = tiley / veclen
     ryoll = tiley / veclen
     rxoll = tilex / veclen
     maxsize = max(tilex, tiley)
-    tmpy = np.copy(y)
     naive = np.zeros((m,))
     for ti in range(blocksx):
-        localx = x[ti*tiley:ti*tiley+tiley]*alpha
+        localx = x[ti*tilex:ti*tilex+tilex]
         for tj in range(blocksy):
-            localy = tmpy[tj*tilex:tj*tilex+tilex]*beta
+            localy = tmpy[tj*tiley:tj*tiley+tiley]*beta
+            localA = A[ti*tiley:ti*tiley+tiley,tj*tilex:tj*tilex+tilex]
             for i in range(tilex):
+                temp = alpha * localx[i]
                 for j in range(tiley):
-                    localA = A[ti*tiley:ti*tiley+tiley,tj*tilex:tj*tilex+tilex]
-                    localy += localA[i] * localx[i]
+                    localy[j] += localA[i,j] * temp
             if ti == blocksx-1:
-                naive[tj*tilex:tj*tilex+tilex] = localy
+                naive[tj*tiley:tj*tiley+tiley] = localy
             else:
-                tmpy[tj*tilex:tj*tilex+tilex] = localy
+                tmpy[tj*tiley:tj*tiley+tiley] = localy
     #
 
     diff = np.linalg.norm(yo - ref) / (m if transposed else n)
+    diffnai = np.linalg.norm(naive-ref) / m
+    if diffnai >= 1e-5:
+        print ("Naive error", diffnai)
+        print (naive)
     if diff >= 1e-5:
         print("Error", diff)
         print ('ref', ref)
         print ('out', yo)
-        print ('nai', naive)
     else:
         print("Ok")
