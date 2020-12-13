@@ -109,8 +109,8 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
 
     memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE])
 
-    y_buf_in = test_state.add_read('y')
-    y_buf_out = test_state.add_write('y')
+    y_buf_in = test_state.add_read('f_y')
+    y_buf_out = test_state.add_write('f_y')
     yi = test_state.add_stream(
         '_yi',
         DATATYPE,
