@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
@@ -97,7 +98,7 @@ def fpga_graph_column(veclen, n_tile, m_tile, precision, vendor, testCase="0"):
         veclen=veclen,
         alpha=a
     )
-    ger_node.implementation = 'fpga_columns'
+    ger_node.implementation = 'fpga_column'
 
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
@@ -220,7 +221,7 @@ def fpga_graph_array_column(veclen, n_tile, m_tile, precision, vendor, testCase=
         veclen=veclen,
         alpha=a
     )
-    ger_node.implementation = 'fpga_columns'
+    ger_node.implementation = 'fpga_column'
 
     fpga_state.add_memlet_path(x,
                                ger_node,
@@ -325,23 +326,6 @@ def run_test(ger, target):
     x[:] = np.random.rand(m).astype(np.float32)
     y[:] = np.random.rand(n).astype(np.float32)
     A[:] = np.random.rand(m, n).astype(np.float32)
-
-    # y = np.array([1, 2, 3, 4]).astype(np.float32)
-    # y = np.array([1, 1, 1, 1]).astype(np.float32)
-    # y = aligned_ndarray(np.ones(n).astype(np.float32), alignment=256)
-    # x = aligned_ndarray(np.ones(m).astype(np.float32), alignment=256)
-    # A = np.random.randint(low=0, high=10, size=n*m).reshape((n,m)).astype(np.float32)
-
-    # A = aligned_ndarray(np.array([
-    #     [1,2,3,4],
-    #     [5,6,7,8],
-    #     [9,10,11,12],
-    #     [13,14,15,16]
-    # ]).astype(np.float32), alignment=256)
-
-    # A = np.zeros(n*m).reshape(n,m).astype(np.float32)
-
-    # result[:] = aligned_ndarray(np.zeros((m, n)).astype(np.float32), alignment=256)
 
     ger(alpha=alpha, x=x, y=y, A=A, r=result, m=m, n=n)
 

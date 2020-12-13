@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+
 import numpy as np
 import argparse
 import scipy
@@ -5,6 +8,7 @@ import dace
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
+import dace.libraries.blas.utility.fpga_helper as streaming
 
 
 # ---------- ----------
@@ -172,13 +176,126 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
     return sdfg
 
 
+
+def fpga_row_streamd_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
+
+    nRows = dace.symbol("n")
+    mCols = dace.symbol("m")
+
+    a = dace.symbol("alpha")
+    b = dace.symbol("beta")
+
+    rowTile = n_tile
+    colTile = m_tile
+    partial_width = 4
+
+    vec_type = dace.vector(dtype, vec_width)
+    single_vec_type = dace.vector(dtype, 1)
+
+    test_sdfg = dace.SDFG("gemv_testing_stream_" + vendor)
+    test_state = test_sdfg.add_state("test_state")
+
+    test_sdfg.add_symbol(a.name, dace.float32)
+
+    if b != 0:
+        test_sdfg.add_symbol(b.name, dace.float32)
+
+    test_sdfg.add_array('A', shape=[nRows*mCols/vec_width], dtype=vec_type)
+    test_sdfg.add_array('x', shape=[mCols/vec_width], dtype=vec_type)
+    test_sdfg.add_array('y', shape=[nRows], dtype=single_vec_type)
+    test_sdfg.add_array('res', shape=[nRows], dtype=single_vec_type)
+
+    x_stream = streaming.StreamReadVector(
+        'x',
+        mCols,
+        dace.float32,
+        veclen=vec_width,
+        repeat='{}/{}'.format(nRows, rowTile)
+    )
+
+    y_stream = None
+    if b != 0:
+        y_stream = streaming.StreamReadVector(
+            'y',
+            nRows,
+            dace.float32,
+            veclen=1,
+        )
+
+    A_stream = streaming.StreamReadMatrixFull(
+        'A',
+        nRows,
+        mCols,
+        rowTile,
+        colTile,
+        dace.float32,
+        tileByRow=True,
+        veclen=vec_width
+    )
+
+    res_stream = streaming.StreamWriteVector(
+        'res',
+        nRows,
+        dace.float32
+    )
+
+    gemv_node = blas.gemv.Gemv(
+        "blas_gemv",
+        dtype=dace.float32,
+        n_tile=rowTile,
+        m_tile=colTile,
+        partial_width=partial_width,
+        n=nRows,
+        m=mCols,
+        veclen=vec_width,
+        alpha=a, beta=b,
+        streaming=True
+    )
+    gemv_node.implementation = 'fpga_row'
+
+    if y_stream is not None:
+        preState, postState = streaming.fpga_setup_connect_streamers(
+            test_sdfg,
+            test_state,
+            gemv_node,
+            [x_stream, y_stream, A_stream],
+            ['_x', '_y', '_A'],
+            gemv_node,
+            [res_stream],
+            ['_res']
+        )
+    else:
+        preState, postState = streaming.fpga_setup_connect_streamers(
+            test_sdfg,
+            test_state,
+            gemv_node,
+            [x_stream, A_stream],
+            ['_x', '_A'],
+            gemv_node,
+            [res_stream],
+            ['_res']
+        )
+
+    test_sdfg.expand_library_nodes()
+
+    mode = "simulation" if vendor == "xilinx" else "emulator"
+    dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
+    dace.config.Config.set("compiler", vendor, "mode", value=mode)
+
+    return test_sdfg
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=16)
-    parser.add_argument("M", type=int, nargs="?", default=16)
+    parser.add_argument("N", type=int, nargs="?", default=64)
+    parser.add_argument("M", type=int, nargs="?", default=64)
+    parser.add_argument("n_tile", type=int, nargs="?", default=16)
+    parser.add_argument("m_tile", type=int, nargs="?", default=16)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=0)
+    parser.add_argument("--veclen", type=int, default=1)
+    parser.add_argument('--cached', default=False, action='store_true')
     parser.add_argument("--transposed",
                         action="store_true",
                         default=False,
@@ -195,22 +312,47 @@ if __name__ == "__main__":
         sdfg = pure_graph(dace.float32, transposed)
     elif args.target == "intel_fpga":
         sdfg = intel_fpga_graph(dace.float32, transposed)
+    elif args.target == "xilinx":
+        sdfg = fpga_row_streamd_graph(
+            dace.float32,
+            "xilinx",
+            n_tile=args.n_tile,
+            m_tile=args.m_tile,
+            vec_width=args.veclen
+        )
     else:
         print("Unsupported target")
         exit(-1)
 
+    
+    if args.cached:
+        print("Running from compilation cache")
+        dace.config.Config.set("compiler", "use_cache", value="true")
+
+
+
     A = np.random.rand(n, m).astype(np.float32)
     x = np.random.rand(n if transposed else m).astype(np.float32)
     y = np.random.rand(m if transposed else n).astype(np.float32)
+    res = np.random.rand(m if transposed else n).astype(np.float32)
+
+    # A = np.ones((n,m), dtype=np.float32)
+    # x = np.array([1,2,3,4], dtype=np.float32)
+    # y = np.zeros(4, dtype=np.float32)
 
     y_copy = np.copy(y)
-
-    sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
-
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
-    diff = np.linalg.norm(y - ref) / (m if transposed else n)
+    if args.target == "xilinx":
+        sdfg(A=A, x=x, y=y, n=n, m=m, res=res, alpha=alpha, beta=beta)
+        diff = np.linalg.norm(res - ref) / (m if transposed else n)
+    else:
+        sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
+        diff = np.linalg.norm(y - ref) / (m if transposed else n)
+
     if diff >= 1e-5:
-        print("Error")
+        result = res if args.target == "xilinx" else y
+        raise RuntimeError("Unexpected result returned from gemv operation ({}) with diff {} "
+                           "got:\n{}\nexpected:\n{}".format(args.target, round(diff, 6), result, ref))
     else:
         print("Ok")
