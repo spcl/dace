@@ -1464,7 +1464,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             name,
             location=location,
             inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
-            outputs={"_res"} if streaming else {"_y"})
+            outputs= {"_res"} if streaming else {"_y"})
 
         self.dtype = dtype
         self.transA = transA

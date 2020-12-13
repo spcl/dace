@@ -271,6 +271,39 @@ def fpga_row_streamd_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     return test_sdfg
 
 
+
+def run_test(sdfg, n, m, alpha, beta, separate_result_buf=False):
+
+    A = np.random.rand(n, m).astype(np.float32)
+    x = np.random.rand(n if transposed else m).astype(np.float32)
+    y = np.random.rand(m if transposed else n).astype(np.float32)
+    res = np.random.rand(m if transposed else n).astype(np.float32)
+
+    # A = np.ones((n,m), dtype=np.float32)
+    # x = np.array([1,2,3,4], dtype=np.float32)
+    # y = np.zeros(4, dtype=np.float32)
+
+    y_copy = np.copy(y)
+    ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
+
+    if separate_result_buf:
+        sdfg(A=A, x=x, y=y, n=n, m=m, res=res, alpha=alpha, beta=beta)
+        diff = np.linalg.norm(res - ref) / (m if transposed else n)
+    else:
+        sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
+        diff = np.linalg.norm(y - ref) / (m if transposed else n)
+
+    if diff >= 1e-5:
+        result = res if args.target == "xilinx" else y
+        raise RuntimeError(
+            "Unexpected result returned from gemv operation ({}) with diff {} "
+            "got:\n{}\nexpected:\n{}".format(args.target, round(diff, 6),
+                                             result, ref))
+    else:
+        print("Ok")
+
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -297,48 +330,28 @@ if __name__ == "__main__":
     alpha = args.alpha
     beta = args.beta
     transposed = args.transposed
+
+    if args.cached:
+        print("Running from compilation cache")
+        dace.config.Config.set("compiler", "use_cache", value="true")
+
+
     if args.target == "pure":
         sdfg = pure_graph(dace.float32, transposed)
+        run_test(sdfg, n, m, alpha, beta)
     elif args.target == "intel_fpga":
         sdfg = intel_fpga_graph(dace.float32, transposed)
+        run_test(sdfg, n, m, alpha, beta)
     elif args.target == "xilinx":
         sdfg = fpga_row_streamd_graph(dace.float32,
                                       "xilinx",
                                       n_tile=args.n_tile,
                                       m_tile=args.m_tile,
                                       vec_width=args.veclen)
+        run_test(sdfg, n, m, alpha, beta, separate_result_buf=True)
     else:
         print("Unsupported target")
         exit(-1)
 
-    if args.cached:
-        print("Running from compilation cache")
-        dace.config.Config.set("compiler", "use_cache", value="true")
 
-    A = np.random.rand(n, m).astype(np.float32)
-    x = np.random.rand(n if transposed else m).astype(np.float32)
-    y = np.random.rand(m if transposed else n).astype(np.float32)
-    res = np.random.rand(m if transposed else n).astype(np.float32)
 
-    # A = np.ones((n,m), dtype=np.float32)
-    # x = np.array([1,2,3,4], dtype=np.float32)
-    # y = np.zeros(4, dtype=np.float32)
-
-    y_copy = np.copy(y)
-    ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
-
-    if args.target == "xilinx":
-        sdfg(A=A, x=x, y=y, n=n, m=m, res=res, alpha=alpha, beta=beta)
-        diff = np.linalg.norm(res - ref) / (m if transposed else n)
-    else:
-        sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
-        diff = np.linalg.norm(y - ref) / (m if transposed else n)
-
-    if diff >= 1e-5:
-        result = res if args.target == "xilinx" else y
-        raise RuntimeError(
-            "Unexpected result returned from gemv operation ({}) with diff {} "
-            "got:\n{}\nexpected:\n{}".format(args.target, round(diff, 6),
-                                             result, ref))
-    else:
-        print("Ok")
