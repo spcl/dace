@@ -898,7 +898,7 @@ class ExpandGemvAccumulate(ExpandTransformation):
         # Partial sums
         sdfg.add_array("partial_sums", (num_partial_sums, ),
                        desc_y.dtype,
-                       storage=dace.StorageType.FPGA_Local,
+                       storage=dace.StorageType.FPGA_Registers,
                        transient=True)
         partial_sum_read = state.add_read("partial_sums")
         partial_sum_write = state.add_access("partial_sums")
