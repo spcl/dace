@@ -479,9 +479,9 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         #
         update_y_task = compute_state.add_tasklet(
             'update_y_task',
-            ['in_con', 'temp'],
+            ['in_con', 'temp', 'prev'],
             ['out_con'],
-            'out_con = in_con * temp'
+            'out_con = in_con * temp + prev'
         )
 
         # Connect everything
@@ -504,12 +504,22 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         )
 
         compute_state.add_memlet_path(
+            compute_state_y,
+            tile_x_map_entry,
+            compute_outer_entry,
+            update_y_task,
+            dst_conn='prev',
+            memlet=dace.Memlet.simple(compute_state_y.data, 'jj')
+        )
+
+        y_write = compute_state.add_access('local_y')
+        compute_state.add_memlet_path(
             update_y_task,
             compute_outer_exit,
             tile_x_map_exit,
-            compute_state_y,
+            y_write,
             src_conn='out_con',
-            memlet=dace.Memlet.simple(compute_state_y.data, 'jj', wcr_str='lambda a, b: a + b')
+            memlet=dace.Memlet.simple(compute_state_y.data, 'jj')
         )
 
         #

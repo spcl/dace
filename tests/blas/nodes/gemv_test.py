@@ -102,13 +102,13 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
 
     y_map_inner_r_entry, y_map_inner_r_exit = test_state.add_map(
         'y_inner_r',
-        dict(j='0:{}'.format(rowTile)),
+        dict(j='0:{}/{}'.format(rowTile, veclen)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device
     )
 
     y_map_inner_w_entry, y_map_inner_w_exit = test_state.add_map(
         'y_inner_w',
-        dict(j='0:{}'.format(rowTile)),
+        dict(j='0:{}/{}'.format(rowTile, veclen)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device
     )
 
@@ -119,7 +119,8 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         gemv_node, [res_stream], ['res']
     )
 
-    memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE])
+    memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE], veclen=veclen)
+    #memOps.fpga_copy_global_to_cpu(test_sdfg, postState, ['y'], [nRows], [DATATYPE], veclen=veclen)
 
     rytask = test_state.add_tasklet(
         'rytask',
@@ -418,7 +419,7 @@ if __name__ == "__main__":
     alpha = args.alpha
     beta = args.beta
     transposed = args.transposed
-    veclen = 1
+    veclen = 2
     if args.target == "pure":
         sdfg = pure_graph(dace.float32, transposed)
     elif args.target == "xilinx":
