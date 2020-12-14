@@ -184,8 +184,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             row_streamed
     ):
         # TODO xilinx uses vectors, where intel uses unrolled veclen loops
-        # TODO remember beta
-        # TODO remember alpha
         # ---------- ----------
         # SETUP GRAPH
         # ---------- ----------
@@ -222,6 +220,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
+
         gemv_state = gemv_sdfg.add_state('gemv_root')
 
         A_in = gemv_state.add_stream(
@@ -327,6 +326,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
+
         inner_sdfg.add_array(
             'local_y',
             shape=[reading_y_outer_loop_limit],
@@ -334,6 +334,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
+
         inner_sdfg.add_array(
             'res',
             shape=[reading_y_outer_loop_limit],
@@ -341,6 +342,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
+
         inner_sdfg.add_array(
             '_y_out',
             shape=[reading_y_outer_loop_limit],
@@ -377,6 +379,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             ['out_con'],
             'out_con = 0'
         )
+
         read_y_true_out = read_y_true_state.add_write('local_y')
         read_y_true_state.add_memlet_path(
             read_y_tasklet, read_y_true_out,
@@ -391,6 +394,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
+
         read_y_false_out = read_y_false_state.add_write('local_y')
         read_y_false_task = read_y_false_state.add_tasklet(
             'read_y_false_task',
@@ -398,12 +402,14 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             ['out_con'],
             'out_con = in_con * beta'
         )
+
         read_y_false_state.add_memlet_path(
             read_y_false_in,
             read_y_false_task,
             dst_conn='in_con',
             memlet=dace.Memlet.simple(read_y_false_in.data, '0')
         )
+
         read_y_false_state.add_memlet_path(
             read_y_false_task,
             read_y_false_out,
@@ -521,12 +527,14 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
+
         store_true_buf = store_true_state.add_stream(
             '_y_buffer',
             dtype=vec_type,
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
+
         store_true_entry, store_true_exit = store_true_state.add_map(
             'story_true_map',
             {
@@ -534,22 +542,26 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             },
             schedule=dace.dtypes.ScheduleType.FPGA_Device
         )
+
         store_true_task = store_true_state.add_tasklet(
             'store_true_task',
             ['in_con'],
             ['out_con', 'buf_out'],
             'out_con = in_con\nbuf_out=in_con'
         )
+
         store_true_state.add_memlet_path(
             store_true_in, store_true_entry, store_true_task,
             dst_conn='in_con',
             memlet=dace.Memlet.simple(store_true_in.data, 'i')
         )
+
         store_true_state.add_memlet_path(
             store_true_task, store_true_exit, store_true_out,
             src_conn='out_con',
             memlet=dace.Memlet.simple(store_true_out.data, '0')
         )
+
         store_true_state.add_memlet_path(
             store_true_task, store_true_exit, store_true_buf,
             src_conn='buf_out',
@@ -571,17 +583,20 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             },
             schedule=dace.dtypes.ScheduleType.FPGA_Device
         )
+
         store_false_task = store_false_state.add_tasklet(
             'store_false_task',
             ['in_con'],
             ['out_con'],
             'out_con = in_con'
         )
+
         store_false_state.add_memlet_path(
             store_false_in, store_false_entry, store_false_task,
             dst_conn='in_con',
             memlet=dace.Memlet.simple(store_false_in.data, 'i')
         )
+
         store_false_state.add_memlet_path(
             store_false_task, store_false_exit, store_false_out,
             src_conn='out_con',
@@ -608,7 +623,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             memlet=dace.Memlet.simple(local_x.data, '0:{}'.format(reading_x_outer_loop_limit))
         )
 
-        # TODO put these in a more fitting location
         gemv_state.add_memlet_path(
             A_in, block_x_map_entry, block_y_map_entry, nested_inner,
             dst_conn='_A',

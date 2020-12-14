@@ -33,8 +33,8 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     b = dace.symbol("beta")
 
     # TODO: expand tests to consider different tile size configs
-    rowTile = 4
-    colTile = 4
+    rowTile = 8
+    colTile = 8
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
     test_sdfg = dace.SDFG("gemv_test_" + vendor_mark + "_" + testCase)
@@ -48,7 +48,6 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     test_sdfg.add_array('A', shape=[nRows*mCols], dtype=DATATYPE)
     test_sdfg.add_array('x', shape=[mCols], dtype=DATATYPE)
     test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
-    # TODO remove res, reuse y
     test_sdfg.add_array('res', shape=[nRows], dtype=DATATYPE)
 
     x_stream = streaming.StreamReadVector(
@@ -90,17 +89,26 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     gemv_node.implementation = 'fpga_stream'
 
     y_map_entry, y_map_exit = test_state.add_map(
-        'y_map',
+        'y_repeat_map',
         dict(i='0:{}/{}'.format(nRows, rowTile)),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device)
-    y_map_inner_r_entry, y_map_inner_r_exit = test_state.add_map(
-        'y_inner_r',
-        dict(j='0:{}/{}'.format(nRows, veclen)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device
     )
+
+    y_tile_map_entry, y_tile_map_exit = test_state.add_map(
+        'y_tile_map',
+        dict(ii='0:{}/{}'.format(nRows, rowTile)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device
+    )
+
+    y_map_inner_r_entry, y_map_inner_r_exit = test_state.add_map(
+        'y_inner_r',
+        dict(j='0:{}'.format(rowTile)),
+        schedule=dace.dtypes.ScheduleType.FPGA_Device
+    )
+
     y_map_inner_w_entry, y_map_inner_w_exit = test_state.add_map(
         'y_inner_w',
-        dict(j='0:{}/{}'.format(nRows, veclen)),
+        dict(j='0:{}'.format(rowTile)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device
     )
 
@@ -108,9 +116,8 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         test_sdfg,
         test_state,
         gemv_node, [x_stream, A_stream], ['_x', '_A'],
-        gemv_node, [res_stream], ['res'])#,
-        #entry_nodes=[y_map_entry, y_map_inner_entry],
-        #exit_nodes=[y_map_inner_exit, y_map_exit])
+        gemv_node, [res_stream], ['res']
+    )
 
     memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE])
 
@@ -137,6 +144,7 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         storage=dace.dtypes.StorageType.FPGA_Local,
         transient=True
     )
+
     yo = test_state.add_stream(
         '_yo',
         vec_type,
@@ -146,13 +154,21 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     )
 
     test_state.add_memlet_path(
-        y_buf_in, y_map_entry, y_map_inner_r_entry, rytask,
+        y_buf_in,
+        y_map_entry,
+        y_tile_map_entry,
+        y_map_inner_r_entry,
+        rytask,
         dst_conn='in_con',
-        memlet=dace.Memlet.simple(y_buf_in.data, 'j')
+        memlet=dace.Memlet.simple(y_buf_in.data, 'ii*{}+j'.format(rowTile))
     )
 
     test_state.add_memlet_path(
-        rytask, y_map_inner_r_exit, y_map_exit, yi,
+        rytask,
+        y_map_inner_r_exit,
+        y_tile_map_exit,
+        y_map_exit,
+        yi,
         src_conn='out_con',
         memlet=dace.Memlet.simple(yi.data, '0')
     )
@@ -184,15 +200,23 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         transient=True
     )
     test_state.add_memlet_path(
-        yo, y_map_entry, y_map_inner_w_entry, rwtask,
+        yo,
+        y_map_entry,
+        y_tile_map_entry,
+        y_map_inner_w_entry,
+        rwtask,
         dst_conn='in_con',
         memlet=dace.Memlet.simple(yo.data, '0')
     )
 
     test_state.add_memlet_path(
-        rwtask, y_map_inner_w_exit, y_map_exit, y_buf_out,
+        rwtask,
+        y_map_inner_w_exit,
+        y_tile_map_exit,
+        y_map_exit,
+        y_buf_out,
         src_conn='out_con',
-        memlet=dace.Memlet.simple(y_buf_out.data, 'j')
+        memlet=dace.Memlet.simple(y_buf_out.data, 'ii*{}+j'.format(rowTile))
     )
 
     test_sdfg.expand_library_nodes()
@@ -378,8 +402,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # TODO deadlocks if above 64
-    parser.add_argument("N", type=int, nargs="?", default=64)
-    parser.add_argument("M", type=int, nargs="?", default=64)
+    parser.add_argument("N", type=int, nargs="?", default=128)
+    parser.add_argument("M", type=int, nargs="?", default=128)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=1)
     parser.add_argument("--transposed",
@@ -394,7 +418,7 @@ if __name__ == "__main__":
     alpha = args.alpha
     beta = args.beta
     transposed = args.transposed
-    veclen = 2
+    veclen = 1
     if args.target == "pure":
         sdfg = pure_graph(dace.float32, transposed)
     elif args.target == "xilinx":
