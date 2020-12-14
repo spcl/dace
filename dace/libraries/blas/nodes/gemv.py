@@ -5,7 +5,7 @@ from dace.properties import Property
 import dace.library
 import dace.sdfg.nodes
 from dace.sdfg import SDFG, SDFGState
-from dace import memlet as mm
+from dace import memlet as mm, data as dt
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.frontend.common import op_repository as oprepo
@@ -1401,6 +1401,7 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
         return inner_sdfg
 
+
     @staticmethod
     def expansion(node, state, sdfg):
 
@@ -1411,6 +1412,189 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         return ExpandGEMVFPGAStreamingRowTilesRowOrdered.make_sdfg(
             node.dtype, int(node.n_tile), int(node.m_tile), node.partial_width,
             node.n, node.m, int(node.veclen), node.alpha, node.beta)
+    
+
+
+@dace.library.expansion
+class ExpandGemvTilesByColumn(ExpandTransformation):
+
+    environments = []
+
+    def expansion(node,
+                  state,
+                  sdfg,
+                  tile_size_x=None,
+                  tile_size_y=None,
+                  **kwargs):
+
+        node.validate(sdfg, state)
+
+        for e in state.in_edges(node):
+            if e.dst_conn == "_A":
+                desc_a = sdfg.arrays[e.data.data]
+            elif e.dst_conn == "_x":
+                desc_x = sdfg.arrays[e.data.data]
+        for e in state.out_edges(node):
+            if e.src_conn == "_y":
+                desc_y = sdfg.arrays[e.data.data]
+
+        sdfg = dace.SDFG("gemv")
+        state = sdfg.add_state("gemv")
+
+        is_transposed = node.transA
+        alpha = node.alpha
+        beta = node.beta
+
+        # Create local versions of input data nodes
+        desc_a = desc_a.clone()
+        desc_a.transient = False
+        sdfg.add_datadesc("_A", desc_a)
+        desc_x = desc_x.clone()
+        desc_x.transient = False
+        sdfg.add_datadesc("_x", desc_x)
+        desc_y = desc_y.clone()
+        desc_y.transient = False
+        sdfg.add_datadesc("_y", desc_y)
+
+        # Create accesses
+        read_a = state.add_read("_A")
+        read_x = state.add_read("_x")
+        if beta != 0:
+            read_y = state.add_read("_y")
+        write_y = state.add_write("_y")
+
+        # Flip loop bounds depending on whether we're transposed
+        size_x = desc_x.shape[0]
+        size_y = desc_y.shape[0]
+        if tile_size_x is None:
+            tile_size_x = size_x
+        if tile_size_y is None:
+            tile_size_y = size_y
+        num_tiles_y = f"{size_y}/{tile_size_y}"
+        num_tiles_x = f"{size_x}/{tile_size_x}"
+
+        # Create y tile map
+        y_tile_entry, y_tile_exit = state.add_map(
+            "y_tiles", {"ty": f"0:{num_tiles_y}"},
+            schedule=dace.ScheduleType.FPGA_Device)
+
+        # Create buffer
+        sdfg.add_array("y_local", (tile_size_y, ),
+                       desc_y.dtype,
+                       storage=dace.StorageType.FPGA_Local,
+                       transient=True)
+        y_local = state.add_access("y_local")
+        y_local_write = state.add_access("y_local")
+
+        # Initialize buffer
+        init_entry, init_exit = state.add_map(
+            "init", {"iy": f"0:{tile_size_y}"},
+            schedule=dace.ScheduleType.FPGA_Device)
+        if beta != 0:
+            if isinstance(desc_y, dt.Stream):
+                subset = "0"
+            else:
+                subset = f"ty*{tile_size_y}+iy"
+            init_tasklet = state.add_tasklet(
+                "init", {"y_in"}, {"y_out"},
+                f"y_out = {desc_y.dtype.base_type.ctype}({beta}) * y_in")
+            state.add_memlet_path(read_y,
+                                  y_tile_entry,
+                                  init_entry,
+                                  init_tasklet,
+                                  dst_conn="y_in",
+                                  memlet=dace.Memlet(f"_y[{subset}]"))
+            state.add_memlet_path(init_tasklet,
+                                  init_exit,
+                                  y_local,
+                                  src_conn="y_out",
+                                  memlet=dace.Memlet(f"y_local[iy]"))
+        else:
+            state.add_memlet_path(y_tile_entry,
+                                  init_entry,
+                                  memlet=dace.Memlet())
+            init_tasklet = state.add_tasklet("init", {}, {"y_out"}, "y_out = 0")
+            state.add_memlet_path(init_entry,
+                                  init_tasklet,
+                                  memlet=dace.Memlet())
+            state.add_memlet_path(init_tasklet,
+                                  init_exit,
+                                  y_local,
+                                  src_conn="y_out",
+                                  memlet=dace.Memlet("y_local[iy]"))
+
+        # Create x tile map
+        x_tile_entry, x_tile_exit = state.add_map(
+            "x_tiles", {"tx": f"0:{num_tiles_x}"},
+            schedule=dace.ScheduleType.FPGA_Device)
+
+        # Create loop over tile size in x
+        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"},
+                                        schedule=dace.ScheduleType.FPGA_Device)
+
+        # Buffer a scalar value of x
+        sdfg.add_array("x_local", (1, ),
+                       desc_x.dtype,
+                       transient=True,
+                       storage=dace.StorageType.FPGA_Local)
+        x_local = state.add_access("x_local")
+        subset = "0" if isinstance(desc_x,
+                                   dt.Stream) else f"tx*{tile_size_x}+ix"
+        state.add_memlet_path(read_x,
+                              y_tile_entry,
+                              x_tile_entry,
+                              x_entry,
+                              x_local,
+                              memlet=dace.Memlet(f"_x[{subset}]"))
+
+        # Create loop over tile size in y
+        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"},
+                                        schedule=dace.ScheduleType.FPGA_Device)
+
+        # Do computation
+        tasklet = state.add_tasklet("gemv", {"A_in", "x_in", "y_in"}, {"y_out"},
+                                    f"y_out = y_in + {alpha} * A_in * x_in")
+        state.add_memlet_path(y_local,
+                              x_tile_entry,
+                              x_entry,
+                              y_entry,
+                              tasklet,
+                              dst_conn="y_in",
+                              memlet=dace.Memlet("y_local[iy]"))
+        state.add_memlet_path(x_local,
+                              y_entry,
+                              tasklet,
+                              dst_conn="x_in",
+                              memlet=dace.Memlet("x_local[0]"))
+        state.add_memlet_path(tasklet,
+                              y_exit,
+                              x_exit,
+                              x_tile_exit,
+                              y_local_write,
+                              src_conn="y_out",
+                              memlet=dace.Memlet("y_local[iy]"))
+        subset = "0" if isinstance(
+            desc_a,
+            dt.Stream) else f"tx * {tile_size_x} + ix, ty * {tile_size_y} + iy"
+        state.add_memlet_path(read_a,
+                              y_tile_entry,
+                              x_tile_entry,
+                              x_entry,
+                              y_entry,
+                              tasklet,
+                              dst_conn="A_in",
+                              memlet=dace.Memlet(f"_A[{subset}]"))
+
+        # Write out tile of y
+        subset = ("0" if isinstance(desc_y, dt.Stream) else
+                  f"ty * {tile_size_y}:(ty + 1) * {tile_size_y}")
+        state.add_memlet_path(y_local_write,
+                              y_tile_exit,
+                              write_y,
+                              memlet=dace.Memlet(f"_y[{subset}]"))
+
+        return sdfg
+
 
 
 @dace.library.node
@@ -1420,7 +1604,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandGemvPure,
         "IntelFPGA": ExpandGEMVIntelFPGAVectorized,
-        "fpga_row": ExpandGEMVFPGAStreamingRowTilesRowOrdered
+        "fpga_row": ExpandGEMVFPGAStreamingRowTilesRowOrdered,
+        "TilesByColumn": ExpandGemvTilesByColumn,
     }
     default_implementation = None
 

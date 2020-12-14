@@ -292,8 +292,8 @@ reduce_out = prev + val_in""")
         buffer_read = stream_state.add_read(buffer_name)
         buffer_write = stream_state.add_write(buffer_name)
 
-        partial_sum_tasklet = stream_state.add_tasklet("partial_sum", {"result_in", "buffer_in"}, {"buffer_out"}, """\
-prev = buffer_in if i > 0 else 0
+        partial_sum_tasklet = stream_state.add_tasklet("partial_sum", {"result_in", "buffer_in"}, {"buffer_out"}, f"""\
+prev = buffer_in if i >= {partial_width} else 0
 buffer_out = prev + result_in""")
 
         stream_state.add_memlet_path(
