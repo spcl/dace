@@ -219,6 +219,8 @@ if __name__ == "__main__":
             raise NotImplementedError(
                 "Non-transposed vectorized tile-by-column NYI.")
         sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn", args.vectorize)
+    elif args.target == "accumulate":
+        sdfg = fpga_graph(dace.float32, transposed, "Accumulate", args.vectorize)
     else:
         print("Unsupported target")
         exit(-1)
