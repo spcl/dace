@@ -443,7 +443,6 @@ if __name__ == "__main__":
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
     diff = np.linalg.norm(y - ref) / (m if transposed else n)
-    diffnai = np.linalg.norm(naive-ref) / m
     if diff >= 1e-5:
         print("Error", diff)
         print ('ref', ref)
