@@ -162,6 +162,9 @@ def configure_and_compile(program_folder, program_name=None,
     # Get required environments are retrieve the CMake information
     environments = set(l.strip() for l in open(
         os.path.join(program_folder, "dace_environments.csv"), "r"))
+
+    environments = dace.library.get_environments_and_dependencies(environments)
+
     cmake_minimum_version = [0]
     cmake_variables = dict()
     cmake_packages = set()
@@ -171,8 +174,7 @@ def configure_and_compile(program_folder, program_name=None,
     cmake_link_flags = set()
     cmake_files = set()
     cmake_module_paths = set()
-    for env_name in environments:
-        env = dace.library.get_environment(env_name)
+    for env in environments:
         if (env.cmake_minimum_version is not None
                 and len(env.cmake_minimum_version) > 0):
             version_list = list(map(int, env.cmake_minimum_version.split(".")))

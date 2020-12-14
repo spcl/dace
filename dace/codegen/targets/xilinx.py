@@ -55,6 +55,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "compiler", "xilinx", "enable_debugging") else "OFF")
         autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
                      else "OFF")
+        frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -62,7 +63,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
+            f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -98,9 +100,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -234,8 +235,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}".format("const " if is_const else "",
-                             dtype.base_type.ctype, dtype.veclen)
+        return "{}{}".format("const " if is_const else "", dtype.ctype)
 
     @staticmethod
     def make_kernel_argument(data,
@@ -379,8 +379,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                     dtype.base_type.ctype, packing_factor, read_expr,
                     write_expr)
             else:
+                # we can write into a vectorized container.
+                # (The dtype passed as argument refers to the src not to the destination)
+                veclen = dtype.veclen * packing_factor
                 return "dace::Write<{}, {}>({}, {});".format(
-                    dtype.base_type.ctype, dtype.veclen, write_expr, read_expr)
+                    dtype.base_type.ctype, veclen, write_expr, read_expr)
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
@@ -528,12 +531,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         added = set()
 
         parameters = list(sorted(parameters, key=lambda t: t[1]))
-        arrays = dtypes.deduplicate([p for p in parameters
-                                     if not isinstance(p[2], dace.data.Scalar)])
+        arrays = dtypes.deduplicate(
+            [p for p in parameters if not isinstance(p[2], dace.data.Scalar)])
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
         scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
-        for is_output, pname, p, interface_id in itertools.chain(arrays, scalars):
+        for is_output, pname, p, interface_id in itertools.chain(
+                arrays, scalars):
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 # Add interface ID to called module, but not to the module
@@ -761,9 +765,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 if if_id is not None:
                     argname += "_%d" % if_id
 
-                kernel_args.append(
-                    arg.as_arg(with_types=True,
-                               name=argname))
+                kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 if name in seen:
                     continue
