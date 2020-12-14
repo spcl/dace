@@ -42,9 +42,7 @@ def pure_graph(dtype, transposed, expansion, veclen):
     x = state.add_read("x")
     result = state.add_write("y")
 
-    gemv_node = blas.Gemv("gemv",
-                          dtype=dace.float32,
-                          transA=transposed)
+    gemv_node = blas.Gemv("gemv", dtype=dace.float32, transA=transposed)
     gemv_node.implementation = expansion
 
     state.add_memlet_path(A,
@@ -97,18 +95,29 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     copy_in_state = sdfg.add_state("copy_to_device")
 
     sdfg.add_array("A", shape=[n, m], dtype=vtype)
-    sdfg.add_array("x", shape=[x_size], dtype=vtype if not transposed else dtype)
+    sdfg.add_array("x",
+                   shape=[x_size],
+                   dtype=vtype if not transposed else dtype)
     sdfg.add_array("y", shape=[y_size], dtype=vtype if transposed else dtype)
 
     in_host_A = copy_in_state.add_read("A")
     in_host_x = copy_in_state.add_read("x")
     in_host_y = copy_in_state.add_read("y")
 
-    sdfg.add_array("device_A", shape=[A_rows, A_cols], dtype=vtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_A",
+                   shape=[A_rows, A_cols],
+                   dtype=vtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
-    sdfg.add_array("device_x", shape=[x_size], dtype=vtype if not transposed else dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_x",
+                   shape=[x_size],
+                   dtype=vtype if not transposed else dtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
-    sdfg.add_array("device_y", shape=[y_size], dtype=vtype if transposed else dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_y",
+                   shape=[y_size],
+                   dtype=vtype if transposed else dtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
 
     in_device_A = copy_in_state.add_write("device_A")
@@ -168,14 +177,16 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     fpga_state.add_memlet_path(x,
                                gemv_node,
                                dst_conn="_x",
-                               memlet=Memlet.simple(x, "0:{}".format("{}".format(x_size))))
+                               memlet=Memlet.simple(
+                                   x, "0:{}".format("{}".format(x_size))))
 
     if beta != 0:
         y_in = fpga_state.add_read("device_y")
         fpga_state.add_memlet_path(y_in,
                                    gemv_node,
                                    dst_conn="_y",
-                                   memlet=Memlet.simple(y_in, "0:{}".format(y_size)))
+                                   memlet=Memlet.simple(y_in,
+                                                        "0:{}".format(y_size)))
     fpga_state.add_memlet_path(gemv_node,
                                y_out,
                                src_conn="_y",
@@ -258,7 +269,7 @@ def fpga_row_streamd_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
                                alpha=a,
                                beta=b,
                                streaming=True)
-    gemv_node.implementation = 'fpga_row'
+    gemv_node.implementation = 'TilesByRow'
 
     if y_stream is not None:
         preState, postState = streaming.fpga_setup_connect_streamers(
@@ -276,8 +287,6 @@ def fpga_row_streamd_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
 
     return test_sdfg
-
-
 
 
 def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
@@ -299,8 +308,8 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     vec_type = dace.vector(dtype, vec_width)
     single_vec_type = dace.vector(dtype, 1)
 
-    test_sdfg.add_array('A', shape=[n*m/vec_width], dtype=vec_type)
-    test_sdfg.add_array('x', shape=[m/vec_width], dtype=vec_type)
+    test_sdfg.add_array('A', shape=[n * m / vec_width], dtype=vec_type)
+    test_sdfg.add_array('x', shape=[m / vec_width], dtype=vec_type)
     test_sdfg.add_array('y', shape=[n], dtype=dtype)
 
     ###########################################################################
@@ -313,7 +322,7 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     in_host_A = copy_in_state.add_read("A")
 
     test_sdfg.add_array("device_x",
-                        shape=[m/vec_width],
+                        shape=[m / vec_width],
                         dtype=vec_type,
                         storage=dace.dtypes.StorageType.FPGA_Global,
                         transient=True)
@@ -323,7 +332,7 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
                         storage=dace.dtypes.StorageType.FPGA_Global,
                         transient=True)
     test_sdfg.add_array("device_A",
-                        shape=[n*m/vec_width],
+                        shape=[n * m / vec_width],
                         dtype=vec_type,
                         storage=dace.dtypes.StorageType.FPGA_Global,
                         transient=True)
@@ -333,17 +342,19 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     in_device_A = copy_in_state.add_write("device_A")
 
     copy_in_state.add_memlet_path(in_host_x,
-                                in_device_x,
-                                memlet=Memlet.simple(in_host_x,
-                                                    "0:{}/{}".format(m, vec_width)))
+                                  in_device_x,
+                                  memlet=Memlet.simple(
+                                      in_host_x, "0:{}/{}".format(m,
+                                                                  vec_width)))
     copy_in_state.add_memlet_path(in_host_y,
-                                in_device_y,
-                                memlet=Memlet.simple(in_host_y,
-                                                    "0:{}".format(n)))
+                                  in_device_y,
+                                  memlet=Memlet.simple(in_host_y,
+                                                       "0:{}".format(n)))
     copy_in_state.add_memlet_path(in_host_A,
-                                in_device_A,
-                                memlet=Memlet.simple(in_host_A,
-                                                    "0:{}".format(n*m/vec_width)))
+                                  in_device_A,
+                                  memlet=Memlet.simple(
+                                      in_host_A,
+                                      "0:{}".format(n * m / vec_width)))
 
     ###########################################################################
     # Copy data from FPGA
@@ -359,8 +370,8 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     out_host = copy_out_state.add_write("y")
 
     copy_out_state.add_memlet_path(out_device,
-                                out_host,
-                                memlet=Memlet.simple(out_host,
+                                   out_host,
+                                   memlet=Memlet.simple(out_host,
                                                         "0:{}".format(n)))
 
     ########################################################################
@@ -374,41 +385,43 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     A = fpga_state.add_read("device_A")
 
     gemv_node = blas.gemv.Gemv("blas_gemv",
-                            dtype=dace.float32,
-                            n_tile=n_tile,
-                            m_tile=m_tile,
-                            partial_width=8,
-                            n=n,
-                            m=m,
-                            veclen=vec_width,
-                            alpha=a,
-                            beta=b,
-                            streaming=False)
-    gemv_node.implementation = 'fpga_row'
+                               dtype=dace.float32,
+                               n_tile=n_tile,
+                               m_tile=m_tile,
+                               partial_width=8,
+                               n=n,
+                               m=m,
+                               veclen=vec_width,
+                               alpha=a,
+                               beta=b,
+                               streaming=False)
+    gemv_node.implementation = 'TilesByRow'
 
     fpga_state.add_memlet_path(x,
-                            gemv_node,
-                            dst_conn="_x",
-                            memlet=Memlet.simple(x, "0:{}".format(m/vec_width)))
+                               gemv_node,
+                               dst_conn="_x",
+                               memlet=Memlet.simple(
+                                   x, "0:{}".format(m / vec_width)))
     fpga_state.add_memlet_path(y,
-                            gemv_node,
-                            dst_conn="_y",
-                            memlet=Memlet.simple(y, "0:{}".format(n)))
+                               gemv_node,
+                               dst_conn="_y",
+                               memlet=Memlet.simple(y, "0:{}".format(n)))
     fpga_state.add_memlet_path(A,
-                            gemv_node,
-                            dst_conn="_A",
-                            memlet=Memlet.simple(A, "0:{}".format(n*m/vec_width)))
+                               gemv_node,
+                               dst_conn="_A",
+                               memlet=Memlet.simple(
+                                   A, "0:{}".format(n * m / vec_width)))
     fpga_state.add_memlet_path(gemv_node,
-                            y_out,
-                            src_conn="_y",
-                            memlet=Memlet.simple(y_out, "0:{}".format(n)))
+                               y_out,
+                               src_conn="_y",
+                               memlet=Memlet.simple(y_out, "0:{}".format(n)))
 
     ######################################
     # Interstate edges
     test_sdfg.add_edge(copy_in_state, fpga_state,
-                    dace.sdfg.sdfg.InterstateEdge())
+                       dace.sdfg.sdfg.InterstateEdge())
     test_sdfg.add_edge(fpga_state, copy_out_state,
-                    dace.sdfg.sdfg.InterstateEdge())
+                       dace.sdfg.sdfg.InterstateEdge())
 
     #########
     # Validate
@@ -422,10 +435,6 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     dace.config.Config.set("compiler", vendor, "mode", value=mode)
 
     return test_sdfg
-
-
-
-
 
 
 if __name__ == "__main__":
@@ -443,9 +452,7 @@ if __name__ == "__main__":
                         help="Compute GEMV with transposed matrix")
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--vectorize", dest="vectorize", default=1, type=int)
-    parser.add_argument("--cached",
-                        action="store_true",
-                        default=False)
+    parser.add_argument("--cached", action="store_true", default=False)
 
     args = parser.parse_args()
     n = args.N
@@ -464,22 +471,23 @@ if __name__ == "__main__":
         sdfg = fpga_graph(dace.float32, transposed, "IntelFPGA", args.vectorize)
     elif args.target == "xilinx":
         sdfg = fpga_row_streamd_graph(dace.float32,
-                                        "xilinx",
-                                        n_tile=args.n_tile,
-                                        m_tile=args.m_tile,
-                                        vec_width=args.vectorize)
+                                      "xilinx",
+                                      n_tile=args.n_tile,
+                                      m_tile=args.m_tile,
+                                      vec_width=args.vectorize)
     elif args.target == "tiles_by_row_array":
         sdfg = fpga_row_array_graph(dace.float32,
-                                "xilinx",
-                                n_tile=args.n_tile,
-                                m_tile=args.m_tile,
-                                vec_width=args.vectorize)
+                                    "xilinx",
+                                    n_tile=args.n_tile,
+                                    m_tile=args.m_tile,
+                                    vec_width=args.vectorize)
     elif args.target == "tiles_by_column":
         if not transposed:
             raise RuntimeError(
                 "Matrix must be transposed to use this expansion, "
                 "please set --transpose")
-        sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn", args.vectorize)
+        sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn",
+                          args.vectorize)
     else:
         print("Unsupported target")
         exit(-1)
@@ -508,9 +516,7 @@ if __name__ == "__main__":
     if diff >= 1e-5:
         print("Error")
         raise RuntimeError("Unexpected result returned from gemv operation: "
-              "got:\n{}\nexpected:\n{} on {}".format(result, ref, args.target))
+                           "got:\n{}\nexpected:\n{} on {}".format(
+                               result, ref, args.target))
     else:
         print("Ok")
-
-
-

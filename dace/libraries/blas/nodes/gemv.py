@@ -711,7 +711,8 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(dtype, n_tile, m_tile, partial_width, n, m, veclen, a, b, streaming):
+    def make_sdfg(dtype, n_tile, m_tile, partial_width, n, m, veclen, a, b,
+                  streaming):
         # ---------- ----------
         # SETUP GRAPH
         # ---------- ----------
@@ -727,34 +728,34 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
         gemv_state = gemv_sdfg.add_state()
 
-
         y_in = None
         if streaming:
             A_in = gemv_state.add_stream('_A',
-                                        vec_type,
-                                        buffer_size=32,
-                                        storage=dtypes.StorageType.FPGA_Local)
+                                         vec_type,
+                                         buffer_size=32,
+                                         storage=dtypes.StorageType.FPGA_Local)
 
             if b != 0:
-                y_in = gemv_state.add_stream('_y',
-                                            single_vec_type,
-                                            buffer_size=32,
-                                            storage=dtypes.StorageType.FPGA_Local,
-                                            transient=(True if b == 0 else False))
+                y_in = gemv_state.add_stream(
+                    '_y',
+                    single_vec_type,
+                    buffer_size=32,
+                    storage=dtypes.StorageType.FPGA_Local,
+                    transient=(True if b == 0 else False))
 
             # Must be received n/n_tile times
             x_in = gemv_state.add_stream('_x',
-                                        vec_type,
-                                        buffer_size=32,
-                                        storage=dtypes.StorageType.FPGA_Local)
+                                         vec_type,
+                                         buffer_size=32,
+                                         storage=dtypes.StorageType.FPGA_Local)
 
             res = gemv_state.add_stream('_res',
                                         single_vec_type,
                                         buffer_size=32,
                                         storage=dtypes.StorageType.FPGA_Local)
         else:
-            gemv_sdfg.add_array("_A", shape=[n*m/veclen], dtype=vec_type)
-            gemv_sdfg.add_array("_x", shape=[m/veclen], dtype=vec_type)
+            gemv_sdfg.add_array("_A", shape=[n * m / veclen], dtype=vec_type)
+            gemv_sdfg.add_array("_x", shape=[m / veclen], dtype=vec_type)
             gemv_sdfg.add_array("_y", shape=[n], dtype=dtype)
 
             A_in = gemv_state.add_read("_A")
@@ -763,7 +764,6 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
             if b != 0:
                 y_in = gemv_state.add_read("_y")
-
 
         # ---------- ----------
         # COMPUTE
@@ -812,7 +812,8 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         return gemv_sdfg
 
     @staticmethod
-    def make_y_tile(dtype, n_tile, m_tile, partial_width, n, m, veclen, a, b, streaming):
+    def make_y_tile(dtype, n_tile, m_tile, partial_width, n, m, veclen, a, b,
+                    streaming):
 
         y_tile_sdfg = dace.SDFG("y_tile_sdfg")
 
@@ -826,13 +827,13 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         if b != 0:
             y_tile_sdfg.add_symbol(b.name, b.dtype)
 
-
         y_in = None
         if streaming:
-            A_in = compute_state.add_stream('_A_tile',
-                                            vec_type,
-                                            buffer_size=32,
-                                            storage=dtypes.StorageType.FPGA_Local)
+            A_in = compute_state.add_stream(
+                '_A_tile',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local)
 
             if b != 0:
                 y_in = compute_state.add_stream(
@@ -841,23 +842,23 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
                     buffer_size=32,
                     storage=dtypes.StorageType.FPGA_Local)
 
-            x_in = compute_state.add_stream('_x_tile',
-                                            vec_type,
-                                            buffer_size=32,
-                                            storage=dtypes.StorageType.FPGA_Local)
-
-
+            x_in = compute_state.add_stream(
+                '_x_tile',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local)
 
             data_out = compute_state.add_stream(
                 'y_tile',
                 single_vec_type,
                 buffer_size=32,
-                storage=dtypes.StorageType.FPGA_Local
-            )
+                storage=dtypes.StorageType.FPGA_Local)
 
         else:
-            y_tile_sdfg.add_array("_A_tile", shape=[n*m/veclen], dtype=vec_type)
-            y_tile_sdfg.add_array("_x_tile", shape=[m/veclen], dtype=vec_type)
+            y_tile_sdfg.add_array("_A_tile",
+                                  shape=[n * m / veclen],
+                                  dtype=vec_type)
+            y_tile_sdfg.add_array("_x_tile", shape=[m / veclen], dtype=vec_type)
             y_tile_sdfg.add_array("y_tile", shape=[n], dtype=dtype)
 
             A_in = compute_state.add_read("_A_tile")
@@ -868,13 +869,11 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
                 y_tile_sdfg.add_array("_y_tile", shape=[n], dtype=dtype)
                 y_in = compute_state.add_read("_y_tile")
 
-
-
         y_tile_sdfg.add_array('y_tile_res',
-                    shape=[n_tile],
-                    dtype=single_vec_type if streaming else dtype,
-                    storage=dtypes.StorageType.FPGA_Local,
-                    transient=True)
+                              shape=[n_tile],
+                              dtype=single_vec_type if streaming else dtype,
+                              storage=dtypes.StorageType.FPGA_Local,
+                              transient=True)
 
         # ---------- ----------
         # INIT State
@@ -982,18 +981,19 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         write_empty_state = redTile_sdfg.add_state('write_empty_reduceTile')
         end_state = redTile_sdfg.add_state('end_reduceTile')
 
-
         y_in = None
         if streaming:
-            A_in = compute_state.add_stream('_A_red',
-                                            vec_type,
-                                            buffer_size=32,
-                                            storage=dtypes.StorageType.FPGA_Local)
+            A_in = compute_state.add_stream(
+                '_A_red',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local)
 
-            x_in = compute_state.add_stream('_x_red',
-                                            vec_type,
-                                            buffer_size=32,
-                                            storage=dtypes.StorageType.FPGA_Local)
+            x_in = compute_state.add_stream(
+                '_x_red',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local)
 
             if b != 0:
                 y_in = read_y_state.add_stream(
@@ -1009,8 +1009,10 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
                 storage=dtypes.StorageType.FPGA_Local)
 
         else:
-            redTile_sdfg.add_array("_A_red", shape=[n*m/veclen], dtype=vec_type)
-            redTile_sdfg.add_array("_x_red", shape=[m/veclen], dtype=vec_type)
+            redTile_sdfg.add_array("_A_red",
+                                   shape=[n * m / veclen],
+                                   dtype=vec_type)
+            redTile_sdfg.add_array("_x_red", shape=[m / veclen], dtype=vec_type)
             redTile_sdfg.add_array("_res_red", shape=[n], dtype=dtype)
 
             A_in = compute_state.add_read("_A_red")
@@ -1020,9 +1022,6 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
             if b != 0:
                 redTile_sdfg.add_array("_y_stream_red", shape=[n], dtype=dtype)
                 y_in = read_y_state.add_read("_y_stream_red")
-
-
-
 
         redTile_sdfg.add_array('_y_red',
                                shape=[n_tile],
@@ -1060,12 +1059,14 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
             'read_y_tasklet', (['in_con'] if b != 0 else []), ['out_con'], code)
 
         if b != 0:
-            read_y_state.add_memlet_path(y_in,
-                                         y_read_tasklet,
-                                         dst_conn='in_con',
-                                         memlet=Memlet.simple(y_in.data,
-                                                              "0" if streaming else "i * {} + ii".format(n_tile),
-                                                              num_accesses=-1))
+            read_y_state.add_memlet_path(
+                y_in,
+                y_read_tasklet,
+                dst_conn='in_con',
+                memlet=Memlet.simple(
+                    y_in.data,
+                    "0" if streaming else "i * {} + ii".format(n_tile),
+                    num_accesses=-1))
 
         read_y_state.add_memlet_path(y_read_tasklet,
                                      y_out,
@@ -1221,7 +1222,10 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         write_y_state.add_memlet_path(
             y_in,
             y_out_stream,
-            memlet=Memlet.simple(y_in.data, "ii", other_subset_str= "0" if streaming else "i * {} + ii".format(n_tile)))
+            memlet=Memlet.simple(y_in.data,
+                                 "ii",
+                                 other_subset_str="0" if streaming else
+                                 "i * {} + ii".format(n_tile)))
 
         redTile_sdfg.add_edge(
             store_state, write_y_state,
@@ -1241,7 +1245,6 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         redTile_sdfg.fill_scope_connectors()
 
         return redTile_sdfg
-
 
     @staticmethod
     def make_unrolledCompute(dtype, n_tile, m_tile, veclen, partial_width, n, m,
@@ -1263,21 +1266,25 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
         if streaming:
             A_in = init_state.add_stream('_A_unroll',
-                                        vec_type,
-                                        buffer_size=32,
-                                        storage=dtypes.StorageType.FPGA_Local)
+                                         vec_type,
+                                         buffer_size=32,
+                                         storage=dtypes.StorageType.FPGA_Local)
 
-            x_in = read_x_state.add_stream('_x_unroll',
-                                        vec_type,
-                                        buffer_size=32,
-                                        storage=dtypes.StorageType.FPGA_Local)
+            x_in = read_x_state.add_stream(
+                '_x_unroll',
+                vec_type,
+                buffer_size=32,
+                storage=dtypes.StorageType.FPGA_Local)
         else:
-            inner_sdfg.add_array("_A_unroll", shape=[n*m/veclen], dtype=vec_type)
-            inner_sdfg.add_array("_x_unroll", shape=[m/veclen], dtype=vec_type)
+            inner_sdfg.add_array("_A_unroll",
+                                 shape=[n * m / veclen],
+                                 dtype=vec_type)
+            inner_sdfg.add_array("_x_unroll",
+                                 shape=[m / veclen],
+                                 dtype=vec_type)
 
             A_in = init_state.add_read("_A_unroll")
             x_in = read_x_state.add_read("_x_unroll")
-
 
         inner_sdfg.add_array(
             '_buf_in_unroll',
@@ -1331,12 +1338,15 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         vec_buf_A = init_state.add_access("vec_buf_A")
         mem_buf_A = init_state.add_write("mem_buf_A")
 
-        init_state.add_memlet_path(A_in,
-                                   vec_buf_A,
-                                   memlet=Memlet.simple(vec_buf_A.data,
-                                                        "0",
-                                                        other_subset_str="0" if streaming else "(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}".format(
-                            n_tile, m, m_tile, veclen)))
+        init_state.add_memlet_path(
+            A_in,
+            vec_buf_A,
+            memlet=Memlet.simple(
+                vec_buf_A.data,
+                "0",
+                other_subset_str="0" if streaming else
+                "(i *{0} + ii) * {1} / {3} + (j * {2} + jj * {3}) / {3}".format(
+                    n_tile, m, m_tile, veclen)))
 
         init_state.add_memlet_path(vec_buf_A,
                                    mem_buf_A,
@@ -1346,11 +1356,13 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         # -----------------------
         data_out = read_x_state.add_write('_x_buf')
 
-        read_x_state.add_memlet_path(x_in,
-                                     data_out,
-                                     memlet=Memlet.simple(data_out.data,
-                                                          "jj",
-                                                          other_subset_str="0" if streaming else "(j * {}/{} + jj)".format(m_tile, veclen)))
+        read_x_state.add_memlet_path(
+            x_in,
+            data_out,
+            memlet=Memlet.simple(data_out.data,
+                                 "jj",
+                                 other_subset_str="0" if streaming else
+                                 "(j * {}/{} + jj)".format(m_tile, veclen)))
 
         inner_sdfg.add_edge(init_state, read_x_state,
                             dace.InterstateEdge("ii == 0"))
@@ -1461,7 +1473,6 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
         return inner_sdfg
 
-
     @staticmethod
     def expansion(node, state, sdfg, **kwargs):
 
@@ -1470,15 +1481,15 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
         for e in state.in_edges(node):
 
-            if isinstance(sdfg.arrays[e.data.data],
-                          dace.data.Stream) and e.dst_conn in ["_x", "_y", "_A"]:
+            if isinstance(
+                    sdfg.arrays[e.data.data],
+                    dace.data.Stream) and e.dst_conn in ["_x", "_y", "_A"]:
                 streaming = True
                 streaming_nodes = streaming_nodes + 1
 
-
         for e in state.out_edges(node):
-            if isinstance(sdfg.arrays[e.data.data],
-                          dace.data.Stream) and e.src_conn == "_res" and node.streaming:
+            if isinstance(sdfg.arrays[e.data.data], dace.data.Stream
+                          ) and e.src_conn == "_res" and node.streaming:
                 streaming = True
                 streaming_nodes = streaming_nodes + 1
 
@@ -1493,8 +1504,8 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
                              ".")
         return ExpandGEMVFPGAStreamingRowTilesRowOrdered.make_sdfg(
             node.dtype, int(node.n_tile), int(node.m_tile), node.partial_width,
-            node.n, node.m, int(node.veclen), node.alpha, node.beta, (node.streaming  and streaming))
-    
+            node.n, node.m, int(node.veclen), node.alpha, node.beta,
+            (node.streaming and streaming))
 
 
 @dace.library.expansion
@@ -1678,7 +1689,6 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
         return sdfg
 
 
-
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
@@ -1686,7 +1696,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandGemvPure,
         "IntelFPGA": ExpandGEMVIntelFPGAVectorized,
-        "fpga_row": ExpandGEMVFPGAStreamingRowTilesRowOrdered,
+        "TilesByRow": ExpandGEMVFPGAStreamingRowTilesRowOrdered,
         "TilesByColumn": ExpandGemvTilesByColumn,
     }
     default_implementation = None
@@ -1715,7 +1725,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # To set output connectors appropriately
     streaming = dace.properties.SymbolicProperty(allow_none=False,
-                                                     default=False)
+                                                 default=False)
 
     def __init__(self,
                  name,
@@ -1735,7 +1745,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             name,
             location=location,
             inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
-            outputs= {"_res"} if streaming else {"_y"})
+            outputs={"_res"} if streaming else {"_y"})
 
         self.dtype = dtype
         self.transA = transA
