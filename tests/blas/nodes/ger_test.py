@@ -252,7 +252,6 @@ def fpga_graph_array_column(veclen, n_tile, m_tile, precision, vendor, testCase=
     test_sdfg.fill_scope_connectors()
     test_sdfg.validate()
 
-    # test_sdfg.~~~()
     ger_node.expand(test_sdfg, fpga_state)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
