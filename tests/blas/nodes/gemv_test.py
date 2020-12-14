@@ -198,7 +198,7 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     sdfg.add_edge(copy_in_state, fpga_state, dace.sdfg.sdfg.InterstateEdge())
     sdfg.add_edge(fpga_state, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
 
-    gemv_node.expand(sdfg, fpga_state, tile_size_x=16, tile_size_y=16)
+    gemv_node.expand(sdfg, fpga_state, tile_m_size=16, tile_n_size=16, vec_width=vec_width)
 
     sdfg.fill_scope_connectors()
     return sdfg

@@ -1246,6 +1246,8 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
 
         return redTile_sdfg
 
+
+
     @staticmethod
     def make_unrolledCompute(dtype, n_tile, m_tile, veclen, partial_width, n, m,
                              a, streaming):
@@ -1516,8 +1518,8 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
     def expansion(node,
                   state,
                   sdfg,
-                  tile_size_x=None,
-                  tile_size_y=None,
+                  tile_m_size=None,
+                  tile_n_size=None,
                   **kwargs):
 
         node.validate(sdfg, state)
@@ -1559,12 +1561,12 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
         # Flip loop bounds depending on whether we're transposed
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
-        if tile_size_x is None:
-            tile_size_x = size_x
-        if tile_size_y is None:
-            tile_size_y = size_y
-        num_tiles_y = f"{size_y}/{tile_size_y}"
-        num_tiles_x = f"{size_x}/{tile_size_x}"
+        if tile_m_size is None:
+            tile_m_size = size_x
+        if tile_n_size is None:
+            tile_n_size = size_y
+        num_tiles_y = f"{size_y}/{tile_n_size}"
+        num_tiles_x = f"{size_x}/{tile_m_size}"
 
         # Create y tile map
         y_tile_entry, y_tile_exit = state.add_map(
@@ -1572,7 +1574,7 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
             schedule=dace.ScheduleType.FPGA_Device)
 
         # Create buffer
-        sdfg.add_array("y_local", (tile_size_y, ),
+        sdfg.add_array("y_local", (tile_n_size, ),
                        desc_y.dtype,
                        storage=dace.StorageType.FPGA_Local,
                        transient=True)
@@ -1581,13 +1583,13 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
 
         # Initialize buffer
         init_entry, init_exit = state.add_map(
-            "init", {"iy": f"0:{tile_size_y}"},
+            "init", {"iy": f"0:{tile_n_size}"},
             schedule=dace.ScheduleType.FPGA_Device)
         if beta != 0:
             if isinstance(desc_y, dt.Stream):
                 subset = "0"
             else:
-                subset = f"ty*{tile_size_y}+iy"
+                subset = f"ty*{tile_n_size}+iy"
             init_tasklet = state.add_tasklet(
                 "init", {"y_in"}, {"y_out"},
                 f"y_out = {desc_y.dtype.base_type.ctype}({beta}) * y_in")
@@ -1622,7 +1624,7 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
             schedule=dace.ScheduleType.FPGA_Device)
 
         # Create loop over tile size in x
-        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"},
+        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_m_size}"},
                                         schedule=dace.ScheduleType.FPGA_Device)
 
         # Buffer a scalar value of x
@@ -1632,7 +1634,7 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
                        storage=dace.StorageType.FPGA_Local)
         x_local = state.add_access("x_local")
         subset = "0" if isinstance(desc_x,
-                                   dt.Stream) else f"tx*{tile_size_x}+ix"
+                                   dt.Stream) else f"tx*{tile_m_size}+ix"
         state.add_memlet_path(read_x,
                               y_tile_entry,
                               x_tile_entry,
@@ -1641,7 +1643,7 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
                               memlet=dace.Memlet(f"_x[{subset}]"))
 
         # Create loop over tile size in y
-        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"},
+        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_n_size}"},
                                         schedule=dace.ScheduleType.FPGA_Device)
 
         # Do computation
@@ -1668,7 +1670,7 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
                               memlet=dace.Memlet("y_local[iy]"))
         subset = "0" if isinstance(
             desc_a,
-            dt.Stream) else f"tx * {tile_size_x} + ix, ty * {tile_size_y} + iy"
+            dt.Stream) else f"tx * {tile_m_size} + ix, ty * {tile_n_size} + iy"
         state.add_memlet_path(read_a,
                               y_tile_entry,
                               x_tile_entry,
@@ -1680,7 +1682,7 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
 
         # Write out tile of y
         subset = ("0" if isinstance(desc_y, dt.Stream) else
-                  f"ty * {tile_size_y}:(ty + 1) * {tile_size_y}")
+                  f"ty * {tile_n_size}:(ty + 1) * {tile_n_size}")
         state.add_memlet_path(y_local_write,
                               y_tile_exit,
                               write_y,
