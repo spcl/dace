@@ -893,6 +893,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "pure": ExpandGemvPure,
         "IntelFPGA": ExpandGEMVIntelFPGAVectorized,
         "TilesByColumn": ExpandGemvTilesByColumn,
+        "FPGA": ExpandGemvTilesByColumn
     }
     default_implementation = None
 
