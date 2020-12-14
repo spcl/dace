@@ -703,6 +703,7 @@ class ExpandGEMVIntelFPGAVectorized(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGemvTilesByColumn(ExpandTransformation):
+    # This corresponds to gemv_v2 in FBLAS
 
     environments = []
 
@@ -728,7 +729,6 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
         sdfg = dace.SDFG("gemv")
         state = sdfg.add_state("gemv")
 
-        is_transposed = node.transA
         alpha = node.alpha
         beta = node.beta
 
@@ -750,7 +750,6 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
             read_y = state.add_read("_y")
         write_y = state.add_write("_y")
 
-        # Flip loop bounds depending on whether we're transposed
         size_x = desc_x.shape[0]
         size_y = desc_y.shape[0]
         if tile_size_x is None:
