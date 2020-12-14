@@ -55,6 +55,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "compiler", "xilinx", "enable_debugging") else "OFF")
         autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
                      else "OFF")
+        frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -62,7 +63,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
+            f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -233,8 +235,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}".format("const " if is_const else "",
-                             dtype.base_type.ctype, dtype.veclen)
+        return "{}{}".format("const " if is_const else "", dtype.ctype)
 
     @staticmethod
     def make_kernel_argument(data,
