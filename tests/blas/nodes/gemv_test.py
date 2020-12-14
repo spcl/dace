@@ -10,7 +10,7 @@ import dace.libraries.blas as blas
 # ---------- ----------
 # Pure graph program (CPU)
 # ---------- ----------
-def pure_graph(dtype, transposed):
+def pure_graph(dtype, transposed, expansion):
     n = dace.symbol("n")
     m = dace.symbol("m")
 
@@ -38,6 +38,7 @@ def pure_graph(dtype, transposed):
     gemv_node = blas.Gemv("gemv",
                           dtype=dace.float32,
                           transA=transposed)
+    gemv_node.implementation = expansion
 
     state.add_memlet_path(A,
                           gemv_node,
@@ -65,7 +66,10 @@ def pure_graph(dtype, transposed):
 # ---------- ----------
 # Intel FPGA graph
 # ---------- ----------
-def intel_fpga_graph(dtype, transposed, vec_width=4):
+def fpga_graph(dtype, transposed, expansion, vec_width=4):
+
+    sdfg = dace.SDFG("gemv_fpga_test")
+
     n = dace.symbol("n")
     m = dace.symbol("m")
 
@@ -136,12 +140,14 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
 
     A = fpga_state.add_read("device_A")
     x = fpga_state.add_read("device_x")
-    y_in = fpga_state.add_read("device_y")
     y_out = fpga_state.add_write("device_y")
 
-
-    gemv_node = blas.Gemv("gemv", dtype=dace.float32, vec_width=vec_width, transA=transposed)
-    gemv_node.implementation = "IntelFPGA"
+    gemv_node = blas.Gemv("gemv",
+                          dtype=dace.float32,
+                          transA=transposed,
+                          alpha=alpha,
+                          beta=beta)
+    gemv_node.implementation = expansion
 
     fpga_state.add_memlet_path(A,
                                gemv_node,
@@ -152,10 +158,13 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
                                gemv_node,
                                dst_conn="_x",
                                memlet=Memlet.simple(x, "0:{}".format("{}".format(x_size))))
-    fpga_state.add_memlet_path(y_in,
-                               gemv_node,
-                               dst_conn="_y",
-                               memlet=Memlet.simple(y_in, "0:{}".format(y_size)))
+
+    if beta != 0:
+        y_in = fpga_state.add_read("device_y")
+        fpga_state.add_memlet_path(y_in,
+                                   gemv_node,
+                                   dst_conn="_y",
+                                   memlet=Memlet.simple(y_in, "0:{}".format(y_size)))
     fpga_state.add_memlet_path(gemv_node,
                                y_out,
                                src_conn="_y",
@@ -168,6 +177,8 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
     sdfg.add_edge(fpga_state, copy_out_state,
                   dace.sdfg.sdfg.InterstateEdge())
 
+    gemv_node.expand(sdfg, fpga_state, tile_size_n=32, tile_size_m=32)
+
     sdfg.fill_scope_connectors()
     return sdfg
 
@@ -175,8 +186,8 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=16)
-    parser.add_argument("M", type=int, nargs="?", default=16)
+    parser.add_argument("N", type=int, nargs="?", default=128)
+    parser.add_argument("M", type=int, nargs="?", default=128)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
@@ -192,9 +203,15 @@ if __name__ == "__main__":
     beta = args.beta
     transposed = args.transposed
     if args.target == "pure":
-        sdfg = pure_graph(dace.float32, transposed)
+        sdfg = pure_graph(dace.float32, transposed, "pure")
     elif args.target == "intel_fpga":
-        sdfg = intel_fpga_graph(dace.float32, transposed)
+        sdfg = fpga_graph(dace.float32, transposed)
+    elif args.target == "tiles_by_column":
+        if not transposed:
+            raise RuntimeError(
+                "Matrix must be transposed to use this expansion, "
+                "please set --transpose")
+        sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn")
     else:
         print("Unsupported target")
         exit(-1)
