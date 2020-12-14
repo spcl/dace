@@ -357,11 +357,11 @@ def make_fpga_state(sdfg, vec_width=1):
 def make_sdfg(specialized, vec_width):
 
     if specialized:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_{}_{}x{}x{}".format(
-            P.get(), N.get(), K.get(), M.get()))
+        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_{}x{}x{}".format(
+            P.get(), vec_width, N.get(), K.get(), M.get()))
     else:
-        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_{}_NxKx{}".format(
-            P.get(), M.get()))
+        sdfg = dace.SDFG("gemm_fpga_systolic_vectorized_d{}_w{}_NxKx{}".format(
+            P.get(), vec_width, M.get()))
 
     pre_state = make_copy_to_fpga_state(sdfg, vec_width)
     compute_state = make_fpga_state(sdfg, vec_width)
