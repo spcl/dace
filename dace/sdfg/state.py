@@ -331,13 +331,22 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, False, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
                 cycles = self.find_cycles()
                 if cycles:
                     raise ValueError('Found cycles in state %s: %s' %
-                                     (self.label, cycles))
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            if validate and len(result) != self.number_of_nodes():
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                leftover_nodes = set(self.nodes()) - result.keys()
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(leftover_nodes))
 
             # Cache result
             self._scope_dict_toparent_cached = result
@@ -371,13 +380,24 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, True, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
                 cycles = self.find_cycles()
                 if cycles:
                     raise ValueError('Found cycles in state %s: %s' %
-                                     (self.label, cycles))
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            entry_nodes = set(n for n in self.nodes()
+                              if isinstance(n, nd.EntryNode)) | {None}
+            if (validate and len(result) != len(entry_nodes)):
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(entry_nodes -
+                                                               result.keys()))
 
             # Cache result
             self._scope_dict_tochildren_cached = result
