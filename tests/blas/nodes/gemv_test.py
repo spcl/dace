@@ -35,7 +35,6 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     # TODO: expand tests to consider different tile size configs
     rowTile = 4
     colTile = 4
-    partialWidth = 1
 
     vendor_mark = "x" if vendor == "xilinx" else "i"
     test_sdfg = dace.SDFG("gemv_test_" + vendor_mark + "_" + testCase)
@@ -49,6 +48,7 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     test_sdfg.add_array('A', shape=[nRows*mCols], dtype=DATATYPE)
     test_sdfg.add_array('x', shape=[mCols], dtype=DATATYPE)
     test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
+    # TODO remove res, reuse y
     test_sdfg.add_array('res', shape=[nRows], dtype=DATATYPE)
 
     x_stream = streaming.StreamReadVector(
@@ -81,7 +81,6 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         dtype=DATATYPE,
         n_tile=rowTile,
         m_tile=colTile,
-        partial_width=partialWidth,
         n=nRows,
         m=mCols,
         veclen=veclen,
@@ -96,12 +95,12 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         schedule=dace.dtypes.ScheduleType.FPGA_Device)
     y_map_inner_r_entry, y_map_inner_r_exit = test_state.add_map(
         'y_inner_r',
-        dict(j='0:{}'.format(nRows)),
+        dict(j='0:{}/{}'.format(nRows, veclen)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device
     )
     y_map_inner_w_entry, y_map_inner_w_exit = test_state.add_map(
         'y_inner_w',
-        dict(j='0:{}'.format(nRows)),
+        dict(j='0:{}/{}'.format(nRows, veclen)),
         schedule=dace.dtypes.ScheduleType.FPGA_Device
     )
 
@@ -378,8 +377,9 @@ def intel_fpga_graph(dtype, transposed, vec_width=4):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=8)
-    parser.add_argument("M", type=int, nargs="?", default=8)
+    # TODO deadlocks if above 64
+    parser.add_argument("N", type=int, nargs="?", default=64)
+    parser.add_argument("M", type=int, nargs="?", default=64)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=1)
     parser.add_argument("--transposed",
@@ -394,7 +394,7 @@ if __name__ == "__main__":
     alpha = args.alpha
     beta = args.beta
     transposed = args.transposed
-    veclen = 1
+    veclen = 2
     if args.target == "pure":
         sdfg = pure_graph(dace.float32, transposed)
     elif args.target == "xilinx":
@@ -408,11 +408,8 @@ if __name__ == "__main__":
     sdfg.save('aoeu.sdfg')
 
     A = np.random.rand(n, m).astype(np.float32)
-    #A = np.ones((n,m)).astype(np.float32)
     x = np.random.rand(n if transposed else m).astype(np.float32)
-    #x = np.ones((m,) if transposed else (n,)).astype(np.float32)
     y = np.random.rand(m if transposed else n).astype(np.float32)
-    #y = np.ones((m,) if transposed else (n,)).astype(np.float32)
     yo = np.zeros((n,)).astype(np.float32)
 
     y_copy = np.copy(y)

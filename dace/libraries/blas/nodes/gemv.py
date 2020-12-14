@@ -154,7 +154,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         if row_streamed:
             if row_ordered:
                 if transA: # FBLAS v4 not row_streamed | BICG
-                    gemv_sdfg = expand_gemv_fpga_streaming.v4(dtype, n_tile, m_tile, partial_width, n, m, veclen, a, b, row_streamed)
+                    gemv_sdfg = expand_gemv_fpga_streaming.v4(dtype, n_tile, m_tile, n, m, veclen, a, b, row_streamed)
                     gemv_sdfg.save('aoeu.sdfg')
                     return gemv_sdfg
                 else: # FBLAS v1 row_streamed | BICG
@@ -178,7 +178,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
 
     def v4(dtype,
             n_tile, m_tile,
-            partial_width,
             n, m,
             veclen,
             a, b,
@@ -194,7 +193,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         gemv_sdfg.add_symbol(a.name, a.dtype)
         gemv_sdfg.add_symbol(b.name, b.dtype)
 
-        if row_streamed:
+        if row_streamed: # Transposed
             len_x = n
             len_y = m
             tile_x = n_tile
@@ -205,25 +204,25 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             len_x = m
             len_y = n
             tile_x = m_tile
-            tile_y = m_tile
+            tile_y = n_tile
             blocks_x = m // m_tile
-            blocks_y = n // m_tile
+            blocks_y = n // n_tile
 
         computing_outer_loop_limit = tile_y // veclen
         reading_y_outer_loop_limit = tile_y // veclen
         reading_x_outer_loop_limit = tile_x // veclen
 
+        # Define input/outputs
+        vec_type=dace.dtypes.vector(dtype, veclen)
+
         gemv_sdfg.add_array(
             'local_y',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_y_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
         gemv_state = gemv_sdfg.add_state('gemv_root')
-
-        # Define input/outputs
-        vec_type=dace.dtypes.vector(dtype, 1)
 
         A_in = gemv_state.add_stream(
             '_A',
@@ -263,7 +262,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
 
 
         # Start defining the graph
-
         block_x_map_entry, block_x_map_exit = gemv_state.add_map(
             'block_x_map',
             dict(ti = '0:{}'.format(blocks_x)),
@@ -275,8 +273,8 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         #
         gemv_sdfg.add_array(
             'local_x',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_x_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
@@ -286,12 +284,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         read_x_outer_entry, read_x_outer_exit = gemv_state.add_map(
             'read_x_outer_map',
             dict(i = '0:{}'.format(reading_x_outer_loop_limit)),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device
-        )
-
-        read_x_inner_entry, read_x_inner_exit = gemv_state.add_map(
-            'read_x_inner_map',
-            dict(j = '0:{}'.format(veclen)),
             schedule=dace.dtypes.ScheduleType.FPGA_Device
         )
 
@@ -306,7 +298,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             x_in,
             block_x_map_entry,
             read_x_outer_entry,
-            read_x_inner_entry,
             read_x_task,
             dst_conn='in_con',
             memlet=dace.Memlet.simple(x_in.data, '0'.format(n))
@@ -314,11 +305,10 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
 
         gemv_state.add_memlet_path(
             read_x_task,
-            read_x_inner_exit,
             read_x_outer_exit,
             local_x,
             src_conn='out_con',
-            memlet=dace.Memlet.simple(local_x.data, 'i*{}+j'.format(veclen))
+            memlet=dace.Memlet.simple(local_x.data, 'i')
         )
 
         #
@@ -333,28 +323,28 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         inner_sdfg = dace.SDFG('compute')
         inner_sdfg.add_array(
             'local_x',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_x_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
         inner_sdfg.add_array(
             'local_y',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_y_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
         inner_sdfg.add_array(
             'res',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_y_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
         )
         inner_sdfg.add_array(
             '_y_out',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_y_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
 
@@ -369,8 +359,8 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
 
         read_y_sdfg.add_array(
             'local_y',
-            shape=[max(tile_x, tile_y)],
-            dtype=dtype,
+            shape=[reading_y_outer_loop_limit],
+            dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
 
@@ -381,13 +371,17 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         )
 
         # Read y true
-        read_y_true_state.add_mapped_tasklet(
-            'read_y_true',
-            { 'j' : '0:{}'.format(veclen) },
-            { },
-            'out_con = 0',
-            { 'out_con' : dace.Memlet.simple('local_y', 'i*{}+j'.format(veclen)) },
-            external_edges=True
+        read_y_tasklet = read_y_true_state.add_tasklet(
+            'read_y_task',
+            [],
+            ['out_con'],
+            'out_con = 0'
+        )
+        read_y_true_out = read_y_true_state.add_write('local_y')
+        read_y_true_state.add_memlet_path(
+            read_y_tasklet, read_y_true_out,
+            src_conn='out_con',
+            memlet=dace.Memlet.simple(read_y_true_out.data, 'i')
         )
 
         # Read y false
@@ -398,11 +392,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             storage=dace.dtypes.StorageType.FPGA_Local
         )
         read_y_false_out = read_y_false_state.add_write('local_y')
-        read_y_false_entry, read_y_false_exit = read_y_false_state.add_map(
-            'read_y_false_map',
-            dict(j='0:{}'.format(veclen)),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device
-        )
         read_y_false_task = read_y_false_state.add_tasklet(
             'read_y_false_task',
             ['in_con'],
@@ -410,14 +399,16 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             'out_con = in_con * beta'
         )
         read_y_false_state.add_memlet_path(
-            read_y_false_in, read_y_false_entry, read_y_false_task,
+            read_y_false_in,
+            read_y_false_task,
             dst_conn='in_con',
             memlet=dace.Memlet.simple(read_y_false_in.data, '0')
         )
         read_y_false_state.add_memlet_path(
-            read_y_false_task, read_y_false_exit, read_y_false_out,
+            read_y_false_task,
+            read_y_false_out,
             src_conn='out_con',
-            memlet=dace.Memlet.simple(read_y_false_out.data, 'i*{}+j'.format(veclen))
+            memlet=dace.Memlet.simple(read_y_false_out.data, 'i')
         )
 
         read_y_sdfg.add_edge(read_y_init_state, read_y_true_state, dace.InterstateEdge('ti==0 and beta==0'))
@@ -447,7 +438,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         read_y_state.add_memlet_path(
             nested_read_y, read_y_outer_exit, read_y_out,
             src_conn='local_y',
-            memlet=dace.Memlet.simple(read_y_out.data, '0:{}'.format(max([tile_x, tile_y])))
+            memlet=dace.Memlet.simple(read_y_out.data, '0:{}'.format(reading_y_outer_loop_limit))
         )
 
         read_y_sdfg.save('read_y.sdfg')
@@ -478,30 +469,8 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         )
 
         #
-        # Read A
-        #
-        read_a_entry, read_a_exit = compute_state.add_map(
-            'read_a_map',
-            dict(j='0:{}'.format(veclen)),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device
-        )
-
-        read_a_task = compute_state.add_tasklet(
-            'read_a_task',
-            ['in_con'],
-            ['out_con'],
-            'out_con = in_con'
-        )
-
-        #
         # Update y
         #
-        update_y_entry, update_y_exit = compute_state.add_map(
-            'update_y',
-            dict(j='0:{}'.format(veclen)),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device
-        )
-
         update_y_task = compute_state.add_tasklet(
             'update_y_task',
             ['in_con', 'temp'],
@@ -511,45 +480,30 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
 
         # Connect everything
         compute_state.add_memlet_path(
-            compute_state_a, tile_x_map_entry, compute_outer_entry, read_a_entry, read_a_task,
+            compute_state_a,
+            tile_x_map_entry,
+            compute_outer_entry,
+            update_y_task,
             dst_conn='in_con',
             memlet=dace.Memlet.simple(compute_state_a.data, '0')
-        )
-
-        inner_sdfg.add_array(
-            'local_A',
-            shape=[veclen],
-            dtype=dtype,
-            storage=dace.dtypes.StorageType.FPGA_Local,
-            transient=True
-        )
-
-        local_a = compute_state.add_access('local_A')
-
-        compute_state.add_memlet_path(
-            read_a_task, read_a_exit, local_a,
-            src_conn='out_con',
-            memlet=dace.Memlet.simple(local_a.data, 'j')
-        )
-
-        compute_state.add_memlet_path(
-            local_a, update_y_entry, update_y_task,
-            dst_conn='in_con',
-            memlet=dace.Memlet.simple(local_a.data, 'j')
         )
 
         compute_state.add_memlet_path(
             compute_state_x,
             tile_x_map_entry,
-            compute_outer_entry, update_y_entry, update_y_task,
+            compute_outer_entry,
+            update_y_task,
             dst_conn='temp',
-            memlet=dace.Memlet.simple(compute_state_x.data, 'i')
+            memlet=dace.Memlet.simple(compute_state_x.data, 'i//{}'.format(veclen))
         )
 
         compute_state.add_memlet_path(
-            update_y_task, update_y_exit, compute_outer_exit, tile_x_map_exit, compute_state_y,
+            update_y_task,
+            compute_outer_exit,
+            tile_x_map_exit,
+            compute_state_y,
             src_conn='out_con',
-            memlet=dace.Memlet.simple(compute_state_y.data, 'jj*{}+j'.format(veclen), wcr_str='lambda a, b: a + b')
+            memlet=dace.Memlet.simple(compute_state_y.data, 'jj', wcr_str='lambda a, b: a + b')
         )
 
         #
@@ -576,8 +530,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         store_true_entry, store_true_exit = store_true_state.add_map(
             'story_true_map',
             {
-                'i' : '0:{}'.format(computing_outer_loop_limit),
-                'ii' : '0:{}'.format(veclen)
+                'i' : '0:{}'.format(computing_outer_loop_limit)
             },
             schedule=dace.dtypes.ScheduleType.FPGA_Device
         )
@@ -590,7 +543,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         store_true_state.add_memlet_path(
             store_true_in, store_true_entry, store_true_task,
             dst_conn='in_con',
-            memlet=dace.Memlet.simple(store_true_in.data, 'i*{}+ii'.format(veclen))
+            memlet=dace.Memlet.simple(store_true_in.data, 'i')
         )
         store_true_state.add_memlet_path(
             store_true_task, store_true_exit, store_true_out,
@@ -603,7 +556,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             memlet=dace.Memlet.simple(store_true_buf.data, '0')
         )
 
-        # TODO handle writing y back?
         store_false_in = store_false_state.add_read('local_y')
         store_false_out = store_false_state.add_stream(
             '_y_buffer',
@@ -615,8 +567,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         store_false_entry, store_false_exit = store_false_state.add_map(
             'story_true_map',
             {
-                'i' : '0:{}'.format(computing_outer_loop_limit),
-                'ii' : '0:{}'.format(veclen)
+                'i' : '0:{}'.format(computing_outer_loop_limit)
             },
             schedule=dace.dtypes.ScheduleType.FPGA_Device
         )
@@ -629,14 +580,13 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         store_false_state.add_memlet_path(
             store_false_in, store_false_entry, store_false_task,
             dst_conn='in_con',
-            memlet=dace.Memlet.simple(store_false_in.data, 'i*{}+ii'.format(veclen))
+            memlet=dace.Memlet.simple(store_false_in.data, 'i')
         )
         store_false_state.add_memlet_path(
             store_false_task, store_false_exit, store_false_out,
             src_conn='out_con',
             memlet=dace.Memlet.simple(store_false_out.data, '0')
         )
-
 
         inner_sdfg.add_edge(read_y_state, compute_state, dace.InterstateEdge(None))
         inner_sdfg.add_edge(compute_state, store_init_state, dace.InterstateEdge(None))
@@ -655,7 +605,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         gemv_state.add_memlet_path(
             local_x, block_y_map_entry, nested_inner,
             dst_conn='local_x',
-            memlet=dace.Memlet.simple(local_x.data, '0:{}'.format(max(tile_x, tile_y)))
+            memlet=dace.Memlet.simple(local_x.data, '0:{}'.format(reading_x_outer_loop_limit))
         )
 
         # TODO put these in a more fitting location
