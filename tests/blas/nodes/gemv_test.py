@@ -215,10 +215,6 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
         sdfg = fpga_graph(dace.float32, transposed, "IntelFPGA", args.vectorize)
     elif args.target == "tiles_by_column":
-        if not transposed:
-            raise RuntimeError(
-                "Matrix must be transposed to use this expansion, "
-                "please set --transpose")
         sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn", args.vectorize)
     else:
         print("Unsupported target")

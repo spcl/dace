@@ -860,9 +860,12 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
                               y_local_write,
                               src_conn="y_out",
                               memlet=dace.Memlet("y_local[iy]"))
-        subset = "0" if isinstance(
-            desc_a,
-            dt.Stream) else f"tx * {tile_size_x} + ix, ty * {tile_size_y} + iy"
+        if isinstance(desc_a, dt.Stream):
+            subset = "0"
+        elif node.transA:
+            subset = f"tx * {tile_size_x} + ix, ty * {tile_size_y} + iy"
+        else:
+            subset = f"ty * {tile_size_y} + iy, tx * {tile_size_x} + ix"
         state.add_memlet_path(read_a,
                               y_tile_entry,
                               x_tile_entry,
