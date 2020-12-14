@@ -575,7 +575,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                         p.as_arg(with_types=True, name=pname))
 
         # create a unique module name to prevent name clashes
-        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+        module_function_name = f"module_{name}_{sdfg.sdfg_id}"
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration

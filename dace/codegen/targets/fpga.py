@@ -81,7 +81,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
-        self._other_codes = {}       # any other kind of generated file if any (name, code object)
+        self._other_codes = {
+        }  # any other kind of generated file if any (name, code object)
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
 
         # Register additional FPGA dispatchers
@@ -1119,8 +1120,8 @@ class FPGACodeGen(TargetCodeGenerator):
             if not fully_degenerate:
                 if not node.map.unroll:
                     if is_innermost:
-                        self.generate_pipeline_loop_post(result, sdfg, state_id,
-                                                         node)
+                        self.generate_pipeline_loop_post(
+                            result, sdfg, state_id, node)
                         self.generate_flatten_loop_post(result, sdfg, state_id,
                                                         node)
                     # add pragmas for data read/written inside this map
@@ -1192,7 +1193,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self.generate_kernel_internal(sdfg, state, kernel_name, subgraphs,
                                       kernel_stream, function_stream,
                                       callsite_stream)
-        self._kernel_count = self._kernel_count +1
+        self._kernel_count = self._kernel_count + 1
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
 
@@ -1229,7 +1230,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         if e.dst not in seen:
                             to_traverse.append(e.dst)
             # Name module according to all reached tasklets (can be just one)
-            labels = [n.label.replace(" ", "_") for n in tasklet_list]
+            labels = [
+                n.label.replace(" ", "_") + f"_{state.node_id(n)}"
+                for n in tasklet_list
+            ]
             # If there are no tasklets, name it after access nodes in the
             # subgraph
             if len(labels) == 0:
