@@ -193,8 +193,8 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=256)
-    parser.add_argument("M", type=int, nargs="?", default=256)
+    parser.add_argument("N", type=int, nargs="?", default=512)
+    parser.add_argument("M", type=int, nargs="?", default=512)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
@@ -215,6 +215,9 @@ if __name__ == "__main__":
     elif args.target == "intel_fpga":
         sdfg = fpga_graph(dace.float32, transposed, "IntelFPGA", args.vectorize)
     elif args.target == "tiles_by_column":
+        if not transposed and args.vectorize > 1:
+            raise NotImplementedError(
+                "Non-transposed vectorized tile-by-column NYI.")
         sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn", args.vectorize)
     else:
         print("Unsupported target")
