@@ -729,12 +729,6 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
         state = sdfg.add_state("gemv")
 
         is_transposed = node.transA
-        if not is_transposed:
-            n = desc_a.shape[0]
-            m = desc_a.shape[1]
-        else:
-            n = desc_a.shape[1]
-            m = desc_a.shape[0]
         alpha = node.alpha
         beta = node.beta
 
@@ -780,33 +774,40 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
         y_local_write = state.add_access("y_local")
 
         # Initialize buffer
+        init_entry, init_exit = state.add_map(
+            "init", {"iy": f"0:{tile_size_y}"},
+            schedule=dace.ScheduleType.FPGA_Device)
         if beta != 0:
             if isinstance(desc_y, dt.Stream):
                 subset = "0"
             else:
-                subset = f"ty*{tile_size_y}:(ty+1)*{tile_size_y}"
+                subset = f"ty*{tile_size_y}+iy"
+            init_tasklet = state.add_tasklet(
+                "init", {"y_in"}, {"y_out"},
+                f"y_out = {desc_y.dtype.base_type.ctype}({beta}) * y_in")
             state.add_memlet_path(read_y,
                                   y_tile_entry,
+                                  init_entry,
+                                  init_tasklet,
+                                  dst_conn="y_in",
+                                  memlet=dace.Memlet(f"_y[{subset}]"))
+            state.add_memlet_path(init_tasklet,
+                                  init_exit,
                                   y_local,
-                                  memlet=dace.Memlet(
-                                      f"y_local[0:{tile_size_y}]",
-                                      other_subset=subset))
+                                  src_conn="y_out",
+                                  memlet=dace.Memlet(f"y_local[iy]"))
         else:
-            init_entry, init_exit = state.add_map(
-                "init", {"iy": f"0:{tile_size_y}"},
-                schedule=dace.ScheduleType.FPGA_Device)
             state.add_memlet_path(y_tile_entry,
                                   init_entry,
                                   memlet=dace.Memlet())
-            init_tasklet = state.add_tasklet("init", {}, {"_y_local"},
-                                             "_y_local = 0")
+            init_tasklet = state.add_tasklet("init", {}, {"y_out"}, "y_out = 0")
             state.add_memlet_path(init_entry,
                                   init_tasklet,
                                   memlet=dace.Memlet())
             state.add_memlet_path(init_tasklet,
                                   init_exit,
                                   y_local,
-                                  src_conn="_y_local",
+                                  src_conn="y_out",
                                   memlet=dace.Memlet("y_local[iy]"))
 
         # Create x tile map
