@@ -328,11 +328,15 @@ class CPPUnparser:
 
                     self.locals.define(target.id, t.lineno, self._indent,
                                        inferred_type)
-                    if self.language == dace.dtypes.Language.OpenCL and inferred_type.veclen > 1:
-                        # if the veclen is greater than one, this should be defined with a vector data type
-                        self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],inferred_type.veclen))
+                    if inferred_type is None:
+                        self.locals.define(target.id, t.lineno, self._indent)
+                        self.write("auto ")
                     else:
-                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                        if self.language == dace.dtypes.Language.OpenCL and inferred_type is not None and inferred_type.veclen > 1:
+                            # if the veclen is greater than one, this should be defined with a vector data type
+                            self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],inferred_type.veclen))
+                        else:
+                            self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                 else:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")

@@ -1212,6 +1212,7 @@ __kernel void \\
         # This is used for forward type inference
         defined_symbols = state_dfg.symbols_defined_at(node)
 
+
         # This could be problematic for numeric constants that have no dtype
         defined_symbols.update({
             k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
@@ -1232,7 +1233,6 @@ __kernel void \\
                 rk = ocl_visitor.visit(stmt)
             # Generate width converters
             self.converters_to_generate |= ocl_visitor.width_converters
-
             if rk is not None:
                 result = StringIO()
                 cppunparse.CPPUnparser(rk,
@@ -1242,6 +1242,7 @@ __kernel void \\
                                        defined_symbols=defined_symbols,
                                        type_inference=True,
                                        language=dtypes.Language.OpenCL)
+
                 callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
     def generate_constants(self, sdfg, callsite_stream):
@@ -1327,14 +1328,41 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         self.used_streams = []
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
+        # ONNX lenet patch
+        ## add constant
+        for k, v in sdfg.constants.items():
+            if isinstance(v, np.ndarray):
+                self.dtypes[k]=v.dtype
+
+
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
+
+        print("---",target)
+
         if target not in self.memlets:
-            return self.generic_visit(node)
+            # Patch for ONNX lenet
+            # This could be the case when we have constant
+            # We will not have a memlet in that case, so we check if this is a subscript
+            # Probably, this is also not the right place to do this
+            #     # non-valid python
+            if isinstance(node.value, ast.Subscript):
+                dtype = infer_expr_type(astunparse.unparse(node.value),
+                                            self.dtypes)
+                value = cppunparse.cppunparse(self.visit(node.value),
+                                              expr_semicolon=False)
+                code_str = "{} {} = {};".format(dtype, target, value)
+                updated = ast.Name(id=code_str)
+                return updated
+            else:
+                # defined_type, _ = self.defined_vars.get(target)
+                return self.generic_visit(node)
+
 
         memlet, nc, wcr, dtype = self.memlets[target]
+
         is_scalar = not isinstance(dtype, dtypes.pointer)
 
         value = cppunparse.cppunparse(self.visit(node.value),
@@ -1378,6 +1406,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             value = "{}({})".format(pack_str, value)
 
         defined_type, _ = self.defined_vars.get(target)
+
 
         if defined_type == DefinedType.Pointer:
             # In case of wcr over an array, resolve access to pointer, replacing the code inside
