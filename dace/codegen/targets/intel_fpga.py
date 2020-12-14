@@ -1340,8 +1340,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def visit_Assign(self, node):
         target = rname(node.targets[0])
 
-        print("---",target)
-
         if target not in self.memlets:
             # Patch for ONNX lenet
             # This could be the case when we have constant
