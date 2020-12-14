@@ -183,7 +183,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             a, b,
             row_streamed
     ):
-        # TODO xilinx uses vectors, where intel uses unrolled veclen loops
         # ---------- ----------
         # SETUP GRAPH
         # ---------- ----------
@@ -241,13 +240,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         x_in = gemv_state.add_stream(
             '_x',
             vec_type,
-            buffer_size=32,
-            storage=dace.dtypes.StorageType.FPGA_Local
-        )
-
-        y_out = gemv_state.add_stream(
-            'res',
-            dtype=vec_type,
             buffer_size=32,
             storage=dace.dtypes.StorageType.FPGA_Local
         )
@@ -333,21 +325,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             dtype=vec_type,
             storage=dace.dtypes.StorageType.FPGA_Local,
             transient=True
-        )
-
-        inner_sdfg.add_array(
-            'res',
-            shape=[reading_y_outer_loop_limit],
-            dtype=vec_type,
-            storage=dace.dtypes.StorageType.FPGA_Local,
-            transient=True
-        )
-
-        inner_sdfg.add_array(
-            '_y_out',
-            shape=[reading_y_outer_loop_limit],
-            dtype=vec_type,
-            storage=dace.dtypes.StorageType.FPGA_Local
         )
 
         #
@@ -519,64 +496,13 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             tile_x_map_exit,
             y_write,
             src_conn='out_con',
-            memlet=dace.Memlet.simple(compute_state_y.data, 'jj')
+            memlet=dace.Memlet.simple(y_write.data, 'jj')
         )
 
         #
         # Store
         #
-        store_init_state = inner_sdfg.add_state('store_init')
-        store_true_state = inner_sdfg.add_state('store_true')
         store_false_state = inner_sdfg.add_state('store_false')
-
-        # True
-        store_true_in = store_true_state.add_read('local_y')
-        store_true_out = store_true_state.add_stream(
-            '_y_out',
-            dtype=vec_type,
-            buffer_size=32,
-            storage=dace.dtypes.StorageType.FPGA_Local
-        )
-
-        store_true_buf = store_true_state.add_stream(
-            '_y_buffer',
-            dtype=vec_type,
-            buffer_size=32,
-            storage=dace.dtypes.StorageType.FPGA_Local
-        )
-
-        store_true_entry, store_true_exit = store_true_state.add_map(
-            'story_true_map',
-            {
-                'i' : '0:{}'.format(computing_outer_loop_limit)
-            },
-            schedule=dace.dtypes.ScheduleType.FPGA_Device
-        )
-
-        store_true_task = store_true_state.add_tasklet(
-            'store_true_task',
-            ['in_con'],
-            ['out_con', 'buf_out'],
-            'out_con = in_con\nbuf_out=in_con'
-        )
-
-        store_true_state.add_memlet_path(
-            store_true_in, store_true_entry, store_true_task,
-            dst_conn='in_con',
-            memlet=dace.Memlet.simple(store_true_in.data, 'i')
-        )
-
-        store_true_state.add_memlet_path(
-            store_true_task, store_true_exit, store_true_out,
-            src_conn='out_con',
-            memlet=dace.Memlet.simple(store_true_out.data, '0')
-        )
-
-        store_true_state.add_memlet_path(
-            store_true_task, store_true_exit, store_true_buf,
-            src_conn='buf_out',
-            memlet=dace.Memlet.simple(store_true_buf.data, '0')
-        )
 
         store_false_in = store_false_state.add_read('local_y')
         store_false_out = store_false_state.add_stream(
@@ -614,9 +540,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
         )
 
         inner_sdfg.add_edge(read_y_state, compute_state, dace.InterstateEdge(None))
-        inner_sdfg.add_edge(compute_state, store_init_state, dace.InterstateEdge(None))
-        inner_sdfg.add_edge(store_init_state, store_true_state, dace.InterstateEdge('ti=={}-1'.format(blocks_x)))
-        inner_sdfg.add_edge(store_init_state, store_false_state, dace.InterstateEdge('ti!={}-1'.format(blocks_x)))
+        inner_sdfg.add_edge(compute_state, store_false_state, dace.InterstateEdge(None))
 
         inner_sdfg.save('inner.sdfg')
 
@@ -624,7 +548,7 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             inner_sdfg,
             gemv_sdfg,
             {'local_x', '_y', '_A'},
-            {'_y_out', '_y_buffer'}
+            {'_y_buffer'}
         )
 
         gemv_state.add_memlet_path(
@@ -643,12 +567,6 @@ class expand_gemv_fpga_streaming(ExpandTransformation):
             y_in, block_x_map_entry, block_y_map_entry, nested_inner,
             dst_conn='_y',
             memlet=dace.Memlet.simple(y_in.data, '0')
-        )
-
-        gemv_state.add_memlet_path(
-            nested_inner, block_y_map_exit, block_x_map_exit, y_out,
-            src_conn='_y_out',
-            memlet=dace.Memlet.simple(y_out.data, '0')
         )
 
         gemv_state.add_memlet_path(
@@ -1518,7 +1436,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             name,
             location=location,
             inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
-            outputs={"res", '_y_buffer'})
+            outputs={'_y_buffer'})
         self.dtype = dtype
         self.transA = transA
         self.alpha = alpha

@@ -45,10 +45,10 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
     if b != 0:
         test_sdfg.add_symbol(b.name, DATATYPE)
 
-    test_sdfg.add_array('A', shape=[nRows*mCols], dtype=DATATYPE)
-    test_sdfg.add_array('x', shape=[mCols], dtype=DATATYPE)
-    test_sdfg.add_array('y', shape=[nRows], dtype=DATATYPE)
-    test_sdfg.add_array('res', shape=[nRows], dtype=DATATYPE)
+    vec_type = dace.dtypes.vector(DATATYPE, veclen)
+    test_sdfg.add_array('A', shape=[(nRows*mCols)/veclen], dtype=vec_type)
+    test_sdfg.add_array('x', shape=[mCols/veclen], dtype=vec_type)
+    test_sdfg.add_array('y', shape=[nRows/veclen], dtype=vec_type)
 
     x_stream = streaming.StreamReadVector(
         'x',
@@ -65,13 +65,6 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         colTile,
         DATATYPE,
         tileByRow=True,
-        veclen=veclen
-    )
-
-    res_stream = streaming.StreamWriteVector(
-        'res',
-        nRows,
-        DATATYPE,
         veclen=veclen
     )
 
@@ -116,11 +109,17 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         test_sdfg,
         test_state,
         gemv_node, [x_stream, A_stream], ['_x', '_A'],
-        gemv_node, [res_stream], ['res']
+        gemv_node, [], []
     )
 
     memOps.fpga_copy_cpu_to_global(test_sdfg, preState, ['y'], [nRows], [DATATYPE], veclen=veclen)
     #memOps.fpga_copy_global_to_cpu(test_sdfg, postState, ['y'], [nRows], [DATATYPE], veclen=veclen)
+    fpga_y = postState.add_read('f_y')
+    cpu_y = postState.add_write('y')
+    postState.add_memlet_path(
+        fpga_y, cpu_y,
+        memlet=dace.Memlet.simple(cpu_y.data, '0:{}/{}'.format(nRows, veclen))
+    )
 
     rytask = test_state.add_tasklet(
         'rytask',
@@ -134,7 +133,6 @@ def fpga_graph(veclen, precision, vendor, transposed, testCase="0"):
         ['out_con'],
         'out_con = in_con'
     )
-    vec_type = dace.dtypes.vector(DATATYPE, veclen)
 
     y_buf_in = test_state.add_read('f_y')
     y_buf_out = test_state.add_write('f_y')
@@ -403,8 +401,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # TODO deadlocks if above 64
-    parser.add_argument("N", type=int, nargs="?", default=128)
-    parser.add_argument("M", type=int, nargs="?", default=128)
+    parser.add_argument("N", type=int, nargs="?", default=16)
+    parser.add_argument("M", type=int, nargs="?", default=16)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=1)
     parser.add_argument("--transposed",
@@ -440,45 +438,15 @@ if __name__ == "__main__":
     y_copy = np.copy(y)
     tmpy = np.copy(y)
 
-    sdfg(A=A, x=x, y=y, res=yo, n=n, m=m, alpha=alpha, beta=beta)
+    sdfg(A=A, x=x, y=y, n=n, m=m, alpha=alpha, beta=beta)
 
     ref = scipy.linalg.blas.sgemv(alpha, A, x, beta, y_copy, trans=transposed)
 
-    # Naive implementation of GEMV v4 row_streamed
-    lenx = n
-    leny = m
-    tilex = 8
-    tiley = 8
-    blocksx = n//tilex
-    blocksy = m//tiley
-    coll = tiley / veclen
-    ryoll = tiley / veclen
-    rxoll = tilex / veclen
-    maxsize = max(tilex, tiley)
-    naive = np.zeros((m,))
-    for ti in range(blocksx):
-        localx = x[ti*tilex:ti*tilex+tilex]
-        for tj in range(blocksy):
-            localy = tmpy[tj*tiley:tj*tiley+tiley]*beta
-            localA = A[ti*tiley:ti*tiley+tiley,tj*tilex:tj*tilex+tilex]
-            for i in range(tilex):
-                temp = alpha * localx[i]
-                for j in range(tiley):
-                    localy[j] += localA[i,j] * temp
-            if ti == blocksx-1:
-                naive[tj*tiley:tj*tiley+tiley] = localy
-            else:
-                tmpy[tj*tiley:tj*tiley+tiley] = localy
-    #
-
-    diff = np.linalg.norm(yo - ref) / (m if transposed else n)
+    diff = np.linalg.norm(y - ref) / (m if transposed else n)
     diffnai = np.linalg.norm(naive-ref) / m
-    if diffnai >= 1e-5:
-        print ("Naive error", diffnai)
-        print (naive)
     if diff >= 1e-5:
         print("Error", diff)
         print ('ref', ref)
-        print ('out', yo)
+        print ('out', y)
     else:
         print("Ok")
