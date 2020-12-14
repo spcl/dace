@@ -30,6 +30,10 @@ def test_unsqueeze():
 
 
 def test_apply_to_matmul():
+
+    old_serialization = dace.Config.get_bool('testing', 'serialization')
+    dace.Config.set('testing', 'serialization', value=False)
+
     @dace.library.node
     class MyNode(nodes.LibraryNode):
         implementations = {}
@@ -77,6 +81,7 @@ def test_apply_to_matmul():
     sdfg(A=A, B=B, C=C)
 
     assert np.allclose(C, np.matmul(A, B))
+    dace.Config.set('testing', 'serialization', value=old_serialization)
 
 
 if __name__ == '__main__':
