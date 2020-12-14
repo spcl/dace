@@ -710,8 +710,8 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
     def expansion(node,
                   state,
                   sdfg,
-                  tile_size_n=None,
-                  tile_size_m=None,
+                  tile_size_x=None,
+                  tile_size_y=None,
                   **kwargs):
 
         node.validate(sdfg, state)
@@ -737,12 +737,6 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
             m = desc_a.shape[0]
         alpha = node.alpha
         beta = node.beta
-        vector_length = desc_a.veclen
-
-        if tile_size_n is None:
-            tile_size_n = n
-        if tile_size_m is None:
-            tile_size_m = m
 
         # Create local versions of input data nodes
         desc_a = desc_a.clone()
@@ -763,19 +757,14 @@ class ExpandGemvTilesByColumn(ExpandTransformation):
         write_y = state.add_write("_y")
 
         # Flip loop bounds depending on whether we're transposed
-        if is_transposed:
-            size_x = n
-            size_y = m
-            tile_size_x = tile_size_n
-            tile_size_y = tile_size_m
-        else:
-            size_x = m
-            size_y = n
-            tile_size_x = tile_size_m
-            tile_size_y = tile_size_n
+        size_x = desc_x.shape[0]
+        size_y = desc_y.shape[0]
+        if tile_size_x is None:
+            tile_size_x = size_x
+        if tile_size_y is None:
+            tile_size_y = size_y
         num_tiles_y = f"{size_y}/{tile_size_y}"
         num_tiles_x = f"{size_x}/{tile_size_x}"
-        tile_size_y = f"{tile_size_y}//{vector_length}"
 
         # Create y tile map
         y_tile_entry, y_tile_exit = state.add_map(

@@ -10,11 +10,14 @@ import dace.libraries.blas as blas
 # ---------- ----------
 # Pure graph program (CPU)
 # ---------- ----------
-def pure_graph(dtype, transposed, expansion):
+def pure_graph(dtype, transposed, expansion, veclen):
     n = dace.symbol("n")
     m = dace.symbol("m")
 
     sdfg = dace.SDFG("gemv")
+
+    if veclen != 1:
+        raise NotImplementedError("Vectorization not implemented for pure.")
 
     # alpha and beta are symbols
     sdfg.add_symbol("alpha", dtype)
@@ -66,12 +69,16 @@ def pure_graph(dtype, transposed, expansion):
 # ---------- ----------
 # Intel FPGA graph
 # ---------- ----------
-def fpga_graph(dtype, transposed, expansion, vec_width=4):
+def fpga_graph(dtype, transposed, expansion, vec_width):
+
+    vtype = dace.vector(dtype, vec_width)
 
     sdfg = dace.SDFG("gemv_fpga_test")
 
     n = dace.symbol("n")
     m = dace.symbol("m")
+
+    m /= vec_width
 
     # alpha and beta are symbols
     sdfg.add_symbol("alpha", dtype)
@@ -87,19 +94,19 @@ def fpga_graph(dtype, transposed, expansion, vec_width=4):
 
     copy_in_state = sdfg.add_state("copy_to_device")
 
-    sdfg.add_array("A", shape=[n, m], dtype=dtype)
-    sdfg.add_array("x", shape=[x_size], dtype=dtype)
-    sdfg.add_array("y", shape=[y_size], dtype=dtype)
+    sdfg.add_array("A", shape=[n, m], dtype=vtype)
+    sdfg.add_array("x", shape=[x_size], dtype=vtype if not transposed else dtype)
+    sdfg.add_array("y", shape=[y_size], dtype=vtype if transposed else dtype)
 
     in_host_A = copy_in_state.add_read("A")
     in_host_x = copy_in_state.add_read("x")
     in_host_y = copy_in_state.add_read("y")
 
-    sdfg.add_array("device_A", shape=[A_rows, A_cols], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_A", shape=[A_rows, A_cols], dtype=vtype, storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
-    sdfg.add_array("device_x", shape=[x_size], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_x", shape=[x_size], dtype=vtype if not transposed else dtype, storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
-    sdfg.add_array("device_y", shape=[y_size], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_y", shape=[y_size], dtype=vtype if transposed else dtype, storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
 
     in_device_A = copy_in_state.add_write("device_A")
@@ -177,7 +184,7 @@ def fpga_graph(dtype, transposed, expansion, vec_width=4):
     sdfg.add_edge(fpga_state, copy_out_state,
                   dace.sdfg.sdfg.InterstateEdge())
 
-    gemv_node.expand(sdfg, fpga_state, tile_size_n=32, tile_size_m=32)
+    gemv_node.expand(sdfg, fpga_state, tile_size_x=16, tile_size_y=16)
 
     sdfg.fill_scope_connectors()
     return sdfg
@@ -186,8 +193,8 @@ def fpga_graph(dtype, transposed, expansion, vec_width=4):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=128)
-    parser.add_argument("M", type=int, nargs="?", default=128)
+    parser.add_argument("N", type=int, nargs="?", default=256)
+    parser.add_argument("M", type=int, nargs="?", default=256)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
@@ -195,6 +202,7 @@ if __name__ == "__main__":
                         default=False,
                         help="Compute GEMV with transposed matrix")
     parser.add_argument("--target", dest="target", default="pure")
+    parser.add_argument("--vectorize", dest="vectorize", default=1, type=int)
 
     args = parser.parse_args()
     n = args.N
@@ -203,15 +211,15 @@ if __name__ == "__main__":
     beta = args.beta
     transposed = args.transposed
     if args.target == "pure":
-        sdfg = pure_graph(dace.float32, transposed, "pure")
+        sdfg = pure_graph(dace.float32, transposed, "pure", args.vectorize)
     elif args.target == "intel_fpga":
-        sdfg = fpga_graph(dace.float32, transposed)
+        sdfg = fpga_graph(dace.float32, transposed, "IntelFPGA", args.vectorize)
     elif args.target == "tiles_by_column":
         if not transposed:
             raise RuntimeError(
                 "Matrix must be transposed to use this expansion, "
                 "please set --transpose")
-        sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn")
+        sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn", args.vectorize)
     else:
         print("Unsupported target")
         exit(-1)
