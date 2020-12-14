@@ -1474,7 +1474,7 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
         return inner_sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg, **kwargs):
+    def expansion(node, state, sdfg, vec_width=1, tile_m_size=1, tile_n_size=1):
 
         streaming = False
         streaming_nodes = 0
@@ -1503,8 +1503,8 @@ class ExpandGEMVFPGAStreamingRowTilesRowOrdered(ExpandTransformation):
             raise ValueError("Data type must be set to expand " + str(node) +
                              ".")
         return ExpandGEMVFPGAStreamingRowTilesRowOrdered.make_sdfg(
-            node.dtype, int(node.n_tile), int(node.m_tile), node.partial_width,
-            node.n, node.m, int(node.veclen), node.alpha, node.beta,
+            node.dtype, tile_n_size, tile_m_size, node.partial_width,
+            node.n, node.m, vec_width, node.alpha, node.beta,
             (node.streaming and streaming))
 
 
@@ -1709,10 +1709,6 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     transA = Property(dtype=bool,
                       desc="Whether to transpose A before multiplying")
 
-    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    n_tile = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    m_tile = dace.properties.SymbolicProperty(allow_none=False, default=1)
-
     n = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("n"))
     m = dace.properties.SymbolicProperty(allow_none=False,
@@ -1722,7 +1718,6 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     # latency of reduction operation on FPGA
     partial_width = dace.properties.SymbolicProperty(allow_none=False,
                                                      default=16)
-
     # To set output connectors appropriately
     streaming = dace.properties.SymbolicProperty(allow_none=False,
                                                  default=False)
@@ -1734,9 +1729,6 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                  transA=False,
                  alpha=1,
                  beta=0,
-                 veclen=1,
-                 n_tile=1,
-                 m_tile=1,
                  n=dace.symbolic.symbol("n"),
                  m=dace.symbolic.symbol("m"),
                  partial_width=1,
@@ -1754,11 +1746,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
         self.n = n
         self.m = m
-        self.veclen = veclen
-        self.n_tile = n_tile
-        self.m_tile = m_tile
-        self.partial_width = partial_width
 
+        self.partial_width = partial_width
         self.streaming = streaming
 
     def validate(self, sdfg, state):

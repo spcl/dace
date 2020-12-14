@@ -260,12 +260,9 @@ def fpga_row_streamd_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
 
     gemv_node = blas.gemv.Gemv("blas_gemv",
                                dtype=dace.float32,
-                               n_tile=rowTile,
-                               m_tile=colTile,
                                partial_width=partial_width,
                                n=nRows,
                                m=mCols,
-                               veclen=vec_width,
                                alpha=a,
                                beta=b,
                                streaming=True)
@@ -280,7 +277,7 @@ def fpga_row_streamd_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
             test_sdfg, test_state, gemv_node, [x_stream, A_stream],
             ['_x', '_A'], gemv_node, [res_stream], ['_res'])
 
-    test_sdfg.expand_library_nodes()
+    gemv_node.expand(test_sdfg, test_state, tile_m_size=colTile, tile_n_size=rowTile, vec_width=vec_width)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
@@ -386,12 +383,9 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
 
     gemv_node = blas.gemv.Gemv("blas_gemv",
                                dtype=dace.float32,
-                               n_tile=n_tile,
-                               m_tile=m_tile,
                                partial_width=8,
                                n=n,
                                m=m,
-                               veclen=vec_width,
                                alpha=a,
                                beta=b,
                                streaming=False)
@@ -428,7 +422,8 @@ def fpga_row_array_graph(dtype, vendor, n_tile=4, m_tile=4, vec_width=1):
     test_sdfg.fill_scope_connectors()
     test_sdfg.validate()
 
-    gemv_node.expand(test_sdfg, fpga_state)
+    
+    gemv_node.expand(test_sdfg, fpga_state, tile_m_size=m_tile, tile_n_size=n_tile, vec_width=vec_width)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
