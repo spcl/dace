@@ -1240,7 +1240,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 labels = [n.label.replace(" ", "_") for n in access_nodes]
             if len(labels) == 0:
                 raise RuntimeError("Expected at least one tasklet or data node")
-            module_name = "_".join(labels)
+            # Do not use long name, otherwise Intel compiler fails
+            module_name = "_".join(labels[:1])
             self.generate_module(
                 sdfg, state, module_name, subgraph,
                 subgraph_parameters[subgraph] + scalar_parameters,
