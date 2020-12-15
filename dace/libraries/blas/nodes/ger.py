@@ -573,12 +573,23 @@ class ExpandGerFpga(ExpandTransformation):
         # Load y buffer
         read_y = state.add_read("_y")
         subset = ("0" if isinstance(desc_y, dace.data.Stream) else
-                  f"ty*{tile_size_y}:(ty + 1)*{tile_size_y}")
+                  f"ty*{tile_size_y}+iy")
+        read_y_entry, read_y_exit = state.add_map(
+            "read_y", {"iy": f"0:{tile_size_y}"},
+            schedule=dace.ScheduleType.FPGA_Device)
+        read_y_tasklet = state.add_tasklet("read_y", {"y_memory"}, {"y_buffer"},
+                                           "y_buffer = y_memory")
         state.add_memlet_path(read_y,
                               y_tile_entry,
+                              read_y_entry,
+                              read_y_tasklet,
+                              dst_conn="y_memory",
+                              memlet=dace.Memlet(f"_y[{subset}]"))
+        state.add_memlet_path(read_y_tasklet,
+                              read_y_exit,
                               y_local,
-                              memlet=dace.Memlet(f"y_local[0:{tile_size_y}]",
-                                                 other_subset=subset))
+                              src_conn="y_buffer",
+                              memlet=dace.Memlet(f"y_local[iy]"))
 
         x_tile_entry, x_tile_exit = state.add_map(
             "x_tiles", {"tx": f"0:{num_tiles_x}"},
