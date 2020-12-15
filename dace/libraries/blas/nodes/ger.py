@@ -515,7 +515,7 @@ class ExpandGerFpga(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None):
+    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None, **kwargs):
         node.validate(sdfg, state)
 
         for e in state.in_edges(node):
