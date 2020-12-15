@@ -771,14 +771,12 @@ class ExpandGemvAccumulate(ExpandTransformation):
             schedule=dace.ScheduleType.FPGA_Device)
 
         # Create y map
-        y_entry, y_exit = state.add_map(
-            "y", {"iy": f"0:{tile_size_y}"},
-            schedule=dace.ScheduleType.FPGA_Device)
+        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"},
+                                        schedule=dace.ScheduleType.FPGA_Device)
 
         # Create x map
-        x_entry, x_exit = state.add_map(
-            "x", {"ix": f"0:{tile_size_x}"},
-            schedule=dace.ScheduleType.FPGA_Device)
+        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"},
+                                        schedule=dace.ScheduleType.FPGA_Device)
 
         # Local buffer of x
         sdfg.add_array("x_local", (tile_size_x, ),
@@ -789,7 +787,6 @@ class ExpandGemvAccumulate(ExpandTransformation):
 
         if beta != 0:
             raise NotImplementedError("Not yet implemented.")
-
 
         multiply_tasklet = state.add_tasklet("multiply", {"A_in", "x_in"},
                                              {f"product": desc_a.dtype},
@@ -809,15 +806,25 @@ class ExpandGemvAccumulate(ExpandTransformation):
                               multiply_tasklet,
                               dst_conn="A_in",
                               memlet=dace.Memlet(f"_A[{subset}]"))
+        read_x_entry, read_x_exit = state.add_map(
+            "read_x", {"ix": f"0:{tile_size_x}"},
+            schedule=dace.ScheduleType.FPGA_Device)
         subset = ("0" if isinstance(desc_x, dt.Stream) else
-                  f"tx*{tile_size_x}:(tx + 1)*{tile_size_x}")
+                  f"tx*{tile_size_x} + ix")
+        read_x_tasklet = state.add_tasklet("read_x", {"x_memory"}, {"x_buffer"},
+                                           "x_buffer = x_memory")
         state.add_memlet_path(read_x,
                               y_tile_entry,
                               x_tile_entry,
+                              read_x_entry,
+                              read_x_tasklet,
+                              dst_conn="x_memory",
+                              memlet=dace.Memlet(f"_x[{subset}]"))
+        state.add_memlet_path(read_x_tasklet,
+                              read_x_exit,
                               x_local_access,
-                              memlet=dace.Memlet(
-                                  f"_x[{subset}]",
-                                  other_subset=f"0:{tile_size_x}"))
+                              src_conn="x_buffer",
+                              memlet=dace.Memlet(f"x_local[ix]"))
         state.add_memlet_path(x_local_access,
                               y_entry,
                               x_entry,
@@ -844,9 +851,8 @@ class ExpandGemvAccumulate(ExpandTransformation):
         product_scalar = state.add_access("product_scalar")
         state.add_memlet_path(product_vector,
                               product_scalar,
-                              memlet=dace.Memlet(
-                                  f"product_vector[0]",
-                                  other_subset=f"0:{veclen}"))
+                              memlet=dace.Memlet(f"product_vector[0]",
+                                                 other_subset=f"0:{veclen}"))
 
         # Now we need to collapse this
         reduce_vector_entry, reduce_vector_exit = state.add_map(
@@ -920,28 +926,34 @@ acc_out = prev + y_in""")
                               update_y_tasklet,
                               dst_conn="y_in",
                               memlet=dace.Memlet(f"accumulate_product[0]"))
-        state.add_memlet_path(partial_sum_read,
-                              x_entry,
-                              update_y_tasklet,
-                              dst_conn="acc_in",
-                              memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
+        state.add_memlet_path(
+            partial_sum_read,
+            x_entry,
+            update_y_tasklet,
+            dst_conn="acc_in",
+            memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
         state.add_memlet_path(y_tile_entry, y_local_read, memlet=dace.Memlet())
         state.add_memlet_path(y_entry, partial_sum_read, memlet=dace.Memlet())
-        state.add_memlet_path(update_y_tasklet,
-                              x_exit,
-                              partial_sum_write,
-                              src_conn="acc_out",
-                              memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
+        state.add_memlet_path(
+            update_y_tasklet,
+            x_exit,
+            partial_sum_write,
+            src_conn="acc_out",
+            memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
 
         # Reduce the partial sums
         reduce_sums_entry, reduce_sums_exit = state.add_map(
             "reduce_partial_sums", {"u": f"0:{num_partial_sums}"},
             schedule=dace.ScheduleType.FPGA_Device,
             unroll=True)
-        reduce_sums_tasklet = state.add_tasklet("reduce_partial_sums", {"sum_in", "val_in"}, {"sum_out"}, """
+        reduce_sums_tasklet = state.add_tasklet(
+            "reduce_partial_sums", {"sum_in", "val_in"}, {"sum_out"}, """
 prev = sum_in if u > 0 else 0
 sum_out = prev + val_in""")
-        sdfg.add_array("accumulate_sum", (1, ), desc_y.dtype, transient=True, storage=dace.StorageType.FPGA_Local)
+        sdfg.add_array("accumulate_sum", (1, ),
+                       desc_y.dtype,
+                       transient=True,
+                       storage=dace.StorageType.FPGA_Local)
         accumulate_sum_read = state.add_access("accumulate_sum")
         accumulate_sum_write = state.add_access("accumulate_sum")
         state.add_memlet_path(y_entry,
@@ -964,9 +976,8 @@ sum_out = prev + val_in""")
                               memlet=dace.Memlet("partial_sums[u]"))
 
         # Combine with y buffer
-        combine_tasklet = state.add_tasklet("combine_y", {"val", "buffer_in"},
-                                            {"buffer_out"},
-                                            """\
+        combine_tasklet = state.add_tasklet(
+            "combine_y", {"val", "buffer_in"}, {"buffer_out"}, """\
 prev = buffer_in if tx > 0 else 0
 buffer_out = prev + val""")
         state.add_memlet_path(accumulate_sum_write,
@@ -980,7 +991,6 @@ buffer_out = prev + val""")
                               dst_conn="buffer_in",
                               memlet=dace.Memlet("y_local[iy]"))
 
-
         state.add_memlet_path(combine_tasklet,
                               y_exit,
                               x_tile_exit,
@@ -988,16 +998,24 @@ buffer_out = prev + val""")
                               src_conn="buffer_out",
                               memlet=dace.Memlet(f"y_local[iy]"))
 
-
         subset = ("0" if isinstance(desc_y, dt.Stream) else
-                  f"ty*{tile_size_y}:(ty + 1)*{tile_size_y}")
+                  f"ty*{tile_size_y} + iy")
+        write_y_entry, write_y_exit = state.add_map(
+            "write_y", {"iy": f"0:{tile_size_y}"},
+            schedule=dace.ScheduleType.FPGA_Device)
+        write_y_tasklet = state.add_tasklet("write_y", {"y_buffer"},
+                                            {"y_memory"}, "y_memory = y_buffer")
         state.add_memlet_path(y_local_write,
+                              write_y_entry,
+                              write_y_tasklet,
+                              dst_conn="y_buffer",
+                              memlet=dace.Memlet(f"y_local[iy]"))
+        state.add_memlet_path(write_y_tasklet,
+                              write_y_exit,
                               y_tile_exit,
                               write_y,
-                              src_conn="y_out",
-                              memlet=dace.Memlet(f"_y[{subset}]",
-                                                 other_subset=f"0:{tile_size_y}",
-                                                 dynamic=True))
+                              src_conn="y_memory",
+                              memlet=dace.Memlet(f"_y[{subset}]"))
 
         return sdfg
 
