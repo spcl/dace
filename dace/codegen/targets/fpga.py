@@ -284,6 +284,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
+            # For each subgraph, keep a listing of array to current interface ID
+            data_to_interface: Dict[str, int] = {} 
+
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
@@ -294,9 +297,13 @@ class FPGACodeGen(TargetCodeGenerator):
                         or isinstance(data, dace.data.Scalar)
                         or isinstance(data, dace.data.Stream)):
                     if data.storage == dace.dtypes.StorageType.FPGA_Global:
-                        # Get and update global memory interface ID
-                        interface_id = global_interfaces[dataname]
-                        global_interfaces[dataname] += 1
+                        if dataname in data_to_interface:
+                            interface_id = data_to_interface[dataname]
+                        else:
+                            # Get and update global memory interface ID
+                            interface_id = global_interfaces[dataname]
+                            global_interfaces[dataname] += 1
+                            data_to_interface[dataname] = interface_id
 
                         subgraph_parameters[subgraph].append(
                             (is_output, dataname, data, interface_id))
