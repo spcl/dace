@@ -377,8 +377,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int)
-    parser.add_argument("M", type=int)
     parser.add_argument("K", type=int)
+    parser.add_argument("M", type=int)
     parser.add_argument("P", type=int, help="Number of processing elements")
     parser.add_argument("W", type=int, help="Vectorization width")
     parser.add_argument("-specialize",
@@ -403,8 +403,8 @@ if __name__ == "__main__":
         sdfg = make_sdfg(True, vec_width)
         sdfg.specialize(dict(P=P, M=M, N=N, K=K))
 
-    print("Matrix multiplication {}x{}x{} with {} PEs ({}specialized)".format(
-        M.get(), N.get(), K.get(), P.get(),
+    print("Matrix multiplication {}x{}x{} with {} PEs and vectorization width {} ({}specialized)".format(
+        N.get(), K.get(), M.get(), P.get(), W.get(),
         "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
