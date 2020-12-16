@@ -435,10 +435,9 @@ class StreamingComposition(xf.Transformation):
             curstate = curstate.parent.parent
 
         # Array must not be used anywhere else in the state
-        if strict:
-            if any(n is not access and n.data == access.data
-                for n in graph.data_nodes()):
-                return False
+        if any(n is not access and n.data == access.data
+               for n in graph.data_nodes()):
+            return False
 
         # Only one memlet path on each direction is allowed
         # TODO: Relax so that repeated application of
