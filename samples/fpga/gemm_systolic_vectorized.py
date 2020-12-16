@@ -404,7 +404,7 @@ if __name__ == "__main__":
         sdfg.specialize(dict(P=P, M=M, N=N, K=K))
 
     print("Matrix multiplication {}x{}x{} with {} PEs and vectorization width {} ({}specialized)".format(
-        N.get(), K.get(), M.get(), P.get(), args.W,
+        N.get(), K.get(), M.get(), P.get(), args["W"],
         "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
