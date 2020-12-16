@@ -8,7 +8,7 @@ from dace.sdfg import sdfg
 from dace.sdfg import graph as sdfg_graph
 from dace.frontend import operations
 from dace import dtypes
-
+from dace.transformation import transformation
 import textwrap
 
 from typing import List
@@ -17,86 +17,47 @@ from typing import List
 @registry.autoregister_params(singlestate=True)
 @properties.make_properties
 class WarpAllReduceDetection(pattern_matching.Transformation):
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _temp_node = nodes.AccessNode("_")
-    _map_exit = nodes.MapExit(nodes.Map("", [], []))
-    _output_node = nodes.AccessNode("_")
+
+    local_access = transformation.PatternNode(nodes.AccessNode)
+    reduced_access = transformation.PatternNode(nodes.AccessNode)
 
     @staticmethod
     def expressions():
         return [
             utils.node_path_graph(
-                WarpAllReduceDetection._map_entry,
-                WarpAllReduceDetection._temp_node,
-                WarpAllReduceDetection._map_exit,
-                WarpAllReduceDetection._output_node,
+                WarpAllReduceDetection.local_access,
+                WarpAllReduceDetection.reduced_access,
             )
         ]
 
     @staticmethod
-    def can_be_applied(sdfg_state: state.SDFGState,
+    def can_be_applied(state: state.SDFGState,
                        candidate,
                        expr_index,
                        sdfg: sdfg.SDFG,
                        strict=False):
-        map_entry: nodes.MapEntry = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._map_entry]]
-        temp_node: nodes.AccessNode = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._temp_node]]
-        map_exit: nodes.MapExit = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._map_exit]]
-        output_node: nodes.AccessNode = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._output_node]]
+        local_access = state.nodes()[candidate[WarpAllReduceDetection.local_access]]
+        reduced_access = state.nodes()[candidate[WarpAllReduceDetection.reduced_access]]
 
-        if len(sdfg_state.in_edges(map_entry)) != 1 or len(
-                sdfg_state.out_edges(map_entry)) != 1:
-            return False
-
-        if len(sdfg_state.in_edges(temp_node)) != 1 or len(
-                sdfg_state.out_edges(temp_node)) != 1:
-            return False
-
-        if len(sdfg_state.in_edges(map_exit)) != 1 or len(
-                sdfg_state.out_edges(map_exit)) != 1:
-            return False
-
-        if len(sdfg_state.in_edges(output_node)) != 1:
-            return False
-
-        if (not sdfg_state.in_edges(map_exit)[0].data.wcr) or (
-                not sdfg_state.out_edges(map_exit)[0].data.wcr):
-            return False
-
-        # TODO we need to check that exactly 32 operations is done and those operations have warp schedule
+        # 1. access nodes should be inside gpu map over warp
+        # 2. there should be reduction
+        # 3. reduction should be done over warp index
 
         return True
 
     @staticmethod
-    def match_to_str(sdfg_state: state.SDFGState, candidate):
-        map_entry: nodes.MapEntry = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._map_entry]]
-        temp_node: nodes.AccessNode = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._temp_node]]
-        map_exit: nodes.MapExit = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._map_exit]]
-        output_node: nodes.AccessNode = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._output_node]]
+    def match_to_str(state: state.SDFGState, candidate):
+        local_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetection.local_access]]
+        reduced_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetection.reduced_access]]
 
-        return f'{map_entry.map.label} -> {temp_node.label} -> {map_exit.map.params} -> {output_node.data}'
+        return f'{local_access.label} -> {reduced_access.label}'
 
     def apply(self, sdfg: sdfg.SDFG):
-        sdfg_state = sdfg.nodes()[self.state_id]
+        state = sdfg.nodes()[self.state_id]
 
         candidate = self.subgraph
-
-        map_entry: nodes.MapEntry = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._map_entry]]
-        temp_node: nodes.AccessNode = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._temp_node]]
-        map_exit: nodes.MapExit = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._map_exit]]
-        output_node: nodes.AccessNode = sdfg_state.nodes()[candidate[
-            WarpAllReduceDetection._output_node]]
+        local_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetection.local_access]]
+        reduced_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetection.reduced_access]]
 
         # get edges
         outer_edge_in: sdfg_graph.MultiConnectorEdge = sdfg_state.in_edges(
