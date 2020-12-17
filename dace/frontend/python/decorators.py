@@ -3,6 +3,9 @@
 
 from __future__ import print_function
 
+import inspect
+import os.path
+
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser
@@ -20,7 +23,10 @@ def program(f, *args, **kwargs) -> parser.DaceProgram:
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs)
+    frame = inspect.stack()[2]
+    module = inspect.getmodule(frame[0])
+    filepath = os.path.abspath(module.__file__)
+    return parser.DaceProgram(f, args, kwargs, filepath)
 
 
 function = program

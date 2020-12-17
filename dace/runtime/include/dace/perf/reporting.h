@@ -143,7 +143,7 @@ namespace perf {
                 }
 
                 ofs << std::endl << "  ]" << std::endl;
-                ofs << std::endl << "}" << std::endl;
+                ofs << "}" << std::endl;
             }
         }
     };

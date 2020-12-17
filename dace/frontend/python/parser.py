@@ -91,7 +91,8 @@ def parse_from_file(filename, *compilation_args):
     return [parse_function(p, *compilation_args) for p in programs]
 
 
-def parse_from_function(function, *compilation_args, strict=None):
+def parse_from_function(function, *compilation_args, strict=None,
+                        parent_file=None):
     """ Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
         :param function: DaceProgram object (obtained from the `@dace.program`
@@ -99,6 +100,7 @@ def parse_from_function(function, *compilation_args, strict=None):
         :param compilation_args: Various compilation arguments e.g. dtypes.
         :param strict: Whether to apply strict transformations or not (None
                        uses configuration-defined value). 
+        :param parent_file: Absolute path to the file that generated this SDFG.
         :return: The generated SDFG object.
     """
     # Avoid import loop
@@ -128,6 +130,15 @@ def parse_from_function(function, *compilation_args, strict=None):
         # Split back edges with assignments and conditions to allow richer
         # control flow detection in code generation
         xfh.split_interstate_edges(sdfg)
+
+    if parent_file is not None:
+        os.makedirs(sdfg.build_folder, exist_ok=True)
+        with open(os.path.join(sdfg.build_folder, 'sdfg_launchfiles.csv'), 'w') as launchfiles_file:
+            launchfiles_file.write(
+                sdfg.name + ',' +
+                os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
+                + ',' + parent_file
+            )
 
     # Save the SDFG (again)
     sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
@@ -232,12 +243,13 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-    def __init__(self, f, args, kwargs):
+    def __init__(self, f, args, kwargs, parent_file):
         self.f = f
         self.args = args
         self.kwargs = kwargs
         self._name = f.__name__
         self.argnames = _get_argnames(f)
+        self.parent_file = parent_file
 
         global_vars = _get_locals_and_globals(f)
 
@@ -254,18 +266,20 @@ class DaceProgram:
 
     def to_sdfg(self, *args, strict=None) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return parse_from_function(self, *args, strict=strict)
+        return parse_from_function(self, *args, strict=strict,
+                                   parent_file=self.parent_file)
 
     def compile(self, *args, strict=None):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = parse_from_function(self, *args, strict=strict)
+        sdfg = parse_from_function(self, *args, strict=strict,
+                                   parent_file=self.parent_file)
         return sdfg.compile()
 
     def __call__(self, *args, **kwargs):
         """ Convenience function that parses, compiles, and runs a DaCe 
             program. """
         # Parse SDFG
-        sdfg = parse_from_function(self, *args)
+        sdfg = parse_from_function(self, *args, parent_file=self.parent_file)
 
         # Add named arguments to the call
         kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
