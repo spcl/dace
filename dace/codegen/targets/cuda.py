@@ -29,7 +29,7 @@ from dace.codegen import cppunparse
 
 
 def prod(iterable):
-    return functools.reduce(sympy.mul.Mul, iterable, 1)
+    return functools.reduce(sympy.Mul, iterable, 1)
 
 
 def _expr(val):
@@ -1412,7 +1412,7 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # Linearize (flatten) rest of dimensions to third
         if len(grid_size) > 3:
-            grid_size[2] = functools.reduce(sympy.mul.Mul, grid_size[2:], 1)
+            grid_size[2] = functools.reduce(sympy.Mul, grid_size[2:], 1)
             del grid_size[3:]
 
         # Extend to 3 dimensions if necessary
@@ -1489,7 +1489,7 @@ void  *{kname}_args[] = {{ {kargs} }};
 
             # Linearize (flatten) rest of dimensions to third
             if len(tbsize) > 3:
-                tbsize[2] = functools.reduce(sympy.mul.Mul, tbsize[2:], 1)
+                tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
                 del tbsize[3:]
 
             # Extend to 3 dimensions if necessary
@@ -1576,7 +1576,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Delinearize third dimension if necessary
                 if i == 2 and len(krange) > 3:
                     block_expr = '(blockIdx.z / (%s))' % _topy(
-                        functools.reduce(sympy.mul.Mul, kdims[3:], 1))
+                        functools.reduce(sympy.Mul, kdims[3:], 1))
                 else:
                     block_expr = 'blockIdx.%s' % _named_idx(i)
                     # If we defaulted to 32 threads per block, offset by thread ID
@@ -1597,8 +1597,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                     varname = kernel_map.params[-i - 1]
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
                     block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
-                        _topy(functools.reduce(sympy.mul.Mul, kdims[i + 1:],
-                                               1)),
+                        _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
                     )
 
@@ -1821,7 +1820,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Delinearize third dimension if necessary
                 if i == 2 and len(device_map_range) > 3:
                     block_expr = '(blockIdx.z / (%s))' % _topy(
-                        functools.reduce(sympy.mul.Mul, device_map_dims[3:], 1))
+                        functools.reduce(sympy.Mul, device_map_dims[3:], 1))
                 else:
                     block_expr = 'blockIdx.%s' % _named_idx(i)
                     # If we defaulted to 32 threads per block, offset by thread ID
@@ -1843,8 +1842,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
                     block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
                         _topy(
-                            functools.reduce(sympy.mul.Mul,
-                                             device_map_dims[i + 1:], 1)),
+                            functools.reduce(sympy.Mul, device_map_dims[i + 1:],
+                                             1)),
                         _topy(device_map_dims[i]),
                     )
 
@@ -1947,7 +1946,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
                     block_expr = '(threadIdx.z / (%s))' % _topy(
-                        functools.reduce(sympy.mul.Mul, kdims[3:], 1))
+                        functools.reduce(sympy.Mul, kdims[3:], 1))
                 else:
                     block_expr = 'threadIdx.%s' % _named_idx(i)
 
@@ -1963,8 +1962,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                     varname = scope_map.params[-i - 1]
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
                     block_expr = '(threadIdx.z / (%s)) %% (%s)' % (
-                        _topy(functools.reduce(sympy.mul.Mul, kdims[i + 1:],
-                                               1)),
+                        _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
                     )
 
