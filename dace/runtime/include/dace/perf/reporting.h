@@ -23,6 +23,7 @@ namespace dace {
 namespace perf {
 
     struct TraceEvent {
+        char ph;
         std::string name;
         std::string cat;
         unsigned long int tstart;
@@ -33,6 +34,10 @@ namespace perf {
             int state_id;
             int el_id;
         } element_id;
+        struct _counter {
+            std::string name;
+            unsigned long int val;
+        } counter;
     };
 
     /**
@@ -52,6 +57,29 @@ namespace perf {
             std::lock_guard<std::mutex> guard (this->_mutex);
             this->_events.clear();
             this->_events.reserve(DACE_REPORT_BUFFER_SIZE);
+        }
+
+        void add_counter(
+            const char *name,
+            const char *cat,
+            const char *counter_name,
+            unsigned long int counter_val
+        ) {
+            long unsigned int tstart = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::high_resolution_clock::now().time_since_epoch()
+            ).count();
+            std::thread::id tid = std::this_thread::get_id();
+            std::lock_guard<std::mutex> guard (this->_mutex);
+            this->_events.push_back({
+                'C',
+                name,
+                cat,
+                tstart,
+                0,
+                tid,
+                { 0, 0, 0 },
+                { counter_name, counter_val }
+            });
         }
 
         /**
@@ -76,16 +104,14 @@ namespace perf {
             std::thread::id tid = std::this_thread::get_id();
             std::lock_guard<std::mutex> guard (this->_mutex);
             this->_events.push_back({
+                'X',
                 name,
                 cat,
                 tstart,
                 tend,
                 tid,
-                {
-                    sdfg_id,
-                    state_id,
-                    el_id
-                }
+                { sdfg_id, state_id, el_id },
+                { "", 0 }
             });
         }
 
@@ -123,23 +149,31 @@ namespace perf {
                     ofs << "    {";
                     ofs << "\"name\": \"" << event.name << "\", ";
                     ofs << "\"cat\": \"" << event.cat << "\", ";
-                    ofs << "\"ph\": \"" << 'X' << "\", ";
+                    ofs << "\"ph\": \"" << event.ph << "\", ";
 
                     ofs << "\"ts\": " << event.tstart << ", ";
-                    ofs << "\"dur\": " << event.tend - event.tstart << ", ";
+
+                    if (event.ph == 'X')
+                        ofs << "\"dur\": " << event.tend - event.tstart << ", ";
 
                     ofs << "\"pid\": " << pid << ", ";
                     ofs << "\"tid\": " << event.tid << ", ";
 
                     ofs << "\"args\": {";
-                    ofs << "\"sdfg_id\": " << event.element_id.sdfg_id;
-                    if (event.element_id.state_id > -1)
-                        ofs << ", \"state_id\": " << event.element_id.state_id;
-                    if (event.element_id.el_id > -1)
-                        ofs << ", \"id\": " << event.element_id.el_id;
-                    ofs << "}";
 
-                    ofs << "}";
+                    if (event.ph == 'X') {
+                        ofs << "\"sdfg_id\": " << event.element_id.sdfg_id;
+                        if (event.element_id.state_id > -1)
+                            ofs << ", \"state_id\": ";
+                            ofs << event.element_id.state_id;
+                        if (event.element_id.el_id > -1)
+                            ofs << ", \"id\": " << event.element_id.el_id;
+                    } else if (event.ph == 'C') {
+                        ofs << "\"" << event.counter.name << "\": ";
+                        ofs << event.counter.val;
+                    }
+
+                    ofs << "}}";
                 }
 
                 ofs << std::endl << "  ]" << std::endl;
