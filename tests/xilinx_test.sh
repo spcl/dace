@@ -84,6 +84,10 @@ run_all() {
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
+
+    # Multiple gearboxing
+    run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
+
 }
 
 # Check if xocc is vailable
