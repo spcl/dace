@@ -15,6 +15,13 @@ class TimerProvider(InstrumentationProvider):
         # For other file headers
         sdfg.append_global_code('\n#include <chrono>', None)
 
+        if sdfg.instrument == dtypes.InstrumentationType.Timer:
+            self.on_tbegin(local_stream, sdfg)
+
+    def on_sdfg_end(self, sdfg, local_stream, global_stream):
+        if sdfg.instrument == dtypes.InstrumentationType.Timer:
+            self.on_tend('SDFG %s' % sdfg.name, local_stream, sdfg)
+
     def on_tbegin(self, stream: CodeIOStream, sdfg=None, state=None, node=None):
         idstr = self._idstr(sdfg, state, node)
 

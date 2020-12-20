@@ -352,7 +352,7 @@ class CompiledSDFG(object):
 
             # PROFILING
             if Config.get_bool('profiling'):
-                operations.timethis(self._sdfg.name, 'DaCe', 0, self._cfunc,
+                operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc,
                                     *argtuple)
             else:
                 self._cfunc(*argtuple)

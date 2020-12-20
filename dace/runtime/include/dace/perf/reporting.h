@@ -163,11 +163,15 @@ namespace perf {
 
                     if (event.ph == 'X') {
                         ofs << "\"sdfg_id\": " << event.element_id.sdfg_id;
-                        if (event.element_id.state_id > -1)
+
+                        if (event.element_id.state_id > -1) {
                             ofs << ", \"state_id\": ";
                             ofs << event.element_id.state_id;
-                        if (event.element_id.el_id > -1)
+                        }
+
+                        if (event.element_id.el_id > -1) {
                             ofs << ", \"id\": " << event.element_id.el_id;
+                        }
                     } else if (event.ph == 'C') {
                         ofs << "\"" << event.counter.name << "\": ";
                         ofs << event.counter.val;

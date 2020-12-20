@@ -243,6 +243,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            dtypes.typeclass,
                            desc="Global symbols for this SDFG")
 
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
+
     global_code = DictProperty(
         str,
         CodeBlock,
@@ -601,6 +605,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def is_instrumented(self) -> bool:
         """ Returns True if the SDFG has performance instrumentation enabled on
             it or any of its elements. """
+        if self.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return True
         try:
             next(n for n, _ in self.all_nodes_recursive()
                  if hasattr(n, 'instrument') and
