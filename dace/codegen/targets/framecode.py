@@ -404,10 +404,9 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             return stream.getvalue()
 
         # Handle specialized control flow
-        # if config.Config.get_bool('optimizer', 'detect_control_flow'):
-        #    cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
-        # else:
-        if True:
+        if config.Config.get_bool('optimizer', 'detect_control_flow'):
+           cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
+        else:
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]

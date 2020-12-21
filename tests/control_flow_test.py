@@ -306,6 +306,7 @@ if __name__ == '__main__':
     test_2d_assignment()
     test_while_symbol()
     test_while_data()
+    test_dowhile()
     test_ifchain()
     test_switchcase()
     test_fsm()
