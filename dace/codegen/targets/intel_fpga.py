@@ -204,8 +204,6 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         else:
             return var_name
 
-
-
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
         """
@@ -223,7 +221,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
         else:
             size_str = ""
         # mangle name
-        chan_name = self.create_mangled_channel_name(var_name, self._kernel_count)
+        chan_name = self.create_mangled_channel_name(var_name,
+                                                     self._kernel_count)
         kernel_stream.write("channel {} {}{}{};".format(vec_type, chan_name,
                                                         size_str,
                                                         depth_attribute))
@@ -300,7 +299,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                   packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             # channel mangling: the expression could contain indexing
-            expr.replace(var_name, self.get_mangled_channel_name(var_name, self._kernel_count))
+            expr.replace(
+                var_name,
+                self.get_mangled_channel_name(var_name, self._kernel_count))
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
             if index and index != "0":
@@ -331,7 +332,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             #mangle name
-            chan_name = self.get_mangled_channel_name(write_expr,self._kernel_count)
+            chan_name = self.get_mangled_channel_name(write_expr,
+                                                      self._kernel_count)
             if defined_type == DefinedType.StreamArray:
                 write_expr = "{}[{}]".format(chan_name, index)
             if is_unpack:
@@ -674,10 +676,11 @@ __attribute__((autorun))\n"""
             # a function that will be used create a kernel multiple times
 
             # generate a unique name for this function
-            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + name+"_func"
+            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + name + "_func"
             module_body_stream.write(
-                "inline void {}({}) {{".format(
-                    pe_function_name, ", ".join(kernel_args_opencl)), sdfg, state_id)
+                "inline void {}({}) {{".format(pe_function_name,
+                                               ", ".join(kernel_args_opencl)),
+                sdfg, state_id)
 
         # Allocate local transients
         data_to_allocate = (set(subgraph.top_level_transients()) -
@@ -1013,13 +1016,17 @@ __kernel void \\
                     result += "{} {};".format(memlet_type, connector)
                 else:
                     result += "{} {} = read_channel_intel({});".format(
-                        memlet_type, connector, self.get_mangled_channel_name(data_name,self._kernel_count))
+                        memlet_type, connector,
+                        self.get_mangled_channel_name(data_name,
+                                                      self._kernel_count))
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
-                    connector, self.get_mangled_channel_name(data_name, self._kernel_count))
+                    connector,
+                    self.get_mangled_channel_name(data_name,
+                                                  self._kernel_count))
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         elif def_type == DefinedType.StreamArray:
@@ -1050,7 +1057,10 @@ __kernel void \\
                             outer_sdfg.arrays[data_name], outer_memlet.subset)
 
                     result += "{} {} = read_channel_intel({}[{}]);".format(
-                        memlet_type, connector, self.get_mangled_channel_name(data_name, self._kernel_count), offset)
+                        memlet_type, connector,
+                        self.get_mangled_channel_name(data_name,
+                                                      self._kernel_count),
+                        offset)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
@@ -1063,7 +1073,10 @@ __kernel void \\
                     channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                       memlet.subset)
                 result += "#define {} {}[{}] // God save us".format(
-                    connector, self.get_mangled_channel_name(data_name, self._kernel_count), channel_idx)
+                    connector,
+                    self.get_mangled_channel_name(data_name,
+                                                  self._kernel_count),
+                    channel_idx)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         else:
@@ -1071,7 +1084,8 @@ __kernel void \\
 
         callsite_stream.write(result, sdfg, state_id, tasklet)
 
-    def generate_channel_writes(self, sdfg, dfg, node, callsite_stream, state_id):
+    def generate_channel_writes(self, sdfg, dfg, node, callsite_stream,
+                                state_id):
         for edge in dfg.out_edges(node):
             connector = edge.src_conn
             memlet = edge.data
@@ -1081,7 +1095,8 @@ __kernel void \\
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.volume == 1 and not memlet.dynamic):
                     # mangle channel
-                    chan_name = self.get_mangled_channel_name(data_name, self._kernel_count)
+                    chan_name = self.get_mangled_channel_name(
+                        data_name, self._kernel_count)
                     if data_desc.is_stream_array():
                         offset = cpp.cpp_offset_expr(data_desc, memlet.subset)
                         target = f"{chan_name}[{offset}]"
@@ -1226,10 +1241,12 @@ __kernel void \\
             stmt = copy.deepcopy(stmt)
             ocl_visitor = OpenCLDaceKeywordRemover(
                 sdfg, self._dispatcher.defined_vars, memlets, self)
+
             if isinstance(stmt, ast.Expr):
                 rk = ocl_visitor.visit_TopLevelExpr(stmt)
             else:
                 rk = ocl_visitor.visit(stmt)
+
             # Generate width converters
             self.converters_to_generate |= ocl_visitor.width_converters
 
@@ -1259,7 +1276,8 @@ __kernel void \\
         super().generate_tasklet_postamble(sdfg, dfg, state_id, node,
                                            function_stream, callsite_stream,
                                            after_memlets_stream)
-        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream, state_id)
+        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream,
+                                     state_id)
 
     def write_and_resolve_expr(self,
                                sdfg,
@@ -1326,13 +1344,31 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         # Keep track of the different streams used in a tasklet
         self.used_streams = []
         self.width_converters = set()  # Pack and unpack vectors
-        self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
+        self.dtypes = {k: v[3]
+                       for k, v in memlets.items()
+                       if k is not None}  # Type inference
+        ## consider also constants
+        for k, v in sdfg.constants.items():
+            if isinstance(v, np.ndarray):
+                self.dtypes[k] = v.dtype
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
 
     def visit_Assign(self, node):
         target = rname(node.targets[0])
         if target not in self.memlets:
-            return self.generic_visit(node)
+            # If we don't have a memlet for this target, it could be the case
+            # that on the right hand side we have a constant
+
+            # We can try to infer the type, and if infer fails, we fallback to generic visit
+            dtype = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+            if dtype is not None:
+                value = cppunparse.cppunparse(self.visit(node.value),
+                                              expr_semicolon=False)
+                code_str = "{} {} = {};".format(dtype, target, value)
+                updated = ast.Name(id=code_str)
+                return updated
+            else:
+                return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[target]
         is_scalar = not isinstance(dtype, dtypes.pointer)

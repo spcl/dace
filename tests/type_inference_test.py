@@ -97,6 +97,12 @@ class TestTypeInference(unittest.TestCase):
         symbols = type_inference.infer_types(code_str, symbols)
         self.assertEqual(symbols["res3"], dtypes.typeclass(int))
 
+    def testArrayAccess(self):
+
+        code_str = "tmp = array[i]"
+        symbols = type_inference.infer_types(code_str, {"array": dtypes.typeclass(float)})
+        self.assertEqual(symbols["tmp"], dtypes.typeclass(float))
+
     def testAssignmentIf(self):
         code_str = "res = 5 if(x>10) else 3.1"
         inf_symbols = type_inference.infer_types(code_str)
