@@ -340,6 +340,10 @@ def _loop_from_structure(
             leave_edge.data.condition_sympy())):
         return None
 
+    # Body of guard state must be empty
+    if not guard.is_empty():
+        return None
+
     if not increment_edge.data.is_unconditional():
         return None
 
@@ -470,12 +474,12 @@ def _structured_control_flow_traversal(
             stack.append(oe[0].dst)
             parent_block.elements.append(stateblock)
 
-            # If there is no condition/assignment, there is no need to generate
-            # state transition code (since the next popped element is the
-            # succeeding state)
-            if (oe[0].data.is_unconditional() and not oe[0].data.assignments
-                    and (oe[0].dst not in visited or oe[0].dst is stop)):
-                parent_block.edges_to_ignore.append(oe[0])
+            # # If there is no condition/assignment, there is no need to generate
+            # # state transition code (since the next popped element is the
+            # # succeeding state)
+            # if (oe[0].data.is_unconditional() and not oe[0].data.assignments
+            #         and (oe[0].dst not in visited or oe[0].dst is stop)):
+            #     parent_block.edges_to_ignore.append(oe[0])
 
             continue
 
