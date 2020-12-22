@@ -27,6 +27,7 @@ from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
+from collections import defaultdict
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "min",
@@ -68,6 +69,11 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         if fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
+        # Keep track of generated converters to avoid multiple definition
+        self.generated_converters = set()
+        # Channel mangles
+        self.channel_mangle = defaultdict(dict)
+
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -162,7 +168,43 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
                        target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
-        return [host_code_obj] + kernel_code_objs
+        # add the util header if present
+        other_code_objs = [
+            CodeObject(file_name,
+                       code.getvalue(),
+                       "cl",
+                       IntelFPGACodeGen,
+                       "Intel FPGA",
+                       target_type="device")
+            for (file_name, code) in self._other_codes.items()
+        ]
+
+        return [host_code_obj] + kernel_code_objs + other_code_objs
+
+    def create_mangled_channel_name(self, var_name, kernel_id):
+        '''
+        Memorize and returns  the mangled name of a global channel
+        The dictionary is organized as (var_name) : {kernel_id: mangled_name)
+        '''
+
+        if kernel_id not in self.channel_mangle[var_name]:
+            existing_count = len(self.channel_mangle[var_name])
+            suffix = f"_{existing_count}" if existing_count > 0 else ""
+            mangled_name = f"{var_name}{suffix}"
+            self.channel_mangle[var_name][kernel_id] = mangled_name
+        return self.channel_mangle[var_name][kernel_id]
+
+    def get_mangled_channel_name(self, var_name, kernel_id):
+        '''
+        Returns the mangled name of a channel if it is a global channel,
+        or var_name if it is an alias (generated through #define)
+        '''
+        if var_name in self.channel_mangle:
+            return self.channel_mangle[var_name][kernel_id]
+        else:
+            return var_name
+
+
 
     def define_stream(self, dtype, buffer_size, var_name, array_size,
                       function_stream, kernel_stream):
@@ -180,7 +222,9 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             size_str = "[" + cpp.sym2cpp(array_size) + "]"
         else:
             size_str = ""
-        kernel_stream.write("channel {} {}{}{};".format(vec_type, var_name,
+        # mangle name
+        chan_name = self.create_mangled_channel_name(var_name, self._kernel_count)
+        kernel_stream.write("channel {} {}{}{};".format(vec_type, chan_name,
                                                         size_str,
                                                         depth_attribute))
 
@@ -255,6 +299,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
     def make_read(self, defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
+            # channel mangling: the expression could contain indexing
+            expr.replace(var_name, self.get_mangled_channel_name(var_name, self._kernel_count))
             read_expr = "read_channel_intel({})".format(expr)
         elif defined_type == DefinedType.Pointer:
             if index and index != "0":
@@ -284,14 +330,16 @@ DACE_EXPORTED void __dace_exit_intel_fpga({signature}) {{
             redtype = operations.detect_reduction_type(wcr)
 
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
+            #mangle name
+            chan_name = self.get_mangled_channel_name(write_expr,self._kernel_count)
             if defined_type == DefinedType.StreamArray:
-                write_expr = "{}[{}]".format(write_expr, index)
+                write_expr = "{}[{}]".format(chan_name, index)
             if is_unpack:
                 return "\n".join("write_channel_intel({}, {}[{}]);".format(
                     write_expr, read_expr, i) for i in range(packing_factor))
             else:
                 return "write_channel_intel({}, {});".format(
-                    write_expr, read_expr)
+                    chan_name, read_expr)
         elif defined_type == DefinedType.Pointer:
             if wcr is not None:
                 if (redtype != dace.dtypes.ReductionType.Min
@@ -403,6 +451,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         kernel_header_stream = CodeIOStream()
         kernel_body_stream = CodeIOStream()
+
+        #reset list of needed converters
+        self.converters_to_generate = set()
 
         kernel_header_stream.write("#include <dace/intel_fpga/device.h>\n\n",
                                    sdfg)
@@ -621,9 +672,12 @@ __attribute__((autorun))\n"""
         else:
             # Unrolled PEs: we have to generate a kernel for each PE. We will generate
             # a function that will be used create a kernel multiple times
+
+            # generate a unique name for this function
+            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + name+"_func"
             module_body_stream.write(
-                "inline void {}_func({}) {{".format(
-                    name, ", ".join(kernel_args_opencl)), sdfg, state_id)
+                "inline void {}({}) {{".format(
+                    pe_function_name, ", ".join(kernel_args_opencl)), sdfg, state_id)
 
         # Allocate local transients
         data_to_allocate = (set(subgraph.top_level_transients()) -
@@ -666,13 +720,13 @@ __attribute__((autorun)) \\"""
 __kernel void \\
 {}_##PE_ID({}) \\
 {{ \\
-  {}_func({}{}PE_ID); \\
+  {}({}{}PE_ID); \\
 }}\\\n\n""".format(module_function_name,
                    ", " if len(kernel_args_call) > 1 else "",
                    ", ".join(kernel_args_call[:-1]),
                    AUTORUN_STR_MACRO if is_autorun else "",
                    module_function_name, ", ".join(kernel_args_opencl[:-1]),
-                   name, ", ".join(kernel_args_call[:-1]),
+                   pe_function_name, ", ".join(kernel_args_call[:-1]),
                    ", " if len(kernel_args_call) > 1 else ""))
 
             # create PE kernels by using the previously defined macro
@@ -958,15 +1012,14 @@ __kernel void \\
                 if is_output:
                     result += "{} {};".format(memlet_type, connector)
                 else:
-
                     result += "{} {} = read_channel_intel({});".format(
-                        memlet_type, connector, data_name)
+                        memlet_type, connector, self.get_mangled_channel_name(data_name,self._kernel_count))
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
                 # Desperate times call for desperate measures
                 result += "#define {} {} // God save us".format(
-                    connector, data_name)
+                    connector, self.get_mangled_channel_name(data_name, self._kernel_count))
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         elif def_type == DefinedType.StreamArray:
@@ -995,8 +1048,9 @@ __kernel void \\
                     if outer_memlet is not None:
                         offset = cpp.cpp_offset_expr(
                             outer_sdfg.arrays[data_name], outer_memlet.subset)
+
                     result += "{} {} = read_channel_intel({}[{}]);".format(
-                        memlet_type, connector, data_name, offset)
+                        memlet_type, connector, self.get_mangled_channel_name(data_name, self._kernel_count), offset)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
@@ -1009,7 +1063,7 @@ __kernel void \\
                     channel_idx = cpp.cpp_offset_expr(sdfg.arrays[data_name],
                                                       memlet.subset)
                 result += "#define {} {}[{}] // God save us".format(
-                    connector, data_name, channel_idx)
+                    connector, self.get_mangled_channel_name(data_name, self._kernel_count), channel_idx)
                 self._dispatcher.defined_vars.add(connector, DefinedType.Stream,
                                                   ctypedef)
         else:
@@ -1017,7 +1071,7 @@ __kernel void \\
 
         callsite_stream.write(result, sdfg, state_id, tasklet)
 
-    def generate_channel_writes(self, sdfg, dfg, node, callsite_stream):
+    def generate_channel_writes(self, sdfg, dfg, node, callsite_stream, state_id):
         for edge in dfg.out_edges(node):
             connector = edge.src_conn
             memlet = edge.data
@@ -1026,11 +1080,13 @@ __kernel void \\
                 data_desc = sdfg.arrays[data_name]
                 if (isinstance(data_desc, dace.data.Stream)
                         and memlet.volume == 1 and not memlet.dynamic):
+                    # mangle channel
+                    chan_name = self.get_mangled_channel_name(data_name, self._kernel_count)
                     if data_desc.is_stream_array():
                         offset = cpp.cpp_offset_expr(data_desc, memlet.subset)
-                        target = f"{data_name}[{offset}]"
+                        target = f"{chan_name}[{offset}]"
                     else:
-                        target = data_name
+                        target = chan_name
                     callsite_stream.write(
                         f"write_channel_intel({target}, {connector});", sdfg)
 
@@ -1052,26 +1108,53 @@ __kernel void \\
 
     def _generate_converter(self, is_unpack, ctype, veclen, sdfg,
                             function_stream):
+        # Get the file stream
+        if "converters" not in self._other_codes:
+            self._other_codes["converters"] = CodeIOStream()
+        converter_stream = self._other_codes["converters"]
+
         if is_unpack:
-            function_stream.write(
-                """\
-void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
+            converter_name = "unpack_{dtype}{veclen}".format(dtype=ctype,
+                                                             veclen=veclen)
+            signature = "void {name}(const {dtype}{veclen} value, {dtype} *const ptr)".format(
+                name=converter_name, dtype=ctype, veclen=veclen)
+            if converter_name not in self.generated_converters:
+                self.generated_converters.add(converter_name)
+
+                # create code for converter in appropriate header file
+                converter_stream.write(
+                    """\
+{signature} {{
     #pragma unroll
     for (int u = 0; u < {veclen}; ++u) {{
         ptr[u] = value[u];
     }}
-}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
+}}\n\n""".format(signature=signature, dtype=ctype, veclen=veclen), sdfg)
+
+            # add forward declaration
+            function_stream.write("extern {};".format(signature), sdfg)
+
         else:
-            function_stream.write(
-                """\
-{dtype}{veclen} pack_{dtype}{veclen}({dtype} const *const ptr) {{
+            converter_name = "pack_{dtype}{veclen}".format(dtype=ctype,
+                                                           veclen=veclen)
+            signature = "{dtype}{veclen} {name}({dtype} const *const ptr)".format(
+                name=converter_name, dtype=ctype, veclen=veclen)
+            if converter_name not in self.generated_converters:
+                self.generated_converters.add(converter_name)
+                # create code for converter in appropriate header file
+                converter_stream.write(
+                    """\
+{signature} {{
     {dtype}{veclen} vec;
     #pragma unroll
     for (int u = 0; u < {veclen}; ++u) {{
         vec[u] = ptr[u];
     }}
     return vec;
-}}\n\n""".format(dtype=ctype, veclen=veclen), sdfg)
+}}\n\n""".format(signature=signature, dtype=ctype, veclen=veclen), sdfg)
+
+            # add forward declaration
+            function_stream.write("extern {};".format(signature), sdfg, self)
 
     def generate_converters(self, sdfg, function_stream):
         for unpack, ctype, veclen in self.converters_to_generate:
@@ -1176,7 +1259,7 @@ void unpack_{dtype}{veclen}(const {dtype}{veclen} value, {dtype} *const ptr) {{
         super().generate_tasklet_postamble(sdfg, dfg, state_id, node,
                                            function_stream, callsite_stream,
                                            after_memlets_stream)
-        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream)
+        self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream, state_id)
 
     def write_and_resolve_expr(self,
                                sdfg,
@@ -1240,8 +1323,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
     def __init__(self, sdfg, defined_vars, memlets, codegen):
         self.sdfg = sdfg
         self.defined_vars = defined_vars
-        self.used_streams = [
-        ]  # keep track of the different streams used in a tasklet
+        # Keep track of the different streams used in a tasklet
+        self.used_streams = []
         self.width_converters = set()  # Pack and unpack vectors
         self.dtypes = {k: v[3] for k, v in memlets.items()}  # Type inference
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
@@ -1367,6 +1450,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         if ((defined_type == DefinedType.Stream
              or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
+            # we should not need mangle here, since we are in a tasklet
             updated = ast.Name(id="read_channel_intel({})".format(node.id))
             self.used_streams.append(node.id)
         elif defined_type == DefinedType.Pointer and memlet.dynamic:

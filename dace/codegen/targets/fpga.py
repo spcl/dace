@@ -67,7 +67,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._cpu_codegen = None
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
-
+        self._kernel_count = 0
         self._global_sdfg = sdfg
         self._program_name = sdfg.name
 
@@ -81,6 +81,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
+        self._other_codes = {}       # any other kind of generated file if any (name, code object)
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
 
         # Register additional FPGA dispatchers
@@ -1185,14 +1186,13 @@ class FPGACodeGen(TargetCodeGenerator):
             raise cgx.CodegenError("Tried to generate kernel from device code")
         self._in_device_code = True
         self._cpu_codegen._packed_types = True
-
         kernel_stream = CodeIOStream()
 
         # Actual kernel code generation
         self.generate_kernel_internal(sdfg, state, kernel_name, subgraphs,
                                       kernel_stream, function_stream,
                                       callsite_stream)
-
+        self._kernel_count = self._kernel_count +1
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
 
