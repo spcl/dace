@@ -143,6 +143,7 @@ def test_2d_assignment():
     sdfg(A=A)
     assert np.allclose(A[0, 0], A[1, 1])
 
+
 def test_while_symbol():
     @dace.program
     def whiletest(A: dace.int32[1]):
@@ -230,9 +231,37 @@ def test_ifchain():
     sdfg(A=A)
     assert A[1] == 1
 
-    # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-    #     code = sdfg.generate_code()[0].clean_code
-    #     assert 'else ' in code
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        code = sdfg.generate_code()[0].clean_code
+        assert 'else ' in code
+
+
+def test_ifchain_manual():
+    sdfg = dace.SDFG('casetest')
+    sdfg.add_array('A', [2], dace.int32)
+    init = sdfg.add_state()
+    case0 = sdfg.add_state()
+    case1 = sdfg.add_state()
+    case3 = sdfg.add_state()
+    case5 = sdfg.add_state()
+    end = sdfg.add_state()
+    for case, state in [(0, case0), (1, case1), (3, case3), (5, case5)]:
+        if case == 5:
+            sdfg.add_edge(init, state, dace.InterstateEdge(f'A[0] >= {case}'))
+        else:
+            sdfg.add_edge(init, state, dace.InterstateEdge(f'A[0] == {case}'))
+        t = state.add_tasklet('update', {}, {'a'}, f'a = {case}')
+        w = state.add_write('A')
+        state.add_edge(t, 'a', w, None, dace.Memlet('A[1]'))
+        sdfg.add_edge(state, end, dace.InterstateEdge())
+
+    A = np.array([6, 0], dtype=np.int32)
+    sdfg(A=A)
+    assert A[1] == 5
+
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        code = sdfg.generate_code()[0].clean_code
+        assert 'else if' in code
 
 
 def test_switchcase():
@@ -310,3 +339,4 @@ if __name__ == '__main__':
     test_ifchain()
     test_switchcase()
     test_fsm()
+    test_ifchain_manual()

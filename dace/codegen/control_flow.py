@@ -19,6 +19,13 @@ from dace.codegen.targets import cpp
 class ControlFlow:
     dispatch_state: Callable[[SDFGState], str]
 
+    @property
+    def first_state(self) -> SDFGState:
+        """ 
+        Returns the first or initializing state in this control flow block. 
+        """
+        return None
+
 
 @dataclass
 class SingleState(ControlFlow):
@@ -44,8 +51,10 @@ class SingleState(ControlFlow):
             expr += 'goto __state_exit_{};\n'.format(sdfg.sdfg_id)
         return expr
 
-    def generate_transition(self, sdfg: SDFG,
-                            edge: Edge[InterstateEdge]) -> str:
+    def generate_transition(self,
+                            sdfg: SDFG,
+                            edge: Edge[InterstateEdge],
+                            successor: SDFGState = None) -> str:
         expr = ''
         condition_string = cpp.unparse_interstate_edge(
             edge.data.condition.code[0], sdfg)
@@ -60,11 +69,16 @@ class SingleState(ControlFlow):
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
+        if successor is None or edge.dst is not successor:
+            expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional():
             expr += '}\n'
         return expr
+
+    @property
+    def first_state(self) -> SDFGState:
+        return self.state
 
 
 @dataclass
@@ -75,16 +89,23 @@ class GeneralBlock(ControlFlow):
 
     def as_cpp(self, defined_vars, symbols) -> str:
         expr = ''
-        for elem in self.elements:
+        for i, elem in enumerate(self.elements):
             expr += elem.as_cpp(defined_vars, symbols)
             # In a general block, emit transitions and assignments after each
             # individual state
             if isinstance(elem, SingleState):
                 sdfg = elem.state.parent
                 out_edges = sdfg.out_edges(elem.state)
-                for e in out_edges:
+                for j, e in enumerate(out_edges):
                     if e not in self.edges_to_ignore:
-                        expr += elem.generate_transition(sdfg, e)
+                        # If this is the last generated edge and it leads
+                        # to the next state, skip emitting goto
+                        successor = None
+                        if (j == (len(out_edges) - 1)
+                                and (i + 1) < len(self.elements)):
+                            successor = self.elements[i + 1].first_state
+
+                        expr += elem.generate_transition(sdfg, e, successor)
                 # Add exit goto as necessary
                 if elem.last_state:
                     continue
@@ -101,11 +122,18 @@ class GeneralBlock(ControlFlow):
 
         return expr
 
+    @property
+    def first_state(self) -> SDFGState:
+        if not self.elements:
+            return None
+        return self.elements[0].first_state
+
 
 @dataclass
 class IfScope(ControlFlow):
     """ A control flow scope of an if (else) block. """
     sdfg: SDFG
+    branch_state: SDFGState
     condition: CodeBlock
     body: GeneralBlock
     orelse: Optional[GeneralBlock] = None
@@ -122,20 +150,27 @@ class IfScope(ControlFlow):
             expr += '\n}'
         return expr
 
+    @property
+    def first_state(self) -> SDFGState:
+        return self.branch_state
+
 
 @dataclass
 class IfElseChain(ControlFlow):
     """ A control flow scope of "if, else if, ..., else" chain of blocks. """
     sdfg: SDFG
+    branch_state: SDFGState
     body: List[Tuple[CodeBlock, GeneralBlock]]
 
     def as_cpp(self, defined_vars, symbols) -> str:
         expr = ''
-        for i, (condition, body) in self.body:
+        for i, (condition, body) in enumerate(self.body):
             # First block in the chain is just "if", rest are "else if"
             prefix = '' if i == 0 else ' else '
 
-            expr += f'{prefix}if ({condition}) {{\n'
+            condition_string = cpp.unparse_interstate_edge(
+                condition.code[0], self.sdfg)
+            expr += f'{prefix}if ({condition_string}) {{\n'
             expr += body.as_cpp(defined_vars, symbols)
             expr += '\n}'
 
@@ -146,11 +181,16 @@ class IfElseChain(ControlFlow):
             expr += '\n}'
         return expr
 
+    @property
+    def first_state(self) -> SDFGState:
+        return self.branch_state
+
 
 @dataclass
 class ForScope(ControlFlow):
     """ For loop block (without break or continue statements). """
     itervar: str
+    guard: SDFGState
     init: CodeBlock
     condition: CodeBlock
     update: CodeBlock
@@ -178,10 +218,15 @@ class ForScope(ControlFlow):
         expr += '\n}'
         return expr
 
+    @property
+    def first_state(self) -> SDFGState:
+        return self.guard
+
 
 @dataclass
 class WhileScope(ControlFlow):
     """ While loop block (without break or continue statements). """
+    guard: SDFGState
     test: CodeBlock
     body: GeneralBlock
 
@@ -191,6 +236,10 @@ class WhileScope(ControlFlow):
         expr += self.body.as_cpp(defined_vars, symbols)
         expr += '\n}'
         return expr
+
+    @property
+    def first_state(self) -> SDFGState:
+        return self.guard
 
 
 @dataclass
@@ -206,11 +255,16 @@ class DoWhileScope(ControlFlow):
         expr += f'\n}} while ({test});'
         return expr
 
+    @property
+    def first_state(self) -> SDFGState:
+        return self.body[0].first_state
+
 
 @dataclass
 class SwitchCaseScope(ControlFlow):
     """ Simple switch-case scope wihout fallbacks. """
     sdfg: SDFG
+    branch_state: SDFGState
     switchvar: str
     cases: Dict[str, GeneralBlock]
 
@@ -223,6 +277,10 @@ class SwitchCaseScope(ControlFlow):
         expr += f'default:\n goto __state_exit_{self.sdfg.sdfg_id};'
         expr += '\n}'
         return expr
+
+    @property
+    def first_state(self) -> SDFGState:
+        return self.branch_state
 
 
 
@@ -272,12 +330,12 @@ def _structured_control_flow_traversal(
         elif len(oe) == 1:  # No traversal change
             stack.append(oe[0].dst)
             parent_block.elements.append(stateblock)
-
+            
             # If there is no condition/assignment, there is no need to generate
             # state transition code (since the next popped element is the
             # succeeding state)
             if (oe[0].data.is_unconditional() and not oe[0].data.assignments
-                    and oe[0].dst not in visited):
+                    and (oe[0].dst not in visited or oe[0].dst is stop)):
                 parent_block.edges_to_ignore.append(oe[0])
 
             continue
@@ -289,6 +347,7 @@ def _structured_control_flow_traversal(
             # Add branching node and ignore outgoing edges
             parent_block.elements.append(stateblock)
             parent_block.edges_to_ignore.extend(oe)
+            stateblock.last_state = True
 
             # Parse all outgoing edges recursively first
             cblocks: Dict[Edge[InterstateEdge], GeneralBlock] = {}
@@ -311,21 +370,26 @@ def _structured_control_flow_traversal(
                     oe[1].data.condition_sympy())):
                 # If without else
                 if oe[0].dst is mergestate:
-                    branch_block = IfScope(dispatch_state, sdfg,
+                    branch_block = IfScope(dispatch_state, sdfg, node,
                                            oe[1].data.condition, cblocks[oe[1]])
                 elif oe[1].dst is mergestate:
-                    branch_block = IfScope(dispatch_state, sdfg,
+                    branch_block = IfScope(dispatch_state, sdfg, node,
                                            oe[0].data.condition, cblocks[oe[0]])
                 else:
-                    branch_block = IfScope(dispatch_state, sdfg,
+                    branch_block = IfScope(dispatch_state, sdfg, node,
                                            oe[0].data.condition, cblocks[oe[0]],
                                            cblocks[oe[1]])
-            # TODO: If there are 2 or more edges (one is not the negation of the other):
-            #   * if all edges are of form "x == y" for a single x and integer
-            #     y, it is a switch/case
-            #   * otherwise, create if/else if/else if.../else goto exit chain
             else:
-                raise NotImplementedError
+                # TODO: If there are 2 or more edges (one is not the negation of the other):
+                #   * if all edges are of form "x == y" for a single x and integer
+                #     y, it is a switch/case
+                #if all():
+
+                #   * otherwise, create if/else if/.../else goto exit chain
+                branch_block = IfElseChain(dispatch_state, sdfg, node,
+                                           [(e.data.condition, cblocks[e])
+                                            for e in oe])
+            # End of branch classification
             parent_block.elements.append(branch_block)
             if mergestate != stop:
                 stack.append(mergestate)
