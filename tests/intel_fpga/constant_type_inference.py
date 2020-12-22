@@ -72,8 +72,8 @@ if __name__ == "__main__":
     sdfg.add_constant('constant_value', CONSTANT_VALUE)
 
     out = dace.ndarray([CONSTANT_ARRAY.size], dtype=dace.float32)
-    sdfg(N=CONSTANT_ARRAY.size, out=out)
-    ref = CONSTANT_ARRAY + 1
+    sdfg(N=CONSTANT_ARRAY.size, output=out)
+    ref = CONSTANT_ARRAY + CONSTANT_VALUE
     diff = np.linalg.norm(ref - out) / CONSTANT_ARRAY.size
     if diff <= 1e-5:
         print("==== Program end ====")
