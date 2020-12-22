@@ -274,7 +274,10 @@ def test_switchcase():
     case5 = sdfg.add_state()
     end = sdfg.add_state()
     for case, state in [(0, case0), (1, case1), (3, case3), (5, case5)]:
-        sdfg.add_edge(init, state, dace.InterstateEdge(f'A[0] == {case}'))
+        if case == 3:
+            sdfg.add_edge(init, state, dace.InterstateEdge(f'{case} == A[0]'))
+        else:
+            sdfg.add_edge(init, state, dace.InterstateEdge(f'A[0] == {case}'))
         t = state.add_tasklet('update', {}, {'a'}, f'a = {case}')
         w = state.add_write('A')
         state.add_edge(t, 'a', w, None, dace.Memlet('A[1]'))
@@ -284,9 +287,9 @@ def test_switchcase():
     sdfg(A=A)
     assert A[1] == 3
 
-    # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-    #     code = sdfg.generate_code()[0].clean_code
-    #     assert 'switch ' in code
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        code = sdfg.generate_code()[0].clean_code
+        assert 'switch ' in code
 
 
 def test_fsm():

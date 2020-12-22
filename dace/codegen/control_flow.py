@@ -9,7 +9,8 @@ import sympy as sp
 from dace.sdfg.state import SDFGState
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
-from dace.properties import CodeBlock, Property, make_properties
+from dace.properties import CodeBlock
+from dace.codegen import cppunparse
 from dace.codegen.targets import cpp
 
 ###############################################################################
@@ -284,6 +285,52 @@ class SwitchCaseScope(ControlFlow):
 
 
 
+
+def _cases_from_branches(
+    edges: List[Edge[InterstateEdge]],
+    cblocks: Dict[Edge[InterstateEdge], GeneralBlock],
+) -> Tuple[str, Dict[str, GeneralBlock]]:
+    """ 
+    If the input list of edges correspond to a switch/case scope (with all
+    conditions being "x == y" for a unique symbolic x and integers y),
+    returns the switch/case scope parameters.
+    :param edges: List of inter-state edges.
+    :return: Tuple of (case variable C++ expression, mapping from case to 
+             control flow block). If not a valid switch/case scope, 
+             returns None.
+    """
+    cond = edges[0].data.condition_sympy()
+    a = sp.Wild('a')
+    b = sp.Wild('b', properties=[lambda k: k.is_Integer])
+    m = cond.match(sp.Eq(a, b))
+    if m:
+        # Obtain original code for variable
+        astvar = edges[0].data.condition.code[0].value.left
+    else:
+        # Try integer == symbol
+        m = cond.match(sp.Eq(b, a))
+        if m:
+            astvar = edges[0].data.condition.code[0].value.right
+        else:
+            return None
+
+    # Get C++ expression from AST
+    switchvar = cppunparse.pyexpr2cpp(astvar)
+
+    # Check that all edges match criteria
+    result = {}
+    for e in edges:
+        ematch = e.data.condition_sympy().match(sp.Eq(m[a], b))
+        if not ematch:
+            ematch = e.data.condition_sympy().match(sp.Eq(b, m[a]))
+            if not ematch:
+                return None
+        # Create mapping to codeblocks
+        result[cpp.sym2cpp(ematch[b])] = cblocks[e]
+
+    return switchvar, result
+
+
 def _structured_control_flow_traversal(
         sdfg: SDFG,
         start: SDFGState,
@@ -330,7 +377,7 @@ def _structured_control_flow_traversal(
         elif len(oe) == 1:  # No traversal change
             stack.append(oe[0].dst)
             parent_block.elements.append(stateblock)
-            
+
             # If there is no condition/assignment, there is no need to generate
             # state transition code (since the next popped element is the
             # succeeding state)
@@ -380,15 +427,19 @@ def _structured_control_flow_traversal(
                                            oe[0].data.condition, cblocks[oe[0]],
                                            cblocks[oe[1]])
             else:
-                # TODO: If there are 2 or more edges (one is not the negation of the other):
-                #   * if all edges are of form "x == y" for a single x and integer
-                #     y, it is a switch/case
-                #if all():
-
-                #   * otherwise, create if/else if/.../else goto exit chain
-                branch_block = IfElseChain(dispatch_state, sdfg, node,
-                                           [(e.data.condition, cblocks[e])
-                                            for e in oe])
+                # If there are 2 or more edges (one is not the negation of the
+                # other):
+                switch = _cases_from_branches(oe, cblocks)
+                if switch:
+                    # If all edges are of form "x == y" for a single x and
+                    # integer y, it is a switch/case
+                    branch_block = SwitchCaseScope(dispatch_state, sdfg, node,
+                                                   switch[0], switch[1])
+                else:
+                    # Otherwise, create if/else if/.../else goto exit chain
+                    branch_block = IfElseChain(dispatch_state, sdfg, node,
+                                               [(e.data.condition, cblocks[e])
+                                                for e in oe])
             # End of branch classification
             parent_block.elements.append(branch_block)
             if mergestate != stop:
