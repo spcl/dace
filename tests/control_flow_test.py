@@ -159,9 +159,10 @@ def test_while_symbol():
 
     assert A[0] == 4
 
-    # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-    #     code = whiletest.to_sdfg().generate_code()[0].clean_code
-    #     assert 'while ' in code
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        code = whiletest.to_sdfg().generate_code()[0].clean_code
+        assert 'while ' in code
+        assert 'goto ' not in code
 
 
 def test_while_data():
@@ -180,6 +181,7 @@ def test_while_data():
 
     assert A[0] == 0
 
+    # Disable check due to CFG generation in Python frontend
     # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
     #     code = whiletest.to_sdfg().generate_code()[0].clean_code
     #     assert 'while ' in code
@@ -209,6 +211,7 @@ def test_dowhile():
     sdfg(A=A)
     assert A[0] == 4
 
+    # TODO: Not yet available
     # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
     #     code = sdfg.generate_code()[0].clean_code
     #     assert 'do {' in code and '} while' in code
@@ -303,6 +306,7 @@ def test_fsm():
     case1 = sdfg.add_state()
     case3 = sdfg.add_state()
     case5 = sdfg.add_state()
+    estate = sdfg.add_state()
 
     # State transitions
     fsm = {0: 3, 3: 1, 1: 5, 5: 7}
@@ -319,15 +323,16 @@ def test_fsm():
         state.add_edge(t, 'a', w, None, dace.Memlet('A'))
         state.add_edge(t, 'nstate', ws, None, dace.Memlet('nextstate'))
 
-        sdfg.add_edge(state, init, dace.InterstateEdge())
+        sdfg.add_edge(state, estate, dace.InterstateEdge())
+    sdfg.add_edge(estate, init, dace.InterstateEdge())
 
     A = np.array([1], dtype=np.int32)
     sdfg(A=A, nextstate=0)
     assert A[0] == 1 + 3 + 1 + 5
 
-    # if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-    #     code = sdfg.generate_code()[0].clean_code
-    #     assert 'switch ' in code
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        code = sdfg.generate_code()[0].clean_code
+        assert 'switch ' in code
 
 
 if __name__ == '__main__':
@@ -340,6 +345,6 @@ if __name__ == '__main__':
     test_while_data()
     test_dowhile()
     test_ifchain()
+    test_ifchain_manual()
     test_switchcase()
     test_fsm()
-    test_ifchain_manual()

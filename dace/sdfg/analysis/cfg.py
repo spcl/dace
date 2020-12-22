@@ -1,10 +1,10 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various analyses related to control flow in SDFG states. """
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr
 from dace.symbolic import pystr_to_symbolic
 import networkx as nx
 import sympy as sp
-from typing import Dict, Iterator, Set
+from typing import Dict, Iterator, List, Set
 
 
 def acyclic_dominance_frontier(sdfg: SDFG,
@@ -41,6 +41,36 @@ def acyclic_dominance_frontier(sdfg: SDFG,
     return dom_frontiers
 
 
+def all_dominators(
+    sdfg: SDFG,
+    idom: Dict[SDFGState, SDFGState] = None
+) -> Dict[SDFGState, Set[SDFGState]]:
+    """ Returns a mapping between each state and all its dominators. """
+    idom = idom or nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+    # Create a dictionary of all dominators of each node by using the
+    # transitive closure of the DAG induced by the idoms
+    g = nx.DiGraph()
+    for node, dom in idom.items():
+        if node is dom:  # Skip root
+            continue
+        g.add_edge(node, dom)
+    tc = nx.transitive_closure_dag(g)
+    alldoms: Dict[SDFGState, Set[SDFGState]] = {sdfg.start_state: set()}
+    for node in tc:
+        alldoms[node] = set(dst for _, dst in tc.out_edges(node))
+
+    return alldoms
+
+
+def back_edges(
+    sdfg: SDFG,
+    idom: Dict[SDFGState, SDFGState] = None
+) -> List[gr.Edge[InterstateEdge]]:
+    """ Returns a list of back-edges in an SDFG. """
+    alldoms = all_dominators(sdfg, idom)
+    return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
+
+
 def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
     """
     Computes an upward-pointing tree of each state, pointing to the "parent
@@ -54,6 +84,7 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
              if the root (start) state.
     """
     idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+    alldoms = all_dominators(sdfg, idom)
     loopexits: Dict[SDFGState, SDFGState] = {}
 
     # First, annotate loops
@@ -68,45 +99,21 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
             in_edges = sdfg.in_edges(v)
             out_edges = sdfg.out_edges(v)
 
-            # A for-loop guard has two or more incoming edges (1 increment and
+            # A loop guard has two or more incoming edges (1 increment and
             # n init, all identical), and exactly two outgoing edges (loop and
             # exit loop).
             if len(in_edges) < 2 or len(out_edges) != 2:
                 continue
-
-            # All incoming guard edges must set exactly one variable and it must
-            # be the same for all of them.
-            itvars = set()
-            for iedge in in_edges:
-                if len(iedge.data.assignments) > 0:
-                    if not itvars:
-                        itvars = set(iedge.data.assignments.keys())
-                    else:
-                        itvars &= set(iedge.data.assignments.keys())
-                else:
-                    itvars = None
-                    break
-            if not itvars or len(itvars) > 1:
-                continue
-            itvar = next(iter(itvars))
-            itvarsym = pystr_to_symbolic(itvar)
 
             # The outgoing edges must be negations of one another.
             if out_edges[0].data.condition_sympy() != (sp.Not(
                     out_edges[1].data.condition_sympy())):
                 continue
 
-            # Make sure the last state of the loop (i.e. the state leading back
-            # to the guard via 'increment' edge) is part of this cycle. If not,
-            # we're looking at the guard for a nested cycle, which we ignore for
+            # Make sure the entire cycle is dominated by this node. If not,
+            # we're looking at a guard for a nested cycle, which we ignore for
             # this cycle.
-            increment_edge = None
-            for iedge in in_edges:
-                if itvarsym in pystr_to_symbolic(
-                        iedge.data.assignments[itvar]).free_symbols:
-                    increment_edge = iedge
-                    break
-            if increment_edge.src not in cycle:
+            if any(v not in alldoms[u] for u in cycle if u is not v):
                 continue
 
             loop_state = None

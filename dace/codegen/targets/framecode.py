@@ -403,7 +403,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Handle specialized control flow
         if config.Config.get_bool('optimizer', 'detect_control_flow'):
-           cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
+            cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
         else:
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
@@ -495,6 +495,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
             isvar = data.Scalar(isvarType)
             callsite_stream.write(
                 '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
+            self.dispatcher.defined_vars.add(isvarName, isvarType,
+                                             isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)
 
