@@ -1347,10 +1347,11 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         self.dtypes = {k: v[3]
                        for k, v in memlets.items()
                        if k is not None}  # Type inference
-        ## consider also constants
+        # consider also constants: add them to known dtypes
         for k, v in sdfg.constants.items():
-            if isinstance(v, np.ndarray):
+            if k is not None:
                 self.dtypes[k] = v.dtype
+
         super().__init__(sdfg, memlets, sdfg.constants, codegen)
 
     def visit_Assign(self, node):
@@ -1360,8 +1361,8 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # that on the right hand side we have a constant (a Name or a subscript)
             # If this is the case, we try to infer the type, otherwise we fallback to generic visit
             if (isinstance(node.value, ast.Name) and node.value.id
-                    in self.dtypes) or (isinstance(node.value, ast.Subscript)
-                                        and node.value.value.id in self.dtypes):
+                    in self.constants) or (isinstance(node.value, ast.Subscript)
+                                        and node.value.value.id in self.constants):
                 dtype = infer_expr_type(astunparse.unparse(node.value),
                                         self.dtypes)
                 value = cppunparse.cppunparse(self.visit(node.value),
