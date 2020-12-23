@@ -596,9 +596,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
-        # 61 - 15 = 46, and round down to 42 to be conservative.
+        # 61 - 15 = 46, and round down to 36 to be conservative, since
+        # internally could still fail while dealing with RTL.
         # Therefore we cut down names longer than that
-        module_function_name = module_function_name[0:42]
+        module_function_name = module_function_name[0:36]
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
