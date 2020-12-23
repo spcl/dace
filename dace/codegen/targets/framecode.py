@@ -403,6 +403,12 @@ DACE_EXPORTED void __dace_exit_%s(%s)
 
         # Handle specialized control flow
         if config.Config.get_bool('optimizer', 'detect_control_flow'):
+            # Avoid import loop
+            from dace.transformation import helpers as xfh
+            # Clean up the state machine by separating combined condition and assignment
+            # edges.
+            xfh.split_interstate_edges(sdfg)
+
             cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
         else:
             # If disabled, generate entire graph as general control flow block
