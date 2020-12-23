@@ -225,7 +225,11 @@ class ForScope(ControlFlow):
                 init = f'{symbols[self.itervar]} {self.itervar}'
             init += ' = ' + self.init
 
-        cond = self.condition.as_string if self.condition is not None else ''
+        if self.condition is not None:
+            sdfg = self.guard.parent
+            cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg)
+        else:
+            cond = ''
 
         update = ''
         if self.update is not None:
@@ -253,7 +257,12 @@ class WhileScope(ControlFlow):
     body: GeneralBlock
 
     def as_cpp(self, defined_vars, symbols) -> str:
-        test = self.test.as_string if self.test is not None else 'true'
+        if self.test is not None:
+            sdfg = self.guard.parent
+            test = cpp.unparse_interstate_edge(self.test.code[0], sdfg)
+        else:
+            test = 'true'
+
         expr = f'while ({test}) {{\n'
         expr += self.body.as_cpp(defined_vars, symbols)
         expr += '\n}\n'
@@ -271,11 +280,16 @@ class WhileScope(ControlFlow):
 @dataclass
 class DoWhileScope(ControlFlow):
     """ Do-while loop block (without break or continue statements). """
+    sdfg: SDFG
     test: CodeBlock
     body: GeneralBlock
 
     def as_cpp(self, defined_vars, symbols) -> str:
-        test = self.test.as_string if self.test is not None else 'true'
+        if self.test is not None:
+            test = cpp.unparse_interstate_edge(self.test.code[0], self.sdfg)
+        else:
+            test = 'true'
+
         expr = 'do {\n'
         expr += self.body.as_cpp(defined_vars, symbols)
         expr += f'\n}} while ({test});\n'
@@ -326,11 +340,14 @@ def _loop_from_structure(
     body = GeneralBlock(dispatch_state, [], [])
 
     guard_inedges = sdfg.in_edges(guard)
-    try:
-        increment_edge = next(e for e in guard_inedges if e in back_edges)
-    except StopIteration:
-        return None
+    increment_edges = [e for e in guard_inedges if e in back_edges]
     init_edges = [e for e in guard_inedges if e not in back_edges]
+
+    # If no back edge found (or more than one, indicating a "continue"
+    # statement), disregard
+    if len(increment_edges) > 1 or len(increment_edges) == 0:
+        return None
+    increment_edge = increment_edges[0]
 
     # Mark increment edge to be ignored in body
     body.edges_to_ignore.append(increment_edge)
@@ -426,6 +443,16 @@ def _ignore_recursive(edges: List[Edge[InterstateEdge]], block: ControlFlow):
         _ignore_recursive(edges, subblock)
 
 
+def _child_of(node: SDFGState, parent: SDFGState,
+              ptree: Dict[SDFGState, SDFGState]) -> bool:
+    curnode = node
+    while curnode is not None:
+        if curnode is parent:
+            return True
+        curnode = ptree[curnode]
+    return False
+
+
 def _structured_control_flow_traversal(
         sdfg: SDFG,
         start: SDFGState,
@@ -434,7 +461,8 @@ def _structured_control_flow_traversal(
         back_edges: List[Edge[InterstateEdge]],
         dispatch_state: Callable[[SDFGState], str],
         parent_block: GeneralBlock,
-        stop: SDFGState = None) -> Set[SDFGState]:
+        stop: SDFGState = None,
+        generate_children_of: SDFGState = None) -> Set[SDFGState]:
     """ 
     Helper function for ``structured_control_flow_tree``. 
     :param sdfg: SDFG.
@@ -457,6 +485,9 @@ def _structured_control_flow_traversal(
     stack = [start]
     while stack:
         node = stack.pop()
+        if (generate_children_of is not None
+                and not _child_of(node, generate_children_of, ptree)):
+            continue
         if node in visited:
             continue
         visited.add(node)
@@ -496,14 +527,16 @@ def _structured_control_flow_traversal(
             cblocks: Dict[Edge[InterstateEdge], GeneralBlock] = {}
             for branch in oe:
                 cblocks[branch] = GeneralBlock(dispatch_state, [], [])
-                visited |= _structured_control_flow_traversal(sdfg,
-                                                              branch.dst,
-                                                              ptree,
-                                                              branch_merges,
-                                                              back_edges,
-                                                              dispatch_state,
-                                                              cblocks[branch],
-                                                              stop=mergestate)
+                visited |= _structured_control_flow_traversal(
+                    sdfg,
+                    branch.dst,
+                    ptree,
+                    branch_merges,
+                    back_edges,
+                    dispatch_state,
+                    cblocks[branch],
+                    stop=mergestate,
+                    generate_children_of=node)
 
             # Classify branch type:
             branch_block = None
@@ -560,24 +593,33 @@ def _structured_control_flow_traversal(
                 loop_exit = oe[0].dst
 
             if scope:
-                visited |= _structured_control_flow_traversal(sdfg,
-                                                              body_start,
-                                                              ptree,
-                                                              branch_merges,
-                                                              back_edges,
-                                                              dispatch_state,
-                                                              scope.body,
-                                                              stop=node)
+                visited |= _structured_control_flow_traversal(
+                    sdfg,
+                    body_start,
+                    ptree,
+                    branch_merges,
+                    back_edges,
+                    dispatch_state,
+                    scope.body,
+                    stop=node,
+                    generate_children_of=node)
+
                 # Add branching node and ignore outgoing edges
                 parent_block.elements.append(stateblock)
                 parent_block.edges_to_ignore.extend(oe)
 
                 parent_block.elements.append(scope)
-                # Mark init edge(s) to ignore in parent_block and all children
+
+                # If for loop, ignore certain edges
                 if isinstance(scope, ForScope):
+                    # Mark init edge(s) to ignore in parent_block and all children
                     _ignore_recursive(
                         [e for e in sdfg.in_edges(node) if e not in back_edges],
                         parent_block)
+                    # Mark back edge for ignoring in all children of loop body
+                    _ignore_recursive(
+                        [e for e in sdfg.in_edges(node) if e in back_edges],
+                        scope.body)
 
                 stack.append(loop_exit)
                 continue
