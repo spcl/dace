@@ -363,6 +363,8 @@ def _loop_from_structure(
 
     if not increment_edge.data.is_unconditional():
         return None
+    if len(enter_edge.data.assignments) > 0:
+        return None
 
     condition = enter_edge.data.condition
 
@@ -378,8 +380,10 @@ def _loop_from_structure(
         itvar = next(iter(itvars))
         init = init_edges[0].data.assignments[itvar]
 
-        # Check that all init edges are the same
-        if all(e.data.assignments[itvar] == init for e in init_edges):
+        # Check that all init edges are the same and that increment edge only
+        # increments
+        if (all(e.data.assignments[itvar] == init for e in init_edges)
+                and len(increment_edge.data.assignments) == 1):
             update = increment_edge.data.assignments[itvar]
             return ForScope(dispatch_state, itvar, guard, init, condition,
                             update, body)
@@ -504,14 +508,6 @@ def _structured_control_flow_traversal(
         elif len(oe) == 1:  # No traversal change
             stack.append(oe[0].dst)
             parent_block.elements.append(stateblock)
-
-            # # If there is no condition/assignment, there is no need to generate
-            # # state transition code (since the next popped element is the
-            # # succeeding state)
-            # if (oe[0].data.is_unconditional() and not oe[0].data.assignments
-            #         and (oe[0].dst not in visited or oe[0].dst is stop)):
-            #     parent_block.edges_to_ignore.append(oe[0])
-
             continue
 
         # Potential branch or loop
