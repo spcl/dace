@@ -97,8 +97,14 @@ class TestTypeInference(unittest.TestCase):
         symbols = type_inference.infer_types(code_str, symbols)
         self.assertEqual(symbols["res3"], dtypes.typeclass(int))
 
+    def testArrayAccess(self):
+        code_str = "tmp = array[i]"
+        symbols = type_inference.infer_types(code_str,
+                                             {"array": dtypes.typeclass(float)})
+        self.assertEqual(symbols["tmp"], dtypes.typeclass(float))
+
     def testAssignmentIf(self):
-        code_str = "res = 5 if(x>10) else 3.1"
+        code_str = "res = 5 if x > 10 else 3.1"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["res"], dtypes.typeclass(float))
 
@@ -198,7 +204,6 @@ for i in range(5):
         inf_symbols = type_inference.infer_types(for_loop_code)
         self.assertEqual(inf_symbols["x"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["i"], dtypes.typeclass(int))
-
 
     def testVarious(self):
         # code snippets that contains constructs not directly involved in type inference
