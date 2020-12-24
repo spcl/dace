@@ -60,7 +60,6 @@ def make_sdfg():
 
     sdfg.add_edge(fpga_state, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
     sdfg.fill_scope_connectors()
-    sdfg.save("/tmp/out.sdfg")
     sdfg.validate()
     return sdfg
 

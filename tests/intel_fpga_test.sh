@@ -131,7 +131,7 @@ run_all() {
     # Channels mangling
     run_sample intel_fpga/channels_mangling channels_mangling "\n"
 
-    #Constant Type inference
+    # Constant Type inference
     run_sample intel_fpga/constant_type_inference constant_type_inference "\n"
 
 }

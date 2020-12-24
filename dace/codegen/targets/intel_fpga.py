@@ -1361,9 +1361,10 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # If we don't have a memlet for this target, it could be the case
             # that on the right hand side we have a constant (a Name or a subscript)
             # If this is the case, we try to infer the type, otherwise we fallback to generic visit
-            if (isinstance(node.value, ast.Name) and node.value.id
-                    in self.constants) or (isinstance(node.value, ast.Subscript)
-                                        and node.value.value.id in self.constants):
+            if (isinstance(node.value, ast.Name)
+                    and node.value.id in self.constants) or (
+                        isinstance(node.value, ast.Subscript)
+                        and node.value.value.id in self.constants):
                 dtype = infer_expr_type(astunparse.unparse(node.value),
                                         self.dtypes)
                 value = cppunparse.cppunparse(self.visit(node.value),
