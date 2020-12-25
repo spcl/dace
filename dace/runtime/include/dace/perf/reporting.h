@@ -118,8 +118,9 @@ namespace perf {
         /**
          * Saves the report to a timestamped JSON file.
          * @param path: Path to folder where the output JSON file will be stored.
+         * @param hash: Hash of the SDFG.
          */
-        void save(const char *path) {
+        void save(const char *path, const char *hash) {
             std::lock_guard<std::mutex> guard (this->_mutex);
 
             // Create report filename
@@ -180,7 +181,12 @@ namespace perf {
                     ofs << "}}";
                 }
 
-                ofs << std::endl << "  ]" << std::endl;
+                ofs << std::endl << "  ]," << std::endl;
+
+                ofs << "  \"sdfgHash\": \"";
+                ofs << hash;
+                ofs << "\"" << std::endl;
+
                 ofs << "}" << std::endl;
             }
         }

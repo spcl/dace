@@ -157,11 +157,14 @@ class DaCeCodeGenerator(object):
             if instr is not None:
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
+        sdfg_hash = sdfg.hash_sdfg()
+
         # Instrumentation saving
         if len(self._dispatcher.instrumentation) > 1:
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' %
-                sdfg.build_folder.replace('\\', '/'), sdfg)
+                '''dace::perf::report.save("{path}/perf", "{hash}");'''
+                .format(path=sdfg.build_folder.replace('\\', '/'),
+                        hash=sdfg_hash), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
