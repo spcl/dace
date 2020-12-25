@@ -387,7 +387,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 keys_to_delete = []
                 kv_to_recurse = []
                 for key, value in json_obj.items():
-                    if (isinstance(key, str) and (key.startswith('_meta_') or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist'])):
+                    if (isinstance(key, str)
+                            and (key.startswith('_meta_') or key in [
+                                'name', 'hash', 'orig_sdfg',
+                                'transformation_hist', 'instrument'
+                            ])):
                         keys_to_delete.append(key)
                     else:
                         kv_to_recurse.append((key, value))
@@ -2031,8 +2035,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(str(node),
-                                                                                                          impl_name))
+                    print(
+                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
+                        .format(str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
