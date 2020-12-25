@@ -59,7 +59,7 @@ class GPUEventProvider(InstrumentationProvider):
         return '''float __dace_ms_{id} = -1.0f;
 {backend}EventSynchronize(__dace_ev_e{id});
 {backend}EventElapsedTime(&__dace_ms_{id}, __dace_ev_b{id}, __dace_ev_e{id});
-int __dace_micros_{id} = (int) __dace_ms_{id} * 1000;
+int __dace_micros_{id} = (int) (__dace_ms_{id} * 1000.0);
 unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 unsigned long int __dace_ts_start_{id} = __dace_ts_end_{id} - __dace_micros_{id};
 dace::perf::report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.format(
