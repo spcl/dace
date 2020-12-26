@@ -10,7 +10,7 @@ import six
 import shutil
 import subprocess
 import re
-from typing import List
+from typing import Any, Dict, List
 
 import dace
 from dace.config import Config
@@ -35,10 +35,8 @@ def generate_program_folder(sdfg,
     """
 
     src_path = os.path.join(out_path, "src")
+    filelist = list()
 
-    os.makedirs(src_path, exist_ok=True)
-
-    filelist = []
     # Write each code object to a file
     for code_object in code_objects:
 
@@ -94,8 +92,7 @@ def generate_program_folder(sdfg,
     return out_path
 
 
-def configure_and_compile(program_folder,
-                          program_name=None,
+def configure_and_compile(program_folder, program_name=None,
                           output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
@@ -165,6 +162,9 @@ def configure_and_compile(program_folder,
     # Get required environments are retrieve the CMake information
     environments = set(l.strip() for l in open(
         os.path.join(program_folder, "dace_environments.csv"), "r"))
+
+    environments = dace.library.get_environments_and_dependencies(environments)
+
     cmake_minimum_version = [0]
     cmake_variables = dict()
     cmake_packages = set()
@@ -174,8 +174,7 @@ def configure_and_compile(program_folder,
     cmake_link_flags = set()
     cmake_files = set()
     cmake_module_paths = set()
-    for env_name in environments:
-        env = dace.library.get_environment(env_name)
+    for env in environments:
         if (env.cmake_minimum_version is not None
                 and len(env.cmake_minimum_version) > 0):
             version_list = list(map(int, env.cmake_minimum_version.split(".")))

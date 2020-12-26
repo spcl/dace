@@ -16,17 +16,17 @@ from dace.registry import extensible_enum
 class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
-    Default = ()  # Scope-default storage location
-    Register = ()  # Local data on registers, stack, or equivalent memory
-    CPU_Pinned = ()  # Host memory that can be DMA-accessed from accelerators
-    CPU_Heap = ()  # Host memory allocated on heap
-    CPU_ThreadLocal = ()  # Thread-local host memory
-    GPU_Global = ()  # Global memory
-    GPU_Shared = ()  # Shared memory
-    FPGA_Global = ()  # Off-chip global memory (DRAM)
-    FPGA_Local = ()  # On-chip memory (bulk storage)
-    FPGA_Registers = ()  # On-chip memory (fully partitioned registers)
-    FPGA_ShiftRegister = ()  # Only accessible at constant indices
+    Default = ()  #: Scope-default storage location
+    Register = ()  #: Local data on registers, stack, or equivalent memory
+    CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
+    CPU_Heap = ()  #: Host memory allocated on heap
+    CPU_ThreadLocal = ()  #: Thread-local host memory
+    GPU_Global = ()  #: Global memory
+    GPU_Shared = ()  #: Shared memory
+    FPGA_Global = ()  #: Off-chip global memory (DRAM)
+    FPGA_Local = ()  #: On-chip memory (bulk storage)
+    FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
+    FPGA_ShiftRegister = ()  #: Only accessible at constant indices
 
 
 @extensible_enum
@@ -36,13 +36,16 @@ class ScheduleType(aenum.AutoNumberEnum):
     # TODO: Add per-type properties for scope nodes. Consider TargetType enum
     #       and a MapScheduler class
 
-    Default = ()  # Scope-default parallel schedule
-    Sequential = ()  # Sequential code (single-thread)
-    MPI = ()  # MPI processes
-    CPU_Multicore = ()  # OpenMP
-    GPU_Device = ()  # Kernel
-    GPU_ThreadBlock = ()  # Thread-block code
-    GPU_ThreadBlock_Dynamic = ()  # Allows rescheduling work within a block
+    Default = ()  #: Scope-default parallel schedule
+    Sequential = ()  #: Sequential code (single-thread)
+    MPI = ()  #: MPI processes
+    CPU_Multicore = ()  #: OpenMP
+
+    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
+    GPU_Default = ()
+    GPU_Device = ()  #: Kernel
+    GPU_ThreadBlock = ()  #: Thread-block code
+    GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     FPGA_Device = ()
 
@@ -59,35 +62,35 @@ GPU_SCHEDULES = [
 class ReductionType(aenum.AutoNumberEnum):
     """ Reduction types natively supported by the SDFG compiler. """
 
-    Custom = ()  # Defined by an arbitrary lambda function
-    Min = ()  # Minimum value
-    Max = ()  # Maximum value
-    Sum = ()  # Sum
-    Product = ()  # Product
-    Logical_And = ()  # Logical AND (&&)
-    Bitwise_And = ()  # Bitwise AND (&)
-    Logical_Or = ()  # Logical OR (||)
-    Bitwise_Or = ()  # Bitwise OR (|)
-    Logical_Xor = ()  # Logical XOR (!=)
-    Bitwise_Xor = ()  # Bitwise XOR (^)
-    Min_Location = ()  # Minimum value and its location
-    Max_Location = ()  # Maximum value and its location
-    Exchange = ()  # Set new value, return old value
+    Custom = ()  #: Defined by an arbitrary lambda function
+    Min = ()  #: Minimum value
+    Max = ()  #: Maximum value
+    Sum = ()  #: Sum
+    Product = ()  #: Product
+    Logical_And = ()  #: Logical AND (&&)
+    Bitwise_And = ()  #: Bitwise AND (&)
+    Logical_Or = ()  #: Logical OR (||)
+    Bitwise_Or = ()  #: Bitwise OR (|)
+    Logical_Xor = ()  #: Logical XOR (!=)
+    Bitwise_Xor = ()  #: Bitwise XOR (^)
+    Min_Location = ()  #: Minimum value and its location
+    Max_Location = ()  #: Maximum value and its location
+    Exchange = ()  #: Set new value, return old value
 
     # Only supported in OpenMP
-    Sub = ()  # Subtraction
-    Div = ()  # Division
+    Sub = ()  #: Subtraction (only supported in OpenMP)
+    Div = ()  #: Division (only supported in OpenMP)
 
 
 @extensible_enum
 class AllocationLifetime(aenum.AutoNumberEnum):
     """ Options for allocation span (when to allocate/deallocate) of data. """
 
-    Scope = ()  # Allocated/Deallocated on innermost scope start/end
-    State = ()  # Allocated throughout the containing state
-    SDFG = ()  # Allocated throughout the innermost SDFG (possibly nested)
-    Global = ()  # Allocated throughout the entire program (outer SDFG)
-    Persistent = ()  # Allocated throughout multiple invocations (init/exit)
+    Scope = ()  #: Allocated/Deallocated on innermost scope start/end
+    State = ()  #: Allocated throughout the containing state
+    SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
+    Global = ()  #: Allocated throughout the entire program (outer SDFG)
+    Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
 
 
 @extensible_enum
@@ -96,6 +99,8 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    OpenCL = ()
+    SystemVerilog = ()
 
 
 class AccessType(aenum.AutoNumberEnum):
@@ -124,6 +129,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
+    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
@@ -137,6 +143,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
+    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
@@ -511,7 +518,7 @@ class pointer(typeclass):
 
     @property
     def ocltype(self):
-        return f"{self.type.ocltype}*"
+        return f"{self.base_type.ocltype}*"
 
 
 class vector(typeclass):
@@ -857,21 +864,15 @@ _CONSTANT_TYPES = [
 ]
 
 
-def isconstant(var, allow_recursive=False):
+def isconstant(var):
     """ Returns True if a variable is designated a constant (i.e., that can be
         directly generated in code).
-
-        :param allow_recursive: whether to allow dicts or lists containing constants.
     """
-    if allow_recursive:
-        if isinstance(var, (list, tuple)):
-            return all(isconstant(v, allow_recursive=False) for v in var)
-
     return type(var) in _CONSTANT_TYPES
 
 
 bool = typeclass(numpy.bool)
-bool_ = typeclass(numpy.int8)
+bool_ = typeclass(numpy.bool_)
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -904,10 +905,36 @@ DTYPE_TO_TYPECLASS = {
     numpy.float32: float32,
     numpy.float64: float64,
     numpy.complex64: complex64,
-    numpy.complex128: complex128
+    numpy.complex128: complex128,
+    # FIXME
+    numpy.longlong: int64,
+    numpy.ulonglong: uint64
+}
+
+TYPECLASS_TO_STRING = {
+    bool: "dace::bool",
+    bool_: "dace::bool_",
+    uint8: "dace::uint8",
+    uint16: "dace::uint16",
+    uint32: "dace::uint32",
+    uint64: "dace::uint64",
+    int8: "dace::int8",
+    int16: "dace::int16",
+    int32: "dace::int32",
+    int64: "dace::int64",
+    float16: "dace::float16",
+    float32: "dace::float32",
+    float64: "dace::float64",
+    complex64: "dace::complex64",
+    complex128: "dace::complex128"
 }
 
 TYPECLASS_STRINGS = [
+    "int",
+    "float",
+    "complex",
+    "bool",
+    "bool_",
     "int8",
     "int16",
     "int32",
@@ -920,7 +947,7 @@ TYPECLASS_STRINGS = [
     "float32",
     "float64",
     "complex64",
-    "complex128",
+    "complex128"
 ]
 
 INTEGER_TYPES = [
@@ -933,7 +960,7 @@ INTEGER_TYPES = [
     uint8,
     uint16,
     uint32,
-    uint64,
+    uint64
 ]
 
 #######################################################
@@ -983,10 +1010,18 @@ def ismodule_and_allowed(var):
     return False
 
 
-def isallowed(var):
-    """ Returns True if a given object is allowed in a DaCe program. """
+def isallowed(var, allow_recursive=False):
+    """ Returns True if a given object is allowed in a DaCe program.
+
+        :param allow_recursive: whether to allow dicts or lists containing constants.
+    """
     from dace.symbolic import symbol
-    return isconstant(var, allow_recursive=True) or ismodule(var) or isinstance(
+
+    if allow_recursive:
+        if isinstance(var, (list, tuple)):
+            return all(isallowed(v, allow_recursive=False) for v in var)
+
+    return isconstant(var) or ismodule(var) or isinstance(
         var, symbol) or isinstance(var, typeclass)
 
 
@@ -1083,6 +1118,8 @@ def deduplicate(iterable):
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
+    if name in {'True', 'False', 'None'}:
+        return False
     if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
         return False
     return True
@@ -1097,7 +1134,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
 
     if schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
-            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic
+            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Default,
     ]:
         return storage in [
             StorageType.GPU_Global, StorageType.GPU_Shared,
@@ -1152,6 +1189,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
             ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_Default
         ]
 
     # The rest (Registers) can be allocated everywhere

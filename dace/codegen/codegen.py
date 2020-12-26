@@ -9,7 +9,7 @@ from dace.sdfg import SDFG
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
-from dace.sdfg.infer_types import infer_connector_types
+from dace.sdfg import infer_types
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
@@ -113,7 +113,10 @@ def generate_code(sdfg) -> List[CodeObject]:
         sdfg = sdfg2
 
     # Before generating the code, run type inference on the SDFG connectors
-    infer_connector_types(sdfg)
+    infer_types.infer_connector_types(sdfg)
+
+    # Set default storage/schedule types in SDFG
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     frame = framecode.DaCeCodeGenerator()
 

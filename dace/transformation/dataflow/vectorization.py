@@ -75,8 +75,8 @@ class Vectorization(transformation.Transformation):
                 continue
 
             # Vectorization can not be applied in WCR
-            if e.data.wcr is not None:
-                return False
+            # if e.data.wcr is not None:
+            #     return False
 
             subset = e.data.subset
             array = sdfg.arrays[e.data.data]

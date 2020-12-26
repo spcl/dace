@@ -55,6 +55,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "compiler", "xilinx", "enable_debugging") else "OFF")
         autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
                      else "OFF")
+        frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -62,7 +63,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
+            f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -98,9 +100,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -194,6 +195,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
                       kernel_stream):
+        """
+           Defines a stream
+           :return: a tuple containing the type of the created variable, and boolean indicating
+               whether this is a global variable or not
+           """
         ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
                                                 dtype.veclen, buffer_size)
         if cpp.sym2cpp(array_size) == "1":
@@ -205,8 +211,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
                 var_name, var_name, cpp.sym2cpp(array_size)))
 
+        # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
-        return ctype
+        return ctype, False
 
     def define_local_array(self, var_name, desc, array_size, function_stream,
                            kernel_stream, sdfg, state_id, node):
@@ -232,13 +239,18 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}".format("const " if is_const else "",
-                             dtype.base_type.ctype, dtype.veclen)
+        return "{}{}".format("const " if is_const else "", dtype.ctype)
 
     @staticmethod
-    def make_kernel_argument(data, var_name, is_output, with_vectorization):
+    def make_kernel_argument(data,
+                             var_name,
+                             is_output,
+                             with_vectorization,
+                             interface_id=None):
         if isinstance(data, dace.data.Array):
             var_name += "_" + ("out" if is_output else "in")
+            if interface_id is not None:
+                var_name += "_%d" % interface_id
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -275,8 +287,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
-    def generate_nsdfg_header(self, sdfg, state, node, memlet_references,
-                              sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node,
+                              memlet_references, sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [
             f'{atype} {aname}' for atype, aname, _ in memlet_references
@@ -327,12 +339,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     @staticmethod
     def make_read(defined_type, dtype, var_name, expr, index, is_pack,
                   packing_factor):
-        if defined_type == DefinedType.Stream:
-            read_expr = "{}.pop()".format(expr)
-        elif defined_type == DefinedType.StreamArray:
+        if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if " " in expr:
                 expr = "(" + expr + ")"
-            read_expr = "{}[{}].pop()".format(expr, index)
+            read_expr = "{}.pop()".format(expr)
         elif defined_type == DefinedType.Scalar:
             read_expr = var_name
         else:
@@ -373,22 +383,31 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     dtype.base_type.ctype, packing_factor, read_expr,
                     write_expr)
             else:
+                # we can write into a vectorized container.
+                # (The dtype passed as argument refers to the src not to the destination)
+                veclen = dtype.veclen * packing_factor
                 return "dace::Write<{}, {}>({}, {});".format(
-                    dtype.base_type.ctype, dtype.veclen, write_expr, read_expr)
+                    dtype.base_type.ctype, veclen, write_expr, read_expr)
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
-                                  packing_factor):
+                                  packing_factor, sdfg):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
-    def generate_no_dependence_pre(var_name, kernel_stream, sdfg, state_id,
-                                   node):
+    def generate_no_dependence_pre(kernel_stream,
+                                   sdfg,
+                                   state_id,
+                                   node,
+                                   var_name=None):
         pass
 
     @staticmethod
-    def generate_no_dependence_post(var_name, kernel_stream, sdfg, state_id,
-                                    node):
+    def generate_no_dependence_post(kernel_stream, sdfg, state_id, node,
+                                    var_name):
+        '''
+        Adds post loop pragma for ignoring loop carried dependencies on a given variable
+        '''
         kernel_stream.write(
             "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
             state_id, node)
@@ -416,9 +435,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Build kernel signature
         array_args = []
-        for is_output, dataname, data in arrays:
+        for is_output, dataname, data, interface in arrays:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
-                                                   True)
+                                                   True, interface)
             if kernel_arg:
                 array_args.append(kernel_arg)
         kernel_args = array_args + [
@@ -435,8 +454,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Insert interface pragmas
         num_mapped_args = 0
-        for arg, (_, dataname, _) in zip(array_args, arrays):
-            var_name = re.findall("\w+", arg)[-1]
+        for arg, (_, dataname, _, _) in zip(array_args, arrays):
+            var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
@@ -445,7 +464,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
-                assignment = self._bank_assignments[(dataname, sdfg)]
+                assignment = self._bank_assignments[(dataname, sdfg)] if (
+                    dataname, sdfg) in self._bank_assignments else None
                 if assignment is not None:
                     mem_type, mem_bank = assignment
                     self._interface_assignments[(kernel_name,
@@ -457,7 +477,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
-            var_name = re.findall("\w+", arg)[-1]
+            var_name = re.findall(r"\w+", arg)[-1]
             kernel_stream.write(
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
@@ -481,10 +501,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             ],
                    key=lambda t: t[1]))
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
         kernel_args = []
-        for _, name, p in itertools.chain(arrays, scalars):
+        for _, name, p, _ in itertools.chain(arrays, scalars):
             if not isinstance(p, dace.data.Array) and name in added:
                 continue
             added.add(name)
@@ -515,16 +535,22 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         added = set()
 
         parameters = list(sorted(parameters, key=lambda t: t[1]))
-        arrays = [
-            p for p in parameters if not isinstance(p[2], dace.data.Scalar)
-        ]
+        arrays = dtypes.deduplicate(
+            [p for p in parameters if not isinstance(p[2], dace.data.Scalar)])
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
-        for is_output, pname, p in itertools.chain(parameters, scalars):
+        for is_output, pname, p, interface_id in itertools.chain(
+                arrays, scalars):
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
-                kernel_args_call.append(arr_name)
+                # Add interface ID to called module, but not to the module
+                # arguments
+                argname = arr_name
+                if interface_id is not None:
+                    argname = arr_name + "_%d" % interface_id
+
+                kernel_args_call.append(argname)
                 dtype = p.dtype
                 kernel_args_module.append("{} {}*{}".format(
                     dtype.ctype, "const " if not is_output else "", arr_name))
@@ -551,7 +577,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(with_types=False, name=pname))
                     kernel_args_module.append(
                         p.as_arg(with_types=True, name=pname))
-        module_function_name = "module_" + name
+
+        # create a unique module name to prevent name clashes
+        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
@@ -568,8 +597,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 kernel_args_module += ["int " + p for p in scope.params]
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
-                        raise cgx.CodegenError(
-                            "Strided unroll not supported")
+                        raise cgx.CodegenError("Strided unroll not supported")
                     entry_stream.write(
                         "for (size_t {param} = {begin}; {param} < {end}; "
                         "{param} += {increment}) {{\n#pragma HLS UNROLL".format(
@@ -602,13 +630,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # to the same global array
         in_args = {
             argname
-            for out, argname, arg in parameters
+            for out, argname, arg, _ in parameters
             if isinstance(arg, dace.data.Array)
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and not out
         }
         out_args = {
             argname
-            for out, argname, arg in parameters
+            for out, argname, arg, _ in parameters
             if isinstance(arg, dace.data.Array)
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
@@ -617,7 +645,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # the same array
             module_body_stream.write("\n")
             interfaces_added = set()
-            for _, argname, arg in parameters:
+            for _, argname, arg, _ in parameters:
                 if argname in interfaces_added:
                     continue
                 interfaces_added.add(argname)
@@ -675,7 +703,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
              sdfg, state, subgraphs)
 
         # Scalar parameters are never output
-        sc_parameters = [(False, pname, param)
+        sc_parameters = [(False, pname, param, None)
                          for pname, param in scalar_parameters]
 
         host_code_stream = CodeIOStream()
@@ -729,17 +757,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
         arrays = list(sorted(arrays, key=lambda t: t[1]))
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
-        scalars += ((False, k, v) for k, v in symbol_parameters.items())
+        scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = list(sorted(scalars, key=lambda t: t[1]))
 
         kernel_args = []
 
         seen = set()
-        for is_output, name, arg in itertools.chain(arrays, scalars):
+        for is_output, name, arg, if_id in itertools.chain(arrays, scalars):
             if isinstance(arg, dace.data.Array):
-                kernel_args.append(
-                    arg.as_arg(with_types=True,
-                               name=name + ("_out" if is_output else "_in")))
+                argname = name + ("_out" if is_output else "_in")
+                if if_id is not None:
+                    argname += "_%d" % if_id
+
+                kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 if name in seen:
                     continue

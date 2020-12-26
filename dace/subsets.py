@@ -17,10 +17,13 @@ class Subset(object):
             subset. """
         def nng(expr):
             # When dealing with set sizes, assume symbols are non-negative
-            # TODO: Fix in symbol definition, not here
-            for sym in list(expr.free_symbols):
-                expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-            return expr
+            try:
+                # TODO: Fix in symbol definition, not here
+                for sym in list(expr.free_symbols):
+                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+                return expr
+            except AttributeError:  # No free_symbols in expr
+                return expr
 
         try:
             return all([(symbolic.simplify_ext(nng(rb)) <=
@@ -177,7 +180,7 @@ class Range(Subset):
         return Range(sum_ranges)
 
     def num_elements(self):
-        return reduce(sp.mul.Mul, self.size(), 1)
+        return reduce(sp.Mul, self.size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
@@ -615,8 +618,10 @@ class Range(Subset):
                 new_ranges.append(self.ranges[i])
                 new_tsizes.append(self.tile_sizes[i])
         if not new_ranges:
-            new_ranges = [self.ranges[-1]]
-            new_tsizes = [self.tile_sizes[-1]]
+            new_ranges = [(symbolic.pystr_to_symbolic(0),
+                           symbolic.pystr_to_symbolic(0),
+                           symbolic.pystr_to_symbolic(1))]
+            new_tsizes = [symbolic.pystr_to_symbolic(1)]
         self.ranges = new_ranges
         self.tile_sizes = new_tsizes
 
@@ -947,10 +952,10 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
 
 
 def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
-    """ 
+    """
     Returns True if two subsets intersect, False if they do not, or
     None if the answer cannot be determined.
-        
+
     :param subset_a: The first subset.
     :param subset_b: The second subset.
     :return: True if subsets intersect, False if not, None if indeterminate.

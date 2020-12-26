@@ -24,5 +24,9 @@ def myprogram(A, B):
     bla(A, B)
 
 
-if __name__ == '__main__':
+def test():
     myprogram.compile(dp.float32[W, H], dp.float32[H, W])
+
+
+if __name__ == "__main__":
+    test()

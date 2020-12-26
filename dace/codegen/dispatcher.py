@@ -27,7 +27,9 @@ class DefinedType(aenum.AutoNumberEnum):
 
 class DefinedMemlets:
     """ Keeps track of the type of defined memlets to ensure that they are
-        referenced correctly in nested scopes and SDFGs. """
+        referenced correctly in nested scopes and SDFGs.
+        The ones defined in the first (top) scope, refer to global variables.
+    """
     def __init__(self):
         self._scopes = [(None, {}, True)]
 
@@ -49,7 +51,9 @@ class DefinedMemlets:
             return False
 
     def get(self, name: str, ancestor: int = 0) -> Tuple[DefinedType, str]:
+        last_visited_scope = None
         for _, scope, can_access_parent in reversed(self._scopes):
+            last_visited_scope = scope
             if ancestor > 0:
                 ancestor -= 1
                 continue
@@ -57,6 +61,12 @@ class DefinedMemlets:
                 return scope[name]
             if not can_access_parent:
                 break
+
+        # Search among globally defined variables (top scope), if not already visited
+        if last_visited_scope != self._scopes[0]:
+            if name in self._scopes[0][1]:
+                return self._scopes[0][1][name]
+
         raise KeyError("Variable {} has not been defined".format(name))
 
     def add(self,
@@ -82,6 +92,14 @@ class DefinedMemlets:
             if not can_access_parent:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
+
+    def add_global(self, name: str, dtype: DefinedType, ctype: str):
+        ''' Adds a global variable (top scope) '''
+        if not isinstance(name, str):
+            raise TypeError('Variable name type cannot be %s' %
+                            type(name).__name__)
+
+        self._scopes[0][1][name] = (dtype, ctype)
 
 
 #############################################################################

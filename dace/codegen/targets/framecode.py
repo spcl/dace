@@ -60,7 +60,7 @@ class DaCeCodeGenerator(object):
             else:
                 callsite_stream.write(
                     "constexpr %s %s = %s;\n" %
-                    (csttype.dtype.ctype, cstname, str(cstval)), sdfg)
+                    (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
     def generate_fileheader(self,
                             sdfg: SDFG,
@@ -123,10 +123,9 @@ struct {sdfg.name}_t {{
             :param callsite_stream: Stream to write to (at call site).
         """
 
-        environments = [
-            dace.library.get_environment(env_name)
-            for env_name in used_environments
-        ]
+        import dace.library
+        environments = dace.library.get_environments_and_dependencies(
+            used_environments)
 
         # Write frame code - header
         global_stream.write(
@@ -159,13 +158,12 @@ struct {sdfg.name}_t {{
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
+        import dace.library
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
-        environments = [
-            dace.library.get_environment(env_name)
-            for env_name in used_environments
-        ]
+        environments = dace.library.get_environments_and_dependencies(
+            used_environments)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -262,11 +260,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if target.has_finalizer:
                 callsite_stream.write(
                     '__dace_exit_%s(__state);' % target.target_name, sdfg)
-        for env in environments:
+        for env in reversed(environments):
             if env.finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
-                callsite_stream.write(env.init_code)
+                callsite_stream.write(env.finalize_code)
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n}\n', sdfg)
@@ -729,13 +727,17 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
 
-        # Set default storage/schedule types in SDFG
-        set_default_schedule_and_storage_types(sdfg, schedule)
-
         is_top_level = sdfg.parent is None
 
         # Generate code
         ###########################
+
+        # Keep track of allocated variables
+        allocated = set()
+
+        # Add symbol mappings to allocated variables
+        if sdfg.parent_nsdfg_node is not None:
+            allocated |= sdfg.parent_nsdfg_node.symbol_mapping.keys()
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -744,7 +746,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         # Allocate outer-level transients
         shared_transients = sdfg.shared_transients()
-        allocated = set()
         for state in sdfg.nodes():
             for node in state.data_nodes():
                 if (node.data in shared_transients
@@ -968,11 +969,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
+                left_nodes.add(left) # left also belong to scope
+
                 right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                all_nodes = left_nodes | right_nodes
+                right_nodes.add(right) # right also belong to scope
 
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:

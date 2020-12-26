@@ -12,7 +12,20 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Set, Tuple, Union
+
+
+class AttributedCallDetector(ast.NodeVisitor):
+    """ Detects attributed calls in Tasklets.
+    """
+    def __init__(self):
+        self.detected = False
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        if isinstance(node.func, ast.Attribute):
+            self.detected = True
+            return
+        return self.generic_visit(node)
 
 
 def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
@@ -137,6 +150,15 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                         # Ensure the candidate is assigned to
                         if (len(cb.code[0].targets) != 1 or astutils.rname(
                                 cb.code[0].targets[0]) != edge.src_conn):
+                            candidates.remove(candidate)
+                            continue
+                        # Ensure that the candidate is not assigned through
+                        # an "attribute" call, e.g., "dace.int64". These calls
+                        # are not supported currently by the SymPy-based
+                        # symbolic module.
+                        detector = AttributedCallDetector()
+                        detector.visit(cb.code[0].value)
+                        if detector.detected:
                             candidates.remove(candidate)
                             continue
                     elif cb.language is dtypes.Language.CPP:
@@ -311,7 +333,7 @@ def _cpp_indirection_promoter(
     repl: Dict[Tuple[int, int], str] = {}
 
     # Find all occurrences of "aname[subexpr]"
-    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*)\[(.*?)\]', code):
+    for m in re.finditer(r'([a-zA-Z_][a-zA-Z_0-9]*?)\[(.*?)\]', code):
         node_name = m.group(1)
         subexpr = m.group(2)
         if node_name in (set(in_edges.keys()) | set(out_edges.keys())):
@@ -466,12 +488,16 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
 
                         # Descend recursively to remove scalar
                         remove_scalar_reads(dst.sdfg, {e.dst_conn: tmp_symname})
+                        for ise in dst.sdfg.edges():
+                            ise.data.replace(e.dst_conn, tmp_symname)
+                            # Remove subscript occurrences as well
+                            ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
                         dst.sdfg.remove_data(e.dst_conn, validate=False)
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[
-                            symname].dtype
+                            node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
@@ -536,7 +562,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
             tasklet_inputs = [e.src for e in state.in_edges(input)]
             # Step 2.1
             new_state = xfh.state_fission(
-                sdfg, gr.SubgraphView(state, [input, node] + tasklet_inputs))
+                sdfg, gr.SubgraphView(state,
+                                      set([input, node] + tasklet_inputs)))
             new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
             # Step 2.2
             node: nodes.AccessNode = new_state.sink_nodes()[0]
@@ -547,7 +574,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
                 if input.language is dtypes.Language.Python:
                     newcode = astutils.unparse(input.code.code[0].value)
                 elif input.language is dtypes.Language.CPP:
-                    newcode = re.findall(r'.*=\s*(.*);',
+                    newcode = re.findall(r'.*?=\s*(.*);',
                                          input.code.as_string.strip())[0]
                 # Replace tasklet inputs with incoming edges
                 for e in new_state.in_edges(input):

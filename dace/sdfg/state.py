@@ -3,6 +3,7 @@
 
 import collections
 import copy
+from dace.subsets import Range, Subset
 from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
                   symbolic)
 from dace.sdfg import nodes as nd
@@ -14,7 +15,8 @@ from dace.properties import (Property, DictProperty, SubsetProperty,
                              SymbolicProperty, CodeBlock, make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import Any, Dict, Optional, List, Set, Tuple, Union
+from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple,
+                    Union)
 import warnings
 
 
@@ -216,6 +218,36 @@ class StateGraphView(object):
         # Return node that corresponds to current edge
         return traverse(tree_root)
 
+    def in_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges entering the given connector of the
+            given node.
+            :param node: Destination node of edges.
+            :param connector: Destination connector of edges.
+        """
+        return (e for e in self.in_edges(node) if e.dst_conn == connector)
+
+    def out_edges_by_connector(
+            self, node: nd.Node,
+            connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges exiting the given connector of the
+            given node.
+            :param node: Source node of edges.
+            :param connector: Source connector of edges.
+        """
+        return (e for e in self.out_edges(node) if e.src_conn == connector)
+
+    def edges_by_connector(self, node: nd.Node,
+                           connector: AnyStr) -> Iterable[MultiConnectorEdge]:
+        """ Returns a generator over edges entering or exiting the given
+            connector of the given node.
+            :param node: Source/destination node of edges.
+            :param connector: Source/destination connector of edges.
+        """
+        return itertools.chain(self.in_edges_by_connector(node, connector),
+                               self.out_edges_by_connector(node, connector))
+
     ###################################################################
     # Scope-related methods
 
@@ -299,9 +331,22 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, False, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            if validate and len(result) != self.number_of_nodes():
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                leftover_nodes = set(self.nodes()) - result.keys()
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(leftover_nodes))
 
             # Cache result
             self._scope_dict_toparent_cached = result
@@ -335,9 +380,24 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, True, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            entry_nodes = set(n for n in self.nodes()
+                              if isinstance(n, nd.EntryNode)) | {None}
+            if (validate and len(result) != len(entry_nodes)):
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(entry_nodes -
+                                                               result.keys()))
 
             # Cache result
             self._scope_dict_tochildren_cached = result
@@ -416,6 +476,56 @@ class StateGraphView(object):
             defined_syms.update(snode.new_symbols(defined_syms))
 
         return defined_syms
+
+    def _read_and_write_sets(
+        self
+    ) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
+        """
+        Determines what data is read and written in this subgraph, returning
+        dictionaries from data containers to all subsets that are read/written.
+        """
+        read_set = collections.defaultdict(list)
+        write_set = collections.defaultdict(list)
+        from dace.sdfg import utils  # Avoid cyclic import
+        subgraphs = utils.concurrent_subgraphs(self)
+        for sg in subgraphs:
+            rs = collections.defaultdict(list)
+            ws = collections.defaultdict(list)
+            # Traverse in topological order, so data that is written before it
+            # is read is not counted in the read set
+            for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
+                if isinstance(n, nd.AccessNode):
+                    for e in sg.in_edges(n):
+                        # skip empty memlets
+                        if e.data.is_empty():
+                            continue
+                        # Store all subsets that have been written
+                        ws[n.data].append(e.data.subset)
+                    for e in sg.out_edges(n):
+                        # skip empty memlets
+                        if e.data.is_empty():
+                            continue
+                        if n.data in ws:
+                            if any(s.covers(e.data.subset) for s in ws[n.data]):
+                                continue
+                        rs[n.data].append(e.data.subset)
+            # Union all subgraphs, so an array that was excluded from the read
+            # set because it was written first is still included if it is read
+            # in another subgraph
+            for data, accesses in rs.items():
+                read_set[data] += accesses
+            for data, accesses in ws.items():
+                write_set[data] += accesses
+        return read_set, write_set
+
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        """
+        Determines what data is read and written in this subgraph.
+        :return: A two-tuple of sets of things denoting
+                 ({data read}, {data written}).
+        """
+        read_set, write_set = self._read_and_write_sets()
+        return set(read_set.keys()), set(write_set.keys())
 
     def arglist(self) -> Dict[str, dt.Data]:
         """
@@ -594,7 +704,8 @@ class StateGraphView(object):
 
 
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
+class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
+                StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -610,10 +721,26 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                           desc="Measure execution statistics with given method",
                           default=dtypes.InstrumentationType.No_Instrumentation)
 
+    executions = SymbolicProperty(default=0,
+                                  desc="The number of times this state gets "
+                                  "executed (0 stands for unbounded)")
+    dynamic_executions = Property(dtype=bool,
+                                  default=True,
+                                  desc="The number of executions of this state "
+                                  "is dynamic")
+
+    ranges = DictProperty(key_type=symbolic.symbol,
+                          value_type=Range,
+                          default={},
+                          desc='Variable ranges, typically within loops')
+
     location = DictProperty(
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
+
+    def __repr__(self) -> str:
+        return f"SDFGState ({self.label})"
 
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
@@ -664,7 +791,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
     def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
         """
         Sets the default source line information to be lineinfo, or None to
-        revert to default mode. 
+        revert to default mode.
         """
         self._default_lineinfo = lineinfo
 
@@ -1027,8 +1154,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             ndrange = {k: v for k, v in ndrange}
         else:
             params = list(ndrange.keys())
-        map_range = SubsetProperty.from_string(", ".join(
-            [ndrange[p] for p in params]))
+
+        if ndrange and isinstance(next(iter(ndrange.values())), tuple):
+            map_range = sbs.Range([ndrange[p] for p in params])
+        else:
+            map_range = SubsetProperty.from_string(", ".join(
+                [ndrange[p] for p in params]))
         return params, map_range
 
     def add_map(
@@ -1482,6 +1613,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Innermost edge memlet
         cur_memlet = memlet
 
+        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode)
+                                   and src_node.data == cur_memlet.data)
+
         # Verify that connectors exist
         if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors")
                 and isinstance(edges[0].src, nd.CodeNode)
@@ -1547,6 +1681,85 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.parent, self, edge)
+
+    def remove_memlet_path(self,
+                           edge: MultiConnectorEdge,
+                           remove_orphans: bool = True) -> None:
+        """ Removes all memlets and associated connectors along a path formed
+            by a given edge. Undefined behavior if the path is ambiguous.
+            Orphaned entry and exit nodes will be connected with empty edges to
+            maintain connectivity of the graph.
+
+            :param edge: An edge that is part of the path that should be
+                         removed, which will be passed to `memlet_path` to
+                         determine the edges to be removed.
+            :param remove_orphans: Remove orphaned data nodes from the graph if
+                                   they become orphans from removing this memlet
+                                   path.
+        """
+
+        path = self.memlet_path(edge)
+
+        is_read = isinstance(path[0], nd.AccessNode)
+        if is_read:
+            # Traverse from connector to access node, so we can check if it's
+            # safe to delete edges going out of a scope
+            path = reversed(path)
+
+        for edge in path:
+
+            self.remove_edge(edge)
+
+            edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
+
+            # Check if there are any other edges exiting the source node that
+            # use the same connector
+            for e in self.out_edges(edge.src):
+                if e.src_conn is not None and e.src_conn == edge.src_conn:
+                    other_outgoing = True
+                    break
+            else:
+                other_outgoing = False
+                edge.src.remove_out_connector(edge.src_conn)
+
+            # Check if there are any other edges entering the destination node
+            # that use the same connector
+            for e in self.in_edges(edge.dst):
+                if e.dst_conn is not None and e.dst_conn == edge.dst_conn:
+                    other_incoming = True
+                    break
+            else:
+                other_incoming = False
+                edge.dst.remove_in_connector(edge.dst_conn)
+
+            if isinstance(edge.src, nd.EntryNode):
+                # If removing this edge orphans the entry node, replace the
+                # edge with an empty edge
+                if not edges_remain:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_outgoing:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            if isinstance(edge.dst, nd.ExitNode):
+                # If removing this edge orphans the exit node, replace the
+                # edge with an empty edge
+                if not edges_remain:
+                    self.add_nedge(edge.src, edge.dst, mm.Memlet())
+                if other_incoming:
+                    # If other inner memlets use the outer memlet, we have to
+                    # stop the deletion here
+                    break
+
+            # Prune access nodes
+            if remove_orphans:
+                if (isinstance(edge.src, nd.AccessNode)
+                        and self.degree(edge.src) == 0):
+                    self.remove_node(edge.src)
+                if (isinstance(edge.dst, nd.AccessNode)
+                        and self.degree(edge.dst) == 0):
+                    self.remove_node(edge.dst)
 
     # DEPRECATED FUNCTIONS
     ######################################

@@ -20,7 +20,8 @@ state.add_edge(red, None, mx, None, Memlet.simple(B, 'i'))
 state.add_edge(mx, None, B, None, Memlet.simple(B, '0:20'))
 sdfg.fill_scope_connectors()
 
-if __name__ == '__main__':
+
+def test():
     print('Nested reduction test')
 
     Adata = np.random.rand(40).astype(np.float32)
@@ -33,5 +34,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(B_regression - Bdata) / 20.0
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

@@ -44,7 +44,7 @@ state.add_memlet_path(nsdfg_node,
                       memlet=dace.Memlet.simple('M', 'i'),
                       src_conn='m')
 
-if __name__ == '__main__':
+def test():
     L = np.random.rand(2).astype(np.float32)
     M = np.random.rand(2).astype(np.float32)
 
@@ -55,4 +55,7 @@ if __name__ == '__main__':
     result = np.array([L[0], L[1], M[0], M[1]])
     diff = np.linalg.norm(expected - result)
     print('Difference:', diff)
-    exit(1 if diff > 1e-6 else 0)
+    assert diff <= 1e-5
+
+if __name__ == "__main__":
+    test()

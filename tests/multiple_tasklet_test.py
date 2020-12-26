@@ -5,8 +5,9 @@ import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
+
 # Constructs an SDFG with multiple tasklets manually and runs it
-if __name__ == '__main__':
+def test():
     print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
@@ -41,5 +42,8 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(5 * input - output) / N.get()
     print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    assert diff <= 1e-5
+
+
+if __name__ == "__main__":
+    test()

@@ -72,7 +72,7 @@ def covariance(data, cov, mean):
             def comp_cov_k(k: _[0:N]):
                 indi << data[k, i]
                 indj << data[k, j]
-                cov_ij >> cov(1, lambda x, y: x + y, 0)[i, j]
+                cov_ij >> cov(1, lambda x, y: x + y)[i, j]
                 cov_ij = (indi * indj)
 
             with dace.tasklet:

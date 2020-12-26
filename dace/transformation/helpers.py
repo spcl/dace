@@ -5,6 +5,7 @@ import copy
 from dace.subsets import Range, Subset, union
 from typing import Dict, List, Optional, Tuple
 
+from dace import symbolic
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView
@@ -32,7 +33,7 @@ def nest_state_subgraph(sdfg: SDFG,
     """
     if state.parent != sdfg:
         raise KeyError('State does not belong to given SDFG')
-    if subgraph.graph != state:
+    if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
 
     # Find the top-level scope
@@ -320,12 +321,15 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     return newstate
 
 
-def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
+def unsqueeze_memlet(internal_memlet: Memlet,
+                     external_memlet: Memlet,
+                     preserve_minima: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
                                 before modification.
         :param external_memlet: The external memlet before modification.
+        :param preserve_minima: Do not change the subset's minimum elements.
         :return: Offset Memlet to set on the resulting graph.
     """
     result = copy.deepcopy(internal_memlet)
@@ -356,6 +360,18 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
                              (external_memlet, internal_memlet))
 
     result.subset.offset(external_memlet.subset, False)
+
+    if preserve_minima:
+        if len(result.subset) != len(external_memlet.subset):
+            raise ValueError(
+                'Memlet specifies reshape that cannot be un-squeezed.\n'
+                'External memlet: %s\nInternal memlet: %s' %
+                (external_memlet, internal_memlet))
+
+        original_minima = external_memlet.subset.min_element()
+        for i in set(range(len(original_minima))):
+            rb, re, rs = result.subset.ranges[i]
+            result.subset.ranges[i] = (original_minima[i], re, rs)
 
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
@@ -410,11 +426,36 @@ def replicate_scope(sdfg: SDFG, state: SDFGState,
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
+def offset_map(sdfg: SDFG,
+               state: SDFGState,
+               entry: nodes.MapEntry,
+               dim: int,
+               offset: symbolic.SymbolicType,
+               negative: bool = True):
+    """
+    Offsets a map parameter and its contents by a value.
+    :param sdfg: The SDFG in which the map resides.
+    :param state: The state in which the map resides.
+    :param entry: The map entry node.
+    :param dim: The map dimension to offset.
+    :param offset: The value to offset by.
+    :param negative: If True, offsets by ``-offset``.
+    """
+    entry.map.range.offset(offset, negative, indices=[dim])
+    param = entry.map.params[dim]
+    subgraph = state.scope_subgraph(entry)
+    # Offset map param by -offset, contents by +offset and vice versa
+    if negative:
+        subgraph.replace(param, f'({param} + {offset})')
+    else:
+        subgraph.replace(param, f'({param} - {offset})')
+
+
 def split_interstate_edges(sdfg: SDFG) -> None:
     """
     Splits all inter-state edges into edges with conditions and edges with
     assignments. This procedure helps in nested loop detection.
-    :param sdfg: The SDFG to split 
+    :param sdfg: The SDFG to split
     :note: Operates in-place on the SDFG.
     """
     for e in sdfg.edges():

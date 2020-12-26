@@ -4,6 +4,7 @@ import dace
 from dace.transformation.interstate import GPUTransformSDFG
 
 from typing import Dict, Tuple
+import pytest
 
 
 def create_zero_initialization(init_state: dace.SDFGState, array_name):
@@ -54,8 +55,8 @@ def create_test_sdfg():
 
     return sdfg
 
-
-if __name__ == '__main__':
+@pytest.mark.gpu
+def test():
     my_max_sdfg = create_test_sdfg()
     my_max_sdfg.validate()
     my_max_sdfg.apply_transformations(GPUTransformSDFG)
@@ -66,3 +67,6 @@ if __name__ == '__main__':
     my_max_sdfg(BETA=BETA, BETA_MAX=BETA_MAX)
 
     assert (np.max(BETA) == BETA_MAX[0])
+
+if __name__ == "__main__":
+    test()
