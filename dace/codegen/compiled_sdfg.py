@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import warnings
 
 import numpy as np
@@ -183,12 +183,12 @@ class CompiledSDFG(object):
 
     def __call__(self, **kwargs):
         try:
-            argtuple = self._construct_args(**kwargs)
+            argtuple, initargtuple = self._construct_args(**kwargs)
 
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
-                self.initialize(*argtuple)
+                self.initialize(*initargtuple)
 
             # PROFILING
             if Config.get_bool('profiling'):
@@ -210,7 +210,7 @@ class CompiledSDFG(object):
             self._libhandle = ctypes.c_void_p(0)
         self._lib.unload()
 
-    def _construct_args(self, **kwargs):
+    def _construct_args(self, **kwargs) -> Tuple[Tuple[Any], Tuple[Any]]:
         """ Main function that controls argument construction for calling
             the C prototype of the SDFG.
 
@@ -309,11 +309,18 @@ class CompiledSDFG(object):
              atype) if dtypes.is_array(arg) else (arg, actype, atype)
             for arg, actype, atype in callparams)
 
+        initargs = tuple(atup for atup in callparams
+                         if not dtypes.is_array(atup[0]))
+
         newargs = tuple(
             actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
             for arg, actype, atype in newargs)
 
-        self._lastargs = newargs
+        initargs = tuple(
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype in initargs)
+
+        self._lastargs = newargs, initargs
         return self._lastargs
 
     def _initialize_return_values(self, kwargs):

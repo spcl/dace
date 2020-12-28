@@ -4,7 +4,7 @@ from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
-from dace.sdfg import nodes
+from dace.sdfg import nodes, SDFG
 from dace.config import Config
 
 from dace.codegen import cppunparse
@@ -17,7 +17,7 @@ class MPICodeGen(TargetCodeGenerator):
     title = 'MPI'
     language = 'cpp'
 
-    def __init__(self, frame_codegen, sdfg):
+    def __init__(self, frame_codegen, sdfg: SDFG):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._global_sdfg = sdfg
@@ -30,7 +30,7 @@ class MPICodeGen(TargetCodeGenerator):
         sdfg = self._global_sdfg
         self._frame.generate_fileheader(sdfg, fileheader)
 
-        params_comma = sdfg.signature()
+        params_comma = sdfg.signature(with_arrays=False)
         if params_comma:
             params_comma = ', ' + params_comma
 

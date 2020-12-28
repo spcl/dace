@@ -868,7 +868,6 @@ def _result_type(
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, Number):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-            print(arg, type(arg), dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))

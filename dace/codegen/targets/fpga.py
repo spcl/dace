@@ -16,7 +16,7 @@ from dace import subsets, data as dt
 from dace.dtypes import deduplicate
 from dace.config import Config
 from dace.frontend import operations
-from dace.sdfg import nodes
+from dace.sdfg import nodes, SDFG
 from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
 from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
@@ -59,7 +59,7 @@ class FPGACodeGen(TargetCodeGenerator):
     title = None
     language = None
 
-    def __init__(self, frame_codegen, sdfg):
+    def __init__(self, frame_codegen, sdfg: SDFG):
 
         # The inheriting class must set target_name, title and language.
 

@@ -162,6 +162,8 @@ struct {sdfg.name}_t {{
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
+        initparams = sdfg.signature(with_arrays=False)
+        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
         environments = dace.library.get_environments_and_dependencies(
             used_environments)
 
@@ -182,7 +184,9 @@ struct {sdfg.name}_t {{
 
         # Write awkward footer to avoid 'extern "C"' issues
         params_comma = (', ' + params) if params else ''
+        initparams_comma = (', ' + initparams) if initparams else ''
         paramnames_comma = (', ' + paramnames) if paramnames else ''
+        initparamnames_comma = (', ' + initparamnames) if initparamnames else ''
         callsite_stream.write(
             f'''
 DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
@@ -194,7 +198,7 @@ DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
             if target.has_initializer:
                 callsite_stream.write(
                     'DACE_EXPORTED int __dace_init_%s(%s_t *__state%s);\n' %
-                    (target.target_name, sdfg.name, params_comma), sdfg)
+                    (target.target_name, sdfg.name, initparams_comma), sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
                     'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' %
@@ -202,7 +206,7 @@ DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
 
         callsite_stream.write(
             f"""
-DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({params})
+DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
 {{
     int __result = 0;
     {sdfg.name}_t *__state = new {sdfg.name}_t;
@@ -213,7 +217,7 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({params})
             if target.has_initializer:
                 callsite_stream.write(
                     '__result |= __dace_init_%s(__state%s);' %
-                    (target.target_name, paramnames_comma), sdfg)
+                    (target.target_name, initparamnames_comma), sdfg)
         for env in environments:
             if env.init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,

@@ -53,7 +53,7 @@ class CUDACodeGen(TargetCodeGenerator):
     target_name = 'cuda'
     title = 'CUDA'
 
-    def __init__(self, frame_codegen, sdfg):
+    def __init__(self, frame_codegen, sdfg: SDFG):
         self.backend = Config.get('compiler', 'cuda', 'backend')
         self.language = 'cu' if self.backend == 'cuda' else 'cpp'
         self._frame = frame_codegen
@@ -78,7 +78,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
-        self._global_sdfg = sdfg
+        self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
 
         # Keep track of current "scope entry/exit" code streams for extra
@@ -183,7 +183,7 @@ class CUDACodeGen(TargetCodeGenerator):
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
-        params_comma = self._global_sdfg.signature()
+        params_comma = self._global_sdfg.signature(with_arrays=False)
         if params_comma:
             params_comma = ', ' + params_comma
 
