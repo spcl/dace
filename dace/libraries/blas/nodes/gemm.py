@@ -193,6 +193,7 @@ class ExpandGemmMKL(ExpandTransformation):
         node.validate(sdfg, state)
         dtype = node.dtype
         func = to_blastype(dtype.type).lower() + 'gemm'
+        # TODO: Fix w.r.t. other alpha/beta values
         if dtype == dace.float32:
             alpha = "1.0f"
             beta = "0.0f"
@@ -259,12 +260,12 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        # TODO: Fix
+        # TODO: Fix (use One/Zero, copy to custom_alpha/custom_beta if necessary)
         if node.alpha != 1.0 or node.beta != 0.0:
             raise NotImplementedError('Only alpha = 1 and beta = 0 supported')
 
-        alpha = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sPone()" % factort
-        beta = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sZero()" % factort
+        alpha = "__state->cublas_handle.Constants(__dace_cuda_device).%sPone()" % factort
+        beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
 
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None

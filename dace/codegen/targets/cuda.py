@@ -616,11 +616,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     path = graph.memlet_path(e)
                     # If leading from/to a GPU memory node, keep stream
                     if ((isinstance(path[0].src, nodes.AccessNode)
-                         and path[0].src.desc(cur_sdfg).storage
-                         == dtypes.StorageType.GPU_Global)
+                         and path[0].src.desc(
+                             cur_sdfg).storage == dtypes.StorageType.GPU_Global)
                             or (isinstance(path[-1].dst, nodes.AccessNode)
-                                and path[-1].dst.desc(cur_sdfg).storage
-                                == dtypes.StorageType.GPU_Global)):
+                                and path[-1].dst.desc(cur_sdfg).storage ==
+                                dtypes.StorageType.GPU_Global)):
                         break
                     # If leading from/to a GPU tasklet, keep stream
                     if ((isinstance(path[0].src, nodes.CodeNode)
@@ -687,13 +687,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if (isinstance(src_node, nodes.AccessNode)
                 and isinstance(dst_node, nodes.AccessNode)
-                and not self._in_device_code and
-            (src_storage
-             in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]
-             or dst_storage
-             in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned])
-                and not (src_storage in cpu_storage_types
-                         and dst_storage in cpu_storage_types)):
+                and not self._in_device_code and (src_storage in [
+                    dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
+                ] or dst_storage in [
+                    dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned
+                ]) and not (src_storage in cpu_storage_types
+                            and dst_storage in cpu_storage_types)):
             src_location = 'Device' if src_storage == dtypes.StorageType.GPU_Global else 'Host'
             dst_location = 'Device' if dst_storage == dtypes.StorageType.GPU_Global else 'Host'
 

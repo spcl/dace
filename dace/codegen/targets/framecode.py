@@ -34,6 +34,7 @@ class DaCeCodeGenerator(object):
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
         self.statestruct: List[str] = []
+        self.environments: List[Any] = []
 
     ##################################################################
     # Target registry
@@ -72,6 +73,14 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
         """
+        #########################################################
+        # Environment-based includes
+        for env in self.environments:
+            if len(env.headers) > 0:
+                global_stream.write(
+                    "\n".join("#include \"" + h + "\"" for h in env.headers),
+                    sdfg)
+
         #########################################################
         # Custom types
         datatypes = set()
@@ -113,7 +122,7 @@ struct {sdfg.name}_t {{
                 global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
                                     sd)
 
-    def generate_header(self, sdfg: SDFG, used_environments: Set[str],
+    def generate_header(self, sdfg: SDFG,
                         global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
@@ -122,22 +131,14 @@ struct {sdfg.name}_t {{
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
-
-        import dace.library
-        environments = dace.library.get_environments_and_dependencies(
-            used_environments)
-
         # Write frame code - header
         global_stream.write(
             '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' +
             '#include <dace/dace.h>\n', sdfg)
 
         # Write header required by environments
-        for env in environments:
-            if len(env.headers) > 0:
-                global_stream.write(
-                    "\n".join("#include \"" + h + "\"" for h in env.headers),
-                    sdfg)
+        for env in self.environments:
+            self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
         if len(self._dispatcher.instrumentation) > 1:
@@ -149,7 +150,7 @@ struct {sdfg.name}_t {{
 
         self.generate_fileheader(sdfg, global_stream, 'frame')
 
-    def generate_footer(self, sdfg: SDFG, used_environments: Set[str],
+    def generate_footer(self, sdfg: SDFG,
                         global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
@@ -164,8 +165,6 @@ struct {sdfg.name}_t {{
         paramnames = sdfg.signature(False, for_call=True)
         initparams = sdfg.signature(with_arrays=False)
         initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
-        environments = dace.library.get_environments_and_dependencies(
-            used_environments)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -218,7 +217,7 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
                 callsite_stream.write(
                     '__result |= __dace_init_%s(__state%s);' %
                     (target.target_name, initparamnames_comma), sdfg)
-        for env in environments:
+        for env in self.environments:
             if env.init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
@@ -264,7 +263,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if target.has_finalizer:
                 callsite_stream.write(
                     '__dace_exit_%s(__state);' % target.target_name, sdfg)
-        for env in reversed(environments):
+        for env in reversed(self.environments):
             if env.finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
@@ -973,13 +972,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                left_nodes.add(left) # left also belong to scope
+                left_nodes.add(left)  # left also belong to scope
 
                 right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                right_nodes.add(right) # right also belong to scope
+                right_nodes.add(right)  # right also belong to scope
 
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:
@@ -1058,8 +1057,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             header_global_stream = CodeIOStream()
             footer_stream = CodeIOStream()
             footer_global_stream = CodeIOStream()
-            self.generate_header(sdfg, self._dispatcher.used_environments,
-                                 header_global_stream, header_stream)
+
+            # Get all environments used in the generated code, including
+            # dependent environments
+            import dace.library  # Avoid import loops
+            self.environments = dace.library.get_environments_and_dependencies(
+                self._dispatcher.used_environments)
+
+            self.generate_header(sdfg, header_global_stream, header_stream)
 
             # Open program function
             params = sdfg.signature()
@@ -1069,8 +1074,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 'void __program_%s_internal(%s_t *__state%s)\n{\n' %
                 (sdfg.name, sdfg.name, params))
 
-            self.generate_footer(sdfg, self._dispatcher.used_environments,
-                                 footer_global_stream, footer_stream)
+            self.generate_footer(sdfg, footer_global_stream, footer_stream)
 
             header_global_stream.write(global_stream.getvalue())
             header_global_stream.write(footer_global_stream.getvalue())
