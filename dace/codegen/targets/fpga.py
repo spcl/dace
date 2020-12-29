@@ -458,7 +458,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
                         # Define buffer, using proper type
                         result_decl.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {}"
+                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
                             .format(nodedesc.dtype.ctype, dataname))
                         result_alloc.write(
                             "{} = __state->fpga_context->Get()."

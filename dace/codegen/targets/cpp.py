@@ -52,7 +52,7 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    expr = dataname
+    expr = ptr(dataname, datadesc)
 
     def_type, _ = dispatcher.defined_vars.get(dataname)
 
