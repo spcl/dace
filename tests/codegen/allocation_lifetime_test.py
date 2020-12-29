@@ -51,6 +51,37 @@ def test_alloc_persistent():
     del csdfg
 
 
+def test_alloc_persistent_threadlocal():
+    @dace.program
+    def persistentmem(output: dace.int32[1]):
+        tmp = dace.ndarray([1],
+                           output.dtype,
+                           storage=dace.StorageType.CPU_ThreadLocal,
+                           lifetime=dace.AllocationLifetime.Persistent)
+        if output[0] == 1.0:
+            for i in dace.map[0:1]:
+                tmp[i] = 0
+        else:
+            for i in dace.map[0:1]:
+                tmp[i] += 3
+                output[i] = tmp[i]
+
+    # Repeatedly invoke program. Since memory is persistent, output is expected
+    # to increase with each call
+    csdfg = persistentmem.compile()
+    value = np.ones([1], dtype=np.int32)
+    csdfg(output=value)
+    assert value[0] == 1
+    value[0] = 2
+    csdfg(output=value)
+    assert value[0] == 3
+    csdfg(output=value)
+    assert value[0] == 6
+
+    del csdfg
+
+
 if __name__ == '__main__':
     test_alloc_persistent_register()
     test_alloc_persistent()
+    test_alloc_persistent_threadlocal()

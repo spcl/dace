@@ -176,6 +176,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
 
+        alloc_name = cpp.ptr(name, nodedesc)
+
         if isinstance(nodedesc, data.Scalar):
             declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
                                      sdfg, state_id, node)
@@ -259,7 +261,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                      state_id, node)
             allocation_stream.write(
                 "%s = new %s DACE_ALIGN(64)[%s];\n" %
-                (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
+                (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
                 state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
                                               ctypedef)
@@ -267,7 +269,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 allocation_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
-                    (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
+                    (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -313,7 +315,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 {{
                     {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(
                     ctype=nodedesc.dtype.ctype,
-                    name=name,
+                    name=alloc_name,
                     arrsize=cpp.sym2cpp(arrsize)),
                 sdfg,
                 state_id,
@@ -322,7 +324,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 allocation_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
-                    (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
+                    (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             # Close OpenMP parallel section
             allocation_stream.write('}')
         else:
@@ -333,6 +335,8 @@ class CPUCodeGen(TargetCodeGenerator):
                          callsite_stream):
         nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
+        alloc_name = cpp.ptr(node.data, nodedesc)
+
         if isinstance(nodedesc, data.Scalar):
             return
         elif isinstance(nodedesc, data.Stream):
@@ -340,7 +344,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register
                   and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write("delete[] %s;\n" % node.data, sdfg, state_id,
+            callsite_stream.write("delete[] %s;\n" % alloc_name, sdfg, state_id,
                                   node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
@@ -348,7 +352,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 """#pragma omp parallel
                 {{
                     delete[] {name};
-                }}""".format(name=node.data),
+                }}""".format(name=alloc_name),
                 sdfg,
                 state_id,
                 node,
@@ -512,8 +516,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                             src_nodedesc.shape, 1) == 1
                     stream.write(
                         "{s}.pop(&{arr}[{aexpr}], {maxsize});".format(
-                            s=src_node.data,
-                            arr=dst_node.data,
+                            s=cpp.ptr(src_node.data, src_nodedesc),
+                            arr=cpp.ptr(dst_node.data, dst_nodedesc),
                             aexpr=array_expr,
                             maxsize=cpp.sym2cpp(array_subset.num_elements())),
                         sdfg,
@@ -527,8 +531,10 @@ class CPUCodeGen(TargetCodeGenerator):
                                   dst_nodedesc, data.Stream):
                     if hasattr(src_nodedesc, "src"):  # ArrayStreamView
                         stream.write(
-                            "{s}.push({arr});".format(s=dst_node.data,
-                                                      arr=src_nodedesc.src),
+                            "{s}.push({arr});".format(
+                                s=cpp.ptr(dst_node.data, dst_nodedesc),
+                                arr=cpp.ptr(src_nodedesc.src,
+                                            sdfg.arrays[src_nodedesc.src])),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
@@ -537,9 +543,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         copysize = " * ".join(
                             [cpp.sym2cpp(s) for s in memlet.subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(s=dst_node.data,
-                                                              arr=src_node.data,
-                                                              size=copysize),
+                            "{s}.push({arr}, {size});".format(
+                                s=cpp.ptr(dst_node.data, dst_nodedesc),
+                                arr=cpp.ptr(src_node.data, src_nodedesc),
+                                size=copysize),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
@@ -993,26 +1000,28 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate variable type
         memlet_type = conntype.dtype.ctype
 
+        desc = sdfg.arrays[memlet.data]
+        ptr = cpp.ptr(memlet.data, desc)
+
         var_type, ctypedef = self._dispatcher.defined_vars.get(memlet.data)
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
                 if var_type in [
                     DefinedType.Pointer, DefinedType.StreamArray,
                     DefinedType.ArrayInterface
-                ] else memlet.data)
+                ] else ptr)
 
         # Special case: ArrayInterface - get input/output pointers from array
         if var_type == DefinedType.ArrayInterface and not is_scalar:
             if output:
-                expr = '(%s + %s).ptr_out()' % (memlet.data, expr)
+                expr = '(%s + %s).ptr_out()' % (ptr, expr)
                 ctypedef = memlet_type
             else:
-                expr = '(%s + %s).ptr_in()' % (memlet.data, expr)
+                expr = '(%s + %s).ptr_in()' % (ptr, expr)
                 ctypedef = 'const ' + memlet_type
-        else:
-            # Otherwise, "&arr[ind]" syntax can be used
-            if expr != memlet.data:
-                expr = '%s[%s]' % (memlet.data, expr)
+        else:  # Otherwise, "&arr[ind]" syntax can be used
+            if expr != ptr:
+                expr = '%s[%s]' % (ptr, expr)
             # If there is a type mismatch, cast pointer
             expr = codegen.make_ptr_vector_cast(sdfg, expr, memlet, conntype,
                                                 is_scalar, var_type)

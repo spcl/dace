@@ -353,6 +353,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
         dataname = node.data
+        allocname = cpp.ptr(dataname, nodedesc)
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
@@ -362,10 +363,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
             # Strides are left to the user's discretion
             result_alloc.write('%sMalloc(&%s, %s);\n' %
-                               (self.backend, dataname, arrsize_malloc))
+                               (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('%sMemset(%s, 0, %s);\n' %
-                                   (self.backend, dataname, arrsize_malloc))
+                                   (self.backend, allocname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             result_decl.write('%s %s;\n' % (ctypedef, dataname))
@@ -374,10 +375,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
             # Strides are left to the user's discretion
             result_alloc.write('%sMallocHost(&%s, %s);\n' %
-                               (self.backend, dataname, arrsize_malloc))
+                               (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' %
-                                   (dataname, arrsize_malloc))
+                                   (allocname, arrsize_malloc))
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             if is_dynamically_sized:
                 raise NotImplementedError('Dynamic shared memory unsupported')
@@ -392,7 +393,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                     '1, false>::Reset({ptr});\n'.format(
                         type=nodedesc.dtype.ctype,
                         block_size=', '.join(_topy(self._block_dims)),
-                        ptr=dataname,
+                        ptr=allocname,
                         elements=sym2cpp(arrsize)))
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
@@ -414,16 +415,16 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                         declaration_stream, allocation_stream):
         nodedesc = node.desc(sdfg)
         dataname = node.data
+        allocname = cpp.ptr(dataname, nodedesc)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
-                'name':
-                dataname,
-                'type':
-                nodedesc.dtype.ctype,
+                'name': dataname,
+                'allocname': allocname,
+                'type': nodedesc.dtype.ctype,
                 'is_pow2':
                 sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
                 'location':
-                '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node)),
+                '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node))
             }
 
             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
@@ -462,8 +463,8 @@ void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type},
                     'dace::GPUStream<{type}, {is_pow2}> {name};'.format(
                         **fmtargs), sdfg, state_id, node)
                 allocation_stream.write(
-                    '__dace_alloc_{location}({ptr}, {size}, {name});'.format(
-                        **fmtargs), sdfg, state_id, node)
+                    '__dace_alloc_{location}({ptr}, {size}, {allocname});'.
+                    format(**fmtargs), sdfg, state_id, node)
             else:
                 fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
 
@@ -480,13 +481,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     'dace::GPUStream<{type}, {is_pow2}> {name};'.format(
                         **fmtargs), sdfg, state_id, node)
                 allocation_stream.write(
-                    '__dace_alloc_{location}({size}, {name});'.format(
+                    '__dace_alloc_{location}({size}, {allocname});'.format(
                         **fmtargs), sdfg, state_id, node)
 
     def deallocate_stream(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
         nodedesc = node.desc(sdfg)
-        dataname = node.data
+        dataname = cpp.ptr(node.data, nodedesc)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write(
@@ -499,7 +500,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):
         nodedesc = node.desc(sdfg)
-        dataname = node.data
+        dataname = cpp.ptr(node.data, nodedesc)
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node,

@@ -307,10 +307,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         global_data_parameters.append(
                             (is_output, dataname, data, interface_id))
                         global_data_names.add(dataname)
-                    elif (data.storage
-                          in (dace.dtypes.StorageType.FPGA_Local,
-                              dace.dtypes.StorageType.FPGA_Registers,
-                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage in (
+                            dace.dtypes.StorageType.FPGA_Local,
+                            dace.dtypes.StorageType.FPGA_Registers,
+                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -386,6 +386,7 @@ class FPGACodeGen(TargetCodeGenerator):
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
 
         dataname = node.data
+        allocname = cpp.ptr(dataname, nodedesc)
 
         if isinstance(nodedesc, dace.data.Stream):
 
@@ -457,21 +458,22 @@ class FPGACodeGen(TargetCodeGenerator):
 
                         # Define buffer, using proper type
                         result_decl.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {}".format(nodedesc.dtype.ctype, dataname))
+                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {}"
+                            .format(nodedesc.dtype.ctype, dataname))
                         result_alloc.write(
                             "{} = __state->fpga_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({}{});".format(dataname, nodedesc.dtype.ctype,
+                            "({}{});".format(allocname, nodedesc.dtype.ctype,
                                              memory_bank_arg,
                                              cpp.sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
-            elif (nodedesc.storage
-                  in (dace.dtypes.StorageType.FPGA_Local,
-                      dace.dtypes.StorageType.FPGA_Registers,
-                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage in (
+                    dace.dtypes.StorageType.FPGA_Local,
+                    dace.dtypes.StorageType.FPGA_Registers,
+                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise cgx.CodegenError(
@@ -501,8 +503,8 @@ class FPGACodeGen(TargetCodeGenerator):
                                                    sdfg, state_id, node)
                     else:
                         self.define_local_array(dataname, nodedesc, arrsize,
-                                                function_stream, result_decl, sdfg,
-                                                state_id, node)
+                                                function_stream, result_decl,
+                                                sdfg, state_id, node)
 
             else:
                 raise NotImplementedError("Unimplemented storage type " +
@@ -602,9 +604,12 @@ class FPGACodeGen(TargetCodeGenerator):
                 for s in copy_shape
             ])
 
+            src_nodedesc = src_node.desc(sdfg)
+            dst_nodedesc = dst_node.desc(sdfg)
+
             if host_to_device:
 
-                ptr_str = (src_node.data +
+                ptr_str = (cpp.ptr(src_node.data, src_nodedesc) +
                            (" + {}".format(offset)
                             if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
@@ -613,13 +618,13 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        dst_node.data, (offset if not outgoing_memlet else 0),
-                        copysize, ptr_str), sdfg, state_id,
-                    [src_node, dst_node])
+                        cpp.ptr(dst_node.data, dst_nodedesc),
+                        (offset if not outgoing_memlet else 0), copysize,
+                        ptr_str), sdfg, state_id, [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (dst_node.data +
+                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc) +
                            (" + {}".format(offset)
                             if outgoing_memlet and str(offset) != "0" else ""))
                 if cast:
@@ -628,16 +633,17 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        src_node.data, (offset if outgoing_memlet else 0),
-                        copysize, ptr_str), sdfg, state_id,
-                    [src_node, dst_node])
+                        cpp.ptr(src_node.data, src_nodedesc),
+                        (offset if outgoing_memlet else 0), copysize, ptr_str),
+                    sdfg, state_id, [src_node, dst_node])
 
             elif device_to_device:
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        src_node.data, (offset if outgoing_memlet else 0),
-                        copysize, dst_node.data,
+                        cpp.ptr(src_node.data, src_nodedesc),
+                        (offset if outgoing_memlet else 0), copysize,
+                        cpp.ptr(dst_node.data, dst_nodedesc),
                         (offset if not outgoing_memlet else 0)), sdfg, state_id,
                     [src_node, dst_node])
 
@@ -1252,8 +1258,11 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node,
                               memlet_references, sdfg_label):
-        return self._cpu_codegen.generate_nsdfg_header(sdfg, state, state_id,
-                                                       node, memlet_references,
+        return self._cpu_codegen.generate_nsdfg_header(sdfg,
+                                                       state,
+                                                       state_id,
+                                                       node,
+                                                       memlet_references,
                                                        sdfg_label,
                                                        state_struct=False)
 

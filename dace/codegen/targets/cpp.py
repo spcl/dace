@@ -201,6 +201,22 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
+def ptr(name: str, desc: data.Data) -> str:
+    """ 
+    Returns a string that points to the data based on its name and descriptor.
+    :param name: Data name.
+    :param desc: Data descriptor.
+    :return: C-compatible name that can be used to access the data.
+    """
+    # Special case: If memory is persistent and defined in this SDFG, add state
+    # struct to name
+    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
+            and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
+        return f'__state->{name}'
+
+    return name
+
+
 def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass) -> Tuple[str, str, str]:
@@ -216,6 +232,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
+    pointer_name = ptr(pointer_name, desc)
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
@@ -446,14 +463,12 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data],
-                                    s,
-                                    o,
-                                    packed_veclen,
-                                    indices=indices)
+    desc = sdfg.arrays[memlet.data]
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        return "%s[%s]" % (memlet.data, offset_cppstr)
+        ptrname = ptr(memlet.data, desc)
+        return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
 
@@ -484,14 +499,13 @@ def cpp_ptr_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
+    desc = sdfg.arrays[memlet.data]
     if isinstance(indices, str):
         offset_cppstr = indices
     else:
-        offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data],
-                                        s,
-                                        o,
-                                        indices=indices)
-    dname = memlet.data
+        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
+    dname = ptr(memlet.data, desc)
+
     if isinstance(sdfg.arrays[dname], data.Scalar):
         dname = '&' + dname
 
