@@ -41,12 +41,12 @@ def test_alloc_persistent():
     csdfg = persistentmem.compile()
     value = np.ones([1], dtype=np.int32)
     csdfg(output=value)
-    assert value == 1
+    assert value[0] == 1
     value[0] = 2
     csdfg(output=value)
-    assert value == 3
+    assert value[0] == 3
     csdfg(output=value)
-    assert value == 6
+    assert value[0] == 6
 
     del csdfg
 
