@@ -100,8 +100,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
-                         is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else
+                         unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\

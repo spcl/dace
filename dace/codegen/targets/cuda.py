@@ -331,7 +331,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         return options
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+                       declaration_stream, allocation_stream):
         try:
             self._dispatcher.defined_vars.get(node.data)
             return
@@ -341,7 +341,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         nodedesc = node.desc(sdfg)
         if isinstance(nodedesc, dace.data.Stream):
             return self.allocate_stream(sdfg, dfg, state_id, node,
-                                        function_stream, callsite_stream)
+                                        function_stream, declaration_stream,
+                                        allocation_stream)
 
         result_decl = StringIO()
         result_alloc = StringIO()
@@ -355,7 +356,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            result_decl.write('%s %s = nullptr;\n' % (ctypedef, dataname))
+            result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
                                               ctypedef)
 
@@ -367,7 +368,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                                    (self.backend, dataname, arrsize_malloc))
 
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            result_decl.write('%s %s = nullptr;\n' % (ctypedef, dataname))
+            result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer,
                                               ctypedef)
 
@@ -406,16 +407,11 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             raise NotImplementedError("CUDA: Unimplemented storage type " +
                                       str(nodedesc.storage))
 
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-            function_stream.write(result_decl.getvalue(), sdfg, state_id, node)
-            self._frame._initcode.write(result_alloc.getvalue(), sdfg, state_id,
-                                        node)
-        else:
-            callsite_stream.write(result_decl.getvalue(), sdfg, state_id, node)
-            callsite_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
     def allocate_stream(self, sdfg, dfg, state_id, node, function_stream,
-                        callsite_stream):
+                        declaration_stream, allocation_stream):
         nodedesc = node.desc(sdfg)
         dataname = node.data
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
@@ -451,7 +447,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 datanode = dfg.out_edges(node)[0].dst
                 self._dispatcher.dispatch_allocate(sdfg, dfg, state_id,
                                                    datanode, function_stream,
-                                                   callsite_stream)
+                                                   allocation_stream)
 
                 function_stream.write(
                     'DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
@@ -462,9 +458,12 @@ DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPU
 void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
     result = dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
 }}""".format(**fmtargs), sdfg, state_id, node)
-                callsite_stream.write(
-                    'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({ptr}, {size}, {name});'
-                    .format(**fmtargs), sdfg, state_id, node)
+                declaration_stream.write(
+                    'dace::GPUStream<{type}, {is_pow2}> {name};'.format(
+                        **fmtargs), sdfg, state_id, node)
+                allocation_stream.write(
+                    '__dace_alloc_{location}({ptr}, {size}, {name});'.format(
+                        **fmtargs), sdfg, state_id, node)
             else:
                 fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
 
@@ -477,9 +476,12 @@ DACE_EXPORTED void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{typ
 void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>& result) {{
     result = dace::AllocGPUStream<{type}, {is_pow2}>({size});
 }}""".format(**fmtargs), sdfg, state_id, node)
-                callsite_stream.write(
-                    'dace::GPUStream<{type}, {is_pow2}> {name}; __dace_alloc_{location}({size}, {name});'
-                    .format(**fmtargs), sdfg, state_id, node)
+                declaration_stream.write(
+                    'dace::GPUStream<{type}, {is_pow2}> {name};'.format(
+                        **fmtargs), sdfg, state_id, node)
+                allocation_stream.write(
+                    '__dace_alloc_{location}({size}, {name});'.format(
+                        **fmtargs), sdfg, state_id, node)
 
     def deallocate_stream(self, sdfg, dfg, state_id, node, function_stream,
                           callsite_stream):
@@ -499,21 +501,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         nodedesc = node.desc(sdfg)
         dataname = node.data
 
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-            codestream = self._frame._exitcode
-        else:
-            codestream = callsite_stream
-
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node,
                                           function_stream, codestream)
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            codestream.write('%sFree(%s);\n' % (self.backend, dataname), sdfg,
-                             state_id, node)
+            callsite_stream.write('%sFree(%s);\n' % (self.backend, dataname),
+                                  sdfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            codestream.write('%sFreeHost(%s);\n' % (self.backend, dataname),
-                             sdfg, state_id, node)
+            callsite_stream.write(
+                '%sFreeHost(%s);\n' % (self.backend, dataname), sdfg, state_id,
+                node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing

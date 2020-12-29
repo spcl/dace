@@ -159,7 +159,7 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals.clear_scope(self._ldepth + 1)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
+                       declaration_stream, allocation_stream):
         name = node.data
         nodedesc = node.desc(sdfg)
 
@@ -177,8 +177,8 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
 
         if isinstance(nodedesc, data.Scalar):
-            callsite_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
-                                  sdfg, state_id, node)
+            declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
+                                     sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Scalar,
                                               nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
@@ -199,14 +199,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 memlet_path = state.memlet_path(edges[0])
                 # Allocate the array before its stream view, if necessary
-                self.allocate_array(
-                    sdfg,
-                    dfg,
-                    state_id,
-                    memlet_path[-1].dst,
-                    function_stream,
-                    callsite_stream,
-                )
+                self.allocate_array(sdfg, dfg, state_id, memlet_path[-1].dst,
+                                    function_stream, declaration_stream,
+                                    allocation_stream)
 
                 array_expr = cpp.copy_expr(self._dispatcher,
                                            sdfg,
@@ -223,7 +218,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     threadlocal = "Threadlocal"
                 ctype = 'dace::ArrayStreamView%s<%s>' % (threadlocal,
                                                          arrnode.dtype.ctype)
-                callsite_stream.write(
+                declaration_stream.write(
                     "%s %s (%s);\n" % (ctype, name, array_expr),
                     sdfg,
                     state_id,
@@ -244,7 +239,7 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 definition = "{} {};".format(ctypedef, name)
 
-            callsite_stream.write(definition, sdfg, state_id, node)
+            declaration_stream.write(definition, sdfg, state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
@@ -260,26 +255,24 @@ class CPUCodeGen(TargetCodeGenerator):
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
-            callsite_stream.write(
-                "%s *%s = new %s DACE_ALIGN(64)[%s];\n" %
-                (nodedesc.dtype.ctype, name, nodedesc.dtype.ctype,
-                 cpp.sym2cpp(arrsize)),
-                sdfg,
-                state_id,
-                node,
-            )
+            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg,
+                                     state_id, node)
+            allocation_stream.write(
+                "%s = new %s DACE_ALIGN(64)[%s];\n" %
+                (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
+                state_id, node)
             self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
                                               ctypedef)
 
             if node.setzero:
-                callsite_stream.write(
+                allocation_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
                     (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if node.setzero:
-                callsite_stream.write(
+                declaration_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" %
                     (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
                     sdfg,
@@ -289,7 +282,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
                                                   ctypedef)
                 return
-            callsite_stream.write(
+            declaration_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" %
                 (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
                 sdfg,
@@ -310,11 +303,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     node,
                 )
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer,
-                                                  '%s *' % nodedesc.dtype.ctype)
+                self._dispatcher.defined_vars.add_global(
+                    name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread
-            callsite_stream.write(
+            allocation_stream.write(
                 """
                 #pragma omp parallel
                 {{
@@ -327,11 +320,11 @@ class CPUCodeGen(TargetCodeGenerator):
                 node,
             )
             if node.setzero:
-                callsite_stream.write(
+                allocation_stream.write(
                     "memset(%s, 0, sizeof(%s)*%s);" %
                     (name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             # Close OpenMP parallel section
-            callsite_stream.write('}')
+            allocation_stream.write('}')
         else:
             raise NotImplementedError("Unimplemented storage type " +
                                       str(nodedesc.storage))

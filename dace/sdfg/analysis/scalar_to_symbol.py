@@ -56,6 +56,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
             continue
         if desc.total_size != 1:
             continue
+        if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+            continue
         candidates.add(aname)
 
     # Check all occurrences of candidates in SDFG and filter out

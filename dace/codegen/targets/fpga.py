@@ -378,8 +378,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                            skip_entry_node=True)
 
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       callsite_stream):
-        result = StringIO()
+                       declaration_stream, allocation_stream):
+        result_decl = StringIO()
+        result_alloc = StringIO()
         nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
@@ -409,7 +410,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Language-specific implementation
             ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
                                                   dataname, arrsize,
-                                                  function_stream, result)
+                                                  function_stream, result_decl)
 
             # defined type: decide whether this is a stream array or a single stream
             def_type = DefinedType.StreamArray if cpp.sym2cpp(
@@ -432,8 +433,6 @@ class FPGACodeGen(TargetCodeGenerator):
                                                node.label, sdfg.name))
 
                 else:
-
-                    devptr_name = dataname
                     if isinstance(nodedesc, dace.data.Array):
                         # TODO: Distinguish between read, write, and read+write
                         self._allocated_global_arrays.add(node.data)
@@ -457,18 +456,18 @@ class FPGACodeGen(TargetCodeGenerator):
                             self._bank_assignments[(dataname, sdfg)] = None
 
                         # Define buffer, using proper type
-                        result.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {} = __state->fpga_context->Get()."
+                        result_decl.write(
+                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {}".format(nodedesc.dtype.ctype, dataname))
+                        result_alloc.write(
+                            "{} = __state->fpga_context->Get()."
                             "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({}{});".format(nodedesc.dtype.ctype, dataname,
-                                             nodedesc.dtype.ctype,
+                            "({}{});".format(dataname, nodedesc.dtype.ctype,
                                              memory_bank_arg,
                                              cpp.sym2cpp(arrsize)))
                         self._dispatcher.defined_vars.add(
                             dataname, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
-
             elif (nodedesc.storage
                   in (dace.dtypes.StorageType.FPGA_Local,
                       dace.dtypes.StorageType.FPGA_Registers,
@@ -490,7 +489,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # Language-specific
                     ctype = self.make_vector_type(nodedesc.dtype, False)
                     define_str = "{} {};".format(ctype, dataname)
-                    callsite_stream.write(define_str, sdfg, state_id, node)
+                    result_decl.write(define_str)
                     self._dispatcher.defined_vars.add(dataname,
                                                       DefinedType.Scalar, ctype)
                 else:
@@ -498,11 +497,11 @@ class FPGACodeGen(TargetCodeGenerator):
                     if (nodedesc.storage ==
                             dace.dtypes.StorageType.FPGA_ShiftRegister):
                         self.define_shift_register(dataname, nodedesc, arrsize,
-                                                   function_stream, result,
+                                                   function_stream, result_decl,
                                                    sdfg, state_id, node)
                     else:
                         self.define_local_array(dataname, nodedesc, arrsize,
-                                                function_stream, result, sdfg,
+                                                function_stream, result_decl, sdfg,
                                                 state_id, node)
 
             else:
@@ -511,7 +510,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         elif isinstance(nodedesc, dace.data.Scalar):
 
-            result.write("{} {};\n".format(nodedesc.dtype.ctype, dataname))
+            result_decl.write("{} {};\n".format(nodedesc.dtype.ctype, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar,
                                               nodedesc.dtype.ctype)
 
@@ -519,7 +518,8 @@ class FPGACodeGen(TargetCodeGenerator):
             raise TypeError("Unhandled data type: {}".format(
                 type(nodedesc).__name__))
 
-        callsite_stream.write(result.getvalue(), sdfg, state_id, node)
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
     def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
                          callsite_stream):

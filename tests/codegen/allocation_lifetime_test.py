@@ -24,5 +24,33 @@ def test_alloc_persistent_register():
         print('Exception caught, test passed')
 
 
+def test_alloc_persistent():
+    @dace.program
+    def persistentmem(output: dace.int32[1]):
+        tmp = dace.ndarray([1],
+                           output.dtype,
+                           lifetime=dace.AllocationLifetime.Persistent)
+        if output[0] == 1.0:
+            tmp[0] = 0
+        else:
+            tmp[0] += 3
+            output[0] = tmp[0]
+
+    # Repeatedly invoke program. Since memory is persistent, output is expected
+    # to increase with each call
+    csdfg = persistentmem.compile()
+    value = np.ones([1], dtype=np.int32)
+    csdfg(output=value)
+    assert value == 1
+    value[0] = 2
+    csdfg(output=value)
+    assert value == 3
+    csdfg(output=value)
+    assert value == 6
+
+    del csdfg
+
+
 if __name__ == '__main__':
     test_alloc_persistent_register()
+    test_alloc_persistent()

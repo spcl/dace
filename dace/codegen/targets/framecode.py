@@ -16,7 +16,7 @@ from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
-from typing import List
+from typing import Any, List
 
 from dace.frontend.python import wrappers
 
@@ -29,7 +29,7 @@ class DaCeCodeGenerator(object):
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
     def __init__(self, *args, **kwargs):
-        self._dispatcher = disp.TargetDispatcher()
+        self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
@@ -122,8 +122,7 @@ struct {sdfg.name}_t {{
                 global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
                                     sd)
 
-    def generate_header(self, sdfg: SDFG,
-                        global_stream: CodeIOStream,
+    def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
             function for overriding purposes.
@@ -150,8 +149,7 @@ struct {sdfg.name}_t {{
 
         self.generate_fileheader(sdfg, global_stream, 'frame')
 
-    def generate_footer(self, sdfg: SDFG,
-                        global_stream: CodeIOStream,
+    def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
             function for overriding purposes.
@@ -322,13 +320,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     for nested_node in nodes_to_allocate:
                         nested_allocated.add(nested_node.data)
                         self._dispatcher.dispatch_allocate(
-                            nested_sdfg,
-                            nested_state,
-                            nested_sid,
-                            nested_node,
-                            global_stream,
-                            callsite_stream,
-                        )
+                            nested_sdfg, nested_state, nested_sid, nested_node,
+                            global_stream, callsite_stream)
 
         callsite_stream.write('\n')
 
