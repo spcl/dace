@@ -129,22 +129,28 @@ def parse_from_function(function, *compilation_args, strict=None):
         # control flow detection in code generation
         xfh.split_interstate_edges(sdfg)
 
-    if function.parent_file is not None:
+    sdfg_out_path = os.path.join('_dacegraphs', 'program.sdfg')
+
+    if function.cli_args is not None and len(function.cli_args) > 0:
         os.makedirs(sdfg.build_folder, exist_ok=True)
-        with open(os.path.join(sdfg.build_folder, 'sdfg_launchfiles.csv'), 'w') as launchfiles_file:
+        with open(os.path.join(sdfg.build_folder,
+                  'program.sdfgl'), 'w') as launchfiles_file:
             launchfiles_file.write(
-                'SDFG_name,SDFG_file,launchfile,' +
-                ','.join(['argv_' + str(i) for i in range(len(function.cli_args))]) + '\n'
+                'name,SDFG_intermediate,SDFG,source,' +
+                ','.join(
+                    ['argv_' + str(i) for i in range(len(function.cli_args))]
+                ) + '\n'
             )
             launchfiles_file.write(
                 sdfg.name + ',' +
                 os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
-                + ',' + function.parent_file + ',' +
+                + ',' + os.path.abspath(sdfg_out_path) + ',' +
+                os.path.abspath(function.cli_args[0]) + ',' +
                 ','.join([str(el) for el in function.cli_args])
             )
 
     # Save the SDFG (again)
-    sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+    sdfg.save(sdfg_out_path)
 
     # Validate SDFG
     sdfg.validate()
@@ -252,7 +258,6 @@ class DaceProgram:
         self.kwargs = kwargs
         self._name = f.__name__
         self.argnames = _get_argnames(f)
-        self.parent_file = os.path.abspath(cli_args[0])
         self.cli_args = cli_args
 
         global_vars = _get_locals_and_globals(f)
