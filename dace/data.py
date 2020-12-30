@@ -128,7 +128,6 @@ class Data(object):
     def veclen(self):
         return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
 
-    
     @property
     def ctype(self):
         return self.dtype.ctype
@@ -589,3 +588,12 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+
+@make_properties
+class View(Array):
+    """ 
+    Data descriptor that acts as a reference (or view) of another array. Can
+    be used to reshape or reinterpret existing data without copying it.
+    """
+    pass

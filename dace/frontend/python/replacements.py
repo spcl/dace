@@ -20,7 +20,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, issymbolic
 
 import numpy as np
 import sympy as sp
@@ -3672,6 +3672,96 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call,
                      where=where)
 
     return outputs
+
+
+@oprepo.replaces('numpy.reshape')
+def reshape(sdfg: SDFG,
+            state: SDFGState,
+            arr: str,
+            newshape: Union[str, symbolic.SymbolicType,
+                            Tuple[Union[str, symbolic.SymbolicType]]],
+            order='C') -> str:
+    desc = sdfg.arrays[arr]
+
+    # "order" determines stride orders
+    fortran_strides = False
+    if order == 'F' or (order == 'A' and desc.strides[0] == 1):
+        # FORTRAN strides
+        fortran_strides = True
+
+    # New shape and strides as symbolic expressions
+    newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
+    if fortran_strides:
+        strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
+    else:
+        strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
+
+    newarr, _ = sdfg.add_view(arr,
+                              newshape,
+                              desc.dtype,
+                              storage=desc.storage,
+                              strides=strides,
+                              lifetime=desc.lifetime,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size,
+                              may_alias=desc.may_alias,
+                              alignment=desc.alignment,
+                              find_new_name=True)
+
+    r = state.add_read(arr)
+    w = state.add_access(newarr)
+    state.add_nedge(r, w, Memlet(data=arr))
+
+    return newarr
+
+
+@oprepo.replaces_method('Array', 'view')
+@oprepo.replaces_method('Scalar', 'view')
+@oprepo.replaces_method('View', 'view')
+def view(sdfg: SDFG, state: SDFGState, arr: str, dtype, type=None) -> str:
+    if type is not None:
+        raise ValueError('View to numpy types is not supported')
+
+    desc = sdfg.arrays[arr]
+
+    # Change size of array based on the differences in bytes
+    bytemult = desc.dtype.bytes / dtype.bytes
+    bytediv = dtype.bytes / desc.dtype.bytes
+    contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
+
+    # For cases that can be recognized, if contiguous dimension is too small
+    # raise an exception similar to numpy
+    if (not issymbolic(desc.shape[contigdim], sdfg.constants)
+            and bytemult < 1 and desc.shape[contigdim] % bytediv != 0):
+        raise ValueError(
+            'When changing to a larger dtype, its size must be a divisor of '
+            'the total size in bytes of the last axis of the array.')
+
+    # Create new shape and strides for view
+    newshape = list(desc.shape)
+    newstrides = [
+        s * bytemult if i != contigdim else s
+        for i, s in enumerate(desc.strides)
+    ]
+    newshape[contigdim] *= bytemult
+
+    newarr, _ = sdfg.add_view(arr,
+                              newshape,
+                              dtype,
+                              storage=desc.storage,
+                              strides=newstrides,
+                              lifetime=desc.lifetime,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size * bytemult,
+                              may_alias=desc.may_alias,
+                              alignment=desc.alignment,
+                              find_new_name=True)
+
+    r = state.add_read(arr)
+    w = state.add_access(newarr)
+    state.add_nedge(r, w, Memlet(data=arr))
+
+    return newarr
 
 
 # Datatype converter #########################################################

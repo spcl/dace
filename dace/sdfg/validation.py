@@ -212,9 +212,23 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                 )
+            arr = sdfg.arrays[node.data]
+
+            # # Verify references
+            # if isinstance(arr, dt.View):
+            #     if state.in_degree(node) > 1:
+            #         raise InvalidSDFGNodeError(
+            #             "View access nodes must have exactly one incoming edge",
+            #             sdfg, state_id, nid)
+            #     if state.in_degree(node) == 1:
+            #         in_edge = state.in_edges(node)[0]
+            #         src_node = state.memlet_path(in_edge)[0].src
+            #         if not isinstance(src_node, nd.AccessNode):
+            #             raise InvalidSDFGNodeError(
+            #                 "Input to a view access node must be an access node",
+            #                 sdfg, state_id, nid)
 
             # Find uninitialized transients
-            arr = sdfg.arrays[node.data]
             if (arr.transient and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
                     # Streams do not need to be initialized
@@ -237,7 +251,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         % (node.data, state.label))
 
             # Find writes to input-only arrays
-            only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
+            only_empty_inputs = all(e.data.is_empty()
+                                    for e in state.in_edges(node))
             if (not arr.transient) and (not only_empty_inputs):
                 nsdfg_node = sdfg.parent_nsdfg_node
                 if nsdfg_node is not None:
