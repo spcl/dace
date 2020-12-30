@@ -1733,7 +1733,7 @@ class ProgramVisitor(ExtNodeVisitor):
         return new_params, map_inputs
 
     def _parse_consume_inputs(
-            self, node: ast.FunctionDef
+        self, node: ast.FunctionDef
     ) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
             :return: A 5-tuple of Stream name, internal stream name,
@@ -2196,8 +2196,8 @@ class ProgramVisitor(ExtNodeVisitor):
             end_loop_state = self.last_state
 
             # Add loop to SDFG
-            loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0)
-                                == True) else '<'
+            loop_cond = '>' if ((
+                pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             _, loop_guard, loop_end = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0],
                 astutils.unparse(ast_ranges[0][0]), '%s %s %s' %
@@ -3479,6 +3479,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 return rets[0]
             return rets
 
+        # Set arguments
+        args = []
+
         # TODO: If the function is a callback, implement it as a tasklet
 
         # NumPy ufunc support
@@ -3497,21 +3500,29 @@ class ProgramVisitor(ExtNodeVisitor):
                 if ufunc_name in replacements.ufuncs.keys() and func:
                     found_ufunc = True
 
+        # Check if this is a method called on an object
+        if (func is None and '.' in funcname and len(modname) > 0
+                and modname in self.defined):
+            methodname = funcname[len(modname) + 1:]
+            classname = type(self.defined[modname]).__name__
+            func = oprepo.Replacements.get_method(classname, methodname)
+            if func is None:
+                raise DaceSyntaxError(
+                    self, node,
+                    'Method "%s" is not registered for object type "%s"' %
+                    (methodname, classname))
+            # Add object as first argument
+            args.append(self.scope_vars[modname])
+
         # Otherwise, try to find a default implementation for the SDFG
-        if not found_ufunc:
+        if not found_ufunc and func is None:
             func = oprepo.Replacements.get(funcname)
             if func is None:
-                # Check for SDFG as fallback
-                func = oprepo.Replacements.get(funcname)
-                if func is None:
-                    raise DaceSyntaxError(
-                        self, node,
-                        'Function "%s" is not registered with an SDFG '
-                        'implementation' % funcname)
-                print('WARNING: Function "%s" is not registered with an %s '
-                      'implementation, falling back to SDFG' % funcname)
+                raise DaceSyntaxError(
+                    self, node, 'Function "%s" is not registered with an SDFG '
+                    'implementation' % funcname)
 
-        args = [self._parse_function_arg(arg) for arg in node.args]
+        args.extend([self._parse_function_arg(arg) for arg in node.args])
         keywords = {
             arg.arg: self._parse_function_arg(arg.value)
             for arg in node.keywords

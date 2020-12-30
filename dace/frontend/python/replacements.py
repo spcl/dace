@@ -68,10 +68,10 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
-        sdfg: SDFG,
-        state: SDFGState,
-        dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+    sdfg: SDFG,
+    state: SDFGState,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True, storage=storage)
