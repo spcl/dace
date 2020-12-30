@@ -1,8 +1,7 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.transformation.dataflow import StripMining, Vectorization
-from dace.libraries.standard.memory import aligned_ndarray
+from dace.transformation.dataflow import StripMining
 
 N = dace.symbol('N')
 
@@ -22,9 +21,9 @@ def tiling_number_of_tiles_test():
     size = 256
 
     np.random.seed(0)
-    X = aligned_ndarray(np.random.rand(size))
-    Y = aligned_ndarray(np.random.rand(size))
-    Z = aligned_ndarray(np.zeros_like(Y))
+    X = np.random.rand(size)
+    Y = np.random.rand(size)
+    Z = np.zeros_like(Y)
 
     sdfg = multiply.to_sdfg()
     sdfg.apply_strict_transformations()
