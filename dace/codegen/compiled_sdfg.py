@@ -351,16 +351,7 @@ class CompiledSDFG(object):
                 self.initialize(*argtuple)
 
             # PROFILING
-            profile = Config.get_bool('profiling')
-
-            # Override the configuration value with the environment variable, if
-            # provided.
-            if 'DACE_profiling' in os.environ:
-                profile = str(os.environ.get(
-                    'DACE_profiling',
-                    'FALSE')).lower() in ['yes', 'true', '1', 't']
-
-            if profile:
+            if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc,
                                     *argtuple)
             else:

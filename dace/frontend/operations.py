@@ -31,11 +31,6 @@ def timethis(sdfg, title, flop_count, f, *args, **kwargs):
     start = timer()
     REPS = int(Config.get('treps'))
 
-    # Override the repetition count with the environment variable value,
-    # if provided.
-    if 'DACE_profiling_treps' in os.environ:
-        REPS = int(os.environ.get('DACE_profiling_treps', 100))
-
     times = [start] * (REPS + 1)
     ret = None
     print('\nProfiling...')
