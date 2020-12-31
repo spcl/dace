@@ -1623,12 +1623,24 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
-        if Config.get_bool("compiler", "use_cache"):
+        # Check if we should use a pre-compiled/cached binary. The environment
+        # variable DACE_binary_path overrides whatever the config sets, if it
+        # exists, by defining a path where the binary should be loaded from.
+        use_cache = Config.get_bool('compiler', 'use_cache')
+        binary_filename = None
+
+        if 'DACE_binary_path' in os.environ:
+            use_cache = True
+            binary_filename = os.environ.get(
+                'DACE_binary_path', None
+            )
+
+        if use_cache:
             # Try to see if a cached version of the binary exists
-            binary_filename = compiler.get_binary_name(self.build_folder,
-                                                       self.name)
+            if binary_filename is None:
+                binary_filename = compiler.get_binary_name(self.build_folder,
+                                                           self.name)
             if os.path.isfile(binary_filename):
-                # print("A cached binary was found!")
                 return compiler.load_from_file(self, binary_filename)
 
         ############################

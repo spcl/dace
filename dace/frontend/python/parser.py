@@ -149,8 +149,11 @@ def parse_from_function(function, *compilation_args, strict=None):
                 ','.join([str(el) for el in function.cli_args])
             )
 
-    # Save the SDFG (again)
-    sdfg.save(sdfg_out_path)
+    # Save the SDFG (again). Skip this step if running from a cached SDFG, as
+    # it might overwrite the cached SDFG.
+    if (not 'DACE_binary_path' in os.environ or
+        os.environ.get('DACE_binary_path', None) is None):
+        sdfg.save(sdfg_out_path)
 
     # Validate SDFG
     sdfg.validate()
