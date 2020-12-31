@@ -3501,7 +3501,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     found_ufunc = True
 
         # Check if this is a method called on an object
-        if (func is None and '.' in funcname and len(modname) > 0
+        if ('.' in funcname and len(modname) > 0
                 and modname in self.defined):
             methodname = funcname[len(modname) + 1:]
             classname = type(self.defined[modname]).__name__
@@ -3513,9 +3513,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     (methodname, classname))
             # Add object as first argument
             args.append(self.scope_vars[modname])
-
         # Otherwise, try to find a default implementation for the SDFG
-        if not found_ufunc and func is None:
+        elif not found_ufunc:
             func = oprepo.Replacements.get(funcname)
             if func is None:
                 raise DaceSyntaxError(
