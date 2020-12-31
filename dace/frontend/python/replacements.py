@@ -3701,7 +3701,6 @@ def reshape(sdfg: SDFG,
                               desc.dtype,
                               storage=desc.storage,
                               strides=strides,
-                              lifetime=desc.lifetime,
                               allow_conflicts=desc.allow_conflicts,
                               total_size=desc.total_size,
                               may_alias=desc.may_alias,
@@ -3731,8 +3730,8 @@ def view(sdfg: SDFG, state: SDFGState, arr: str, dtype, type=None) -> str:
 
     # For cases that can be recognized, if contiguous dimension is too small
     # raise an exception similar to numpy
-    if (not issymbolic(desc.shape[contigdim], sdfg.constants)
-            and bytemult < 1 and desc.shape[contigdim] % bytediv != 0):
+    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and bytemult < 1
+            and desc.shape[contigdim] % bytediv != 0):
         raise ValueError(
             'When changing to a larger dtype, its size must be a divisor of '
             'the total size in bytes of the last axis of the array.')
@@ -3750,7 +3749,6 @@ def view(sdfg: SDFG, state: SDFGState, arr: str, dtype, type=None) -> str:
                               dtype,
                               storage=desc.storage,
                               strides=newstrides,
-                              lifetime=desc.lifetime,
                               allow_conflicts=desc.allow_conflicts,
                               total_size=desc.total_size * bytemult,
                               may_alias=desc.may_alias,

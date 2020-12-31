@@ -593,4 +593,11 @@ class View(Array):
     Data descriptor that acts as a reference (or view) of another array. Can
     be used to reshape or reinterpret existing data without copying it.
     """
-    pass
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for '
+                             'Views')
