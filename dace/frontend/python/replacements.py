@@ -64,7 +64,7 @@ def _define_local_ex(pv: 'ProgramVisitor',
 def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape,
                   dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
-    return _define_local_ex(sdfg, state, shape, dtype)
+    return _define_local_ex(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
