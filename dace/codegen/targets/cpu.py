@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg.state import SDFGState
 import functools
 import itertools
 import warnings
@@ -156,6 +157,34 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
+    def allocate_view(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                      node: nodes.AccessNode, global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream,
+                      allocation_stream: CodeIOStream):
+        """ 
+        Allocates (creates pointer and refers to original) a view of an
+        existing array, scalar, or view.
+        """
+        name = node.data
+        nodedesc = node.desc(sdfg)
+        if self._dispatcher.defined_vars.has(name):
+            return  # View was already allocated
+
+        # TODO: Check directionality of view (referencing dst or src)
+        #if TODO:
+        edge = dfg.in_edges(node)[0]
+        #else:
+        #edge = dfg.out_edges(node)[0]
+
+        # Emits memlet as a reference and registers defined variable
+        atype, aname, value = cpp.emit_memlet_reference(
+            self._dispatcher, sdfg, edge.data, name,
+            dtypes.pointer(nodedesc.dtype))
+
+        declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+        # Casting is already done in emit_memlet_reference
+        allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        callsite_stream):
         name = node.data
@@ -174,6 +203,10 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
 
+        if isinstance(nodedesc, data.View):
+            return self.allocate_view(sdfg, dfg, state_id, node,
+                                      function_stream, callsite_stream,
+                                      callsite_stream)
         if isinstance(nodedesc, data.Scalar):
             callsite_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
                                   sdfg, state_id, node)
@@ -340,6 +373,8 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         if isinstance(nodedesc, data.Scalar):
             return
+        elif isinstance(nodedesc, data.View):
+            return
         elif isinstance(nodedesc, data.Stream):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
@@ -473,8 +508,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(vconn)[0]
-                    == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(
+                        vconn)[0] == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -497,8 +532,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset if memlet.data
-                                    == dst_node.data else memlet.other_subset)
+                    array_subset = (memlet.subset
+                                    if memlet.data == dst_node.data else
+                                    memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
