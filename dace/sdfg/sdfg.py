@@ -372,7 +372,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def hash_sdfg(self) -> str:
         '''
-        Returns an hash of the current SDFG, without considering IDs and attributes name
+        Returns a hash of the current SDFG, without considering IDs and attribute names.
         :return: the hash
         '''
         def keyword_remover(json_obj: Any, last_keyword=""):
