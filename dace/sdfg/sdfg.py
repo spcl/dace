@@ -372,8 +372,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def hash_sdfg(self) -> str:
         '''
-        Returns an hash of the current SDFG, without considering IDs and attributes name
-        :return: the hash
+        Returns a hash of the current SDFG, without considering IDs and attribute names.
+        :return: The hash (in SHA-256 format).
         '''
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
