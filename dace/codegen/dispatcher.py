@@ -438,10 +438,15 @@ class TargetDispatcher(object):
             dst_storage = dst_node.desc(sdfg).storage
             dst_is_data = True
 
-        # Skip copies to/from views
-        # TODO: Will not work in array->view->array mode
-        if src_is_data and dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
-            return None
+        # Skip copies to/from views where edge matches
+        if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
+            e = sdutil.get_view_edge(dfg, src_node)
+            if e is edge:
+                return None
+        if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
+            e = sdutil.get_view_edge(dfg, dst_node)
+            if e is edge:
+                return None
 
         if (isinstance(src_node, nodes.Tasklet)
                 and not isinstance(dst_node, nodes.Tasklet)):

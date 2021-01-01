@@ -173,10 +173,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
 
+        # Allocate the viewed data before the view, if necessary
+        mpath = dfg.memlet_path(edge)
+        viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
+        self.allocate_array(sdfg, dfg, state_id, viewed_dnode,
+                            global_stream, declaration_stream)
+
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(
             self._dispatcher, sdfg, edge.data, name,
-            dtypes.pointer(nodedesc.dtype))
+            dtypes.pointer(nodedesc.dtype), ancestor=0)
 
         declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
         # Casting is already done in emit_memlet_reference

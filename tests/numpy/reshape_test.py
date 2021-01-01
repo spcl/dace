@@ -21,7 +21,7 @@ def test_reshape():
     reshp(A, B)
     assert np.allclose(expected, B)
 
-@pytest.mark.skip
+
 def test_reshape_dst():
     """ Tasklet->View->Array """
     @dace.program
@@ -115,6 +115,47 @@ def test_reshape_copy_scoped():
     assert np.allclose(A.reshape([6])[::-1], B)
 
 
+def test_reshape_subset():
+    """ Tests reshapes on subsets of arrays. """
+    @dace.program
+    def reshp(A: dace.float64[2, 3, 4], B: dace.float64[12]):
+        C = np.reshape(A[1, :, :], [12])
+        B[:] += C
+
+    A = np.random.rand(2, 3, 4)
+    B = np.random.rand(12)
+    expected = np.reshape(A[1, :, :], [12]) + B
+
+    reshp(A, B)
+    assert np.allclose(expected, B)
+
+
+def test_reshape_subset_explicit():
+    """ Tests reshapes on subsets of arrays. """
+    sdfg = dace.SDFG('reshp')
+    sdfg.add_array('A', [2, 3, 4], dace.float64)
+    sdfg.add_array('B', [12], dace.float64)
+    sdfg.add_view('Av', [12], dace.float64)
+    state = sdfg.add_state()
+
+    state.add_mapped_tasklet('compute',
+                             dict(i='0:12'),
+                             dict(a=dace.Memlet('Av[i]'),
+                                  b=dace.Memlet('B[i]')),
+                             'out = a + b',
+                             dict(out=dace.Memlet('B[i]')),
+                             external_edges=True)
+    v = next(n for n in state.source_nodes() if n.data == 'Av')
+    state.add_nedge(state.add_read('A'), v, dace.Memlet('A[1, 0:3, 0:4]'))
+
+    A = np.random.rand(2, 3, 4)
+    B = np.random.rand(12)
+    expected = np.reshape(A[1, :, :], [12]) + B
+
+    sdfg(A=A, B=B)
+    assert np.allclose(expected, B)
+
+
 def test_reinterpret():
     @dace.program
     def reint(A: dace.int32[N]):
@@ -151,5 +192,7 @@ if __name__ == "__main__":
     test_reshape_copy(False)
     test_reshape_copy(True)
     test_reshape_copy_scoped()
+    test_reshape_subset()
+    test_reshape_subset_explicit()
     test_reinterpret()
     test_reinterpret_invalid()

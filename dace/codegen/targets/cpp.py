@@ -201,9 +201,12 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
+def emit_memlet_reference(dispatcher,
+                          sdfg: SDFG,
+                          memlet: mmlt.Memlet,
                           pointer_name: str,
-                          conntype: dtypes.typeclass) -> Tuple[str, str, str]:
+                          conntype: dtypes.typeclass,
+                          ancestor: int = 1) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -219,7 +222,8 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
-    defined_type, defined_ctype = dispatcher.defined_vars.get(memlet.data, 1)
+    defined_type, defined_ctype = dispatcher.defined_vars.get(
+        memlet.data, ancestor)
     if defined_type == DefinedType.Pointer:
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
