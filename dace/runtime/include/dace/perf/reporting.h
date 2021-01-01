@@ -24,8 +24,8 @@ namespace perf {
 
     struct TraceEvent {
         char ph;
-        std::string name;
-        std::string cat;
+        char name[50];
+        char cat[10];
         unsigned long int tstart;
         unsigned long int tend;
         std::thread::id tid;
@@ -35,7 +35,7 @@ namespace perf {
             int el_id;
         } element_id;
         struct _counter {
-            std::string name;
+            char name[50];
             unsigned long int val;
         } counter;
     };
@@ -70,16 +70,20 @@ namespace perf {
             ).count();
             std::thread::id tid = std::this_thread::get_id();
             std::lock_guard<std::mutex> guard (this->_mutex);
-            this->_events.push_back({
+            struct TraceEvent event = {
                 'C',
-                name,
-                cat,
+                "",
+                "",
                 tstart,
                 0,
                 tid,
                 { 0, 0, 0 },
-                { counter_name, counter_val }
-            });
+                { "", counter_val }
+            };
+            strcpy(event.name, name);
+            strcpy(event.cat, cat);
+            strcpy(event.counter.name, counter_name);
+            this->_events.push_back(event);
         }
 
         /**
@@ -103,16 +107,19 @@ namespace perf {
         ) {
             std::thread::id tid = std::this_thread::get_id();
             std::lock_guard<std::mutex> guard (this->_mutex);
-            this->_events.push_back({
+            struct TraceEvent event = {
                 'X',
-                name,
-                cat,
+                "",
+                "",
                 tstart,
                 tend,
                 tid,
                 { sdfg_id, state_id, el_id },
                 { "", 0 }
-            });
+            };
+            strcpy(event.name, name);
+            strcpy(event.cat, cat);
+            this->_events.push_back(event);
         }
 
         /**
