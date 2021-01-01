@@ -129,30 +129,10 @@ def parse_from_function(function, *compilation_args, strict=None):
         # control flow detection in code generation
         xfh.split_interstate_edges(sdfg)
 
-    sdfg_out_path = os.path.join('_dacegraphs', 'program.sdfg')
-
-    if function.cli_args is not None and len(function.cli_args) > 0:
-        os.makedirs(sdfg.build_folder, exist_ok=True)
-        with open(os.path.join(sdfg.build_folder,
-                  'program.sdfgl'), 'w') as launchfiles_file:
-            launchfiles_file.write(
-                'name,SDFG_intermediate,SDFG,source,' +
-                ','.join(
-                    ['argv_' + str(i) for i in range(len(function.cli_args))]
-                ) + '\n'
-            )
-            launchfiles_file.write(
-                sdfg.name + ',' +
-                os.path.abspath(os.path.join(sdfg.build_folder, 'program.sdfg'))
-                + ',' + os.path.abspath(sdfg_out_path) + ',' +
-                os.path.abspath(function.cli_args[0]) + ',' +
-                ','.join([str(el) for el in function.cli_args])
-            )
-
     # Save the SDFG (again). Skip this step if running from a cached SDFG, as
     # it might overwrite the cached SDFG.
-    if Config.get_bool('compiler', 'use_cache'):
-        sdfg.save(sdfg_out_path)
+    if not Config.get_bool('compiler', 'use_cache'):
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()
@@ -254,13 +234,12 @@ def infer_symbols_from_shapes(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram:
     """ A data-centric program object, obtained by decorating a function with
         `@dace.program`. """
-    def __init__(self, f, args, kwargs, cli_args):
+    def __init__(self, f, args, kwargs):
         self.f = f
         self.args = args
         self.kwargs = kwargs
         self._name = f.__name__
         self.argnames = _get_argnames(f)
-        self.cli_args = cli_args
 
         global_vars = _get_locals_and_globals(f)
 

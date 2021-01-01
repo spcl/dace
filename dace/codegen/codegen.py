@@ -134,7 +134,7 @@ def generate_code(sdfg) -> List[CodeObject]:
         elif hasattr(node, 'map'):
             frame._dispatcher.instrumentation[node.map.instrument] = \
                 provider_mapping[node.map.instrument]
-    if hasattr(sdfg, 'instrument'):
+    if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
         frame._dispatcher.instrumentation[sdfg.instrument] = \
             provider_mapping[sdfg.instrument]
     frame._dispatcher.instrumentation = {

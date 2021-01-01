@@ -409,7 +409,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
         string_representation = dace.serialize.dumps(jsondict)  # dict->str
         hsh = sha256(string_representation.encode('utf-8'))
-        hsh.update(string_representation.encode('utf-8'))
         return hsh.hexdigest()
 
     @property
@@ -1659,6 +1658,26 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 output_file = os.path.join(output_file,
                                            os.path.basename(shared_library))
             shutil.copyfile(shared_library, output_file)
+
+        # Ensure that an SDFG link file is created along with the SDFG, linking
+        # it to the generating code and storing command line arguments that
+        # were provided.
+        if sys.argv is not None and len(sys.argv) > 0:
+            os.makedirs(sdfg.build_folder, exist_ok=True)
+            with open(os.path.join(sdfg.build_folder, 'program.sdfgl'),
+                      'w') as launchfiles_file:
+                launchfiles_file.write(
+                    'name,SDFG_intermediate,SDFG,source,' +
+                    ','.join(['argv_' + str(i)
+                              for i in range(len(sys.argv))]) + '\n')
+                launchfiles_file.write(
+                    sdfg.name + ',' +
+                    os.path.abspath(os.path.join(sdfg.build_folder,
+                                                 'program.sdfg')) + ',' +
+                    os.path.abspath(os.path.join('_dacegraphs',
+                                                 'program.sdfg')) + ',' +
+                    os.path.abspath(sys.argv[0]) + ',' +
+                    ','.join([str(el) for el in sys.argv]))
 
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)

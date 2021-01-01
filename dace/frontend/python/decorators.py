@@ -3,8 +3,6 @@
 
 from __future__ import print_function
 
-import sys
-
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser
@@ -22,7 +20,7 @@ def program(f, *args, **kwargs) -> parser.DaceProgram:
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, sys.argv)
+    return parser.DaceProgram(f, args, kwargs)
 
 
 function = program
