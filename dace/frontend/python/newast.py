@@ -1109,6 +1109,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
+        self.views: Dict[str, str] = {}  # Keeps track of views
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -1195,6 +1196,24 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr.transient = False
                 self.outputs[arrname] = Memlet.from_array(arrname, arr)
         ####
+
+        # Map view access nodes to their respective data
+        for state in self.sdfg.nodes():
+            for vnode in list(state.data_nodes()):
+                if vnode.data in self.views:
+                    if state.in_degree(vnode) == 0:
+                        aname = self.views[vnode.data]
+                        arr = self.sdfg.arrays[aname]
+                        r = state.add_read(aname)
+                        state.add_nedge(r, vnode, Memlet.from_array(aname, arr))
+                    elif state.out_degree(vnode) == 0:
+                        aname = self.views[vnode.data]
+                        arr = self.sdfg.arrays[aname]
+                        w = state.add_write(aname)
+                        state.add_nedge(vnode, w, Memlet.from_array(aname, arr))
+                    else:
+                        raise ValueError(f'View "{vnode.data}" already has'
+                                         'both incoming and outgoing edges')
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():

@@ -3729,9 +3729,8 @@ def reshape(pv: 'ProgramVisitor',
                               alignment=desc.alignment,
                               find_new_name=True)
 
-    r = state.add_read(arr)
-    w = state.add_access(newarr)
-    state.add_nedge(r, w, Memlet(data=arr))
+    # Register view with DaCe program visitor
+    pv.views[newarr] = arr
 
     return newarr
 
@@ -3782,9 +3781,8 @@ def view(pv: 'ProgramVisitor',
                               alignment=desc.alignment,
                               find_new_name=True)
 
-    r = state.add_read(arr)
-    w = state.add_access(newarr)
-    state.add_nedge(r, w, Memlet(data=arr))
+    # Register view with DaCe program visitor
+    pv.views[newarr] = arr
 
     return newarr
 
