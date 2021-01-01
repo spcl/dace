@@ -592,6 +592,24 @@ class View(Array):
     """ 
     Data descriptor that acts as a reference (or view) of another array. Can
     be used to reshape or reinterpret existing data without copying it.
+
+    To use a View, it needs to be referenced in an access node that is directly
+    connected to another access node. The rules for deciding which access node
+    is viewed are:
+      * If there is one edge (in/out) that leads (via memlet path) to an access
+        node, and the other side (out/in) has a different number of edges.
+      * If there is one incoming and one outgoing edge, and one leads to a code
+        node, the one that leads to an access node is the viewed data.
+      * If both sides lead to access nodes, if one memlet's data points to the 
+        view it cannot point to the viewed node.
+      * If both memlets' data are the respective access nodes, the access 
+        node at the highest scope is the one that is viewed.
+      * If both access nodes reside in the same scope, the input data is viewed.
+
+    Other cases are ambiguous and will fail SDFG validation.
+
+    In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
+    generate Views.
     """
     def validate(self):
         super().validate()

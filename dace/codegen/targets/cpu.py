@@ -12,7 +12,7 @@ from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
@@ -170,13 +170,10 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.defined_vars.has(name):
             return  # View was already allocated
 
-        # TODO: Check directionality of view (referencing dst or src)
-        #if TODO:
-        edge = dfg.in_edges(node)[0]
-        #else:
-        #edge = dfg.out_edges(node)[0]
+        # Check directionality of view (referencing dst or src)
+        edge = sdutils.get_view_edge(dfg, node)
 
-        # Emits memlet as a reference and registers defined variable
+        # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(
             self._dispatcher, sdfg, edge.data, name,
             dtypes.pointer(nodedesc.dtype))
