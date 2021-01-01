@@ -3377,7 +3377,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-        _reduce(sdfg,
+        _reduce(visitor, sdfg,
                 state,
                 ufunc_impl['reduce'],
                 inputs[0],
