@@ -3501,8 +3501,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     found_ufunc = True
 
         # Check if this is a method called on an object
-        if ('.' in funcname and len(modname) > 0
-                and modname in self.defined):
+        if ('.' in funcname and len(modname) > 0 and modname in self.defined):
             methodname = funcname[len(modname) + 1:]
             classname = type(self.defined[modname]).__name__
             func = oprepo.Replacements.get_method(classname, methodname)
@@ -3534,7 +3533,7 @@ class ProgramVisitor(ExtNodeVisitor):
             result = func(self, node, self.sdfg, self.last_state, ufunc_name,
                           args, keywords)
         else:
-            result = func(self.sdfg, self.last_state, *args, **keywords)
+            result = func(self, self.sdfg, self.last_state, *args, **keywords)
 
         self.last_state.set_default_lineinfo(None)
 
