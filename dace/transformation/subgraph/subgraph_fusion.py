@@ -15,7 +15,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, prop
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
 from dace.sdfg.utils import consolidate_edges_scope
-from dace.sdfg.transformation.helpers import find_contiguous_subsets
+from dace.transformation.helpers import find_contiguous_subsets
 
 from copy import deepcopy as dcpy
 from typing import List, Union
@@ -52,7 +52,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
-                                       "keeps schedule.",
+                                  "keeps schedule.",
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Default,
                                   allow_none=True)
@@ -67,7 +67,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         "not work correctly)",
         dtype=bool,
         default=True)
-
 
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
@@ -157,8 +156,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # check whether the WCR is actually produced at
                     # this edge or further up in the memlet path. If not,
                     # we can still fuse!
-                    subset_params = set([str(s) for s in in_in_edge.data.subset.free_symbols])
-                    if any([p not in subset_params for p in in_edge.src.map.params]):
+                    subset_params = set(
+                        [str(s) for s in in_in_edge.data.subset.free_symbols])
+                    if any([
+                            p not in subset_params
+                            for p in in_edge.src.map.params
+                    ]):
                         return False
                 if in_edge.src in map_exits:
                     subset_to_add = dcpy(in_in_edge.data.subset\
@@ -188,8 +191,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # We assume that upper_subsets are contiguous
             # Check for this.
             try:
-                contiguous_upper = find_contiguous_subsets(
-                    upper_subsets)
+                contiguous_upper = find_contiguous_subsets(upper_subsets)
                 if len(contiguous_upper) > 1:
                     return False
             except TypeError:
@@ -289,7 +291,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         else:
                             # add to out_nodes
                             out_nodes.add(current_node)
- 
 
         # any intermediate_nodes currently in in_nodes shouldnt be there
         in_nodes -= intermediate_nodes
@@ -297,11 +298,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for node in intermediate_nodes:
             for e in graph.in_edges(node):
                 if e.src not in map_exits:
-                    warnings.warn(
-                    "Nodes between two maps to be"
-                    "fused with *incoming* edges"
-                    "from outside the maps are not"
-                    "allowed yet.")
+                    warnings.warn("Nodes between two maps to be"
+                                  "fused with *incoming* edges"
+                                  "from outside the maps are not"
+                                  "allowed yet.")
                     raise NotImplementedError()
 
         return (in_nodes, intermediate_nodes, out_nodes)
@@ -450,8 +450,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         step during fusion.
         '''
         nsdfg.data(nname).strides = dcpy(sdfg.data(name).strides)
-        nsdfg.data(nname).total_size = dcpy(
-            sdfg.data(name).total_size)
+        nsdfg.data(nname).total_size = dcpy(sdfg.data(name).total_size)
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
             for nnode in ngraph.nodes():
@@ -741,7 +740,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for oe in graph.out_edges(transients_created[dst]):
                             union = subsets.union(union, oe.data.subset)
                         inner_memlet = dcpy(edge.data)
-                        for i,s in enumerate(edge.data.subset):
+                        for i, s in enumerate(edge.data.subset):
                             if i in invariant_dimensions[dst.label]:
                                 inner_memlet.subset[i] = union[i]
 
@@ -793,13 +792,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # map
                         graph.add_edge(global_map_exit, out_conn, dst, None,
                                        dcpy(out_edge.data))
-                
 
             # maps are now ready to be discarded
             # all connected edges will be finally removed as well
             graph.remove_node(map_entry)
             graph.remove_node(map_exit)
-
 
         # create a mapping from data arrays to offsets
         # for later memlet adjustments later
@@ -950,7 +947,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         if self.propagate:
             _propagate_node(graph, global_map_entry)
             _propagate_node(graph, global_map_exit)
-
 
         # create a hook for outside access to global_map
         self._global_map_entry = global_map_entry
