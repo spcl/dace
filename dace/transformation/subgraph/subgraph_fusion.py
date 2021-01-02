@@ -15,6 +15,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, prop
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
 from dace.sdfg.utils import consolidate_edges_scope
+from dace.sdfg.transformation.helpers import find_contiguous_subsets
 
 from copy import deepcopy as dcpy
 from typing import List, Union
@@ -187,7 +188,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # We assume that upper_subsets are contiguous
             # Check for this.
             try:
-                contiguous_upper = helpers.find_contiguous_subsets(
+                contiguous_upper = find_contiguous_subsets(
                     upper_subsets)
                 if len(contiguous_upper) > 1:
                     return False
