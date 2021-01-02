@@ -1,3 +1,5 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
 from dace.sdfg import SDFG
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
@@ -5,6 +7,8 @@ from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.graph import SubgraphView
 
 import numpy as np
+import pytest
+import itertools
 
 N = dace.symbol('N')
 N.set(100)
@@ -100,15 +104,15 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     print("PASS")
 
 
-def test_all():
-    invoke_stencil(1, offset=False, unroll=False)
-    invoke_stencil(8, offset=False, unroll=False)
-    invoke_stencil(1, offset=True, unroll=False)
-    invoke_stencil(8, offset=True, unroll=False)
-    invoke_stencil(1, offset=False, unroll=True)
-    invoke_stencil(8, offset=False, unroll=True)
-    invoke_stencil(1, offset=True, unroll=True)
-    invoke_stencil(8, offset=True, unroll=True)
+test_settings = list(itertools.product([1, 8], [False, True], [False, True]))
+
+
+@pytest.mark.parametrize(["tile", "offset", "unroll"], test_settings)
+def test_all(tile, offset, unroll):
+    invoke_stencil(tile, offset, unroll)
+
 
 if __name__ == '__main__':
-    test_all()
+    for (t, o, u) in itertools.product([1, 8], [False, True], [False, True]):
+        print(f"Testing config {t}, {o}, {u}")
+        test_all(t, o, u)
