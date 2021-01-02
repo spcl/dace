@@ -80,9 +80,9 @@ namespace perf {
                 { 0, 0, 0 },
                 { "", counter_val }
             };
-            strcpy(event.name, name);
-            strcpy(event.cat, cat);
-            strcpy(event.counter.name, counter_name);
+            strncpy(event.name, name, 50);
+            strncpy(event.cat, cat, 10);
+            strncpy(event.counter.name, counter_name, 50);
             this->_events.push_back(event);
         }
 
@@ -117,8 +117,8 @@ namespace perf {
                 { sdfg_id, state_id, el_id },
                 { "", 0 }
             };
-            strcpy(event.name, name);
-            strcpy(event.cat, cat);
+            strncpy(event.name, name, 50);
+            strncpy(event.cat, cat, 10);
             this->_events.push_back(event);
         }
 
