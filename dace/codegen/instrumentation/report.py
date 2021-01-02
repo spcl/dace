@@ -33,7 +33,7 @@ class InstrumentationReport(object):
             report = json.load(fp)
 
             if 'traceEvents' not in report or 'sdfgHash' not in report:
-                print(filename, 'isn\'t a valid SDFG instrumentation report!')
+                print(filename, 'is not a valid SDFG instrumentation report!')
                 return
 
             self.sdfg_hash = report['sdfgHash']
