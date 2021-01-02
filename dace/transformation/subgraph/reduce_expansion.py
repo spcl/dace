@@ -185,7 +185,7 @@ class ReduceExpansion(transformation.Transformation):
 
         else:
             if self.debug:
-                print(f"ReduceExpansion::Expanding Reduction into Map "
+                print("ReduceExpansion::Expanding Reduction into Map "
                       "and introducing update Tasklet, "
                       "connecting with ancestor.")
             if not array_closest_ancestor:

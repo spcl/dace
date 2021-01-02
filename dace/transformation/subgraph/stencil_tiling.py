@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the orthogonal
     stencil tiling transformation. """
 
@@ -34,9 +35,7 @@ from dace.transformation.subgraph import helpers
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class StencilTiling(transformation.SubgraphTransformation):
-    """ Implements the stencil tiling transformation.
-
-        Operates on top level maps of the given subgraph.
+    """ Operates on top level maps of the given subgraph.
         Applies orthogonal tiling to each of the maps with
         the given strides and extends the newly created
         inner tiles to account for data dependencies
@@ -229,13 +228,14 @@ class StencilTiling(transformation.SubgraphTransformation):
         for map_entry in map_entries:
             coverages[map_entry] = StencilTiling.coverage_dicts(
                 sdfg, graph, map_entry)
-            memlets[map_entry] = StencilTiling.coverage_dicts(
-                sdfg, graph, map_entry, outer_range = False)
-
+            memlets[map_entry] = StencilTiling.coverage_dicts(sdfg,
+                                                              graph,
+                                                              map_entry,
+                                                              outer_range=False)
 
         # get DAG neighbours for each map
         dag_neighbors = StencilTiling.topology(sdfg, graph, map_entries)
-        (children_dict, parent_dict, sink_maps) = dag_neighbors
+        (children_dict, _, sink_maps) = dag_neighbors
 
         # 1.6: we now check coverage:
         # each outgoing coverage for a data memlet has to
@@ -268,16 +268,19 @@ class StencilTiling(transformation.SubgraphTransformation):
 
                     # extend mapping map_parameter -> coverage
                     # by the previous mapping
-                    
-                    for i, (p_subset, c_subset) in enumerate(zip(parent_coverage, children_coverage)):
-                      
+
+                    for i, (p_subset, c_subset) in enumerate(
+                            zip(parent_coverage, children_coverage)):
+
                         # transform into subset
-                        p_subset = subsets.Range((p_subset,))
-                        c_subset = subsets.Range((c_subset,))
+                        p_subset = subsets.Range((p_subset, ))
+                        c_subset = subsets.Range((c_subset, ))
 
                         # get associated parameter in memlet
-                        params1 = symbolic.symlist(memlets[map_entry][1][data_name][i]).keys()
-                        params2 = symbolic.symlist(memlets[child_entry][0][data_name][i]).keys()
+                        params1 = symbolic.symlist(
+                            memlets[map_entry][1][data_name][i]).keys()
+                        params2 = symbolic.symlist(
+                            memlets[child_entry][0][data_name][i]).keys()
                         if params1 != params2:
                             return False
                         params = params1
@@ -286,21 +289,24 @@ class StencilTiling(transformation.SubgraphTransformation):
                             return False
                         try:
                             symbol = next(iter(params))
-                            param_parent_coverage[symbol] = subsets.union(param_parent_coverage[symbol], p_subset)
-                            param_children_coverage[symbol] = subsets.union(param_children_coverage[symbol], c_subset)
+                            param_parent_coverage[symbol] = subsets.union(
+                                param_parent_coverage[symbol], p_subset)
+                            param_children_coverage[symbol] = subsets.union(
+                                param_children_coverage[symbol], c_subset)
 
                         except StopIteration:
                             # current dim has no symbol associated.
                             # ignore and continue
-                            warnings.warning(f"In map {map_entry}, there is a "
-                                              "dimension belonging to {data_name} "
-                                              "that has no map parameter associated.")
+                            warnings.warn(
+                                f"In map {map_entry}, there is a "
+                                "dimension belonging to {data_name} "
+                                "that has no map parameter associated.")
                             pass
 
             # 1.6: parameter mapping must be the same
             if param_parent_coverage != param_children_coverage:
                 return False
-                
+
         # 1.7: we want all sink maps to have the same range size
         assert len(sink_maps) > 0
         first_sink_map = next(iter(sink_maps))
@@ -441,7 +447,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 warnings.warn(
                     f"StencilTiling::No Stencil pattern detected for parameter {p}"
                 )
-        
+
         # during stripmining, we will create new outer map entries
         # for easy access
         self._outer_entries = set()
@@ -519,7 +525,6 @@ class StencilTiling(transformation.SubgraphTransformation):
                         dim_idx + removed_maps) in invariant_dims:
                     trivial = True
                     removed_maps += 1
-             
 
                 # indent all map ranges accordingly and then perform
                 # strip mining on these. Offset inner maps accordingly afterwards
@@ -542,7 +547,6 @@ class StencilTiling(transformation.SubgraphTransformation):
                 stripmine.tile_stride = str(tile_stride)
                 outer_map = stripmine.apply(sdfg)
                 outer_map.schedule = original_schedule
-
 
                 # apply to the new map the schedule of the original one
                 map_entry.schedule = self.schedule
@@ -616,7 +620,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                                                   sdfg.nodes().index(graph),
                                                   subgraph, 0)
                     trafo_for_loop.apply(sdfg)
-                    nsdfg = trafo_for_loop._nsdfg
+                    nsdfg = trafo_for_loop.nsdfg
 
                     # LoopUnroll
 
@@ -636,5 +640,5 @@ class StencilTiling(transformation.SubgraphTransformation):
                 warnings.warn(
                     "Did not unroll loops. Either all ranges are equal to "
                     "one or range difference is symbolic.")
-        
+
         self._outer_entries = list(self._outer_entries)
