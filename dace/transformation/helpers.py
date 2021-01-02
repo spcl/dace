@@ -364,6 +364,12 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     result.subset.offset(external_memlet.subset, False)
 
     if preserve_minima:
+        if len(result.subset) != len(external_memlet.subset):
+            raise ValueError(
+                'Memlet specifies reshape that cannot be un-squeezed.\n'
+                'External memlet: %s\nInternal memlet: %s' %
+                (external_memlet, internal_memlet))
+
         original_minima = external_memlet.subset.min_element()
         for i in set(range(len(original_minima))):
             rb, re, rs = result.subset.ranges[i]
