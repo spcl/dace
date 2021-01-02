@@ -47,7 +47,7 @@ class LoopUnroll(DetectLoop):
         if symbolic.issymbolic(rng[2], sdfg.constants):
             return False
         # If loop range diff is not constant-sized, fail
-        if symbolic.issymbolic(rng[1] - rng[0]):
+        if symbolic.issymbolic(rng[1] - rng[0], sdfg.constants):
             return False
         return True
 
