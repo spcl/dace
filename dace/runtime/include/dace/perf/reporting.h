@@ -17,15 +17,17 @@
 #include <unistd.h>
 #endif
 
-#define DACE_REPORT_BUFFER_SIZE 2048
+#define DACE_REPORT_BUFFER_SIZE     2048
+#define DACE_REPORT_EVENT_NAME_LEN  50
+#define DACE_REPORT_EVENT_CAT_LEN   10
 
 namespace dace {
 namespace perf {
 
     struct TraceEvent {
         char ph;
-        char name[50];
-        char cat[10];
+        char name[DACE_REPORT_EVENT_NAME_LEN];
+        char cat[DACE_REPORT_EVENT_CAT_LEN];
         unsigned long int tstart;
         unsigned long int tend;
         std::thread::id tid;
@@ -35,7 +37,7 @@ namespace perf {
             int el_id;
         } element_id;
         struct _counter {
-            char name[50];
+            char name[DACE_REPORT_EVENT_NAME_LEN];
             unsigned long int val;
         } counter;
     };
@@ -80,9 +82,9 @@ namespace perf {
                 { 0, 0, 0 },
                 { "", counter_val }
             };
-            strncpy(event.name, name, 50);
-            strncpy(event.cat, cat, 10);
-            strncpy(event.counter.name, counter_name, 50);
+            strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
+            strncpy(event.cat, cat, DACE_REPORT_EVENT_CAT_LEN);
+            strncpy(event.counter.name, counter_name, DACE_REPORT_EVENT_NAME_LEN);
             this->_events.push_back(event);
         }
 
@@ -117,8 +119,8 @@ namespace perf {
                 { sdfg_id, state_id, el_id },
                 { "", 0 }
             };
-            strncpy(event.name, name, 50);
-            strncpy(event.cat, cat, 10);
+            strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
+            strncpy(event.cat, cat, DACE_REPORT_EVENT_CAT_LEN);
             this->_events.push_back(event);
         }
 
@@ -205,5 +207,7 @@ namespace perf {
 }  // namespace dace
 
 #undef DACE_REPORT_BUFFER_SIZE
+#undef DACE_REPORT_EVENT_NAME_LEN
+#undef DACE_REPORT_EVENT_CAT_LEN
 
 #endif  // __DACE_PERF_REPORTING_H
