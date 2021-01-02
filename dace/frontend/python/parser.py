@@ -129,8 +129,10 @@ def parse_from_function(function, *compilation_args, strict=None):
         # control flow detection in code generation
         xfh.split_interstate_edges(sdfg)
 
-    # Save the SDFG (again)
-    sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+    # Save the SDFG (again). Skip this step if running from a cached SDFG, as
+    # it might overwrite the cached SDFG.
+    if not Config.get_bool('compiler', 'use_cache'):
+        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
     # Validate SDFG
     sdfg.validate()

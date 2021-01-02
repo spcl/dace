@@ -134,6 +134,9 @@ def generate_code(sdfg) -> List[CodeObject]:
         elif hasattr(node, 'map'):
             frame._dispatcher.instrumentation[node.map.instrument] = \
                 provider_mapping[node.map.instrument]
+    if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
+        frame._dispatcher.instrumentation[sdfg.instrument] = \
+            provider_mapping[sdfg.instrument]
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()

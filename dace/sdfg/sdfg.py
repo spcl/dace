@@ -7,6 +7,7 @@ import errno
 import itertools
 import os
 import pickle, json
+from hashlib import sha256
 from pydoc import locate
 import random
 import re
@@ -243,6 +244,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            dtypes.typeclass,
                            desc="Global symbols for this SDFG")
 
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
+
     global_code = DictProperty(
         str,
         CodeBlock,
@@ -311,7 +316,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         return self.sdfg_list.index(self)
 
-    def to_json(self):
+    def to_json(self, hash=False):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
@@ -326,6 +331,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tmp['sdfg_list_id'] = int(self.sdfg_id)
 
         tmp['attributes']['name'] = self.name
+        if hash:
+            tmp['attributes']['hash'] = self.hash_sdfg()
 
         return tmp
 
@@ -363,21 +370,36 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return ret
 
-    def hash_sdfg(self) -> int:
+    def hash_sdfg(self) -> str:
         '''
-        Returns an hash of the current SDFG, without considering IDs and attributes name
-        :return: the hash
+        Returns a hash of the current SDFG, without considering IDs and attribute names.
+        :return: The hash (in SHA-256 format).
         '''
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
-            # Recursively removes 'name' from json representation, if it is under
-            # an 'attribute' json item, and 'sdfg_list_id'
+            # Recursively remove attributes from the SDFG which are not used in
+            # uniquely representing the SDFG. This, among other things, includes
+            # the hash, name, transformation history, and meta attributes.
             if isinstance(json_obj, dict):
                 if 'sdfg_list_id' in json_obj:
                     del json_obj['sdfg_list_id']
-                if last_keyword == 'attributes' and 'name' in json_obj:
-                    del json_obj['name']
+
+                keys_to_delete = []
+                kv_to_recurse = []
                 for key, value in json_obj.items():
+                    if (isinstance(key, str)
+                            and (key.startswith('_meta_') or key in [
+                                'name', 'hash', 'orig_sdfg',
+                                'transformation_hist', 'instrument'
+                            ])):
+                        keys_to_delete.append(key)
+                    else:
+                        kv_to_recurse.append((key, value))
+
+                for key in keys_to_delete:
+                    del json_obj[key]
+
+                for key, value in kv_to_recurse:
                     keyword_remover(value, last_keyword=key)
             elif isinstance(json_obj, (list, tuple)):
                 for value in json_obj:
@@ -386,8 +408,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         jsondict = self.to_json()  # No more nonstandard objects
         keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
         string_representation = dace.serialize.dumps(jsondict)  # dict->str
-        hsh = hash(string_representation)  # str->int
-        return hsh
+        hsh = sha256(string_representation.encode('utf-8'))
+        return hsh.hexdigest()
 
     @property
     def arrays(self):
@@ -601,6 +623,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def is_instrumented(self) -> bool:
         """ Returns True if the SDFG has performance instrumentation enabled on
             it or any of its elements. """
+        if self.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return True
         try:
             next(n for n, _ in self.all_nodes_recursive()
                  if hasattr(n, 'instrument') and
@@ -1142,7 +1166,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                json_output = self.to_json()
+                json_output = self.to_json(hash=True)
                 if exception:
                     json_output['error'] = exception.to_json()
                 fp.write(dace.serialize.dumps(json_output))
@@ -1598,12 +1622,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
-        if Config.get_bool("compiler", "use_cache"):
+        if Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
             binary_filename = compiler.get_binary_name(self.build_folder,
                                                        self.name)
             if os.path.isfile(binary_filename):
-                # print("A cached binary was found!")
                 return compiler.load_from_file(self, binary_filename)
 
         ############################
@@ -1635,6 +1658,26 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 output_file = os.path.join(output_file,
                                            os.path.basename(shared_library))
             shutil.copyfile(shared_library, output_file)
+
+        # Ensure that an SDFG link file is created along with the SDFG, linking
+        # it to the generating code and storing command line arguments that
+        # were provided.
+        if sys.argv is not None and len(sys.argv) > 0:
+            os.makedirs(sdfg.build_folder, exist_ok=True)
+            with open(os.path.join(sdfg.build_folder, 'program.sdfgl'),
+                      'w') as launchfiles_file:
+                launchfiles_file.write(
+                    'name,SDFG_intermediate,SDFG,source,' +
+                    ','.join(['argv_' + str(i)
+                              for i in range(len(sys.argv))]) + '\n')
+                launchfiles_file.write(
+                    sdfg.name + ',' +
+                    os.path.abspath(os.path.join(sdfg.build_folder,
+                                                 'program.sdfg')) + ',' +
+                    os.path.abspath(os.path.join('_dacegraphs',
+                                                 'program.sdfg')) + ',' +
+                    os.path.abspath(sys.argv[0]) + ',' +
+                    ','.join([str(el) for el in sys.argv]))
 
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)
@@ -2010,8 +2053,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(str(node),
-                                                                                                          impl_name))
+                    print(
+                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
+                        .format(str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:
