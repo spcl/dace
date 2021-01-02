@@ -495,8 +495,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset,
     # General case
     bbunion = subsets.bounding_box_union(subset_a, subset_b)
     try:
-        # NOTE: Changed here!!
-        if bbunion.num_elements() <= (subset_a.num_elements() +
+        if bbunion.num_elements() == (subset_a.num_elements() +
                                         subset_b.num_elements()):
             return True
     except TypeError:
