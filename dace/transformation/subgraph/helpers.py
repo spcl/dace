@@ -1,5 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-''' Subgraph Transformation Helper API'''
+''' Subgraph Transformation Helper API '''
 from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
@@ -110,7 +110,6 @@ def outermost_scope_from_subgraph(graph, subgraph, scope_dict=None):
         if current_scope is None:
             toplevel_candidates.add(scope)
 
-
     if len(toplevel_candidates) != 1:
         raise TypeError("There are several locally top-level nodes. "
                         "Please check your subgraph and see to it "
@@ -166,7 +165,6 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     if scope_dict is None:
         scope_dict = graph.scope_dict()
 
-
     # first, get the toplevel scope of the underlying subgraph
     # if not found, return empty list (ambiguous)
     try:
@@ -185,10 +183,10 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
 
 def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     """
-    given a list of map entries in a single graph,
+    Given a list of map entries in a single graph,
     return a subgraph view that includes all nodes
     inside these maps as well as map entries and exits
-    as well as adjacent nodes
+    as well as adjacent nodes.
     """
     if not scope_children:
         scope_children = graph.scope_children()
@@ -202,127 +200,3 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     return SubgraphView(graph, list(nodes))
 
 
-def are_subsets_contiguous(subset_a: subsets.Subset,
-                           subset_b: subsets.Subset,
-                           dim: int = None) -> bool:
-    '''
-    Checks whether two subsets are contiguous.
-    Outfactored from DeduplicateAccess.
-    '''
-    if dim is not None:
-        # A version that only checks for contiguity in certain
-        # dimension (e.g., to prioritize stride-1 range)
-        if (not isinstance(subset_a, subsets.Range)
-                or not isinstance(subset_b, subsets.Range)):
-            raise NotImplementedError('Contiguous subset check only '
-                                      'implemented for ranges')
-
-        # Other dimensions must be equal
-        for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
-            if i == dim:
-                continue
-            if s1[0] != s2[0] or s1[1] != s2[1] or s1[2] != s2[2]:
-                return False
-
-        # Set of conditions for contiguous dimension
-        ab = (subset_a[dim][1] + 1) == subset_b[dim][0]
-        a_overlap_b = subset_a[dim][1] >= subset_b[dim][0]
-        ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
-        b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
-        # NOTE: Must check with "==" due to sympy using special types
-        return (ab == True or a_overlap_b == True or ba == True
-                or b_overlap_a == True)
-
-    # General case
-    bbunion = subsets.bounding_box_union(subset_a, subset_b)
-    return bbunion.num_elements() == (subset_a.num_elements() +
-                                      subset_b.num_elements())
-
-
-def find_contiguous_subsets(subset_list: List[subsets.Subset],
-                            dim: int = None) -> Set[subsets.Subset]:
-    """
-        Finds the set of largest contiguous subsets in a list of subsets.
-        :param subsets: Iterable of subset objects.
-        :param dim: Check for contiguity only for the specified dimension.
-        :return: A list of contiguous subsets.
-        """
-    # Currently O(n^3) worst case. TODO: improve
-    subset_set = set(
-        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s
-        for s in subset_list)
-    while True:
-        for sa, sb in itertools.product(subset_set, subset_set):
-            if sa is sb:
-                continue
-            if sa.covers(sb):
-                subset_set.remove(sb)
-                break
-            elif sb.covers(sa):
-                subset_set.remove(sa)
-                break
-            elif are_subsets_contiguous(sa, sb, dim):
-                subset_set.remove(sa)
-                subset_set.remove(sb)
-                subset_set.add(subsets.bounding_box_union(sa, sb))
-                break
-        else:  # No modification performed
-            break
-    return subset_set
-
-
-def deduplicate(sdfg, graph, map_entry, out_connector, edges):
-    ''' applies Deduplication to ALL edges coming from the same
-        out_connector specified in out_connector.
-        Suitable after consolidating edges at the entry node.
-        WARNING: This is not guaranteed to be deterministic
-    '''
-    # Steps:
-    # 1. Find unique subsets
-    # 2. Find sets of contiguous subsets
-    # 3. Create transients for subsets
-    # 4. Redirect edges through new transients
-
-    # only connector we are interested in
-    conn = out_connector
-
-    # Get original data descriptor
-    edge0 = next(iter(edges))
-    dname = edge0.data.data
-    desc = sdfg.arrays[edge0.data.data]
-
-    # Get unique subsets
-    unique_subsets = set(e.data.subset for e in edges)
-
-    # Find largest contiguous subsets
-    contiguous_subsets = find_contiguous_subsets(unique_subsets)
-    #print("Subsets:", contiguous_subsets)
-
-    # Map original edges to subsets
-    edge_mapping = defaultdict(list)
-    for e in edges:
-        for ind, subset in enumerate(contiguous_subsets):
-            if subset.covers(e.data.subset):
-                edge_mapping[ind].append(e)
-                break
-        else:
-            raise ValueError("Failed to find contiguous subset for edge %s" %
-                             e.data)
-
-    # Create transients for subsets and redirect edges
-    for ind, subset in enumerate(contiguous_subsets):
-        name, _ = sdfg.add_temp_transient(subset.size(), desc.dtype)
-        anode = graph.add_access(name)
-        graph.add_edge(map_entry, conn, anode, None,
-                       Memlet(data=dname, subset=subset))
-        for e in edge_mapping[ind]:
-            graph.remove_edge(e)
-            new_memlet = copy.deepcopy(e.data)
-            # Offset memlet to match new transient
-            new_memlet.subset.offset(subset, True)
-            new_edge = graph.add_edge(anode, None, e.dst, e.dst_conn,
-                                      new_memlet)
-            # Rename data on memlet
-            for pe in graph.memlet_tree(new_edge):
-                pe.data.data = name
-                pe.data.subset.offset(subset, True)
