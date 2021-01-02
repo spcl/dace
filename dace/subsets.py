@@ -35,8 +35,8 @@ class Subset(object):
                             and (symbolic.simplify_ext(nng(re)) >=
                                 symbolic.simplify_ext(nng(ore))) == True
                             for rb, re, orb, ore in zip(
-                                self.min_element(), self.max_element_approx(),
-                                other.min_element(), other.max_element_approx())])
+                                self.min_element_approx(), self.max_element_approx(),
+                                other.min_element_approx(), other.max_element_approx())])
             except TypeError:
                 return False
         
