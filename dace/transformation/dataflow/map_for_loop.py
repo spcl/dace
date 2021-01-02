@@ -89,7 +89,7 @@ class MapToForLoop(transformation.Transformation):
         loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
                         '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
                         '%s + %s' % (loop_idx, replace_param(loop_step)))
-        # store in class variables for easy access
+        # store as object fields for external access
         self.before_state, self.guard, self.after_state = loop_result
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
@@ -109,7 +109,7 @@ class MapToForLoop(transformation.Transformation):
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
 
-        # create outside hook
-        self._nsdfg = nsdfg
+        # create object field for external nsdfg access
+        self.nsdfg = nsdfg
 
         return node, nstate

@@ -33,12 +33,10 @@ class MapTiling(transformation.Transformation):
         default=tuple(),
         desc="Tile stride (enables overlapping tiles). If empty, matches tile")
 
-    tile_offset = ShapeProperty(
-        dtype=tuple,
-        default= None,
-        desc="Negative Stride offset per dimension",
-        allow_none = True)
-
+    tile_offset = ShapeProperty(dtype=tuple,
+                                default=None,
+                                desc="Negative Stride offset per dimension",
+                                allow_none=True)
 
     divides_evenly = Property(dtype=bool,
                               default=False,
