@@ -407,7 +407,7 @@ class TargetDispatcher(object):
                    dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
-        # TODO: Move to central allocator
+        # TODO: Move to central allocator (see PR #434)
         if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
             declaration_stream = CodeIOStream()
             allocation_stream = self.frame._initcode
@@ -419,7 +419,7 @@ class TargetDispatcher(object):
                                                         declaration_stream,
                                                         allocation_stream)
 
-        # TODO: Move to central allocator
+        # TODO: Move to central allocator (see PR #434)
         if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
             self.frame.statestruct.append(declaration_stream.getvalue())
 
@@ -432,7 +432,7 @@ class TargetDispatcher(object):
                    dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
-        # TODO: Move to central allocator
+        # TODO: Move to central allocator (see PR #434)
         if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
             callsite_stream = self.frame._exitcode
 

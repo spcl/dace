@@ -133,6 +133,13 @@ class _CublasConstants {
   void* custom_beta_;
 };
 
+/**
+ * CUBLAS wrapper class for DaCe. Once constructed, the class can be used to
+ * get or create a CUBLAS library handle (cublasHandle_t) for a given GPU ID,
+ * or get pre-allocated constants (see ``_CublasConstants`` class) for CUBLAS
+ * calls.
+ * The class is constructed when the CUBLAS DaCe library is used.
+ **/
 class CublasHandle {
  public:
   CublasHandle() = default;
