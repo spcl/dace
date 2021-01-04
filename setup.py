@@ -73,8 +73,10 @@ setup(
     extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum']},
     entry_points={
         'console_scripts': [
-            'dacelab = dace.frontend.octave.dacelab:main',
-            'diode = diode.diode_server:main', 'sdfv = diode.sdfv:main',
-            'sdfgcc = dace.codegen.sdfgcc:main'
+            'dacelab = dace.cli.dacelab:main',
+            'diode = diode.diode_server:main',
+            'sdfv = dace.cli.sdfv:main',
+            'sdfgcc = dace.cli.sdfgcc:main',
+            'sdprof = dace.cli.sdfprof:main',
         ],
     })
