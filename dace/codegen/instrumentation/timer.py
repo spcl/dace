@@ -48,7 +48,7 @@ class TimerProvider(InstrumentationProvider):
             '''auto __dace_tend_{id} = std::chrono::high_resolution_clock::now();
 unsigned long int __dace_ts_start_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tbegin_{id}.time_since_epoch()).count();
 unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tend_{id}.time_since_epoch()).count();
-dace::perf::report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.
+__state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.
             format(timer_name=timer_name, id=idstr,
                    sdfg_id=sdfg.sdfg_id, state_id=state_id, node_id=node_id))
 

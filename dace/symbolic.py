@@ -464,6 +464,8 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    if not isinstance(expr, (sympy.Basic, str)):
+        return set()
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}

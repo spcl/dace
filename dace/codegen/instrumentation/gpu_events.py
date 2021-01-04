@@ -7,7 +7,6 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 @registry.autoregister_params(type=dtypes.InstrumentationType.GPU_Events)
 class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
-
     def __init__(self):
         self.backend = config.Config.get('compiler', 'cuda', 'backend')
         super().__init__()
@@ -43,7 +42,7 @@ class GPUEventProvider(InstrumentationProvider):
             id=id, backend=self.backend)
 
     def _record_event(self, id, stream):
-        return '%sEventRecord(__dace_ev_%s, dace::cuda::__streams[%d]);' % (
+        return '%sEventRecord(__dace_ev_%s, __state->gpu_context->streams[%d]);' % (
             self.backend, id, stream)
 
     def _report(self, timer_name: str, sdfg=None, state=None, node=None):
@@ -62,7 +61,7 @@ class GPUEventProvider(InstrumentationProvider):
 int __dace_micros_{id} = (int) (__dace_ms_{id} * 1000.0);
 unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 unsigned long int __dace_ts_start_{id} = __dace_ts_end_{id} - __dace_micros_{id};
-dace::perf::report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.format(
+__state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''.format(
             id=idstr, timer_name=timer_name, backend=self.backend,
             sdfg_id=sdfg.sdfg_id, state_id=state_id, node_id=node_id)
 

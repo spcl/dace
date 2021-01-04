@@ -47,15 +47,20 @@ def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
-def _define_local_ex(sdfg: SDFG,
-                     state: SDFGState,
-                     shape: Shape,
-                     dtype: dace.typeclass,
-                     storage: dtypes.StorageType = dtypes.StorageType.Default):
+def _define_local_ex(
+    sdfg: SDFG,
+    state: SDFGState,
+    shape: Shape,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default,
+    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
+    name, _ = sdfg.add_temp_transient(shape,
+                                      dtype,
+                                      storage=storage,
+                                      lifetime=lifetime)
     return name
 
 
@@ -68,10 +73,10 @@ def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
-        sdfg: SDFG,
-        state: SDFGState,
-        dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+    sdfg: SDFG,
+    state: SDFGState,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True, storage=storage)
@@ -868,7 +873,6 @@ def _result_type(
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, Number):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-            print(arg, type(arg), dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
