@@ -100,7 +100,7 @@ class PAPIInstrumentation(InstrumentationProvider):
             global_stream.write('#include <dace/perf/papi.h>', sdfg)
             local_stream.write(
                 '''dace::perf::PAPI::init();
-dace::perf::PAPIValueStore<%s> __perf_store (dace::perf::report);''' %
+dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
                 (', '.join(self._counters)), sdfg)
             # Get the measured overhead and take the minimum to compensate
             if Config.get_bool('instrumentation', 'papi',

@@ -52,7 +52,7 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    expr = dataname
+    expr = ptr(dataname, datadesc)
 
     def_type, _ = dispatcher.defined_vars.get(dataname)
 
@@ -201,6 +201,22 @@ def memlet_copy_to_absolute_strides(dispatcher,
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
+def ptr(name: str, desc: data.Data) -> str:
+    """ 
+    Returns a string that points to the data based on its name and descriptor.
+    :param name: Data name.
+    :param desc: Data descriptor.
+    :return: C-compatible name that can be used to access the data.
+    """
+    # Special case: If memory is persistent and defined in this SDFG, add state
+    # struct to name
+    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
+            and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
+        return f'__state->{name}'
+
+    return name
+
+
 def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
                           pointer_name: str,
                           conntype: dtypes.typeclass) -> Tuple[str, str, str]:
@@ -216,6 +232,7 @@ def emit_memlet_reference(dispatcher, sdfg: SDFG, memlet: mmlt.Memlet,
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
+    pointer_name = ptr(pointer_name, desc)
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
@@ -446,14 +463,12 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data],
-                                    s,
-                                    o,
-                                    packed_veclen,
-                                    indices=indices)
+    desc = sdfg.arrays[memlet.data]
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
-        return "%s[%s]" % (memlet.data, offset_cppstr)
+        ptrname = ptr(memlet.data, desc)
+        return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
 
@@ -484,14 +499,13 @@ def cpp_ptr_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
+    desc = sdfg.arrays[memlet.data]
     if isinstance(indices, str):
         offset_cppstr = indices
     else:
-        offset_cppstr = cpp_offset_expr(sdfg.arrays[memlet.data],
-                                        s,
-                                        o,
-                                        indices=indices)
-    dname = memlet.data
+        offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
+    dname = ptr(memlet.data, desc)
+
     if isinstance(sdfg.arrays[dname], data.Scalar):
         dname = '&' + dname
 
@@ -674,7 +688,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if (max_streams >= 0 and not is_devicelevel_gpu(sdfg, state_dfg, node)
                 and hasattr(node, "_cuda_stream")):
             callsite_stream.write(
-                'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = dace::cuda::__streams[__dace_current_stream_id];'
+                'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
                 %
                 (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
                 sdfg,
@@ -1042,7 +1056,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream"):
-            cudastream = "dace::cuda::__streams[%d]" % e.src._cuda_stream
+            cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
                 "%sStreamSynchronize(%s);" % (backend, cudastream),
                 sdfg,
@@ -1057,15 +1071,15 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     backend = Config.get('compiler', 'cuda', 'backend')
     if max_streams >= 0:
-        cudastream = "dace::cuda::__streams[%d]" % node._cuda_stream
+        cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
             if (isinstance(edge.dst, nodes.AccessNode)
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
-                    """{backend}EventRecord(dace::cuda::__events[{ev}], {src_stream});
-{backend}StreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
+                    """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
+{backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);"""
                     .format(
                         ev=edge._cuda_event
                         if hasattr(edge, "_cuda_event") else 0,
@@ -1092,8 +1106,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 # for it in target stream.
                 elif e.dst._cuda_stream != node._cuda_stream:
                     callsite_stream.write(
-                        """{backend}EventRecord(dace::cuda::__events[{ev}], {src_stream});
-    {backend}StreamWaitEvent(dace::cuda::__streams[{dst_stream}], dace::cuda::__events[{ev}], 0);"""
+                        """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
+    {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);"""
                         .format(
                             ev=e._cuda_event
                             if hasattr(e, "_cuda_event") else 0,

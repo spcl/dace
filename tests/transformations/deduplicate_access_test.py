@@ -4,6 +4,7 @@ import dace
 import numpy as np
 from dace.subsets import Range
 from dace.transformation.dataflow import DeduplicateAccess
+import dace.transformation.helpers as helpers
 
 N = dace.symbol('N')
 i = dace.symbol('i')
@@ -18,7 +19,7 @@ def test_find_contiguous_subsets():
         Range([(i - 2, i - 1, 1), (j, j + 3, 1)]),
     ]
 
-    result = DeduplicateAccess.find_contiguous_subsets(subset_list)
+    result = helpers.find_contiguous_subsets(subset_list)
     assert len(result) == 1
     assert list(result)[0] == Range([(i - 2, i, 1), (j, j + 3, 1)])
 
@@ -37,14 +38,14 @@ def test_find_contiguous_subsets_nonsquare():
     ]
 
     # Prioritize on first dimension
-    result2 = DeduplicateAccess.find_contiguous_subsets(subset_list, 0)
-    result2 = DeduplicateAccess.find_contiguous_subsets(result2, None)
+    result2 = helpers.find_contiguous_subsets(subset_list, 0)
+    result2 = helpers.find_contiguous_subsets(result2, None)
     assert len(result2) == 2
 
     # Prioritize on second dimension
-    result3 = DeduplicateAccess.find_contiguous_subsets(subset_list, 1)
+    result3 = helpers.find_contiguous_subsets(subset_list, 1)
     assert len(result3) == 3
-    result3 = DeduplicateAccess.find_contiguous_subsets(result3, None)
+    result3 = helpers.find_contiguous_subsets(result3, None)
     assert len(result3) == 3
 
 

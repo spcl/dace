@@ -77,7 +77,8 @@ class TensorCoreCodegen(TargetCodeGenerator):
     def allocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
                        state_id: int, node: nodes.AccessNode,
                        function_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream):
+                       declaration_stream: CodeIOStream,
+                       allocation_stream: CodeIOStream):
         name = node.data
         nodedesc = node.desc(sdfg)
 
@@ -88,11 +89,11 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
         # Write a fragment based on the storage type
         if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
-            callsite_stream.write(
+            declaration_stream.write(
                 'wmma::fragment<wmma::accumulator, '
                 '16, 16, 16, float> {};'.format(name), sdfg, state_id, node)
         else:
-            callsite_stream.write(
+            declaration_stream.write(
                 'wmma::fragment<wmma::matrix_{mat}, '
                 '16, 16, 16, half, wmma::{maj}_major> '
                 '{name};'.format(

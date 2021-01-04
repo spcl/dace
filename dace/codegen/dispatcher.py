@@ -4,6 +4,7 @@ Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
+from dace.codegen.prettycode import CodeIOStream
 import aenum
 from dace import config, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx
@@ -108,7 +109,11 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
-    def __init__(self):
+    def __init__(self, framecode):
+        # Avoid import loop
+        from dace.codegen.targets import framecode as fc
+
+        self.frame: fc.DaCeCodeGenerator = framecode
         self._used_targets = set()
         self._used_environments = set()
 
@@ -394,7 +399,7 @@ class TargetDispatcher(object):
         self.defined_vars.exit_scope(entry_node)
 
     def dispatch_allocate(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
+                          allocation_stream):
         """ Dispatches a code generator for data allocation. """
 
         nodedesc = node.desc(sdfg)
@@ -402,9 +407,21 @@ class TargetDispatcher(object):
                    dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
 
+        # TODO: Move to central allocator (see PR #434)
+        if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
+            declaration_stream = CodeIOStream()
+            allocation_stream = self.frame._initcode
+        else:
+            declaration_stream = allocation_stream
+
         self._array_dispatchers[storage].allocate_array(sdfg, dfg, state_id,
                                                         node, function_stream,
-                                                        callsite_stream)
+                                                        declaration_stream,
+                                                        allocation_stream)
+
+        # TODO: Move to central allocator (see PR #434)
+        if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
+            self.frame.statestruct.append(declaration_stream.getvalue())
 
     def dispatch_deallocate(self, sdfg, dfg, state_id, node, function_stream,
                             callsite_stream):
@@ -414,6 +431,10 @@ class TargetDispatcher(object):
         storage = (nodedesc.storage if not isinstance(node, nodes.Tasklet) else
                    dtypes.StorageType.Register)
         self._used_targets.add(self._array_dispatchers[storage])
+
+        # TODO: Move to central allocator (see PR #434)
+        if nodedesc.lifetime is dtypes.AllocationLifetime.Persistent:
+            callsite_stream = self.frame._exitcode
 
         self._array_dispatchers[storage].deallocate_array(
             sdfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -425,6 +446,8 @@ class TargetDispatcher(object):
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation. 
         """
+
+        state_dfg = sdfg.node(state_id)
 
         if isinstance(src_node, nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
@@ -440,9 +463,9 @@ class TargetDispatcher(object):
                 and not isinstance(dst_node, nodes.Tasklet)):
             # Special case: Copying from a tasklet to an array, schedule of
             # the copy is in the copying tasklet
-            dst_schedule_node = dfg.entry_node(src_node)
+            dst_schedule_node = state_dfg.entry_node(src_node)
         else:
-            dst_schedule_node = dfg.entry_node(dst_node)
+            dst_schedule_node = state_dfg.entry_node(dst_node)
 
         if dst_schedule_node is not None:
             dst_schedule = dst_schedule_node.map.schedule

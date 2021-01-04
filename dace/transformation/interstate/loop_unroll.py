@@ -43,10 +43,12 @@ class LoopUnroll(DetectLoop):
             return False
         _, rng, _ = found
 
-        # If loop is not specialized or constant-sized, fail
-        if any(symbolic.issymbolic(r, sdfg.constants) for r in rng):
+        # If loop stride is not specialized or constant-sized, fail
+        if symbolic.issymbolic(rng[2], sdfg.constants):
             return False
-
+        # If loop range diff is not constant-sized, fail
+        if symbolic.issymbolic(rng[1] - rng[0], sdfg.constants):
+            return False
         return True
 
     def apply(self, sdfg):
@@ -60,10 +62,7 @@ class LoopUnroll(DetectLoop):
         # state(s) before the loop and the last loop state.
         itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
 
-        # Loop must be unrollable
-        if self.count == 0 and any(
-                symbolic.issymbolic(r, sdfg.constants) for r in rng):
-            raise ValueError('Loop cannot be fully unrolled, size is symbolic')
+        # Loop must be fully unrollable for now.
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
@@ -77,15 +76,26 @@ class LoopUnroll(DetectLoop):
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
-        # Evaluate the real values of the loop
-        start, end, stride = (symbolic.evaluate(r, sdfg.constants) for r in rng)
 
+        try:
+            start, end, stride = (r for r in rng)
+            stride = symbolic.evaluate(stride, sdfg.constants)
+            loop_diff = int(symbolic.evaluate(end-start+1, sdfg.constants))
+            is_symbolic = any([symbolic.issymbolic(r) for r in rng[:2]])
+        except TypeError:
+            raise TypeError('Loop difference and strides cannot be symbolic.')
         # Create states for loop subgraph
         unrolled_states = []
-        for i in range(start, end + 1, stride):
+
+        for i in range(0, loop_diff, stride):
+            current_index = start + i
             # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph,
-                                               itervar, i)
+            new_states = self.instantiate_loop(sdfg,
+                                               loop_states,
+                                               loop_subgraph,
+                                               itervar,
+                                               current_index,
+                                               str(i) if is_symbolic else None)
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
@@ -129,7 +139,7 @@ class LoopUnroll(DetectLoop):
         # Replace iterate with value in each state
         for state in new_states:
             state.set_label(state.label + '_' + itervar + '_' + (
-                state_suffix if state_suffix is not None else '%d' % value))
+                state_suffix if state_suffix is not None else str(value)))
             state.replace(itervar, value)
 
         # Add subgraph to original SDFG
