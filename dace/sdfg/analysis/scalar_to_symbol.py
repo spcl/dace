@@ -56,6 +56,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
             continue
         if desc.total_size != 1:
             continue
+        if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+            continue
         candidates.add(aname)
 
     # Check all occurrences of candidates in SDFG and filter out
@@ -621,17 +623,18 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
         ise: InterstateEdge = edge.data
         for scalar in to_promote:
             # Condition
-            if ise.condition.language is dtypes.Language.Python:
-                promo = TaskletPromoter(scalar, scalar)
-                for stmt in ise.condition.code:
-                    promo.visit(stmt)
-            elif ise.condition.language is dtypes.Language.CPP:
-                ise.condition = re.sub(r'\b%s\[.*\]' % re.escape(scalar),
-                                       scalar, ise.condition.as_string)
+            if not edge.data.is_unconditional():
+                if ise.condition.language is dtypes.Language.Python:
+                    promo = TaskletPromoter(scalar, scalar)
+                    for stmt in ise.condition.code:
+                        promo.visit(stmt)
+                elif ise.condition.language is dtypes.Language.CPP:
+                    ise.condition = re.sub(r'\b%s\[.*?\]' % re.escape(scalar),
+                                           scalar, ise.condition.as_string)
             # Assignments
             for aname, assignment in ise.assignments.items():
                 ise.assignments[aname] = re.sub(
-                    r'\b%s\[.*\]' % re.escape(scalar), scalar,
+                    r'\b%s\[.*?\]' % re.escape(scalar), scalar,
                     assignment.strip())
 
     # Step 7: Indirection

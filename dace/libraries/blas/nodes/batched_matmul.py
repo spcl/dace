@@ -193,8 +193,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        alpha = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sPone()" % factort
-        beta = "dace::blas::CublasConstants::Get(__dace_cuda_device).%sZero()" % factort
+        alpha = "__state->cublas_handle.Constants(__dace_cuda_device).%sPone()" % factort
+        beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
 
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None

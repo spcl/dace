@@ -16,6 +16,7 @@ from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg import nodes
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace import dtypes, data, config
+from typing import Any, List
 
 from dace.frontend.python import wrappers
 
@@ -28,10 +29,12 @@ class DaCeCodeGenerator(object):
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
     def __init__(self, *args, **kwargs):
-        self._dispatcher = disp.TargetDispatcher()
+        self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
+        self.statestruct: List[str] = []
+        self.environments: List[Any] = []
 
     ##################################################################
     # Target registry
@@ -71,6 +74,14 @@ class DaCeCodeGenerator(object):
             :param backend: Whose backend this header belongs to.
         """
         #########################################################
+        # Environment-based includes
+        for env in self.environments:
+            if len(env.headers) > 0:
+                global_stream.write(
+                    "\n".join("#include \"" + h + "\"" for h in env.headers),
+                    sdfg)
+
+        #########################################################
         # Custom types
         datatypes = set()
         # Types of this SDFG
@@ -93,6 +104,17 @@ class DaCeCodeGenerator(object):
         # Write constants
         self.generate_constants(sdfg, global_stream)
 
+        #########################################################
+        # Write state struct
+        structstr = '\n'.join(self.statestruct)
+        global_stream.write(
+            f'''
+struct {sdfg.name}_t {{
+    {structstr}
+}};
+
+''', sdfg)
+
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.global_code:
                 global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
@@ -100,8 +122,7 @@ class DaCeCodeGenerator(object):
                 global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
                                     sd)
 
-    def generate_header(self, sdfg: SDFG, used_environments: Set[str],
-                        global_stream: CodeIOStream,
+    def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
             function for overriding purposes.
@@ -109,35 +130,26 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
         """
-
-        import dace.library
-        environments = dace.library.get_environments_and_dependencies(
-            used_environments)
-
         # Write frame code - header
         global_stream.write(
             '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' +
             '#include <dace/dace.h>\n', sdfg)
 
         # Write header required by environments
-        for env in environments:
-            if len(env.headers) > 0:
-                global_stream.write(
-                    "\n".join("#include \"" + h + "\"" for h in env.headers),
-                    sdfg)
-
-        global_stream.write("\n", sdfg)
-
-        self.generate_fileheader(sdfg, global_stream, 'frame')
+        for env in self.environments:
+            self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
         if len(self._dispatcher.instrumentation) > 1:
-            global_stream.write(
-                'namespace dace { namespace perf { Report report; } }', sdfg)
-            callsite_stream.write('dace::perf::report.reset();', sdfg)
+            self.statestruct.append('dace::perf::Report report;')
+            # Reset report if written every invocation
+            if config.Config.get_bool('instrumentation',
+                                      'report_each_invocation'):
+                callsite_stream.write('__state->report.reset();', sdfg)
 
-    def generate_footer(self, sdfg: SDFG, used_environments: Set[str],
-                        global_stream: CodeIOStream,
+        self.generate_fileheader(sdfg, global_stream, 'frame')
+
+    def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
                         callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
             function for overriding purposes.
@@ -149,55 +161,64 @@ class DaCeCodeGenerator(object):
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
-        environments = dace.library.get_environments_and_dependencies(
-            used_environments)
+        initparams = sdfg.signature(with_arrays=False)
+        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_sdfg_end(sdfg, callsite_stream, global_stream)
 
+        sdfg_hash = sdfg.hash_sdfg()
+
         # Instrumentation saving
-        if len(self._dispatcher.instrumentation) > 1:
+        if (config.Config.get_bool('instrumentation', 'report_each_invocation')
+                and len(self._dispatcher.instrumentation) > 1):
             callsite_stream.write(
-                'dace::perf::report.save("%s/perf");' %
-                sdfg.build_folder.replace('\\', '/'), sdfg)
+                '''__state->report.save("{path}/perf", "{hash}");'''
+                .format(path=sdfg.build_folder.replace('\\', '/'),
+                        hash=sdfg_hash), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
 
         # Write awkward footer to avoid 'extern "C"' issues
+        params_comma = (', ' + params) if params else ''
+        initparams_comma = (', ' + initparams) if initparams else ''
+        paramnames_comma = (', ' + paramnames) if paramnames else ''
+        initparamnames_comma = (', ' + initparamnames) if initparamnames else ''
         callsite_stream.write(
-            """
-DACE_EXPORTED void __program_%s(%s)
-{
-    __program_%s_internal(%s);
-}
-""" % (fname, params, fname, paramnames), sdfg)
+            f'''
+DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
+{{
+    __program_{fname}_internal(__state{paramnames_comma});
+}}''', sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_init_%s(%s);\n' %
-                    (target.target_name, params), sdfg)
+                    'DACE_EXPORTED int __dace_init_%s(%s_t *__state%s);\n' %
+                    (target.target_name, sdfg.name, initparams_comma), sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_exit_%s(%s);\n' %
-                    (target.target_name, params), sdfg)
+                    'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' %
+                    (target.target_name, sdfg.name), sdfg)
 
         callsite_stream.write(
-            """
-DACE_EXPORTED int __dace_init_%s(%s)
-{
+            f"""
+DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
+{{
     int __result = 0;
-""" % (sdfg.name, params), sdfg)
+    {sdfg.name}_t *__state = new {sdfg.name}_t;
+
+            """, sdfg)
 
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s(%s);' %
-                    (target.target_name, paramnames), sdfg)
-        for env in environments:
+                    '__result |= __dace_init_%s(__state%s);' %
+                    (target.target_name, initparamnames_comma), sdfg)
+        for env in self.environments:
             if env.init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
@@ -212,13 +233,25 @@ DACE_EXPORTED int __dace_init_%s(%s)
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
         callsite_stream.write(
-            """
-    return __result;
-}
+            f"""
+    if (__result) {{
+        delete __state;
+        return nullptr;
+    }}
+    return __state;
+}}
 
-DACE_EXPORTED void __dace_exit_%s(%s)
-{
-""" % (sdfg.name, params), sdfg)
+DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
+{{
+""", sdfg)
+
+        # Instrumentation saving
+        if (not config.Config.get_bool('instrumentation',
+                                       'report_each_invocation')
+                and len(self._dispatcher.instrumentation) > 1):
+            callsite_stream.write(
+                '__state->report.save("%s/perf");' %
+                sdfg.build_folder.replace('\\', '/'), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
@@ -230,16 +263,15 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
                 callsite_stream.write(
-                    '__dace_exit_%s(%s);' % (target.target_name, paramnames),
-                    sdfg)
-        for env in reversed(environments):
+                    '__dace_exit_%s(__state);' % target.target_name, sdfg)
+        for env in reversed(self.environments):
             if env.finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__,
                                       sdfg)
                 callsite_stream.write(env.finalize_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write('}\n', sdfg)
+        callsite_stream.write('delete __state;\n}\n', sdfg)
 
     def generate_state(self,
                        sdfg,
@@ -291,13 +323,8 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                     for nested_node in nodes_to_allocate:
                         nested_allocated.add(nested_node.data)
                         self._dispatcher.dispatch_allocate(
-                            nested_sdfg,
-                            nested_state,
-                            nested_sid,
-                            nested_node,
-                            global_stream,
-                            callsite_stream,
-                        )
+                            nested_sdfg, nested_state, nested_sid, nested_node,
+                            global_stream, callsite_stream)
 
         callsite_stream.write('\n')
 
@@ -472,8 +499,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 generate_transition = True
 
                 # Handle specialized control flow
-                if (dace.config.Config.get_bool('optimizer',
-                                                'detect_control_flow')):
+                if (config.Config.get_bool('optimizer', 'detect_control_flow')):
 
                     for control in control_flow[edge]:
 
@@ -759,7 +785,7 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         # {edge: [dace.edges.ControlFlow]}
         control_flow = {e: [] for e in sdfg.edges()}
 
-        if dace.config.Config.get_bool('optimizer', 'detect_control_flow'):
+        if config.Config.get_bool('optimizer', 'detect_control_flow'):
 
             ####################################################################
             # Loop detection procedure
@@ -942,13 +968,13 @@ DACE_EXPORTED void __dace_exit_%s(%s)
                 if left_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                left_nodes.add(left) # left also belong to scope
+                left_nodes.add(left)  # left also belong to scope
 
                 right_nodes = sdfg.all_nodes_between(right, dominator)
                 if right_nodes is None:
                     # Not all paths lead to the next dominator
                     continue
-                right_nodes.add(right) # right also belong to scope
+                right_nodes.add(right)  # right also belong to scope
 
                 # Make sure there is no overlap between left and right nodes
                 if len(left_nodes & right_nodes) > 0:
@@ -1018,19 +1044,33 @@ DACE_EXPORTED void __dace_exit_%s(%s)
         # Now that we have all the information about dependencies, generate
         # header and footer
         if is_top_level:
+            # Let each target append code to frame code state before generating
+            # header and footer
+            for target in self._dispatcher.used_targets:
+                target.on_target_used()
+
             header_stream = CodeIOStream()
             header_global_stream = CodeIOStream()
             footer_stream = CodeIOStream()
             footer_global_stream = CodeIOStream()
-            self.generate_header(sdfg, self._dispatcher.used_environments,
-                                 header_global_stream, header_stream)
+
+            # Get all environments used in the generated code, including
+            # dependent environments
+            import dace.library  # Avoid import loops
+            self.environments = dace.library.get_environments_and_dependencies(
+                self._dispatcher.used_environments)
+
+            self.generate_header(sdfg, header_global_stream, header_stream)
 
             # Open program function
-            function_signature = 'void __program_%s_internal(%s)\n{\n' % (
-                sdfg.name, sdfg.signature())
+            params = sdfg.signature()
+            if params:
+                params = ', ' + params
+            function_signature = (
+                'void __program_%s_internal(%s_t *__state%s)\n{\n' %
+                (sdfg.name, sdfg.name, params))
 
-            self.generate_footer(sdfg, self._dispatcher.used_environments,
-                                 footer_global_stream, footer_stream)
+            self.generate_footer(sdfg, footer_global_stream, footer_stream)
 
             header_global_stream.write(global_stream.getvalue())
             header_global_stream.write(footer_global_stream.getvalue())

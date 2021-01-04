@@ -1,5 +1,5 @@
 import dace
-from dace.frontend.octave import dacelab
+from dace.cli import dacelab
 import os
 import pytest
 
