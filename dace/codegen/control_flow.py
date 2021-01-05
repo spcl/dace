@@ -407,7 +407,7 @@ class DoWhileScope(ControlFlow):
 
 @dataclass
 class SwitchCaseScope(ControlFlow):
-    """ Simple switch-case scope without fallbacks. """
+    """ Simple switch-case scope without fall-through cases. """
     sdfg: SDFG  #: Parent SDFG
     branch_state: SDFGState  #: Branching state
     switchvar: str  #: C++ code for switch expression
