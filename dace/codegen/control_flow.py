@@ -1,11 +1,63 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" Various classes to facilitate the code generation of structured control 
-    flow elements (e.g., `for`, `if`, `while`) from state machines in SDFGs. """
+""" 
+Various classes to facilitate the code generation of structured control 
+flow elements (e.g., ``for``, ``if``, ``while``) from state machines in SDFGs. 
 
-from dataclasses import dataclass, field
+SDFGs are state machines of dataflow graphs, where each node is a state and each
+edge may contain a state transition condition and assignments. As such, when 
+generating code from an SDFG, the straightforward way would be to generate code
+for each state and conditional ``goto``s for the state transitions.
+However, this inhibits compiler optimizations on the generated code, which rely
+on loops and branches. 
+
+This file contains analyses that extract structured control flow constructs from
+the state machine and emit code with the correct C keywords. It does so by 
+iteratively converting the SDFG into a control flow tree when certain control
+flow patterns are detected (using the ``structured_control_flow_tree``
+function). The resulting tree classes (which all extend ``ControlFlow``) contain
+the original states, and upon code generation are traversed recursively into
+the tree rather than in arbitrary order. 
+
+Each individual state is first wrapped with the ``SingleState`` control flow 
+"block", and then upon analysis can be grouped into larger control flow blocks,
+such as ``ForScope`` or ``IfElseChain``. If no structured control flow pattern
+is detected (or this analysis is disabled in configuration), the group of states
+is wrapped in a ``GeneralBlock``, which generates the aforementioned conditional
+``goto`` code.
+
+For example, the following SDFG::
+
+
+      x < 5
+     /------>[s2]--------\
+[s1] \                    ->[s5]
+      ------>[s3]->[s4]--/   
+      x >= 5
+
+
+would create the control flow tree below::
+
+
+GeneralBlock({
+    IfScope(condition=x<5, body={  
+        GeneralBlock({
+            SingleState(s2)
+        })
+    }, orelse={
+        GeneralBlock({
+            SingleState(s3),
+            SingleState(s4),
+        })
+    }),
+    SingleState(s5)
+})
+"""
+
+from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set,
                     Tuple, Union)
 import sympy as sp
+from dace import dtypes
 from dace.sdfg.state import SDFGState
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
@@ -18,24 +70,51 @@ from dace.codegen.targets import cpp
 
 @dataclass
 class ControlFlow:
+    """
+    Abstract class representing a control flow block.
+    """
+
+    # A callback to the code generator that receives an SDFGState and returns
+    # a string with its generated code.
     dispatch_state: Callable[[SDFGState], str]
 
     @property
     def first_state(self) -> SDFGState:
         """ 
         Returns the first or initializing state in this control flow block. 
+        Used to determine which will be the next state in a control flow block
+        to avoid generating extraneous ``goto``s.
         """
         return None
 
     @property
     def children(self) -> List['ControlFlow']:
+        """ 
+        Returns a list of control flow blocks that exist within this block.
+        """
         return []
+
+    def as_cpp(self, defined_vars: 'DefinedVars',
+               symbols: Dict[str, dtypes.typeclass]) -> str:
+        """ 
+        Returns C++ code for this control flow block.
+        :param defined_vars: A ``DefinedVars`` object with the variables defined
+                             in the scope.
+        :param symbols: A dictionary of symbol names and their types.
+        :return: C++ string with the generated code of the control flow block.
+        """
+        raise NotImplementedError
 
 
 @dataclass
 class SingleState(ControlFlow):
     """ A control flow element containing a single state. """
+
+    # The state in this element.
     state: SDFGState
+
+    # Set to true if this is the last state in the parent control flow block,
+    # in order to avoid generating an extraneous "goto exit" statement.
     last_state: bool = False
 
     def as_cpp(self, defined_vars, symbols) -> str:
@@ -60,6 +139,16 @@ class SingleState(ControlFlow):
                             sdfg: SDFG,
                             edge: Edge[InterstateEdge],
                             successor: SDFGState = None) -> str:
+        """ 
+        Helper function that generates a state transition (conditional goto) 
+        from a state and an SDFG edge.
+        :param sdfg: The parent SDFG.
+        :param edge: The state transition edge to generate.
+        :param successor: If not None, the state that will be generated right
+                          after the current state (used to avoid extraneous 
+                          gotos).
+        :return: A c++ string representing the state transition code.
+        """
         expr = ''
         condition_string = cpp.unparse_interstate_edge(
             edge.data.condition.code[0], sdfg)
@@ -88,8 +177,16 @@ class SingleState(ControlFlow):
 
 @dataclass
 class GeneralBlock(ControlFlow):
-    """ General (or unrecognized) control flow block with gotos. """
+    """ 
+    General (or unrecognized) control flow block with gotos between states. 
+    """
+
+    # List of children control flow blocks
     elements: List[ControlFlow]
+
+    # List or set of edges to not generate conditional gotos for. This is used
+    # to avoid generating extra assignments or gotos before entering a for loop,
+    # for example.
     edges_to_ignore: Sequence[Edge[InterstateEdge]]
 
     def as_cpp(self, defined_vars, symbols) -> str:
@@ -141,11 +238,12 @@ class GeneralBlock(ControlFlow):
 @dataclass
 class IfScope(ControlFlow):
     """ A control flow scope of an if (else) block. """
-    sdfg: SDFG
-    branch_state: SDFGState
-    condition: CodeBlock
-    body: GeneralBlock
-    orelse: Optional[GeneralBlock] = None
+
+    sdfg: SDFG  #: Parent SDFG
+    branch_state: SDFGState  #: State that branches out to if/else scopes
+    condition: CodeBlock  #: If-condition
+    body: GeneralBlock  #: Body of if condition
+    orelse: Optional[GeneralBlock] = None  #: Optional body of else condition
 
     def as_cpp(self, defined_vars, symbols) -> str:
         condition_string = cpp.unparse_interstate_edge(self.condition.code[0],
@@ -172,9 +270,9 @@ class IfScope(ControlFlow):
 @dataclass
 class IfElseChain(ControlFlow):
     """ A control flow scope of "if, else if, ..., else" chain of blocks. """
-    sdfg: SDFG
-    branch_state: SDFGState
-    body: List[Tuple[CodeBlock, GeneralBlock]]
+    sdfg: SDFG  #: Parent SDFG
+    branch_state: SDFGState  #: State that branches out to all blocks
+    body: List[Tuple[CodeBlock, GeneralBlock]]  #: List of (condition, block)
 
     def as_cpp(self, defined_vars, symbols) -> str:
         expr = ''
@@ -188,6 +286,9 @@ class IfElseChain(ControlFlow):
             expr += body.as_cpp(defined_vars, symbols)
             expr += '\n}'
 
+        # If we generate an if/else if blocks, we cannot guarantee that all
+        # cases have been covered. In SDFG semantics, this means that the SDFG
+        # execution should end, so we emit an "else goto exit" here.
         if len(self.body) > 0:
             expr += ' else {\n'
         expr += 'goto __state_exit_{};\n'.format(self.sdfg.sdfg_id)
@@ -207,12 +308,12 @@ class IfElseChain(ControlFlow):
 @dataclass
 class ForScope(ControlFlow):
     """ For loop block (without break or continue statements). """
-    itervar: str
-    guard: SDFGState
-    init: str
-    condition: CodeBlock
-    update: str
-    body: GeneralBlock
+    itervar: str  #: Name of iteration variable
+    guard: SDFGState  #: Loop guard state
+    init: str  #: C++ code for initializing iteration variable
+    condition: CodeBlock  #: For-loop condition
+    update: str  #: C++ code for updating iteration variable
+    body: GeneralBlock  #: Loop body as a control flow block
 
     def as_cpp(self, defined_vars, symbols) -> str:
         # Initialize to either "int i = 0" or "i = 0" depending on whether
@@ -252,9 +353,9 @@ class ForScope(ControlFlow):
 @dataclass
 class WhileScope(ControlFlow):
     """ While loop block (without break or continue statements). """
-    guard: SDFGState
-    test: CodeBlock
-    body: GeneralBlock
+    guard: SDFGState  #: Loop guard state
+    test: CodeBlock  #: While-loop condition
+    body: GeneralBlock  #: Loop body as control flow block
 
     def as_cpp(self, defined_vars, symbols) -> str:
         if self.test is not None:
@@ -280,9 +381,9 @@ class WhileScope(ControlFlow):
 @dataclass
 class DoWhileScope(ControlFlow):
     """ Do-while loop block (without break or continue statements). """
-    sdfg: SDFG
-    test: CodeBlock
-    body: GeneralBlock
+    sdfg: SDFG  #: Parent SDFG
+    test: CodeBlock  #: Do-while loop condition
+    body: GeneralBlock  #: Loop body as control flow block
 
     def as_cpp(self, defined_vars, symbols) -> str:
         if self.test is not None:
@@ -307,10 +408,10 @@ class DoWhileScope(ControlFlow):
 @dataclass
 class SwitchCaseScope(ControlFlow):
     """ Simple switch-case scope wihout fallbacks. """
-    sdfg: SDFG
-    branch_state: SDFGState
-    switchvar: str
-    cases: Dict[str, GeneralBlock]
+    sdfg: SDFG  #: Parent SDFG
+    branch_state: SDFGState  #: Branching state
+    switchvar: str  #: C++ code for switch expression
+    cases: Dict[str, GeneralBlock]  #: Mapping of cases to control flow blocks
 
     def as_cpp(self, defined_vars, symbols) -> str:
         expr = f'switch ({self.switchvar}) {{\n'
@@ -336,6 +437,10 @@ def _loop_from_structure(
     leave_edge: Edge[InterstateEdge], back_edges: List[Edge[InterstateEdge]],
     dispatch_state: Callable[[SDFGState], str]
 ) -> Union[ForScope, WhileScope]:
+    """ 
+    Helper method that constructs the correct structured loop construct from a
+    set of states. Can construct for or while loops.
+    """
 
     body = GeneralBlock(dispatch_state, [], [])
 
