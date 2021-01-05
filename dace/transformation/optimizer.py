@@ -196,7 +196,7 @@ class SDFGOptimizer(Optimizer):
         if SAVE_INTERMEDIATE:
             self.sdfg.save(os.path.join('_dacegraphs', 'before.sdfg'))
             if VISUALIZE_SDFV:
-                from diode import sdfv
+                from dace.cli import sdfv
                 sdfv.view(os.path.join('_dacegraphs', 'before.sdfg'))
 
         # Optimize until there is not pattern matching or user stops the process.
@@ -271,7 +271,7 @@ class SDFGOptimizer(Optimizer):
                         os.path.join('_dacegraphs', filename + '.sdfg'))
 
                     if VISUALIZE_SDFV:
-                        from diode import sdfv
+                        from dace.cli import sdfv
                         sdfv.view(
                             os.path.join('_dacegraphs', filename + '.sdfg'))
 
