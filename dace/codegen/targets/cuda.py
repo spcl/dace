@@ -928,9 +928,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, memlet,
                     function_stream, callsite_stream):
+        state = sdfg.node(state_id)
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
-            src_parent = dfg.entry_node(src_node)
+            src_parent = state.entry_node(src_node)
             dst_schedule = None if src_parent is None else src_parent.map.schedule
         else:
             src_storage = src_node.desc(sdfg).storage
@@ -940,7 +941,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         else:
             dst_storage = dst_node.desc(sdfg).storage
 
-        dst_parent = dfg.entry_node(dst_node)
+        dst_parent = state.entry_node(dst_node)
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
 
         # Emit actual copy
