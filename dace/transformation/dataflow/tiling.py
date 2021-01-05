@@ -92,7 +92,7 @@ class MapTiling(transformation.Transformation):
             if tile_size == 1 and tile_stride == 1:
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = ''
-                stripmine.tile_size = str(tile_size)
+                stripmine.tile_size_or_number = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = True
                 stripmine.apply(sdfg)
@@ -100,7 +100,7 @@ class MapTiling(transformation.Transformation):
             else:
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = self.prefix
-                stripmine.tile_size = str(tile_size)
+                stripmine.tile_size_or_number = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
                 stripmine.apply(sdfg)

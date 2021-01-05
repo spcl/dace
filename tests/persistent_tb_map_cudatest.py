@@ -26,7 +26,7 @@ def test_persistent_thread_block():
     sdfg = dot.to_sdfg()
 
     sdfg.apply_gpu_transformations()
-    sdfg.apply_transformations(StripMining, options={'tile_size': '256'})
+    sdfg.apply_transformations(StripMining, options={'tile_size_or_number': '256'})
 
     for state in sdfg:
         for scope in state.nodes():

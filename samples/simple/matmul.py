@@ -62,7 +62,7 @@ def tile(sdfg: dace.SDFG, map_entry: dace.nodes.MapEntry, divides_evenly: bool,
     for k, v in tile_sizes.items():
         StripMining.apply_to(sdfg,
                              dict(dim_idx=map_entry.params.index(k),
-                                  tile_size=str(v),
+                                  tile_size_or_number=str(v),
                                   divides_evenly=divides_evenly,
                                   skew=skew),
                              _map_entry=map_entry)

@@ -121,7 +121,7 @@ class MPITransformMap(transformation.Transformation):
                                 self.expr_index)
         stripmine.dim_idx = -1
         stripmine.new_dim_prefix = "mpi"
-        stripmine.tile_size = "(" + rangeexpr + "/__dace_comm_size)"
+        stripmine.tile_size_or_number = "(" + rangeexpr + "/__dace_comm_size)"
         stripmine.divides_evenly = True
         stripmine.apply(sdfg)
 

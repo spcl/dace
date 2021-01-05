@@ -32,7 +32,7 @@ def test_tiling_vectorization():
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations([StripMining, Vectorization],
                                options=[{
-                                   'tile_size': str(vector_len)
+                                   'tile_size_or_number': str(vector_len)
                                }, {
                                    'vector_len': vector_len
                                }])

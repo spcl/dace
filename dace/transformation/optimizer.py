@@ -128,7 +128,7 @@ def _parse_cli_input(line):
             * 5                  - Chooses the fifth transformation
             * MapReduceFusion$0  - First occurrence of MapReduceFusion
             * 4(array='A')       - Transformation number 4 with one parameter
-            * StripMining$1(param='i', tile_size=64) - Strip mining #2 with
+            * StripMining$1(param='i', tile_size_or_number=64) - Strip mining #2 with
                                                        parameters
         :param line: Input line string
         :return: A tuple with (transformation name or None if not given,

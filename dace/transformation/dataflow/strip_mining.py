@@ -137,9 +137,11 @@ class StripMining(transformation.Transformation):
     new_dim_prefix = Property(dtype=str,
                               default="tile",
                               desc="Prefix for new dimension name")
-    tile_size = Property(dtype=str,
-                         default="64",
-                         desc="Tile size of strip-mined dimension")
+    tile_size_or_number = Property(
+        dtype=str,
+        default="64",
+        desc="Tile size of strip-mined dimension,"
+        " or number of tiles if tiling_type=number_of_tiles")
     tile_stride = Property(dtype=str,
                            default="",
                            desc="Stride between two tiles of the "
@@ -152,19 +154,19 @@ class StripMining(transformation.Transformation):
         default=False,
         desc="Continuous (false) or strided (true) elements in tile")
 
-    ceilrange = Property(dtype=bool,
-                         default=False,
-                         desc="Use ceiling(N/tile) in outer range")
+    tiling_type = Property(
+        dtype=str,
+        default='normal',
+        choices=['normal', 'ceilrange', 'number_of_tiles'],
+        allow_none=True,
+        desc="normal: the outerloop increments with tile_size, "
+        "ceilrange: uses ceiling(N/tile_size) in outer range, "
+        "number_of_tiles: tiles the map into the number of provided tiles")
 
     skew = Property(
         dtype=bool,
         default=False,
         desc="If True, offsets inner tile back such that it starts with zero")
-
-    number_of_tiles = Property(
-        dtype=str,
-        default=None,
-        desc="If set tiles the map into the number of provided tiles")
 
     @staticmethod
     def annotates_memlets():
@@ -234,7 +236,7 @@ class StripMining(transformation.Transformation):
         map_exit = state.exit_node(map_entry)
         dim_idx = self.dim_idx
         new_dim_prefix = self.new_dim_prefix
-        tile_size = self.tile_size
+        tile_size = self.tile_size_or_number
         divides_evenly = self.divides_evenly
         tile_stride = self.tile_stride
 
@@ -275,7 +277,7 @@ class StripMining(transformation.Transformation):
         # Retrieve transformation properties.
         dim_idx = self.dim_idx
         new_dim_prefix = self.new_dim_prefix
-        tile_size = self.tile_size
+        tile_size = self.tile_size_or_number
         divides_evenly = self.divides_evenly
         strided = self.strided
         tile_stride = self.tile_stride
@@ -293,7 +295,7 @@ class StripMining(transformation.Transformation):
             nd_to = td_to
         else:
             nd_to = symbolic.pystr_to_symbolic(
-                'int_ceil((%s + 1 - %s)/ %s) - 1' %
+                'int_ceil((%s + 1 - %s), %s) - 1' %
                 (symbolic.symstr(td_to), symbolic.symstr(td_from), tile_stride))
         nd_step = 1
         new_dim_range = (nd_from, nd_to, nd_step)
@@ -332,7 +334,7 @@ class StripMining(transformation.Transformation):
         dim_idx = self.dim_idx
         new_dim_prefix = self.new_dim_prefix
         divides_evenly = self.divides_evenly
-        number_of_tiles = self.number_of_tiles
+        number_of_tiles = self.tile_size_or_number
         tile_stride = self.tile_stride
 
         number_of_tiles = dace.symbolic.pystr_to_symbolic(number_of_tiles)
@@ -375,14 +377,10 @@ class StripMining(transformation.Transformation):
         dim_idx = self.dim_idx
         target_dim = map_entry.map.params[dim_idx]
 
-        if self.number_of_tiles and (self.tile_size != '64' or self.ceilrange):
-            raise ValueError('number_of_tiles is not compatible with tile_size'
-                             ' or ceilrange.')
-
-        if self.ceilrange:
+        if self.tiling_type is 'ceilrange':
             new_dim, new_map, td_rng = self._create_ceil_range(
                 sdfg, graph, map_entry)
-        elif self.number_of_tiles:
+        elif self.tiling_type is 'number_of_tiles':
             new_dim, new_map, td_rng = self._create_from_tile_numbers(
                 sdfg, graph, map_entry)
         else:

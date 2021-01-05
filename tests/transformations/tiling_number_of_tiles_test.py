@@ -17,7 +17,7 @@ def multiply(X, Y, Z):
         z = y * x
 
 
-def tiling_number_of_tiles_test():
+def test_tiling_number_of_tiles():
     size = 256
 
     np.random.seed(0)
@@ -27,9 +27,10 @@ def tiling_number_of_tiles_test():
 
     sdfg = multiply.to_sdfg()
     sdfg.apply_strict_transformations()
-    sdfg.apply_transformations([StripMining],
+    sdfg.apply_transformations(StripMining,
                                options=[{
-                                   'number_of_tiles': '16'
+                                   'tile_size_or_number': '16',
+                                   'tiling_type': 'number_of_tiles'
                                }])
     sdfg(X=X, Y=Y, Z=Z, N=size)
 
@@ -38,4 +39,4 @@ def tiling_number_of_tiles_test():
 
 
 if __name__ == "__main__":
-    tiling_number_of_tiles_test()
+    test_tiling_number_of_tiles()
