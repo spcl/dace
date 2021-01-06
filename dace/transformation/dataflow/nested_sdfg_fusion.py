@@ -22,7 +22,7 @@ def add_nsdfg_array_prefix(parent_sdfg_state: dace_state.SDFGState,
         for name, dtype in connectors.items():
             new_name = prefix + name
             nested_sdfg.sdfg.replace(name, prefix + name)
-            new_in_connectors[new_name] = connectors[name]
+            new_in_connectors[new_name] = dtype
         connectors.clear()
         connectors.update(new_in_connectors)
 
@@ -66,7 +66,7 @@ class NestedSDFGFusion(transformation.Transformation):
                                           sdfg=dace_graph.OrderedDiGraph(),
                                           inputs=set(),
                                           outputs=set())
-    _access_node = dace_nodes.Tasklet('_')
+    _access_node = dace_nodes.AccessNode('_')
     _nested_sdfg2 = dace_nodes.NestedSDFG(label="",
                                           sdfg=dace_graph.OrderedDiGraph(),
                                           inputs=set(),
@@ -145,7 +145,7 @@ class NestedSDFGFusion(transformation.Transformation):
         new_out_edges = out_edges1 + out_edges2
 
         # separate in_edges2 into two groups
-        # - edges that go from outside should be inputs to new nested sdfg
+        # - edges that go from outside should be inputs to new nested sdfg (new_in_edges)
         # - all other edges should be removed
 
         new_in_edges = []

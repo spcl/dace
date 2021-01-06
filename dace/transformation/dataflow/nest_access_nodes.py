@@ -87,12 +87,13 @@ class NestExitAccessNode(transformation.Transformation):
         for connector in connector_names:
             inner_connector_name = 'IN_' + connector
             inner_edges = state.in_edges_by_connector(map_exit, inner_connector_name)
+            new_access_node: nodes.AccessNode = state.add_access(access_node.data)
+            state.add_nedge(new_access_node, map_exit, memlet.Memlet())
+
             for inner_edge in inner_edges:
                 # replace each inner edge "->" by pattern "->AccessNode--"
-                new_access_node: nodes.AccessNode = state.add_access(access_node.data)
                 state.remove_edge(inner_edge)
                 state.add_edge(inner_edge.src, inner_edge.src_conn, new_access_node, None, inner_edge.data)
-                state.add_nedge(new_access_node, inner_edge.dst, memlet.Memlet())
 
         # remove unused map_exit connectors
         for connector in connector_names:
@@ -174,11 +175,12 @@ class NestEntryAccessNode(transformation.Transformation):
         for connector in connector_names:
             inner_connector_name = 'OUT_' + connector
             inner_edges = state.out_edges_by_connector(map_entry, inner_connector_name)
+            new_access_node: nodes.AccessNode = state.add_access(access_node.data)
+            state.add_nedge(map_entry, new_access_node, memlet.Memlet())
+
             for inner_edge in inner_edges:
                 # replace each inner edge "->" by pattern "--AccessNode->"
-                new_access_node: nodes.AccessNode = state.add_access(access_node.data)
                 state.remove_edge(inner_edge)
-                state.add_nedge(inner_edge.src, new_access_node, memlet.Memlet())
                 state.add_edge(new_access_node, None, inner_edge.dst, inner_edge.dst_conn, inner_edge.data)
 
         # remove unused map_exit connectors
