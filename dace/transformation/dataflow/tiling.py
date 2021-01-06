@@ -27,10 +27,17 @@ class MapTiling(transformation.Transformation):
     tile_sizes = ShapeProperty(dtype=tuple,
                                default=(128, 128, 128),
                                desc="Tile size per dimension")
+
     strides = ShapeProperty(
         dtype=tuple,
         default=tuple(),
         desc="Tile stride (enables overlapping tiles). If empty, matches tile")
+
+    tile_offset = ShapeProperty(dtype=tuple,
+                                default=None,
+                                desc="Negative Stride offset per dimension",
+                                allow_none=True)
+
     divides_evenly = Property(dtype=bool,
                               default=False,
                               desc="Tile size divides dimension length evenly")
@@ -80,6 +87,14 @@ class MapTiling(transformation.Transformation):
                 tile_size = symbolic.pystr_to_symbolic(self.tile_sizes[dim_idx])
                 tile_stride = symbolic.pystr_to_symbolic(tile_strides[dim_idx])
 
+            # handle offsets
+            if self.tile_offset and dim_idx >= len(self.tile_offset):
+                offset = self.tile_offset[-1]
+            elif self.tile_offset:
+                offset = self.tile_offset[dim_idx]
+            else:
+                offset = 0
+
             dim_idx -= removed_maps
             # If tile size is trivial, skip strip-mining map dimension
             if tile_size == map_entry.map.range.size()[dim_idx]:
@@ -95,6 +110,7 @@ class MapTiling(transformation.Transformation):
                 stripmine.tile_size = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = True
+                stripmine.tile_offset = str(offset)
                 stripmine.apply(sdfg)
                 removed_maps += 1
             else:
@@ -103,6 +119,7 @@ class MapTiling(transformation.Transformation):
                 stripmine.tile_size = str(tile_size)
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
+                stripmine.tile_offset = str(offset)
                 stripmine.apply(sdfg)
 
             # apply to the new map the schedule of the original one

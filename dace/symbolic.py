@@ -464,6 +464,8 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    if not isinstance(expr, (sympy.Basic, str)):
+        return set()
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}
@@ -671,7 +673,10 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'min': sympy.Min,
         'max': sympy.Max,
         'True': sympy.true,
-        'False': sympy.false
+        'False': sympy.false,
+        'GtE': sympy.Ge,
+        'LtE': sympy.Le,
+        'NotEq': sympy.Ne,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
