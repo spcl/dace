@@ -137,11 +137,10 @@ class StripMining(transformation.Transformation):
     new_dim_prefix = Property(dtype=str,
                               default="tile",
                               desc="Prefix for new dimension name")
-    tile_size_or_number = Property(
-        dtype=str,
-        default="64",
-        desc="Tile size of strip-mined dimension,"
-        " or number of tiles if tiling_type=number_of_tiles")
+    tile_size = Property(dtype=str,
+                         default="64",
+                         desc="Tile size of strip-mined dimension, "
+                         "or number of tiles if tiling_type=number_of_tiles")
     tile_stride = Property(dtype=str,
                            default="",
                            desc="Stride between two tiles of the "
@@ -161,7 +160,8 @@ class StripMining(transformation.Transformation):
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
-        "number_of_tiles: tiles the map into the number of provided tiles")
+        "number_of_tiles: tiles the map into the number of provided tiles, "
+        "provide the number of tiles over tile_size")
 
     skew = Property(
         dtype=bool,
@@ -236,7 +236,7 @@ class StripMining(transformation.Transformation):
         map_exit = state.exit_node(map_entry)
         dim_idx = self.dim_idx
         new_dim_prefix = self.new_dim_prefix
-        tile_size = self.tile_size_or_number
+        tile_size = self.tile_size
         divides_evenly = self.divides_evenly
         tile_stride = self.tile_stride
 
@@ -277,7 +277,7 @@ class StripMining(transformation.Transformation):
         # Retrieve transformation properties.
         dim_idx = self.dim_idx
         new_dim_prefix = self.new_dim_prefix
-        tile_size = self.tile_size_or_number
+        tile_size = self.tile_size
         divides_evenly = self.divides_evenly
         strided = self.strided
         tile_stride = self.tile_stride
@@ -334,7 +334,7 @@ class StripMining(transformation.Transformation):
         dim_idx = self.dim_idx
         new_dim_prefix = self.new_dim_prefix
         divides_evenly = self.divides_evenly
-        number_of_tiles = self.tile_size_or_number
+        number_of_tiles = self.tile_size
         tile_stride = self.tile_stride
 
         number_of_tiles = dace.symbolic.pystr_to_symbolic(number_of_tiles)

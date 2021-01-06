@@ -29,7 +29,7 @@ def test_tiling_number_of_tiles():
     sdfg.apply_strict_transformations()
     sdfg.apply_transformations(StripMining,
                                options=[{
-                                   'tile_size_or_number': '16',
+                                   'tile_size': '16',
                                    'tiling_type': 'number_of_tiles'
                                }])
     sdfg(X=X, Y=Y, Z=Z, N=size)
