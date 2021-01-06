@@ -374,7 +374,7 @@ class StripMining(transformation.Transformation):
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
         tile_size = map_entry.map.range.size_exact()[dim_idx] / number_of_tiles
 
-        if tile_stride is None or len(tile_stride) == 0:
+        if tile_stride == 0:
             tile_stride = tile_size
         if tile_stride != tile_size:
             raise NotImplementedError
