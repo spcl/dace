@@ -68,8 +68,6 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_XILINX_HOST_FILES ${DACE_XILINX_HOST_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
-    elseif(DACE_FILE_EXT MATCHES ".v" OR DACE_FILE_EXT MATCHES ".sv")
-      set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
     set(DACE_ENABLE_INTELFPGA ON)
@@ -87,6 +85,8 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".tcl")
+      set(DACE_TCL_FILES ${DACE_TCL_FILES} ${DACE_FILE})
     endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
@@ -212,20 +212,22 @@ if(DACE_ENABLE_XILINX OR DACE_ENABLE_INTELFPGA)
   set(DACE_HLSLIB_DIR ${CMAKE_SOURCE_DIR}/../external/hlslib)
   set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${DACE_HLSLIB_DIR}/cmake)
   include_directories(SYSTEM ${DACE_HLSLIB_DIR}/include)
-  set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
 endif()
 if(DACE_ENABLE_XILINX)
   find_package(Vitis REQUIRED)
   include_directories(SYSTEM ${Vitis_INCLUDE_DIRS})
   add_definitions(-DDACE_XILINX -DDACE_VITIS_DIR=\"${VITIS_ROOT_DIR}\")
   set(DACE_LIBS ${DACE_LIBS} ${Vitis_LIBRARIES})
-  include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
 if(DACE_ENABLE_INTELFPGA)
   find_package(IntelFPGAOpenCL REQUIRED)
   include_directories(SYSTEM ${IntelFPGAOpenCL_INCLUDE_DIRS})
   add_definitions(-DDACE_INTELFPGA)
   set(DACE_LIBS ${DACE_LIBS} ${IntelFPGAOpenCL_LIBRARIES})
+endif()
+if (DACE_ENABLE_RTL AND DACE_RTL_MODE STREQUAL "xilinx")
+  set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
+  include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
 
 # Create CUDA object files
@@ -305,6 +307,82 @@ if(DACE_ENABLE_HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
 endif() # DACE_ENABLE_HIP
 
+# create verilator RTL simulation objects
+if(DACE_ENABLE_RTL)
+  if (${DACE_RTL_MODE} STREQUAL "simulator")
+    # find verilator installation
+    find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
+    if (NOT verilator_FOUND)
+      message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
+    endif()
+
+    # check minimal version requirements
+    set(VERILATOR_MIN_VERSION "4.028")
+    if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
+      message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
+    endif()
+
+    # get verilator flags from dace.conf
+    set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
+
+    # add lint verilator flags
+    if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
+      # -Wall: Enable all style warnings
+      # -Wno-fatal: Disable fatal exit on warnings
+      set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
+    endif()
+
+    # add verilated.cpp source
+    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
+
+    foreach(RTL_FILE ${DACE_RTL_FILES})
+
+      # extract design name
+      get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
+
+      # add verilated .cpp files
+      set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
+      set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
+      set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
+
+      # add verilated design
+      add_library("${RTL_FILE_NAME}" OBJECT)
+
+      # include verilator
+      set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir")
+      include_directories(${VERILATOR_INCLUDE})
+
+      # verilate design
+      verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
+
+      # add object library for linking
+      set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
+
+    endforeach()
+  elseif (${DACE_RTL_MODE} STREQUAL "xilinx")
+    # TODO rtllib
+    # Get all of the kernel names
+    list(APPEND RTL_KERNELS "")
+    foreach(RTL_FILE ${DACE_RTL_FILES})
+        get_filename_component(RTL_KERNEL ${RTL_FILE} DIRECTORY)
+        list(APPEND RTL_KERNELS ${RTL_KERNEL})
+    endforeach()
+    list(REMOVE_DUPLICATES RTL_KERNELS)
+
+    # Generate all of the .xo targets
+    foreach(RTL_SRC_DIR ${RTL_KERNELS})
+        get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
+        get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
+        message("rtllib_kernel: " ${RTL_SRC_DIR})
+        set (RTL_XO "${RTL_KERNEL}.xo")
+        message("rtllib_target: " ${RTL_XO})
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} "" "${RTLLIB_DIR}/rtl" ${RTL_XO})
+        set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
+        set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
+    endforeach()
+  endif()
+endif() # DACE_ENABLE_RTL
+
 
 # Create Xilinx object files
 if(DACE_ENABLE_XILINX)
@@ -368,6 +446,7 @@ if(DACE_ENABLE_XILINX)
           --advanced.prop kernel.${DACE_KERNEL_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
     endif()
 
+    if (EXISTS ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv)
     # Load kernel memory interface assignments
     file(STRINGS
          ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv
@@ -380,6 +459,7 @@ if(DACE_ENABLE_XILINX)
       set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
           --sp "${DACE_KERNEL_NAME}_1.m_axi_${_INTERFACE_NAME}:${_INTERFACE_TYPE}[${_INTERFACE_INDEX}]")
     endforeach()
+    endif()
 
   endforeach()
 
@@ -447,6 +527,7 @@ if(DACE_ENABLE_XILINX)
     set(DACE_VITIS_KERNELS_HW)
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
+      message(${DACE_KERNEL_FILE})
       # Compile .xo files
 
       # The kernel name is given by the file name
@@ -550,61 +631,6 @@ if(DACE_ENABLE_XILINX)
   endif()
 
 endif() # DACE_ENABLE_XILINX
-
-# create verilator RTL simulation objects
-if(DACE_ENABLE_RTL)
-
-  # find verilator installation
-  find_package(verilator HINTS $ENV{VERILATOR_ROOT} ${VERILATOR_ROOT})
-  if (NOT verilator_FOUND)
-    message(FATAL_ERROR "Verilator was not found. Either install it, or set the VERILATOR_ROOT environment variable")
-  endif()
-
-  # check minimal version requirements
-  set(VERILATOR_MIN_VERSION "4.028")
-  if("${verilator_VERSION}" VERSION_LESS VERILATOR_MIN_VERSION)
-    message(ERROR "Please upgrade verilator to version >=${VERILATOR_MIN_VERSION}")
-  endif()
-
-  # get verilator flags from dace.conf
-  set(VERILATOR_FLAGS "${DACE_RTL_VERILATOR_FLAGS}")
-
-  # add lint verilator flags
-  if("${DACE_RTL_VERILATOR_LINT_WARNINGS}")
-    # -Wall: Enable all style warnings
-    # -Wno-fatal: Disable fatal exit on warnings
-    set(VERILATOR_FLAGS "${VERILATOR_FLAGS}" "-Wall" "-Wno-fatal")
-  endif()
-
-  # add verilated.cpp source
-  set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_ROOT}/include/verilated.cpp")
-
-  foreach(RTL_FILE ${DACE_RTL_FILES})
-
-    # extract design name
-    get_filename_component(RTL_FILE_NAME "${RTL_FILE}" NAME_WE)
-
-    # add verilated .cpp files
-    set(VERILATOR_SRC "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
-    set(VERILATOR_SRC "${VERILATOR_SRC}" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}__Syms.cpp")
-    set(DACE_CPP_FILES "${DACE_CPP_FILES}" "${VERILATOR_SRC}")
-
-    # add verilated design
-    add_library("${RTL_FILE_NAME}" OBJECT)
-
-    # include verilator
-    set(VERILATOR_INCLUDE "${VERILATOR_ROOT}/include" "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir")
-    include_directories(${VERILATOR_INCLUDE})
-
-    # verilate design
-    verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
-
-    # add object library for linking
-    set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
-
-  endforeach()
-
-endif() # DACE_ENABLE_RTL
 
 
 # Create Intel FPGA object files

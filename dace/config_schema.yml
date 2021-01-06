@@ -470,7 +470,7 @@ required:
                         description: Enable/disable verbose internal state debug output.
                     mode: # TODO rtllib
                         type: str
-                        default: emulator
+                        default: simulator
                         title: Compilation mode
                         description: >
                           Target of FPGA kernel build

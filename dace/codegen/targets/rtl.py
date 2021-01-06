@@ -16,6 +16,8 @@ base_dir = os.path.dirname(__file__)
 rtllib_dir = os.path.join(base_dir, '../../external/rtllib')
 sys.path.append(rtllib_dir)
 from templates.control import generate_from_config as rtllib_control
+from templates.package import generate_from_config as rtllib_package
+from templates.synth import generate_from_config as rtllib_synth
 from templates.top import generate_from_config as rtllib_top
 
 @registry.autoregister_params(name='rtl')
@@ -101,7 +103,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
         """
         if isinstance(edge.src, nodes.AccessNode) and isinstance(
-                edge.dst, nodes.Tasklet):  # handle AccessNode->Tasklet
+                edge.dst, nodes.Tasklet):# and self.mode == 'simulator':  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn],
                           dtypes.pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
@@ -185,12 +187,15 @@ class RTLCodeGen(target.TargetCodeGenerator):
                                             "verilator_flags")
         verilator_lint_warnings = config.Config.get_bool(
             "compiler", "rtl", "verilator_lint_warnings")
+        mode: str = config.Config.get(
+            "compiler", "rtl", "mode")
         # create options list
         options = [
             "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
             "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags),
             "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(
-                verilator_lint_warnings)
+                verilator_lint_warnings),
+            "-DDACE_RTL_MODE=\"{}\"".format(mode)
         ]
         return options
 
@@ -457,19 +462,18 @@ for(int i = 0; i < {veclen}; i++){{
                 language="sv",
                 target=RTLCodeGen,
                 title="rtl",
-                target_type="",
+                target_type="{}".format(unique_name),
                 additional_compiler_kwargs="",
                 linkable=True,
                 environments=None))
 
-        if self.mode == 'hw_emu':
-            # rtllib
+        if self.mode == 'xilinx':
+            buses = { name : 's_axis' for name in tasklet.in_connectors }
+            buses.update({ name : 'm_axis' for name in tasklet.out_connectors })
+            # rtllib TODO currently semi hardcoded
             rtllib_config = {
                     "name" : unique_name,
-                    "buses" : {
-                        "inp" : "s_axis",
-                        "outp" : "m_axis"
-                    },
+                    "buses" : buses,
                     "params" : {
                         "scalars" : {
                         },
@@ -487,7 +491,7 @@ for(int i = 0; i < {veclen}; i++){{
                     language="v",
                     target=RTLCodeGen,
                     title="rtl",
-                    target_type="",
+                    target_type="{}".format(unique_name),
                     additional_compiler_kwargs="",
                     linkable=True,
                     environments=None))
@@ -499,10 +503,35 @@ for(int i = 0; i < {veclen}; i++){{
                     language="v",
                     target=RTLCodeGen,
                     title="rtl",
-                    target_type="",
+                    target_type="{}".format(unique_name),
                     additional_compiler_kwargs="",
                     linkable=True,
                     environments=None))
+
+            self.code_objects.append(
+                codeobject.CodeObject(
+                    name=f"{unique_name}_package",
+                    code=rtllib_package(rtllib_config),
+                    language="tcl",
+                    target=RTLCodeGen,
+                    title="rtl",
+                    target_type="scripts",
+                    additional_compiler_kwargs="",
+                    linkable=True,
+                    environments=None))
+
+            self.code_objects.append(
+                codeobject.CodeObject(
+                    name=f"{unique_name}_synth",
+                    code=rtllib_synth(rtllib_config),
+                    language="tcl",
+                    target=RTLCodeGen,
+                    title="rtl",
+                    target_type="scripts",
+                    additional_compiler_kwargs="",
+                    linkable=True,
+                    environments=None))
+
         else:
             # generate verilator simulation cpp code components
             inputs, outputs = self.generate_cpp_inputs_outputs(tasklet)
