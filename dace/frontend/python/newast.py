@@ -3117,24 +3117,18 @@ class ProgramVisitor(ExtNodeVisitor):
         if num_args == 0:
             shape_node = self._get_keyword_value(node.keywords, "shape")
             shape = self._parse_shape(shape_node)
-            print(shape)
             dtype_node = self._get_keyword_value(node.keywords, "dtype")
             dtype = self._parse_dtype(dtype_node)
-            print(dtype)
         elif num_args == 1:
             shape_node = node.args[0]
             shape = self._parse_shape(shape_node)
-            print(shape)
             dtype_node = self._get_keyword_value(node.keywords, "dtype")
             dtype = self._parse_dtype(dtype_node)
-            print(dtype)
         elif num_args >= 2:
             shape_node = node.args[0]
             shape = self._parse_shape(shape_node)
-            print(shape)
             dtype_node = node.args[1]
             dtype = self._parse_dtype(dtype_node)
-            print(dtype)
 
         return (shape, dtype)
 

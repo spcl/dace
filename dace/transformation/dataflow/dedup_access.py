@@ -11,6 +11,9 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
+import dace.transformation.helpers as helpers
+
+import warnings
 
 
 @registry.autoregister_params(singlestate=True)
@@ -77,9 +80,19 @@ class DeduplicateAccess(xf.Transformation):
             for memlet in memlets[1:]:
                 union_subset = subsets.bounding_box_union(
                     union_subset, memlet.subset)
-            if union_subset.num_elements() < sum(m.subset.num_elements()
-                                                 for m in memlets):
-                return True
+
+            # TODO: Enhance me!
+            # NOTE: This does not always result in correct behaviour for certain
+            # ranges whose volume is not comparable by "<",
+            # e.g "2*K" >? "K+1" > "K-1" >? "1"
+
+            if not strict:
+                try:
+                    if union_subset.num_elements() < sum(
+                            m.subset.num_elements() for m in memlets):
+                        return True
+                except TypeError:
+                    pass
 
         return False
 
@@ -87,71 +100,6 @@ class DeduplicateAccess(xf.Transformation):
     def match_to_str(graph, candidate):
         return str(graph.node(candidate[DeduplicateAccess._map_entry]))
 
-    @staticmethod
-    def are_subsets_contiguous(subset_a: subsets.Subset,
-                               subset_b: subsets.Subset,
-                               dim: int = None) -> bool:
-        if dim is not None:
-            # A version that only checks for contiguity in certain
-            # dimension (e.g., to prioritize stride-1 range)
-            if (not isinstance(subset_a, subsets.Range)
-                    or not isinstance(subset_b, subsets.Range)):
-                raise NotImplementedError('Contiguous subset check only '
-                                          'implemented for ranges')
-
-            # Other dimensions must be equal
-            for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
-                if i == dim:
-                    continue
-                if s1[0] != s2[0] or s1[1] != s2[1] or s1[2] != s2[2]:
-                    return False
-
-            # Set of conditions for contiguous dimension
-            ab = (subset_a[dim][1] + 1) == subset_b[dim][0]
-            a_overlap_b = subset_a[dim][1] >= subset_b[dim][0]
-            ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
-            b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
-            # NOTE: Must check with "==" due to sympy using special types
-            return (ab == True or a_overlap_b == True or ba == True
-                    or b_overlap_a == True)
-
-        # General case
-        bbunion = subsets.bounding_box_union(subset_a, subset_b)
-        return bbunion.num_elements() == (subset_a.num_elements() +
-                                          subset_b.num_elements())
-
-    @staticmethod
-    def find_contiguous_subsets(subset_list: List[subsets.Subset],
-                                dim: int = None) -> Set[subsets.Subset]:
-        """ 
-        Finds the set of largest contiguous subsets in a list of subsets. 
-        :param subsets: Iterable of subset objects.
-        :param dim: Check for contiguity only for the specified dimension.
-        :return: A list of contiguous subsets.
-        """
-        # Currently O(n^3) worst case. TODO: improve
-        subset_set = set(
-            subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
-                                                        ) else s
-            for s in subset_list)
-        while True:
-            for sa, sb in itertools.product(subset_set, subset_set):
-                if sa is sb:
-                    continue
-                if sa.covers(sb):
-                    subset_set.remove(sb)
-                    break
-                elif sb.covers(sa):
-                    subset_set.remove(sa)
-                    break
-                elif DeduplicateAccess.are_subsets_contiguous(sa, sb, dim):
-                    subset_set.remove(sa)
-                    subset_set.remove(sb)
-                    subset_set.add(subsets.bounding_box_union(sa, sb))
-                    break
-            else:  # No modification performed
-                break
-        return subset_set
 
     def apply(self, sdfg: sd.SDFG):
         graph: sd.SDFGState = sdfg.nodes()[self.state_id]
@@ -176,6 +124,9 @@ class DeduplicateAccess(xf.Transformation):
         # Get original data descriptor
         dname = edges[0].data.data
         desc = sdfg.arrays[edges[0].data.data]
+        if isinstance(edges[0].dst,
+                      nodes.AccessNode) and '15' in edges[0].dst.data:
+            sdfg.save('faulty_dedup.sdfg')
 
         # Get unique subsets
         unique_subsets = set(e.data.subset for e in edges)
@@ -183,15 +134,15 @@ class DeduplicateAccess(xf.Transformation):
         # Find largest contiguous subsets
         try:
             # Start from stride-1 dimension
-            contiguous_subsets = self.find_contiguous_subsets(
+            contiguous_subsets = helpers.find_contiguous_subsets(
                 unique_subsets,
                 dim=next(i for i, s in enumerate(desc.strides) if s == 1))
         except (StopIteration, NotImplementedError):
+            warnings.warn(
+                "DeduplicateAcces::Not operating on Stride One Dimension!")
             contiguous_subsets = unique_subsets
-
         # Then find subsets for rest of the dimensions
-        contiguous_subsets = self.find_contiguous_subsets(contiguous_subsets)
-
+        contiguous_subsets = helpers.find_contiguous_subsets(contiguous_subsets)
         # Map original edges to subsets
         edge_mapping = defaultdict(list)
         for e in edges:
