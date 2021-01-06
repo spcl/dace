@@ -538,7 +538,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 stripmine = StripMining(sdfg_id, self.state_id,
                                         stripmine_subgraph, 0)
 
-                stripmine.ceilrange = True
+                stripmine.tiling_type = 'ceilrange'
                 stripmine.dim_idx = dim_idx
                 stripmine.new_dim_prefix = self.prefix if not trivial else ''
                 # use tile_stride for both -- we will extend
