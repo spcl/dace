@@ -463,11 +463,11 @@ class TargetDispatcher(object):
 
         # Skip copies to/from views where edge matches
         if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
-            e = sdutil.get_view_edge(dfg, src_node)
+            e = sdutil.get_view_edge(state_dfg, src_node)
             if e is edge:
                 return None
         if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
-            e = sdutil.get_view_edge(dfg, dst_node)
+            e = sdutil.get_view_edge(state_dfg, dst_node)
             if e is edge:
                 return None
 

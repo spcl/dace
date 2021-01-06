@@ -179,7 +179,8 @@ class CPUCodeGen(TargetCodeGenerator):
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
         self.allocate_array(sdfg, dfg, state_id, viewed_dnode,
-                            global_stream, declaration_stream)
+                            global_stream, declaration_stream, 
+                            allocation_stream)
 
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(
