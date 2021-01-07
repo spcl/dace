@@ -240,6 +240,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 padding=" " * (17 - len(idx_str)), idx_str=idx_str, name=inp))
             inputs.append(", output reg{padding} s_axis_{name}_tready".format(
                 padding=" " * 12, name=inp))
+            inputs.append(", input{padding}[3:0] s_axis_{name}_tkeep".format(
+                padding=" " * 12, name=inp))
             inputs.append(", input{padding} s_axis_{name}_tlast".format(
                 padding=" " * 17, name=inp))
         outputs = list()
@@ -270,6 +272,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 padding=" " * (12 - len(idx_str)), idx_str=idx_str, name=inp))
             outputs.append(", input {padding} m_axis_{name}_tready".format(
                 padding=" " * 16, name=inp))
+            outputs.append(", output reg{padding}[3:0] m_axis_{name}_tkeep".format(
+                padding=7*" ", name=inp))
             outputs.append(", output reg{padding} m_axis_{name}_tlast".format(
                 padding=" " * 12, name=inp))
         return inputs, outputs
@@ -692,8 +696,10 @@ model = NULL;
     RTL_HEADER = """\
 module {name}
 {parameters}
-( input                  ap_aclk  // convention: ap_aclk clocks the design
-, input                  ap_areset  // convention: ap_areset resets the design
+( input                  ap_aclk   // convention: ap_aclk clocks the design
+, input                  ap_areset // convention: ap_areset resets the design
+, input                  ap_start  // convention: ap_start indicates a start from host
+, output                 ap_done   // convention: ap_done tells the host that the kernel has finished
 
 {inputs}
 

@@ -35,6 +35,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
         -->|     s_axis_{input}_tvalid   reg m_axis_{output}_tvalid |-->
         -->|     s_axis_{input}_tdata    reg m_axis_{output}_tdata  |-->
         <--| reg s_axis_{input}_tready       m_axis_{output}_tready |<--
+        -->|     s_axis_{input}_tkeep    reg m_axis_{output}_tkeep  |-->
         -->|     s_axis_{input}_tlast    reg m_axis_{output}_tlast  |-->
            |                                                        |
            |--------------------------------------------------------|
@@ -54,13 +55,13 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
             state <= BUSY;
         end else if (m_axis_b_tdata < 100) // case: increment counter b
             m_axis_b_tdata <= m_axis_b_tdata + 1;
-        else
+        else begin
             m_axis_b_tdata <= m_axis_b_tdata;
             state <= DONE;
+        end
     end
 
     assign m_axis_b_tvalid = (m_axis_b_tdata >= 100) ? 1'b1:1'b0;
-    assign m_axis_b_tlast  = (m_axis_b_tdata >= 100) ? s_axis_a_tlast : 1'b0;
     ''',
                             language=dace.Language.SystemVerilog)
 
