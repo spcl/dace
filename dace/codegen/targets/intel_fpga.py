@@ -1056,9 +1056,8 @@ __kernel void \\
                         sdfg.nodes()[state_id], sdfg)
                     data_name = global_node[0][0][1 if is_output else 0].label
 
-                    if outer_memlet is not None:
-                        offset = cpp.cpp_offset_expr(
-                            outer_sdfg.arrays[data_name], outer_memlet.subset)
+                    offset = cpp.cpp_offset_expr(
+                        outer_sdfg.arrays[data_name], memlet.subset)
 
                     result += "{} {} = read_channel_intel({}[{}]);".format(
                         memlet_type, connector,
