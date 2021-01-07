@@ -369,14 +369,23 @@ if(DACE_ENABLE_RTL)
     endforeach()
     list(REMOVE_DUPLICATES RTL_KERNELS)
 
+    # Prepare build folders
+    set (RTL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/rtl/generated")
+    set (RTL_LOG_DIR       "${CMAKE_CURRENT_BINARY_DIR}/rtl/log")
+    set (RTL_TEMP_DIR      "${CMAKE_CURRENT_BINARY_DIR}/rtl/tmp")
+    file (MAKE_DIRECTORY
+        ${RTL_GENERATED_DIR}
+        ${RTL_LOG_DIR}
+        ${RTL_TEMP_DIR}
+    )
+
     # Generate all of the .xo targets
     foreach(RTL_SRC_DIR ${RTL_KERNELS})
         get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
         get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
-        message("rtllib_kernel: " ${RTL_SRC_DIR})
         set (RTL_XO "${RTL_KERNEL}.xo")
-        message("rtllib_target: " ${RTL_XO})
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} "" "${RTLLIB_DIR}/rtl" ${RTL_XO})
+        #function (rtllib_rtl_target RTLLIB_XO RTLLIB_KERNEL RTLLIB_SRC_DIR RTLLIB_TCL_DIR RTLLIB_TMP_DIR RTLLIB_LOG_DIR RTLLIB_GEN_DIR RTLLIB_MODULES)
+        rtllib_rtl_target(${RTL_XO} ${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_TEMP_DIR} ${RTL_LOG_DIR} ${RTL_GENERATED_DIR} "${RTLLIB_DIR}/rtl")
         set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
         set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
     endforeach()
@@ -523,7 +532,7 @@ if(DACE_ENABLE_XILINX)
     # for the general case we have to first compile each kernel
     # and then link together the generated .xo files
     set(DACE_VITIS_KERNELS_SW_EMU)
-    set(DACE_VITIS_KERNELS_HW_EMU)
+    #set(DACE_VITIS_KERNELS_HW_EMU)
     set(DACE_VITIS_KERNELS_HW)
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
@@ -607,11 +616,12 @@ if(DACE_ENABLE_XILINX)
       OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
+      --config "${CMAKE_BINARY_DIR}/link.ini"
       -l
       -t hw_emu
       ${DACE_VITIS_KERNELS_HW_EMU}
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
 
     add_custom_command(
       OUTPUT emconfig.json
@@ -626,7 +636,7 @@ if(DACE_ENABLE_XILINX)
       -t hw
       ${DACE_VITIS_KERNELS_HW}
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW})
 
   endif()
 
