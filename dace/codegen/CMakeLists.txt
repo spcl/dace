@@ -599,7 +599,7 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t sw_emu
-      "${DACE_VITIS_KERNELS_SW_EMU}"
+      ${DACE_VITIS_KERNELS_SW_EMU}
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
 
@@ -609,7 +609,7 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t hw_emu
-      "${DACE_VITIS_KERNELS_HW_EMU}"
+      ${DACE_VITIS_KERNELS_HW_EMU}
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
 
@@ -624,7 +624,7 @@ if(DACE_ENABLE_XILINX)
       ${VITIS_BUILD_FLAGS}
       -l
       -t hw
-      "${DACE_VITIS_KERNELS_HW}"
+      ${DACE_VITIS_KERNELS_HW}
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
 
