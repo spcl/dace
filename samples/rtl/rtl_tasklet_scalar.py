@@ -41,7 +41,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
-    typedef enum [1:0] {READY, BUSY, DONE} state_e;
+    typedef enum logic [1:0] {READY, BUSY, DONE} state_e;
     state_e state;
 
     always@(posedge ap_aclk) begin
