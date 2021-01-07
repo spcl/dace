@@ -1192,7 +1192,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """View this sdfg in the system's HTML viewer
            :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
         """
-        from diode.sdfv import view
+        from dace.cli.sdfv import view
         view(self, filename=filename)
 
     @staticmethod

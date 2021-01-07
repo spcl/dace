@@ -617,6 +617,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if scope.unroll:
                 # Unrolled processing elements
                 self._unrolled_pes.add(scope.map)
+
                 kernel_args_opencl += [
                     "const int " + p for p in scope.params
                 ]  # PE id will be a macro defined constant
@@ -626,6 +627,30 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         # Ensure no duplicate parameters are used
         kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
         kernel_args_call = dtypes.deduplicate(kernel_args_call)
+
+
+        if unrolled_loop is not None:
+            # Systolic array
+            # get the number of dimensions in which PEs are organized
+            pes_dimensions = len(unrolled_loop.params)
+            # Create the cartesian product of the PE ranges, according to the shape
+            # of PE architecture (e.g., 2D systolic array)
+
+            ranges = []
+            for start, stop, skip in unrolled_loop.range:
+                start_idx = evaluate(start, sdfg.constants)
+                stop_idx = evaluate(stop, sdfg.constants)
+                skip_idx = evaluate(skip, sdfg.constants)
+                # Due to restrictions on channel indexing, PE IDs must start
+                # from zero and skip index must be 1
+                if start_idx != 0 or skip_idx != 1:
+                    raise cgx.CodegenError(
+                        f"Unrolled Map in {sdfg.name} should start from 0 "
+                        "and have skip equal to 1")
+
+                ranges.append(range(start_idx, stop_idx + 1, skip_idx))
+
+            PEs_product = list(itertools.product(*ranges))
 
         # Add kernel call host function
         if not is_autorun:
@@ -637,25 +662,18 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                         if len(kernel_args_call) > 0 else ""), sdfg, state_id)
             else:
                 # We will generate a separate kernel for each PE. Adds host call
-                start, stop, skip = unrolled_loop.range.ranges[0]
-                start_idx = evaluate(start, sdfg.constants)
-                stop_idx = evaluate(stop, sdfg.constants)
-                skip_idx = evaluate(skip, sdfg.constants)
-                # Due to restrictions on channel indexing, PE IDs must start
-                # from zero and skip index must be 1
-                if start_idx != 0 or skip_idx != 1:
-                    raise cgx.CodegenError(
-                        f"Unrolled Map in {sdfg.name} should start from 0 "
-                        "and have skip equal to 1")
-                for p in range(start_idx, stop_idx + 1, skip_idx):
-                    # Last element in list kernel_args_call is the PE ID, but
+
+                for pe_ids in PEs_product:
+                    # Last elements in list kernel_args_call are the PE IDs, but
                     # this is already written in stone in the OpenCL generated
                     # code
+                    pe_ids_args = "{}".format("_".join(
+                        ['%d' % i for i in pe_ids]))
                     host_body_stream.write(
                         "kernels.emplace_back(program.MakeKernel(\"{}_{}\"{}));"
                         .format(
-                            module_function_name, p,
-                            ", ".join([""] + kernel_args_call[:-1]) if
+                            module_function_name, pe_ids_args,
+                            ", ".join([""] + kernel_args_call[:-pes_dimensions]) if
                             len(kernel_args_call) > 1 else ""), sdfg, state_id)
 
         # ----------------------------------------------------------------------
@@ -722,33 +740,51 @@ __attribute__((autorun)) \\"""
             # Since OpenCL is "funny", it does not support variadic macros
             # One of the argument is for sure the PE_ID, which is also the last one in kernel_args lists:
             # it will be not passed by the host but code-generated
+
+            #Note that the PE_ID is essentially a tuple, whose size depends on the shape of PEs architecture
+            PE_ID_args = "{}".format(", ".join(
+                ['PE_ID%d' % i for i in range(pes_dimensions)]))
+            PE_ID_macro_signature = "{}".format(" ##_ ".join(
+                [' ##PE_ID%d' % i for i in range(pes_dimensions)]))
+
             module_stream.write("""\
-#define _DACE_FPGA_KERNEL_{}(PE_ID{}{}) \\{}
+#define _DACE_FPGA_KERNEL_{}({}{}{}) \\{}
 __kernel void \\
-{}_##PE_ID({}) \\
+{}_{}({}) \\
 {{ \\
-  {}({}{}PE_ID); \\
-}}\\\n\n""".format(module_function_name,
-                   ", " if len(kernel_args_call) > 1 else "",
-                   ", ".join(kernel_args_call[:-1]),
+  {}({}{}{}); \\
+}}\\\n\n""".format(module_function_name, PE_ID_args,
+                   ", " if len(kernel_args_call) > pes_dimensions else "",
+                   ", ".join(kernel_args_call[:-pes_dimensions]),
                    AUTORUN_STR_MACRO if is_autorun else "",
-                   module_function_name, ", ".join(kernel_args_opencl[:-1]),
-                   pe_function_name, ", ".join(kernel_args_call[:-1]),
-                   ", " if len(kernel_args_call) > 1 else ""))
+                   module_function_name, PE_ID_macro_signature, ", ".join(
+                       kernel_args_opencl[:-pes_dimensions]), pe_function_name,
+                   ", ".join(kernel_args_call[:-pes_dimensions]),
+                   ", " if len(kernel_args_call) > pes_dimensions else "", PE_ID_args))
 
             # create PE kernels by using the previously defined macro
-            start, stop, skip = unrolled_loop.range.ranges[0]
-            start_idx = evaluate(start, sdfg.constants)
-            stop_idx = evaluate(stop, sdfg.constants)
-            skip_idx = evaluate(skip, sdfg.constants)
-            # First macro argument is the processing element id
-            for p in range(start_idx, stop_idx + 1, skip_idx):
+            for items in PEs_product:
+                PE_ID = "{}".format(", ".join(
+                ['%d' % i for i in items]))
                 module_stream.write("_DACE_FPGA_KERNEL_{}({}{}{})\n".format(
-                    module_function_name, p,
-                    ", " if len(kernel_args_call) > 1 else "",
-                    ", ".join(kernel_args_call[:-1])))
+                    module_function_name, PE_ID,
+                    ", " if len(kernel_args_call) > pes_dimensions else "",
+                    ", ".join(kernel_args_call[:-pes_dimensions])))
             module_stream.write(
                 "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
+
+            # start, stop, skip = unrolled_loop.range.ranges[0]
+            # start_idx = evaluate(start, sdfg.constants)
+            # stop_idx = evaluate(stop, sdfg.constants)
+            # skip_idx = evaluate(skip, sdfg.constants)
+            # # First macro argument is the processing element id
+            # for p in range(start_idx, stop_idx + 1, skip_idx):
+            #     module_stream.write("_DACE_FPGA_KERNEL_{}({}{}{})\n".format(
+            #         module_function_name, p,
+            #         ", " if len(kernel_args_call) > 1 else "",
+            #         ", ".join(kernel_args_call[:-1])))
+            # module_stream.write(
+            #     "#undef _DACE_FPGA_KERNEL_{}\n".format(module_function_name))
 
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
@@ -1056,10 +1092,8 @@ __kernel void \\
                         sdfg.nodes()[state_id], sdfg)
                     data_name = global_node[0][0][1 if is_output else 0].label
 
-                    if outer_memlet is not None:
-                        offset = cpp.cpp_offset_expr(
-                            outer_sdfg.arrays[data_name], outer_memlet.subset)
-
+                    offset = cpp.cpp_offset_expr(
+                        outer_sdfg.arrays[data_name], memlet.subset)
                     result += "{} {} = read_channel_intel({}[{}]);".format(
                         memlet_type, connector,
                         self.get_mangled_channel_name(data_name,
