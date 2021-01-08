@@ -34,7 +34,7 @@ def preamble():
     sdfv_js_deps = [
         'renderer_dir/dagre.js', 'renderer_dir/global_vars.js',
         'context_menu.js', 'renderer_elements.js', 'sdfg_utils.js',
-        'renderer.js'
+        'overlay_manager.js', 'renderer.js'
     ]
     sdfv_css_deps = ['sdfv.css']
 
