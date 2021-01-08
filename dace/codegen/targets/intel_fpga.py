@@ -74,6 +74,9 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
         # Channel mangles
         self.channel_mangle = defaultdict(dict)
 
+        # TODO: tmp...maybe a .dace.conf property?
+        self.predicate_channel_accesses=True
+
         super().__init__(*args, **kwargs)
 
     @staticmethod
@@ -1059,11 +1062,41 @@ __kernel void \\
                     offset = cpp.cpp_offset_expr(
                         outer_sdfg.arrays[data_name], memlet.subset)
 
-                    result += "{} {} = read_channel_intel({}[{}]);".format(
-                        memlet_type, connector,
-                        self.get_mangled_channel_name(data_name,
+                    if self.predicate_channel_accesses is False or offset.isnumeric():
+                        result += "{} {} = read_channel_intel({}[{}]);".format(
+                            memlet_type, connector,
+                            self.get_mangled_channel_name(data_name,
                                                       self._kernel_count),
-                        offset)
+                            offset)
+                    else:
+                        start, stop, skip = outer_memlet.subset.ranges[0]
+                        # TODO: if we are inside a PE and the offset is one of the variables
+                        # we have not to generate with this. For the moment being I am intercepting the exception
+
+                        # Due to restrictions on channel indexing, this value must be
+                        # know at compile time. if this is not the case the evaluate will raise exception
+                        try:
+                            start_idx = evaluate(start, sdfg.constants)
+                            stop_idx = evaluate(stop, sdfg.constants)
+                            skip_idx = evaluate(skip, sdfg.constants)
+                            output_code = CodeIOStream()
+                            output_code.write(f"{memlet_type} {connector};", sdfg)
+                            output_code.write(f"switch({offset})")
+                            output_code.write("{",sdfg)
+                            for i in range(start_idx, stop_idx + 1, skip_idx):
+                                output_code.write(f"case({i}): {connector} = read_channel_intel({self.get_mangled_channel_name(data_name, self._kernel_count)}[{i}]); break;", sdfg)
+                            output_code.write("}", sdfg)
+                            result += output_code.getvalue()
+
+                        except TypeError:
+                            # fall back to previous generation
+                            result += "{} {} = read_channel_intel({}[{}]);".format(
+                                memlet_type, connector,
+                                self.get_mangled_channel_name(data_name,
+                                                              self._kernel_count),
+                                offset)
+
+
                 self._dispatcher.defined_vars.add(connector, DefinedType.Scalar,
                                                   memlet_type)
             else:
@@ -1102,11 +1135,49 @@ __kernel void \\
                         data_name, self._kernel_count)
                     if data_desc.is_stream_array():
                         offset = cpp.cpp_offset_expr(data_desc, memlet.subset)
-                        target = f"{chan_name}[{offset}]"
+
+                        if self.predicate_channel_accesses is False or offset.isnumeric():
+                            target = f"{chan_name}[{offset}]"
+                            callsite_stream.write(
+                                f"write_channel_intel({target}, {connector});", sdfg)
+                        else:
+                            # we need to predicate the channel access. As this
+                            # is a write, we have to see the memlet near the access node
+
+                            memlet_path = sdfg.nodes()[state_id].memlet_path(edge)
+                            # TODO: check that we are in a map? that the last edge arrives to a AccessNode
+                            start, stop, skip = memlet_path[-1].data.subset.ranges[0]
+                            #TODO: if we are inside a PE and the offset is one of the variables
+                            # we have not to generate with this. For the moment being I am intercepting the exception
+
+
+                            # Due to restrictions on channel indexing, this value must be
+                            # know at compile time. if this is not the case the evaluate will raise exception
+                            try:
+                                start_idx = evaluate(start, sdfg.constants)
+                                stop_idx = evaluate(stop, sdfg.constants)
+                                skip_idx = evaluate(skip, sdfg.constants)
+                            except TypeError:
+                                # fall back to previous generation
+                                target = f"{chan_name}[{offset}]"
+                                callsite_stream.write(
+                                    f"write_channel_intel({target}, {connector});", sdfg)
+                                return
+
+                            callsite_stream.write(f"switch({offset})", sdfg)
+                            callsite_stream.write('{', sdfg, state_id, node)
+                            for i in range(start_idx, stop_idx+1, skip_idx):
+                                target = f"{chan_name}[{i}]"
+                                callsite_stream.write(
+                                    f"case({i}): write_channel_intel({target}, {connector}); break;", sdfg)
+                            callsite_stream.write('}', sdfg, state_id, node)
+
                     else:
                         target = chan_name
-                    callsite_stream.write(
-                        f"write_channel_intel({target}, {connector});", sdfg)
+                        callsite_stream.write(
+                            f"write_channel_intel({target}, {connector});", sdfg)
+
+
 
     def generate_undefines(self, sdfg, dfg, node, callsite_stream):
         for edge in itertools.chain(dfg.in_edges(node), dfg.out_edges(node)):
