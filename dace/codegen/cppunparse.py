@@ -89,8 +89,13 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr",
-                  "inf": "INFINITY", "nan": "NAN"}
+_py2c_reserved = {
+    "True": "true",
+    "False": "false",
+    "None": "nullptr",
+    "inf": "INFINITY",
+    "nan": "NAN"
+}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
@@ -170,7 +175,8 @@ class CPPUnparser:
                  expr_semicolon=True,
                  indent_offset=0,
                  type_inference=False,
-                 defined_symbols=None):
+                 defined_symbols=None,
+                 language=dace.dtypes.Language.CPP):
 
         self.f = file
         self.future_imports = []
@@ -183,6 +189,7 @@ class CPPUnparser:
         self.dtype = None
         self.locals = locals
         self.firstfill = True
+        self.language = language
 
         self.dispatch(tree)
         print("", file=self.f)
@@ -326,16 +333,22 @@ class CPPUnparser:
 
                     self.locals.define(target.id, t.lineno, self._indent,
                                        inferred_type)
-                    self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
+                    if self.language == dace.dtypes.Language.OpenCL and (
+                            inferred_type is not None
+                            and inferred_type.veclen > 1):
+                        # if the veclen is greater than one, this should be defined with a vector data type
+                        self.write("{}{} ".format(
+                            dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],
+                            inferred_type.veclen))
+                    else:
+                        self.write(dace.dtypes._CTYPES[inferred_type.type] +
+                                   " ")
                 else:
                     self.locals.define(target.id, t.lineno, self._indent)
                     self.write("auto ")
 
             # dispatch target
             self.dispatch(target)
-            #if not infer_type:
-            #   inferred_type = self.dispatch(target, True)
-            #self.dtype = inferred_type
 
         self.write(" = ")
         self.dispatch(t.value)
@@ -931,8 +944,8 @@ class CPPUnparser:
         if (isinstance(t.value, (ast.Num, ast.Constant))
                 and isinstance(t.value.n, int)):
             self.write(" ")
-        if (isinstance(t.value, ast.Name) and
-                t.value.id in ("dace::math", "dace::cmath")):
+        if (isinstance(t.value, ast.Name)
+                and t.value.id in ("dace::math", "dace::cmath")):
             self.write("::")
         else:
             self.write(".")

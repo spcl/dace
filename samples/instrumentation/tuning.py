@@ -119,7 +119,7 @@ if __name__ == '__main__':
                                         tB_padding)
 
             # Obtain the first entry type from the report (there is only one)
-            entry = np.array(list(report.entries.values())[0])
+            entry = np.array(list(report.durations.values())[0])
             print(list(entry))
 
             # Use median value to rank performance

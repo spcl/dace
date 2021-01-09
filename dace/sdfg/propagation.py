@@ -1081,37 +1081,49 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+            try:
+                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
             # If no appropriate memlet found, use array dimension
             for i, (rng, s) in enumerate(
                     zip(internal_memlet.subset,
                         parent_sdfg.arrays[iedge.data.data].shape)):
                 if rng[1] + 1 == s:
                     iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1, 1)
-            if symbolic.issymbolic(iedge.data.volume):
-                if any(
-                        str(s) not in outer_symbols
-                        for s in iedge.data.volume.free_symbols):
-                    iedge.data.volume = 0
-                    iedge.data.dynamic = True
+                if symbolic.issymbolic(iedge.data.volume):
+                    if any(
+                            str(s) not in outer_symbols
+                            for s in iedge.data.volume.free_symbols):
+                        iedge.data.volume = 0
+                        iedge.data.dynamic = True
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                iedge.data.volume = 0
+                iedge.data.dynamic = True
     for oedge in parent_state.out_edges(nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+            try:
+                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
             # If no appropriate memlet found, use array dimension
             for i, (rng, s) in enumerate(
                     zip(internal_memlet.subset,
                         parent_sdfg.arrays[oedge.data.data].shape)):
                 if rng[1] + 1 == s:
                     oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1, 1)
-            if symbolic.issymbolic(oedge.data.volume):
-                if any(
-                        str(s) not in outer_symbols
-                        for s in oedge.data.volume.free_symbols):
-                    oedge.data.volume = 0
-                    oedge.data.dynamic = True
+                if symbolic.issymbolic(oedge.data.volume):
+                    if any(
+                            str(s) not in outer_symbols
+                            for s in oedge.data.volume.free_symbols):
+                        oedge.data.volume = 0
+                        oedge.data.dynamic = True
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                oedge.data.volume = 0
+                oedge.data.dynamic = True
 
 
 def propagate_memlets_sdfg(sdfg):

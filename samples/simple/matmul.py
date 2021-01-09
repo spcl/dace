@@ -233,6 +233,9 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     AccumulateTransient.apply_to(sdfg,
                                  _map_exit=warptile_exit,
                                  _outer_map_exit=btile_exit)
+    # Set C tile to zero on allocation
+    c_access = next(n for n in state.data_nodes() if n.data == 'trans_gpu_C')
+    c_access.setzero = True
 
     # Unroll microkernel maps
     ttile.map.unroll = True

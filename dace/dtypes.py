@@ -99,6 +99,7 @@ class Language(aenum.AutoNumberEnum):
 
     Python = ()
     CPP = ()
+    OpenCL = ()
     SystemVerilog = ()
 
 
@@ -1022,19 +1023,6 @@ def isallowed(var, allow_recursive=False):
 
     return isconstant(var) or ismodule(var) or isinstance(
         var, symbol) or isinstance(var, typeclass)
-
-
-class _external_function(object):
-    def __init__(self, f, alt_imps=None):
-        self.func = f
-        if alt_imps is None:
-            self.alt_imps = {}
-        else:
-            self.alt_imps = alt_imps
-
-    def __call__(self, *args, **kwargs):
-        return self.func(*args, **kwargs)
-
 
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for

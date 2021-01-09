@@ -15,5 +15,7 @@ class OpenBLAS:
     cmake_files = []
 
     headers = ["cblas.h", "../include/dace_blas.h"]
+    state_fields = []
     init_code = ""
     finalize_code = ""
+    dependencies = []

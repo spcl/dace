@@ -17,7 +17,7 @@ set(DACE_XILINX_MODE "simulation" CACHE STRING "Type of compilation/execution [s
 set(DACE_XILINX_HOST_FLAGS "" CACHE STRING "Extra flags to host code")
 set(DACE_XILINX_SYNTHESIS_FLAGS "" CACHE STRING "Extra flags for performing high-level synthesis")
 set(DACE_XILINX_BUILD_FLAGS "" CACHE STRING "Extra flags to xocc build phase")
-set(DACE_XILINX_TARGET_CLOCK 200 CACHE STRING "Target clock frequency of FPGA kernel")
+set(DACE_XILINX_TARGET_CLOCK "" CACHE STRING "Target clock frequency of FPGA kernel")
 set(DACE_XILINX_PART_NAME "xcu280-fsvh2892-2L-e" CACHE STRING "Xilinx chip to target from HLS")
 set(DACE_XILINX_TARGET_PLATFORM "xilinx_u280_xdma_201920_1" CACHE STRING "Vitis platform to target")
 set(DACE_XILINX_ENABLE_DEBUGGING OFF CACHE STRING "Inject debugging cores to kernel build (always on for simulation/emulation)")
@@ -345,8 +345,12 @@ if(DACE_ENABLE_XILINX)
     -I${CMAKE_SOURCE_DIR}/../runtime/include
     -I${CMAKE_BINARY_DIR}
     --platform ${DACE_XILINX_TARGET_PLATFORM}
-    ${DACE_XILINX_BUILD_FLAGS_INTERNAL}
-    --kernel_frequency ${DACE_XILINX_TARGET_CLOCK})
+    ${DACE_XILINX_BUILD_FLAGS_INTERNAL})
+
+  # Optionally specify a target clock (otherwise default is used)
+  if(NOT DACE_XILINX_TARGET_CLOCK STREQUAL "")
+    set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} --kernel_frequency ${DACE_XILINX_TARGET_CLOCK})
+  endif()
 
   # Add synthesis and build commands
   set(DACE_SYNTHESIS_TARGETS)
@@ -531,7 +535,7 @@ if(DACE_ENABLE_XILINX)
       -t hw_emu
       "${DACE_VITIS_KERNELS_HW_EMU}"
       -o ${DACE_PROGRAM_NAME}_hw_emu.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw_emu.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW_EMU})
                      
     add_custom_command(
       OUTPUT emconfig.json  
@@ -546,7 +550,7 @@ if(DACE_ENABLE_XILINX)
       -t hw
       "${DACE_VITIS_KERNELS_HW}"
       -o ${DACE_PROGRAM_NAME}_hw.xclbin
-      DEPENDS ${DACE_PROGRAM_NAME}_hw.xo)
+      DEPENDS ${DACE_VITIS_KERNELS_HW})
 
   endif()
 
@@ -656,7 +660,8 @@ if(DACE_ENABLE_INTELFPGA)
     ${DACE_AOC_BUILD_FLAGS}
     ${DACE_AOC_KERNEL_FILES}
     -rtl
-    -report)
+    -report
+    COMMAND mv ${DACE_AOC_OUTPUT_FILE} ${DACE_PROGRAM_NAME})
 
   add_custom_command(
     OUTPUT ${DACE_PROGRAM_NAME}_emulator.aocx
@@ -673,6 +678,7 @@ if(DACE_ENABLE_INTELFPGA)
     ${DACE_AOC_BUILD_FLAGS}
     ${DACE_AOC_KERNEL_FILES}
     COMMAND mv ${DACE_AOC_OUTPUT_FILE}.aocx  ${DACE_PROGRAM_NAME}_hardware.aocx
+    COMMAND mv ${DACE_AOC_OUTPUT_FILE} ${DACE_PROGRAM_NAME}
     DEPENDS ${DACE_AOC_KERNEL_FILES})
 
 endif()

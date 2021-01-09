@@ -15,5 +15,7 @@ class CUDA:
     cmake_files = []
 
     headers = []
+    state_fields = []
     init_code = ""
     finalize_code = ""
+    dependencies = []
