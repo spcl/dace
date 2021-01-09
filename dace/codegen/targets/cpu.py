@@ -1,4 +1,5 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg.state import SDFGState
 import functools
 import itertools
 import warnings
@@ -13,7 +14,7 @@ from dace.codegen.targets.common import codeblock_to_cpp
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope,
                        is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
@@ -158,6 +159,38 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
+    def allocate_view(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
+                      node: nodes.AccessNode, global_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream,
+                      allocation_stream: CodeIOStream):
+        """ 
+        Allocates (creates pointer and refers to original) a view of an
+        existing array, scalar, or view.
+        """
+        name = node.data
+        nodedesc = node.desc(sdfg)
+        if self._dispatcher.defined_vars.has(name):
+            return  # View was already allocated
+
+        # Check directionality of view (referencing dst or src)
+        edge = sdutils.get_view_edge(dfg, node)
+
+        # Allocate the viewed data before the view, if necessary
+        mpath = dfg.memlet_path(edge)
+        viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
+        self.allocate_array(sdfg, dfg, state_id, viewed_dnode,
+                            global_stream, declaration_stream, 
+                            allocation_stream)
+
+        # Emit memlet as a reference and register defined variable
+        atype, aname, value = cpp.emit_memlet_reference(
+            self._dispatcher, sdfg, edge.data, name,
+            dtypes.pointer(nodedesc.dtype), ancestor=0)
+
+        declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+        # Casting is already done in emit_memlet_reference
+        allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+
     def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
                        declaration_stream, allocation_stream):
         name = node.data
@@ -177,7 +210,11 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
 
         alloc_name = cpp.ptr(name, nodedesc)
-
+        
+        if isinstance(nodedesc, data.View):
+            return self.allocate_view(sdfg, dfg, state_id, node,
+                                      function_stream, declaration_stream,
+                                      allocation_stream)
         if isinstance(nodedesc, data.Scalar):
             declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name),
                                      sdfg, state_id, node)
@@ -338,6 +375,8 @@ class CPUCodeGen(TargetCodeGenerator):
         alloc_name = cpp.ptr(node.data, nodedesc)
 
         if isinstance(nodedesc, data.Scalar):
+            return
+        elif isinstance(nodedesc, data.View):
             return
         elif isinstance(nodedesc, data.Stream):
             return

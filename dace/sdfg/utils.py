@@ -7,9 +7,9 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
-from dace import data as dt, dtypes, subsets as sbs
+from dace import data as dt, dtypes, memlet as mm, subsets as sbs
 from string import ascii_uppercase
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -562,6 +562,76 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     return False
 
 
+def get_view_edge(
+    state: SDFGState, view: nd.AccessNode
+) -> Tuple[nd.AccessNode, gr.MultiConnectorEdge[mm.Memlet]]:
+    """
+    Given a view access node, returns the viewed access node and 
+    incoming/outgoing edge which points to it.
+    See the ruleset in the documentation of ``dace.data.View``.
+
+    :param state: The state in which the view resides.
+    :param view: The view access node.
+    :return: An edge pointing to the viewed data or None if view is invalid.
+    :see: ``dace.data.View``
+    """
+
+    in_edges = state.in_edges(view)
+    out_edges = state.out_edges(view)
+
+    # Invalid case: No data to view
+    if len(in_edges) == 0 or len(out_edges) == 0:
+        return None
+
+    # If there is one edge (in/out) that leads (via memlet path) to an access
+    # node, and the other side (out/in) has a different number of edges.
+    if len(in_edges) == 1 and len(out_edges) != 1:
+        return in_edges[0]
+    if len(out_edges) == 1 and len(in_edges) != 1:
+        return out_edges[0]
+    if len(out_edges) == len(in_edges) and len(out_edges) != 1:
+        return None
+
+    in_edge = in_edges[0]
+    out_edge = out_edges[0]
+
+    # If there is one incoming and one outgoing edge, and one leads to a code
+    # node, the one that leads to an access node is the viewed data.
+    inmpath = state.memlet_path(in_edge)
+    outmpath = state.memlet_path(out_edge)
+    src_is_data, dst_is_data = False, False
+    if isinstance(inmpath[0].src, nd.AccessNode):
+        src_is_data = True
+    if isinstance(outmpath[-1].dst, nd.AccessNode):
+        dst_is_data = True
+
+    if src_is_data and not dst_is_data:
+        return in_edge
+    if not src_is_data and dst_is_data:
+        return out_edge
+    if not src_is_data and not dst_is_data:
+        return None
+
+    # If both sides lead to access nodes, if one memlet's data points to the
+    # view it cannot point to the viewed node.
+    if in_edge.data.data == view.data and out_edge.data.data != view.data:
+        return out_edge
+    if in_edge.data.data != view.data and out_edge.data.data == view.data:
+        return in_edge
+    if in_edge.data.data == view.data and out_edge.data.data == view.data:
+        return None
+
+    # If both memlets' data are the respective access nodes, the access
+    # node at the highest scope is the one that is viewed.
+    if isinstance(in_edge.src, nd.EntryNode):
+        return in_edge
+    if isinstance(out_edge.dst, nd.ExitNode):
+        return out_edge
+
+    # If both access nodes reside in the same scope, the input data is viewed.
+    return in_edge
+
+
 def dynamic_map_inputs(state: SDFGState,
                        map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
     """
@@ -795,7 +865,8 @@ def trace_nested_access(node, state, sdfg):
             memlet_read = m.data
             break
 
-    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)]
+    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)
+             ]
 
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent

@@ -6,7 +6,7 @@ functionality to registered code generators based on user-defined predicates.
 """
 from dace.codegen.prettycode import CodeIOStream
 import aenum
-from dace import config, dtypes, nodes, registry
+from dace import config, data as dt, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil
@@ -446,18 +446,30 @@ class TargetDispatcher(object):
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation. 
         """
-
+        src_is_data, dst_is_data = False, False
         state_dfg = sdfg.node(state_id)
 
         if isinstance(src_node, nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
         else:
             src_storage = src_node.desc(sdfg).storage
+            src_is_data = True
 
         if isinstance(dst_node, nodes.CodeNode):
             dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
+            dst_is_data = True
+
+        # Skip copies to/from views where edge matches
+        if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
+            e = sdutil.get_view_edge(state_dfg, src_node)
+            if e is edge:
+                return None
+        if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
+            e = sdutil.get_view_edge(state_dfg, dst_node)
+            if e is edge:
+                return None
 
         if (isinstance(src_node, nodes.Tasklet)
                 and not isinstance(dst_node, nodes.Tasklet)):
@@ -520,6 +532,8 @@ class TargetDispatcher(object):
         target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg,
                                            state_id, function_stream,
                                            output_stream)
+        if target is None:
+            return
 
         # Dispatch copy
         self._used_targets.add(target)
