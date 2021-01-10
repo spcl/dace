@@ -117,7 +117,7 @@ Profiling:
 
 Contributing
 ------------
-DaCe is an open-source project. We are happy to accept Pull Requests with your contributions!
+DaCe is an open-source project. We are happy to accept Pull Requests with your contributions! Please follow the [contribution guidelines](CONTRIBUTING.md) before submitting a pull request.
 
 License
 -------
