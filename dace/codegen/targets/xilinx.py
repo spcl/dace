@@ -398,7 +398,8 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         module_stream.write(
             """#include <dace/xilinx/device.h>
 #include <dace/math.h>
-#include <dace/complex.h>""", sdfg)
+#include <dace/complex.h>
+#include <hls_stream.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream)
         module_stream.write("\n", sdfg)
 
@@ -425,8 +426,9 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
         # Write kernel signature
         kernel_stream.write(
-            "DACE_EXPORTED void {}({}) {{\n".format(kernel_name,
-                                                    ', '.join(kernel_args)),
+            "DACE_EXPORTED void {}({}{}) {{\n".format(kernel_name,
+                                                    ', '.join(kernel_args),
+                                                    ', hls::stream<int> &to_rtl, hls::stream<int> &from_rtl'),
             sdfg, state_id)
 
         # Insert interface pragmas
@@ -572,6 +574,12 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                             param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
                     unrolled_loops += 1
 
+        # TODO aoeu
+        kernel_args_call.append("to_rtl")
+        kernel_args_call.append("from_rtl")
+        kernel_args_module.append("hls::stream<int> &to_rtl")
+        kernel_args_module.append("hls::stream<int> &from_rtl")
+
         # Generate caller code in top-level function
         entry_stream.write(
             "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(
@@ -608,7 +616,15 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
             if isinstance(arg, dace.data.Array)
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
-        if len(in_args) > 0 or len(out_args) > 0:
+        # TODO aoeu
+        module_body_stream.write('''
+        dace::ArrayInterface<int> fpga_A(fpga_A_in, nullptr);
+        dace::ArrayInterface<int> fpga_B(nullptr, fpga_B_out);
+
+        to_rtl.write(fpga_A[0]);
+        *(fpga_B).ptr_out() = from_rtl.read();
+        ''')
+        if False:# and len(in_args) > 0 or len(out_args) > 0:
             # Add ArrayInterface objects to wrap input and output pointers to
             # the same array
             module_body_stream.write("\n")
@@ -648,11 +664,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                                                module_stream,
                                                module_body_stream)
 
+        # TODO aoeu
+        ignore_stream = CodeIOStream()
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
                                            state_id,
-                                           module_stream,
-                                           module_body_stream,
+                                           ignore_stream,
+                                           ignore_stream,
                                            skip_entry_node=False)
 
         module_stream.write(module_body_stream.getvalue(), sdfg, state_id)

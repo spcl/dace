@@ -76,6 +76,9 @@ state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
 # validate sdfg
 sdfg.validate()
 
+from dace.transformation.interstate import FPGATransformSDFG
+sdfg.apply_transformations(FPGATransformSDFG)
+
 ######################################################################
 
 if __name__ == '__main__':
