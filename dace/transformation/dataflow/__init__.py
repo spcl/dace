@@ -35,7 +35,6 @@ from .prune_connectors import PruneConnectors
 from .wcr_conversion import AugAssignToWCR
 
 # Device-related
-from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
