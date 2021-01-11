@@ -565,7 +565,14 @@ class Range(Subset):
                              rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-
+        elif (self.data_dims() == 0 and other.data_dims() == 0 and
+                all([r == (0, 0, 1) for r in other.ranges])):
+            # NOTE: This is a special case where both subsets contain a single
+            # element, while the other subset is the (multidimensional) index
+            # zero. For example, A[i, j] -> tmp[0]. The result of such a 
+            # composition should be equal to the first subset. Perhaps this
+            # can be generalized.
+            new_subset.extend(self.ranges)
         else:
             raise ValueError("Dimension mismatch in composition: "
                              "Subset composed must be either completely "
