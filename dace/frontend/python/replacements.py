@@ -868,7 +868,6 @@ def _result_type(
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, Number):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-            print(arg, type(arg), dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
@@ -2660,7 +2659,24 @@ def _broadcast(
         output_indices.append(get_idx(i))
 
         not_none_dims = [d for d in dims if d is not None]
-        max_dim = max(not_none_dims)
+        # max_dim = max(not_none_dims)
+        max_dim = 0
+        for d in not_none_dims:
+            if isinstance(max_dim, Number):
+                if isinstance(d, Number):
+                    max_dim = max(max_dim, d)
+                elif symbolic.issymbolic(d):
+                    max_dim = d
+                else:
+                    raise NotImplementedError
+            elif symbolic.issymbolic(max_dim):
+                if isinstance(d, Number):
+                    pass
+                elif symbolic.issymbolic(d):
+                    if max_dim != d:
+                        raise NotImplementedError
+                else:
+                    raise NotImplementedError
 
         map_lengths[get_idx(i)] = max_dim
         for j, d in enumerate(dims):
@@ -2877,14 +2893,12 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                 nested_sdfg_outputs = dict()
                 nested_sdfg._temp_transients = sdfg._temp_transients
 
-                idx = 0
-                for arg in inputs + [where]:
+                for idx, arg in enumerate(inputs + [where]):
                     if not (isinstance(arg, str) and arg in sdfg.arrays.keys()):
                         continue
                     arg_data = sdfg.arrays[arg]
                     conn_name = nested_sdfg.temp_data_name()
                     nested_sdfg_inputs[arg] = (conn_name, input_indices[idx])
-                    idx += 1
                     if isinstance(arg_data, data.Scalar):
                         nested_sdfg.add_scalar(conn_name, arg_data.dtype)
                     elif isinstance(arg_data, data.Array):
@@ -2961,6 +2975,8 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                     set([n for n, _ in nested_sdfg_outputs.values()]))
                 me, mx = state.add_map(state.label + '_map', map_indices)
                 for arg in inputs + [where]:
+                    if not (isinstance(arg, str) and arg in sdfg.arrays.keys()):
+                        continue
                     n = state.add_read(arg)
                     conn, idx = nested_sdfg_inputs[arg]
                     state.add_memlet_path(n,
