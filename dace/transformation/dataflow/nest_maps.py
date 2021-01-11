@@ -72,3 +72,59 @@ class NestMaps(transformation.Transformation):
 
         nest_state_subgraph(sdfg=sdfg, state=state, subgraph=state.scope_subgraph(map_entry))
 
+
+@registry.autoregister_params(singlestate=True)
+class NestMapContent(transformation.Transformation):
+
+    map_entry = transformation.PatternNode(nodes.MapEntry)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(
+                NestMapContent.map_entry,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg, strict=False):
+        map_entry = state.nodes()[candidate[NestMapContent.map_entry]]
+        map_exit = state.exit_node(map_entry)
+
+        if state.in_edges(map_entry) or state.out_edges(map_exit):
+            return False # skip maps that have data flow from outside
+
+        internal_nodes = state.all_nodes_between(map_entry, map_exit)
+
+        # detect that internal nodes contain something else from the nested sdfg and access nodes
+        already_nested = True
+        for node in internal_nodes:
+            if isinstance(node, nodes.AccessNode):
+                continue
+            if isinstance(node, nodes.NestedSDFG):
+                continue
+            already_nested = False
+
+        if already_nested:
+            return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(state: dace_state.SDFGState, candidate):
+        map_entry: nodes.MapEntry = state.nodes()[candidate[NestMapContent.map_entry]]
+
+        return f"{map_entry.map.label} : {str(map_entry.map.params)}"
+
+    def apply(self, sdfg: dace_sdfg.SDFG):
+
+        state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
+        candidate = self.subgraph
+        map_entry: nodes.MapEntry = state.nodes()[candidate[NestMapContent.map_entry]]
+
+        nest_state_subgraph(sdfg=sdfg, state=state,
+                            subgraph=state.scope_subgraph(map_entry, include_entry=False, include_exit=False))
