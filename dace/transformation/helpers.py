@@ -1,9 +1,11 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import copy
+import itertools
 
 from dace.subsets import Range, Subset, union
-from typing import Dict, List, Optional, Tuple
+import dace.subsets as subsets
+from typing import Dict, List, Optional, Tuple, Set
 
 from dace import symbolic
 from dace.sdfg import nodes, utils
@@ -362,6 +364,12 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     result.subset.offset(external_memlet.subset, False)
 
     if preserve_minima:
+        if len(result.subset) != len(external_memlet.subset):
+            raise ValueError(
+                'Memlet specifies reshape that cannot be un-squeezed.\n'
+                'External memlet: %s\nInternal memlet: %s' %
+                (external_memlet, internal_memlet))
+
         original_minima = external_memlet.subset.min_element()
         for i in set(range(len(original_minima))):
             rb, re, rs = result.subset.ranges[i]
@@ -460,3 +468,76 @@ def split_interstate_edges(sdfg: SDFG) -> None:
             sdfg.add_edge(tmpstate, e.dst,
                           InterstateEdge(assignments=e.data.assignments))
             sdfg.remove_edge(e)
+
+
+def are_subsets_contiguous(subset_a: subsets.Subset,
+                            subset_b: subsets.Subset,
+                            dim: int = None) -> bool:
+
+    if dim is not None:
+        # A version that only checks for contiguity in certain
+        # dimension (e.g., to prioritize stride-1 range)
+        if (not isinstance(subset_a, subsets.Range)
+                or not isinstance(subset_b, subsets.Range)):
+            raise NotImplementedError('Contiguous subset check only '
+                                        'implemented for ranges')
+
+        # Other dimensions must be equal
+        for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
+            if i == dim:
+                continue
+            if s1[0] != s2[0] or s1[1] != s2[1] or s1[2] != s2[2]:
+                return False
+
+        # Set of conditions for contiguous dimension
+        ab = (subset_a[dim][1] + 1) == subset_b[dim][0]
+        a_overlap_b = subset_a[dim][1] >= subset_b[dim][0]
+        ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
+        b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
+        # NOTE: Must check with "==" due to sympy using special types
+        return (ab == True or a_overlap_b == True or ba == True
+                or b_overlap_a == True)
+
+    # General case
+    bbunion = subsets.bounding_box_union(subset_a, subset_b)
+    try:
+        if bbunion.num_elements() == (subset_a.num_elements() +
+                                        subset_b.num_elements()):
+            return True
+    except TypeError:
+        pass
+
+    return False
+
+
+def find_contiguous_subsets(subset_list: List[subsets.Subset],
+                            dim: int = None) -> Set[subsets.Subset]:
+    """ 
+    Finds the set of largest contiguous subsets in a list of subsets. 
+    :param subsets: Iterable of subset objects.
+    :param dim: Check for contiguity only for the specified dimension.
+    :return: A list of contiguous subsets.
+    """
+    # Currently O(n^3) worst case. TODO: improve
+    subset_set = set(
+        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
+                                                    ) else s
+        for s in subset_list)
+    while True:
+        for sa, sb in itertools.product(subset_set, subset_set):
+            if sa is sb:
+                continue
+            if sa.covers(sb):
+                subset_set.remove(sb)
+                break
+            elif sb.covers(sa):
+                subset_set.remove(sa)
+                break
+            elif are_subsets_contiguous(sa, sb, dim):
+                subset_set.remove(sa)
+                subset_set.remove(sb)
+                subset_set.add(subsets.bounding_box_union(sa, sb))
+                break
+        else:  # No modification performed
+            break
+    return subset_set

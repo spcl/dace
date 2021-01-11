@@ -142,12 +142,26 @@ runopt() {
     return 0
 }
 
+runoptargs() {
+    TESTS=`expr $TESTS + 1`
+    echo "$opts\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/$*
+    if [ $? -ne 0 ]; then
+        bail "$PYTHON_BINARY $*"
+        return 1
+    fi
+
+    checkoutput # Check for spills in the assembly
+    if [ $? -ne 0 ]; then bail "$PYTHON_BINARY $* (assembly)"; return 1; fi
+    return 0
+}
+
 runall() {
     echo "Running $PYTHON_BINARY"
     runopt samples/simple/sum.py $1 'GPUTransformMap$0'
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
     runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
     runopt samples/customization/tensor_cores.py $1
+    runoptargs samples/simple/matmul.py --version optimize_gpu
 }
 
 
