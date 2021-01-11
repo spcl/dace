@@ -106,9 +106,9 @@ def nest_state_subgraph(sdfg: SDFG,
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode)
                 and node.data not in subgraph_transients):
-            if state.out_degree(node) > 0:
+            if node.has_reads(state):
                 input_arrays.add(node.data)
-            if state.in_degree(node) > 0:
+            if node.has_writes(state):
                 output_arrays.add(node.data)
 
     # Create the nested SDFG
