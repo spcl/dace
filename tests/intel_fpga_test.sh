@@ -123,7 +123,17 @@ run_all() {
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"
 
     # Generating autorun kernels
-    run_sample intel_fpga/autorun autorun_test "\n" 
+    run_sample intel_fpga/autorun autorun_test "\n"
+
+    # Multiple gearboxing
+    run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions "\n"
+
+    # Channels mangling
+    run_sample intel_fpga/channels_mangling channels_mangling "\n"
+
+    # Constant Type inference
+    run_sample intel_fpga/constant_type_inference constant_type_inference "\n"
+
 }
 
 # Check if aoc is vailable

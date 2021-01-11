@@ -366,6 +366,14 @@ required:
                         title: Target platform for Xilinx
                         description: Platform name of Vitis/SDx/SDAccel target.
 
+                    frequency:
+                        type: str 
+                        default: '' 
+                        title: Target frequency for Xilinx kernels
+                        description: >
+                            Target frequency when compiling kernels for Xilinx.
+                            Will not necessarily be achieved in practice.
+
                     enable_debugging:
                         type: bool
                         default: false
@@ -632,6 +640,15 @@ required:
         title: Instrumentation
         description: Instrumentation preferences
         required:
+            report_each_invocation:
+                type: bool
+                title: Save report for each invocation
+                default: true
+                description: >
+                    Save an instrumentation report file for each invocation of
+                    the SDFG, rather than one report that spans from SDFG
+                    initialization to finalization.
+
             papi:
                 type: dict
                 title: PAPI

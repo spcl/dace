@@ -3,14 +3,15 @@
 """
 
 from dace import dtypes, registry, symbolic, subsets
-from dace.sdfg import nodes, utils
+from dace.sdfg import SDFG, nodes, utils
 from dace.memlet import Memlet
-from dace.sdfg import SDFG
+from dace.sdfg.scope import ScopeTree
 from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
 
 from dace.frontend.operations import detect_reduction_type
+from dace.sdfg.propagation import propagate_memlets_scope
 
 from copy import deepcopy as dcpy
 from typing import List
@@ -57,6 +58,7 @@ class ReduceExpansion(transformation.Transformation):
             'CUDA (block allreduce)', 'CUDA (warp)', 'CUDA (warp allreduce)'
         ],
         allow_none=True)
+
 
     reduction_type_update = {
         dtypes.ReductionType.Max: 'out = max(reduction_in, array_in)',
@@ -138,9 +140,7 @@ class ReduceExpansion(transformation.Transformation):
         # expand the reduce node
         in_edge = graph.in_edges(reduce_node)[0]
         nsdfg = self._expand_reduce(sdfg, graph, reduce_node)
-
         # find the new nodes in the nested sdfg created
-        # TODO SCOPE_DICT => SCOPE CHILDREN?
         nstate = nsdfg.sdfg.nodes()[0]
         for node, scope in nstate.scope_dict().items():
             if isinstance(node, nodes.MapEntry):
@@ -185,9 +185,9 @@ class ReduceExpansion(transformation.Transformation):
 
         else:
             if self.debug:
-                print(f"ReduceExpansion::Expanding Reduction into Map"
-                      "and introducing update Tasklet,"
-                      "connecting with ancestor {array_closest_ancestor}")
+                print("ReduceExpansion::Expanding Reduction into Map "
+                      "and introducing update Tasklet, "
+                      "connecting with ancestor.")
             if not array_closest_ancestor:
                 array_closest_ancestor = nodes.AccessNode(
                     out_storage_node.data, access=dtypes.AccessType.ReadOnly)
@@ -199,7 +199,7 @@ class ReduceExpansion(transformation.Transformation):
             self.create_out_transient = True
 
         if self.create_out_transient:
-            ###### create an out transient between inner and outer map exit
+            # create an out transient between inner and outer map exit
             array_out = nstate.out_edges(outer_exit)[0].data.data
 
             from dace.transformation.dataflow.local_storage import LocalStorage
@@ -220,6 +220,9 @@ class ReduceExpansion(transformation.Transformation):
             # push to register
             nsdfg.sdfg.data(out_transient_node_inner.data
                             ).storage = dtypes.StorageType.Register
+            if shortcut:
+                nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
+                nstate.out_edges(out_transient_node_inner)[0].data.volume = 1
 
             if shortcut:
                 nstate.out_edges(out_transient_node_inner)[0].data.wcr = None
@@ -256,9 +259,7 @@ class ReduceExpansion(transformation.Transformation):
             sdfg.nodes().index(graph),
             {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, 0)
         inline_sdfg.apply(sdfg)
-
         if not shortcut:
-
             reduction_type = detect_reduction_type(wcr)
             try:
                 code = ReduceExpansion.reduction_type_update[reduction_type]
@@ -337,7 +338,6 @@ class ReduceExpansion(transformation.Transformation):
                                            schedule=new_schedule,
                                            identity=identity)
         reduce_node_new.implementation = new_implementation
-
         edge_tmp = graph.in_edges(inner_entry)[0]
         memlet_src_reduce = dcpy(edge_tmp.data)
         graph.add_edge(edge_tmp.src, edge_tmp.src_conn, reduce_node_new, None,
@@ -350,22 +350,26 @@ class ReduceExpansion(transformation.Transformation):
 
         graph.add_edge(reduce_node_new, None, edge_tmp.dst, edge_tmp.dst_conn,
                        memlet_reduce_dst)
-
         identity_tasklet = graph.out_edges(inner_entry)[0].dst
         graph.remove_node(inner_entry)
         graph.remove_node(inner_exit)
         graph.remove_node(identity_tasklet)
 
+        # propagate scope for correct volumes
+        scope_tree = ScopeTree(outer_entry, outer_exit)
+        scope_tree.parent = ScopeTree(None, None)
+        propagate_memlets_scope(sdfg, graph, scope_tree)
         sdfg.validate()
 
         # create variables for outside access
         self._new_reduce = reduce_node_new
         self._outer_entry = outer_entry
 
-        if identity is None and not shortcut:
+        if identity is None and self.create_out_transient:
             # set the reduction identity accordingly so that the correct
             # blank result is written to the out_transient node
             # we use default values deducted from the reduction type
+            reduction_type = detect_reduction_type(wcr)
             try:
                 reduce_node_new.identity = self.reduction_type_identity[
                     reduction_type]

@@ -55,6 +55,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "compiler", "xilinx", "enable_debugging") else "OFF")
         autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
                      else "OFF")
+        frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
@@ -62,7 +63,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild)
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
+            f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -110,21 +112,25 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
-        host_code.write("""
-dace::fpga::Context *dace::fpga::_context;
+        params_comma = self._global_sdfg.signature(with_arrays=False)
+        if params_comma:
+            params_comma = ', ' + params_comma
 
-DACE_EXPORTED int __dace_init_xilinx({signature}) {{
+        host_code.write("""
+DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
-    dace::fpga::_context = new dace::fpga::Context();
-    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
+    
+    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
-    delete dace::fpga::_context;
+DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
+    delete __state->fpga_context;
 }}
 
-{host_code}""".format(signature=self._global_sdfg.signature(),
+{host_code}""".format(signature=params_comma,
+                      sdfg=self._global_sdfg,
                       environment_variables=set_env_vars,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
@@ -234,8 +240,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
 
     @staticmethod
     def make_vector_type(dtype, is_const):
-        return "{}{}".format("const " if is_const else "",
-                             dtype.base_type.ctype, dtype.veclen)
+        return "{}{}".format("const " if is_const else "", dtype.ctype)
 
     @staticmethod
     def make_kernel_argument(data,
@@ -379,8 +384,11 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                     dtype.base_type.ctype, packing_factor, read_expr,
                     write_expr)
             else:
+                # we can write into a vectorized container.
+                # (The dtype passed as argument refers to the src not to the destination)
+                veclen = dtype.veclen * packing_factor
                 return "dace::Write<{}, {}>({}, {});".format(
-                    dtype.base_type.ctype, dtype.veclen, write_expr, read_expr)
+                    dtype.base_type.ctype, veclen, write_expr, read_expr)
 
     def make_shift_register_write(self, defined_type, dtype, var_name,
                                   write_expr, index, read_expr, wcr, is_unpack,
@@ -528,12 +536,13 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
         added = set()
 
         parameters = list(sorted(parameters, key=lambda t: t[1]))
-        arrays = dtypes.deduplicate([p for p in parameters
-                                     if not isinstance(p[2], dace.data.Scalar)])
+        arrays = dtypes.deduplicate(
+            [p for p in parameters if not isinstance(p[2], dace.data.Scalar)])
         scalars = [p for p in parameters if isinstance(p[2], dace.data.Scalar)]
         scalars += ((False, k, v, None) for k, v in symbol_parameters.items())
         scalars = dace.dtypes.deduplicate(sorted(scalars, key=lambda t: t[1]))
-        for is_output, pname, p, interface_id in itertools.chain(arrays, scalars):
+        for is_output, pname, p, interface_id in itertools.chain(
+                arrays, scalars):
             if isinstance(p, dace.data.Array):
                 arr_name = "{}_{}".format(pname, "out" if is_output else "in")
                 # Add interface ID to called module, but not to the module
@@ -761,9 +770,7 @@ DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
                 if if_id is not None:
                     argname += "_%d" % if_id
 
-                kernel_args.append(
-                    arg.as_arg(with_types=True,
-                               name=argname))
+                kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 if name in seen:
                     continue
