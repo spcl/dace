@@ -133,6 +133,13 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
+            # TODO: Proposal to skip free symbol extraction for assignments
+            # with dace.*. Currently failing in code generation
+            # if isinstance(assign, str) and assign.find('dace.') >= 0:
+            #     warnings.warn('Assignment expression {} cannot be evaluated '
+            #                   'for free symbols. Validation may miss '
+            #                   'undefined symbols.'.format(assign))
+            #     return set()
             result |= symbolic.free_symbols_and_functions(assign)
 
         return result - set(self.assignments.keys())
@@ -166,8 +173,23 @@ class InterstateEdge(object):
                 self.assignments[k] = symbolic.symstr(
                     symbolic.pystr_to_symbolic(v).replace(
                         sym_name, sym_new_name))
-        condition = self.condition
-        self.condition.as_string = condition.as_string.replace(name, new_name)
+        # condition = self.condition
+        # self.condition.as_string = condition.as_string.replace(name, new_name)
+        condition = self.condition.as_string
+        subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), condition)
+        if subscript_matches:
+            sym_condition = symbolic.pystr_to_symbolic(condition)
+            for subscript in subscript_matches:
+                sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                    n=name, s=subscript))
+                sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
+                    n=new_name, s=subscript))
+                sym_condition = sym_condition.replace(sym_name, sym_new_name)
+            str_condition = symbolic.symstr(sym_condition)
+            for subscript in subscript_matches:
+                str_condition = str_condition.replace("({})".format(subscript),
+                                                      "[{}]".format(subscript))
+            self.condition.as_string = str_condition
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
         """
