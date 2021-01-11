@@ -155,7 +155,6 @@ def make_write_C(state, sdfg, vec_width=1):
 
     # C will read from the draining channels (one for each column of the systolic array)
     # Results are interleaved across PE columns
-    # TODO: deal with P_C !=1
 
     # Receives the results and adds it to C
 
@@ -376,11 +375,13 @@ def make_fpga_state(sdfg, vec_width=1):
                     vec_type,
                     transient=True,
                     shape=(P_R , P_C),
+                    buffer_size="P_R",
                     storage=dace.dtypes.StorageType.FPGA_Local)
     sdfg.add_stream("C_pipe",
                     vec_type,
                     transient=True,
                     shape=(P_R, P_C),
+                    buffer_size="P_R",
                     storage=dace.dtypes.StorageType.FPGA_Local)
 
     make_read_A(state)

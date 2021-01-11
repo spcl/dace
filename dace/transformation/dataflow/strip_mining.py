@@ -138,7 +138,8 @@ class StripMining(transformation.Transformation):
                               default="tile",
                               desc="Prefix for new dimension name")
     tile_size = SymbolicProperty(default=64,
-                                 desc="Tile size of strip-mined dimension")
+                                 desc="Tile size of strip-mined dimension, "
+                                 "or number of tiles if tiling_type=number_of_tiles")
     tile_stride = SymbolicProperty(default=0,
                                    desc="Stride between two tiles of the "
                                    "strip-mined dimension. If zero, it is set "
@@ -153,9 +154,15 @@ class StripMining(transformation.Transformation):
         default=False,
         desc="Continuous (false) or strided (true) elements in tile")
 
-    ceilrange = Property(dtype=bool,
-                         default=False,
-                         desc="Use ceiling(N/tile) in outer range")
+    tiling_type = Property(
+        dtype=str,
+        default='normal',
+        choices=['normal', 'ceilrange', 'number_of_tiles'],
+        allow_none=True,
+        desc="normal: the outerloop increments with tile_size, "
+        "ceilrange: uses ceiling(N/tile_size) in outer range, "
+        "number_of_tiles: tiles the map into the number of provided tiles, "
+        "provide the number of tiles over tile_size")
 
     skew = Property(
         dtype=bool,
@@ -280,7 +287,6 @@ class StripMining(transformation.Transformation):
         # Retrieve parameter and range of dimension to be strip-mined.
         target_dim = map_entry.map.params[dim_idx]
         td_from, td_to, td_step = map_entry.map.range[dim_idx]
-
         # Create new map. Replace by cloning map object?
         new_dim = self._find_new_dim(sdfg, graph, map_entry, new_dim_prefix,
                                      target_dim)
@@ -348,8 +354,49 @@ class StripMining(transformation.Transformation):
             td_to_new = td_to_new_approx
         else:
             td_to_new = dace.symbolic.SymExpr(td_to_new_exact, td_to_new_approx)
-
         return new_dim, new_map, (td_from_new, td_to_new, td_step)
+
+    def _create_from_tile_numbers(self, sdfg: SDFG, state: SDFGState,
+                                  map_entry: nodes.MapEntry):
+        map_exit = state.exit_node(map_entry)
+
+        # Retrieve transformation properties.
+        dim_idx = self.dim_idx
+        new_dim_prefix = self.new_dim_prefix
+        divides_evenly = self.divides_evenly
+        number_of_tiles = self.tile_size
+        tile_stride = self.tile_stride
+
+        number_of_tiles = dace.symbolic.pystr_to_symbolic(number_of_tiles)
+
+        # Retrieve parameter and range of dimension to be strip-mined.
+        target_dim = map_entry.map.params[dim_idx]
+        td_from, td_to, td_step = map_entry.map.range[dim_idx]
+        tile_size = map_entry.map.range.size_exact()[dim_idx] / number_of_tiles
+
+        if tile_stride == 0:
+            tile_stride = tile_size
+        if tile_stride != tile_size:
+            raise NotImplementedError
+
+        new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
+                                     target_dim)
+        new_dim_range = (td_from, number_of_tiles, 1)
+        new_map = nodes.Map(map_entry.map.label, [new_dim],
+                            subsets.Range([new_dim_range]))
+
+        dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
+        td_from_new = dimsym * tile_size
+        if divides_evenly:
+            td_to_new = (dimsym + 1) * tile_size
+        else:
+            if isinstance(td_to, dace.symbolic.SymExpr):
+                td_to = td_to.expr
+            td_to_new = dace.symbolic.SymExpr(
+                sympy.Min((dimsym + 1) * tile_size, td_to),
+                (dimsym + 1) * tile_size)
+        td_step_new = td_step
+        return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
     def _stripmine(self, sdfg, graph, candidate):
         # Retrieve map entry and exit nodes.
@@ -360,8 +407,11 @@ class StripMining(transformation.Transformation):
         dim_idx = self.dim_idx
         target_dim = map_entry.map.params[dim_idx]
 
-        if self.ceilrange:
+        if self.tiling_type == 'ceilrange':
             new_dim, new_map, td_rng = self._create_ceil_range(
+                sdfg, graph, map_entry)
+        elif self.tiling_type == 'number_of_tiles':
+            new_dim, new_map, td_rng = self._create_from_tile_numbers(
                 sdfg, graph, map_entry)
         else:
             new_dim, new_map, td_rng = self._create_strided_range(
