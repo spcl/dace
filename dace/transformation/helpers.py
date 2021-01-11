@@ -1,10 +1,18 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import copy
-from typing import List, Optional
+import itertools
 
-from dace.sdfg import nodes
+from dace.subsets import Range, Subset, union
+import dace.subsets as subsets
+from typing import Dict, List, Optional, Tuple, Set
+
+from dace import symbolic
+from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.scope import ScopeSubgraphView
+from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg import graph
 from dace.memlet import Memlet
 
 
@@ -27,13 +35,13 @@ def nest_state_subgraph(sdfg: SDFG,
     """
     if state.parent != sdfg:
         raise KeyError('State does not belong to given SDFG')
-    if subgraph.graph != state:
+    if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
 
     # Find the top-level scope
     scope_tree = state.scope_tree()
     scope_dict = state.scope_dict()
-    scope_dict_children = state.scope_dict(True)
+    scope_dict_children = state.scope_children()
     top_scopenode = -1  # Initialized to -1 since "None" already means top-level
 
     for node in subgraph.nodes():
@@ -59,6 +67,9 @@ def nest_state_subgraph(sdfg: SDFG,
 
     scope = scope_tree[top_scopenode]
     ###
+
+    # Consolidate edges in top scope
+    utils.consolidate_edges(sdfg, scope)
 
     # Collect inputs and outputs of the nested SDFG
     inputs: List[MultiConnectorEdge] = []
@@ -118,26 +129,47 @@ def nest_state_subgraph(sdfg: SDFG,
     # descriptors in nested SDFG
     input_names = []
     output_names = []
+    global_subsets: Dict[str, Tuple[str, Subset]] = {}
     for edge in inputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
-        name = '__in_' + edge.data.data
-        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-        datadesc.transient = False
-        if not full_data:
-            datadesc.shape = edge.data.subset.size()
-        input_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
+        name = edge.data.data
+        if name not in global_subsets:
+            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            datadesc.transient = False
+            if not full_data:
+                datadesc.shape = edge.data.subset.size()
+            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            global_subsets[name] = (new_name, edge.data.subset)
+        else:
+            new_name, subset = global_subsets[name]
+            if not full_data:
+                new_subset = union(subset, edge.data.subset)
+                if new_subset is None:
+                    new_subset = Range.from_array(sdfg.arrays[name])
+                global_subsets[name] = (new_name, new_subset)
+                nsdfg.arrays[new_name].shape = new_subset.size()
+        input_names.append(new_name)
     for edge in outputs:
         if edge.data.data is None:  # Skip edges with an empty memlet
             continue
-        name = '__out_' + edge.data.data
-        datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
-        datadesc.transient = False
-        if not full_data:
-            datadesc.shape = edge.data.subset.size()
-        output_names.append(
-            nsdfg.add_datadesc(name, datadesc, find_new_name=True))
+        name = edge.data.data
+        if name not in global_subsets:
+            datadesc = copy.deepcopy(sdfg.arrays[edge.data.data])
+            datadesc.transient = False
+            if not full_data:
+                datadesc.shape = edge.data.subset.size()
+            new_name = nsdfg.add_datadesc(name, datadesc, find_new_name=True)
+            global_subsets[name] = (new_name, edge.data.subset)
+        else:
+            new_name, subset = global_subsets[name]
+            if not full_data:
+                new_subset = union(subset, edge.data.subset)
+                if new_subset is None:
+                    new_subset = Range.from_array(sdfg.arrays[name])
+                global_subsets[name] = (new_name, new_subset)
+                nsdfg.arrays[new_name].shape = new_subset.size()
+        output_names.append(new_name)
     ###################
 
     # Add scope symbols to the nested SDFG
@@ -145,6 +177,10 @@ def nest_state_subgraph(sdfg: SDFG,
         if v in sdfg.symbols:
             sym = sdfg.symbols[v]
             nsdfg.add_symbol(v, sym.dtype)
+
+    # Add constants to nested SDFG
+    for cstname, cstval in sdfg.constants.items():
+        nsdfg.add_constant(cstname, cstval)
 
     # Create nested state
     nstate = nsdfg.add_state()
@@ -183,7 +219,8 @@ def nest_state_subgraph(sdfg: SDFG,
         for edge in nstate.memlet_tree(new_edge):
             edge.data.data = new_edge.data.data
             if not full_data:
-                edge.data.subset.offset(original_edge.data.subset, True)
+                edge.data.subset.offset(
+                    global_subsets[original_edge.data.data][1], True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, None,
@@ -191,20 +228,31 @@ def nest_state_subgraph(sdfg: SDFG,
                                         set(output_names) | output_arrays)
 
     # Reconnect memlets to nested SDFG
+    reconnected_in = set()
+    reconnected_out = set()
     for name, edge in zip(input_names, inputs):
+        if name in reconnected_in:
+            continue
         if full_data:
             data = Memlet.from_array(edge.data.data,
                                      sdfg.arrays[edge.data.data])
         else:
-            data = edge.data
+            data = copy.deepcopy(edge.data)
+            data.subset = global_subsets[edge.data.data][1]
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
+        reconnected_in.add(name)
+
     for name, edge in zip(output_names, outputs):
+        if name in reconnected_out:
+            continue
         if full_data:
             data = Memlet.from_array(edge.data.data,
                                      sdfg.arrays[edge.data.data])
         else:
-            data = edge.data
+            data = copy.deepcopy(edge.data)
+            data.subset = global_subsets[edge.data.data][1]
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
+        reconnected_out.add(name)
 
     # Connect access nodes to internal input/output data as necessary
     entry = scope.entry
@@ -229,15 +277,61 @@ def nest_state_subgraph(sdfg: SDFG,
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
 
+    # Remove newly isolated nodes due to memlet consolidation
+    for edge in inputs:
+        if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
+            state.remove_node(edge.src)
+    for edge in outputs:
+        if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
+            state.remove_node(edge.dst)
+
     return nested_sdfg
 
 
-def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
+def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
+    '''
+    Given a subgraph, adds a new SDFG state before the state that contains it,
+    removes the subgraph from the original state, and connects the two states.
+    :param subgraph: the subgraph to remove.
+    :return: the newly created SDFG state.
+    '''
+
+    state: SDFGState = subgraph.graph
+    newstate = sdfg.add_state_before(state)
+
+    # Save edges before removing nodes
+    orig_edges = subgraph.edges()
+
+    # Mark boundary access nodes to keep after fission
+    nodes_to_remove = set(subgraph.nodes())
+    nodes_to_remove -= set(n for n in subgraph.source_nodes()
+                           if state.in_degree(n) > 0)
+    nodes_to_remove -= set(n for n in subgraph.sink_nodes()
+                           if state.out_degree(n) > 0)
+    state.remove_nodes_from(nodes_to_remove)
+
+    for n in subgraph.nodes():
+        if isinstance(n, nodes.NestedSDFG):
+            # Set the new parent state
+            n.sdfg.parent = newstate
+
+    newstate.add_nodes_from(subgraph.nodes())
+
+    for e in orig_edges:
+        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+
+    return newstate
+
+
+def unsqueeze_memlet(internal_memlet: Memlet,
+                     external_memlet: Memlet,
+                     preserve_minima: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
                                 before modification.
         :param external_memlet: The external memlet before modification.
+        :param preserve_minima: Do not change the subset's minimum elements.
         :return: Offset Memlet to set on the resulting graph.
     """
     result = copy.deepcopy(internal_memlet)
@@ -269,8 +363,181 @@ def unsqueeze_memlet(internal_memlet: Memlet, external_memlet: Memlet):
 
     result.subset.offset(external_memlet.subset, False)
 
+    if preserve_minima:
+        if len(result.subset) != len(external_memlet.subset):
+            raise ValueError(
+                'Memlet specifies reshape that cannot be un-squeezed.\n'
+                'External memlet: %s\nInternal memlet: %s' %
+                (external_memlet, internal_memlet))
+
+        original_minima = external_memlet.subset.min_element()
+        for i in set(range(len(original_minima))):
+            rb, re, rs = result.subset.ranges[i]
+            result.subset.ranges[i] = (original_minima[i], re, rs)
+
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
         raise NotImplementedError
 
     return result
+
+
+def replicate_scope(sdfg: SDFG, state: SDFGState,
+                    scope: ScopeSubgraphView) -> ScopeSubgraphView:
+    """
+    Replicates a scope subgraph view within a state, reconnecting all external
+    edges to the same nodes.
+    :param sdfg: The SDFG in which the subgraph scope resides.
+    :param state: The SDFG state in which the subgraph scope resides.
+    :param scope: The scope subgraph to replicate.
+    :return: A reconnected replica of the scope.
+    """
+    exit_node = state.exit_node(scope.entry)
+
+    # Replicate internal graph
+    new_nodes = []
+    new_entry = None
+    new_exit = None
+    for node in scope.nodes():
+        node_copy = copy.deepcopy(node)
+        if node == scope.entry:
+            new_entry = node_copy
+        elif node == exit_node:
+            new_exit = node_copy
+
+        state.add_node(node_copy)
+        new_nodes.append(node_copy)
+
+    for edge in scope.edges():
+        src = scope.nodes().index(edge.src)
+        dst = scope.nodes().index(edge.dst)
+        state.add_edge(new_nodes[src], edge.src_conn, new_nodes[dst],
+                       edge.dst_conn, copy.deepcopy(edge.data))
+
+    # Reconnect external scope nodes
+    for edge in state.in_edges(scope.entry):
+        state.add_edge(edge.src, edge.src_conn, new_entry, edge.dst_conn,
+                       copy.deepcopy(edge.data))
+    for edge in state.out_edges(exit_node):
+        state.add_edge(new_exit, edge.src_conn, edge.dst, edge.dst_conn,
+                       copy.deepcopy(edge.data))
+
+    # Set the exit node's map to match the entry node
+    new_exit.map = new_entry.map
+
+    return ScopeSubgraphView(state, new_nodes, new_entry)
+
+
+def offset_map(sdfg: SDFG,
+               state: SDFGState,
+               entry: nodes.MapEntry,
+               dim: int,
+               offset: symbolic.SymbolicType,
+               negative: bool = True):
+    """
+    Offsets a map parameter and its contents by a value.
+    :param sdfg: The SDFG in which the map resides.
+    :param state: The state in which the map resides.
+    :param entry: The map entry node.
+    :param dim: The map dimension to offset.
+    :param offset: The value to offset by.
+    :param negative: If True, offsets by ``-offset``.
+    """
+    entry.map.range.offset(offset, negative, indices=[dim])
+    param = entry.map.params[dim]
+    subgraph = state.scope_subgraph(entry)
+    # Offset map param by -offset, contents by +offset and vice versa
+    if negative:
+        subgraph.replace(param, f'({param} + {offset})')
+    else:
+        subgraph.replace(param, f'({param} - {offset})')
+
+
+def split_interstate_edges(sdfg: SDFG) -> None:
+    """
+    Splits all inter-state edges into edges with conditions and edges with
+    assignments. This procedure helps in nested loop detection.
+    :param sdfg: The SDFG to split
+    :note: Operates in-place on the SDFG.
+    """
+    for e in sdfg.edges():
+        if e.data.assignments and not e.data.is_unconditional():
+            tmpstate = sdfg.add_state()
+            sdfg.add_edge(e.src, tmpstate,
+                          InterstateEdge(condition=e.data.condition))
+            sdfg.add_edge(tmpstate, e.dst,
+                          InterstateEdge(assignments=e.data.assignments))
+            sdfg.remove_edge(e)
+
+
+def are_subsets_contiguous(subset_a: subsets.Subset,
+                            subset_b: subsets.Subset,
+                            dim: int = None) -> bool:
+
+    if dim is not None:
+        # A version that only checks for contiguity in certain
+        # dimension (e.g., to prioritize stride-1 range)
+        if (not isinstance(subset_a, subsets.Range)
+                or not isinstance(subset_b, subsets.Range)):
+            raise NotImplementedError('Contiguous subset check only '
+                                        'implemented for ranges')
+
+        # Other dimensions must be equal
+        for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
+            if i == dim:
+                continue
+            if s1[0] != s2[0] or s1[1] != s2[1] or s1[2] != s2[2]:
+                return False
+
+        # Set of conditions for contiguous dimension
+        ab = (subset_a[dim][1] + 1) == subset_b[dim][0]
+        a_overlap_b = subset_a[dim][1] >= subset_b[dim][0]
+        ba = (subset_b[dim][1] + 1) == subset_a[dim][0]
+        b_overlap_a = subset_b[dim][1] >= subset_a[dim][0]
+        # NOTE: Must check with "==" due to sympy using special types
+        return (ab == True or a_overlap_b == True or ba == True
+                or b_overlap_a == True)
+
+    # General case
+    bbunion = subsets.bounding_box_union(subset_a, subset_b)
+    try:
+        if bbunion.num_elements() == (subset_a.num_elements() +
+                                        subset_b.num_elements()):
+            return True
+    except TypeError:
+        pass
+
+    return False
+
+
+def find_contiguous_subsets(subset_list: List[subsets.Subset],
+                            dim: int = None) -> Set[subsets.Subset]:
+    """ 
+    Finds the set of largest contiguous subsets in a list of subsets. 
+    :param subsets: Iterable of subset objects.
+    :param dim: Check for contiguity only for the specified dimension.
+    :return: A list of contiguous subsets.
+    """
+    # Currently O(n^3) worst case. TODO: improve
+    subset_set = set(
+        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
+                                                    ) else s
+        for s in subset_list)
+    while True:
+        for sa, sb in itertools.product(subset_set, subset_set):
+            if sa is sb:
+                continue
+            if sa.covers(sb):
+                subset_set.remove(sb)
+                break
+            elif sb.covers(sa):
+                subset_set.remove(sa)
+                break
+            elif are_subsets_contiguous(sa, sb, dim):
+                subset_set.remove(sa)
+                subset_set.remove(sb)
+                subset_set.add(subsets.bounding_box_union(sa, sb))
+                break
+        else:  # No modification performed
+            break
+    return subset_set

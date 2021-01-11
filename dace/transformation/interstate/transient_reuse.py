@@ -1,13 +1,14 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import registry, sdfg as sd
 from dace.sdfg import nodes
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties
 import networkx as nx
 
 
 @registry.autoregister
 @make_properties
-class TransientReuse(pattern_matching.Transformation):
+class TransientReuse(transformation.Transformation):
     """ Implements the TransientReuse transformation.
         Finds all possible reuses of arrays,
         decides for a valid combination and changes sdfg accordingly.
@@ -32,9 +33,10 @@ class TransientReuse(pattern_matching.Transformation):
         memory_before = 0
         arrays = {}
         for a in sdfg.arrays:
+            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[
+                a].dtype.bytes
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
-                memory_before += sdfg.arrays[a].total_size
 
         # only consider transients appearing in one single state
         for state in sdfg.states():
@@ -56,13 +58,13 @@ class TransientReuse(pattern_matching.Transformation):
                     G.add_edge(e.src, e.dst)
 
             # Collapse all mappings and their scopes into one node
-            scope_dict = state.scope_dict(node_to_children=True)
-            for n in scope_dict[None]:
+            scope_children = state.scope_children()
+            for n in scope_children[None]:
                 if isinstance(n, nodes.EntryNode):
                     G.add_edges_from([
                         (n, x) for (y, x) in G.out_edges(state.exit_node(n))
                     ])
-                    G.remove_nodes_from(scope_dict[n])
+                    G.remove_nodes_from(scope_children[n])
 
             # Remove all nodes that are not AccessNodes or have incoming wcr edges
             # and connect their predecessors and successors
@@ -171,8 +173,8 @@ class TransientReuse(pattern_matching.Transformation):
         # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
-            if sdfg.arrays[a].transient:
-                memory_after += sdfg.arrays[a].total_size
+            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[
+                a].dtype.bytes
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')

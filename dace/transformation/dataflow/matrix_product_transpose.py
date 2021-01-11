@@ -1,17 +1,18 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the matrix-matrix product transpose transformation. """
 
 from copy import deepcopy as dcpy
 import dace
 from dace.sdfg import nodes
 from dace import registry
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import make_properties
 import dace.libraries.blas as blas
 
 
 @registry.autoregister_params(singlestate=True)
 @make_properties
-class MatrixProductTranspose(pattern_matching.Transformation):
+class MatrixProductTranspose(transformation.Transformation):
     """ Implements the matrix-matrix product transpose transformation.
 
         T(A) @ T(B) = T(B @ A)
@@ -44,8 +45,7 @@ class MatrixProductTranspose(pattern_matching.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         _at = graph.nodes()[candidate[MatrixProductTranspose._at]]
-        _a_times_b = graph.nodes()[candidate[
-            MatrixProductTranspose._a_times_b]]
+        _a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
         edges = graph.edges_between(_at, _a_times_b)
         # Enforce unique match
         if len(edges) != 1:

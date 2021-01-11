@@ -1,8 +1,10 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
 import ast
 from copy import deepcopy as dcpy
+from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
@@ -29,15 +31,24 @@ import warnings
 class Node(object):
     """ Base node class. """
 
-    in_connectors = SetProperty(str,
-                                default=set(),
-                                desc="A set of input connectors for this node.")
-    out_connectors = SetProperty(
-        str, default=set(), desc="A set of output connectors for this node.")
+    in_connectors = DictProperty(
+        key_type=str,
+        value_type=dtypes.typeclass,
+        desc="A set of input connectors for this node.")
+    out_connectors = DictProperty(
+        key_type=str,
+        value_type=dtypes.typeclass,
+        desc="A set of output connectors for this node.")
 
     def __init__(self, in_connectors=None, out_connectors=None):
-        self.in_connectors = in_connectors or set()
-        self.out_connectors = out_connectors or set()
+        # Convert connectors to typed connectors with autodetect type
+        if isinstance(in_connectors, (set, list, KeysView)):
+            in_connectors = {k: None for k in in_connectors}
+        if isinstance(out_connectors, (set, list, KeysView)):
+            out_connectors = {k: None for k in out_connectors}
+
+        self.in_connectors = in_connectors or {}
+        self.out_connectors = out_connectors or {}
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -85,12 +96,15 @@ class Node(object):
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
 
-    def add_in_connector(self, connector_name: str):
+    def add_in_connector(self,
+                         connector_name: str,
+                         dtype: dtypes.typeclass = None):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
+            :param dtype: The type of the connector, or None for auto-detect.
             :return: True if the operation is successful, otherwise False.
         """
 
@@ -98,16 +112,19 @@ class Node(object):
                 or connector_name in self.out_connectors):
             return False
         connectors = self.in_connectors
-        connectors.add(connector_name)
+        connectors[connector_name] = dtype
         self.in_connectors = connectors
         return True
 
-    def add_out_connector(self, connector_name: str):
+    def add_out_connector(self,
+                          connector_name: str,
+                          dtype: dtypes.typeclass = None):
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
+            :param dtype: The type of the connector, or None for auto-detect.
             :return: True if the operation is successful, otherwise False.
         """
 
@@ -115,7 +132,7 @@ class Node(object):
                 or connector_name in self.out_connectors):
             return False
         connectors = self.out_connectors
-        connectors.add(connector_name)
+        connectors[connector_name] = dtype
         self.out_connectors = connectors
         return True
 
@@ -127,7 +144,7 @@ class Node(object):
 
         if connector_name in self.in_connectors:
             connectors = self.in_connectors
-            connectors.remove(connector_name)
+            del connectors[connector_name]
             self.in_connectors = connectors
         return True
 
@@ -139,7 +156,7 @@ class Node(object):
 
         if connector_name in self.out_connectors:
             connectors = self.out_connectors
-            connectors.remove(connector_name)
+            del connectors[connector_name]
             self.out_connectors = connectors
         return True
 
@@ -162,9 +179,17 @@ class Node(object):
                 continue
         return next_number
 
-    def next_connector(self) -> str:
-        """ Returns the next unused connector ID (as a string). Used for
-            filling connectors when adding edges to scopes. """
+    def next_connector(self, try_name: str = None) -> str:
+        """
+        Returns the next unused connector ID (as a string). Used for
+        filling connectors when adding edges to scopes.
+        :param try_name: First try the connector with this name. If already
+                         exists, use the next integer connector.
+        """
+        if (try_name and 'IN_' + try_name not in self.in_connectors
+                and 'OUT_' + try_name not in self.out_connectors):
+            return try_name
+
         return str(self._next_connector_int())
 
     def last_connector(self) -> str:
@@ -181,6 +206,13 @@ class Node(object):
         """ Returns a mapping between symbols defined by this node (e.g., for
             scope entries) to their type. """
         return {}
+
+    def infer_connector_types(self, sdfg, state):
+        """
+        Infers and fills remaining connectors (i.e., set to None) with their
+        types.
+        """
+        pass
 
 
 # ------------------------------------------------------------------------------
@@ -329,8 +361,36 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors
-                                          | self.out_connectors)
+        return self.code.get_free_symbols(self.in_connectors.keys()
+                                          | self.out_connectors.keys())
+
+    def infer_connector_types(self, sdfg, state):
+        # If a Python tasklet, use type inference to figure out all None output
+        # connectors
+        if all(cval.type is not None for cval in self.out_connectors.values()):
+            return
+        if self.code.language != dtypes.Language.Python:
+            return
+
+        if any(cval.type is None for cval in self.in_connectors.values()):
+            raise TypeError('Cannot infer output connectors of tasklet "%s", '
+                            'not all input connectors have types' % str(self))
+
+        # Avoid import loop
+        from dace.codegen.tools.type_inference import infer_types
+
+        # Get symbols defined at beginning of node, and infer all types in
+        # tasklet
+        syms = state.symbols_defined_at(self)
+        syms.update(self.in_connectors)
+        new_syms = infer_types(self.code.code, syms)
+        for cname, oconn in self.out_connectors.items():
+            if oconn.type is None:
+                if cname not in new_syms:
+                    raise TypeError('Cannot infer type of tasklet %s output '
+                                    '"%s", please specify manually.' %
+                                    (self.label, cname))
+                self.out_connectors[cname] = new_syms[cname]
 
     def __str__(self):
         if not self.label:
@@ -384,10 +444,11 @@ class NestedSDFG(CodeNode):
                  schedule=dtypes.ScheduleType.Default,
                  location=None,
                  debuginfo=None):
+        from dace.sdfg import SDFG
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg = sdfg
+        self.sdfg: SDFG = sdfg
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
@@ -397,7 +458,7 @@ class NestedSDFG(CodeNode):
         from dace import SDFG  # Avoid import loop
 
         # We have to load the SDFG first.
-        ret = NestedSDFG("nolabel", SDFG('nosdfg'), set(), set())
+        ret = NestedSDFG("nolabel", SDFG('nosdfg'), {}, {})
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
 
@@ -422,6 +483,12 @@ class NestedSDFG(CodeNode):
                   pystr_to_symbolic(v).free_symbols)
               for v in self.location.values()))
 
+    def infer_connector_types(self, sdfg, state):
+        # Avoid import loop
+        from dace.sdfg.infer_types import infer_connector_types
+        # Infer internal connector types
+        infer_connector_types(self.sdfg)
+
     def __str__(self):
         if not self.label:
             return "SDFG"
@@ -437,7 +504,7 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
-        connectors = self.in_connectors | self.out_connectors
+        connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for dname, desc in self.sdfg.arrays.items():
             # TODO(later): Disallow scalars without access nodes (so that this
             #              check passes for them too).
@@ -457,6 +524,10 @@ class NestedSDFG(CodeNode):
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG: %s' %
                              (missing_symbols))
+        extra_symbols = self.symbol_mapping.keys() - symbols
+        if len(extra_symbols) > 0:
+            # TODO: Elevate to an error?
+            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
         self.sdfg.validate()
@@ -553,10 +624,11 @@ class MapEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
 
-        # TODO: Get connector type from connector
+        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+                result[e.dst_conn] = (self.in_connectors[e.dst_conn]
+                                      or sdfg.arrays[e.data.data].dtype)
 
         return result
 
@@ -763,10 +835,11 @@ class ConsumeEntry(EntryNode):
         dyn_inputs = set(c for c in self.in_connectors
                          if not c.startswith('IN_'))
 
-        # TODO: Get connector type from connector
+        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
-                result[e.dst_conn] = sdfg.arrays[e.data.data].dtype
+                result[e.dst_conn] = (self.in_connectors[e.dst_conn]
+                                      or sdfg.arrays[e.data.data].dtype)
 
         return result
 
@@ -1031,6 +1104,7 @@ class LibraryNode(CodeNode):
         choices=dtypes.ScheduleType,
         from_string=lambda x: dtypes.ScheduleType[x],
         default=dtypes.ScheduleType.Default)
+    debuginfo = DebugInfoProperty()
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1070,9 +1144,11 @@ class LibraryNode(CodeNode):
                                                     context=context)
             return ret
 
-    def expand(self, sdfg, state, *args, **kwargs):
-        """Create and perform the expansion transformation for this library
-           node."""
+    def expand(self, sdfg, state, *args, **kwargs) -> str:
+        """ Create and perform the expansion transformation for this library
+            node.
+            :return: the name of the expanded implementation
+        """
         implementation = self.implementation
         library_name = type(self)._dace_library_name
         try:
@@ -1121,6 +1197,7 @@ class LibraryNode(CodeNode):
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
         transformation.apply(sdfg, *args, **kwargs)
+        return implementation
 
     @classmethod
     def register_implementation(cls, name, transformation_type):
@@ -1132,4 +1209,4 @@ class LibraryNode(CodeNode):
             raise ValueError(
                 "Transformation " + transformation_type.__name__ +
                 " is already registered with a different library node.")
-        transformation_type._match_node = cls(match_node_name)
+        transformation_type._match_node = cls

@@ -1,11 +1,13 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import data, symbolic, dtypes
 import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import Set
+from typing import List, Set, Union
 import warnings
+from dace.config import Config
 
 
 class Subset(object):
@@ -15,22 +17,49 @@ class Subset(object):
             subset. """
         def nng(expr):
             # When dealing with set sizes, assume symbols are non-negative
-            # TODO: Fix in symbol definition, not here
-            for sym in list(expr.free_symbols):
-                expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-            return expr
+            try:
+                # TODO: Fix in symbol definition, not here
+                for sym in list(expr.free_symbols):
+                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+                return expr
+            except AttributeError:  # No free_symbols in expr
+                return expr
 
-        try:
-            return all([(symbolic.simplify_ext(nng(rb)) <=
-                         symbolic.simplify_ext(nng(orb))) == True
-                        and (symbolic.simplify_ext(nng(re)) >=
-                             symbolic.simplify_ext(nng(ore))) == True
-                        for rb, re, orb, ore in zip(
-                            self.min_element(), self.max_element_approx(),
-                            other.min_element(), other.max_element_approx())])
-        except TypeError:
-            return False
 
+        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+        if not symbolic_positive:
+            try:
+                return all([(symbolic.simplify_ext(nng(rb)) <=
+                            symbolic.simplify_ext(nng(orb))) == True
+                            and (symbolic.simplify_ext(nng(re)) >=
+                                symbolic.simplify_ext(nng(ore))) == True
+                            for rb, re, orb, ore in zip(
+                                self.min_element_approx(), self.max_element_approx(),
+                                other.min_element_approx(), other.max_element_approx())])
+            except TypeError:
+                return False
+        
+        else:
+            try:
+                for rb, re, orb, ore in zip(
+                            self.min_element_approx(), self.max_element_approx(),
+                            other.min_element_approx(), other.max_element_approx()):
+
+                    # lower bound: first check whether symbolic positive condition applies 
+                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                            return False 
+                        
+                    # upper bound: first check whether symbolic positive condition applies
+                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                            return False 
+            except TypeError:
+                return False 
+                
+            return True
+               
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
@@ -114,6 +143,10 @@ class Range(Subset):
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
 
+    @staticmethod
+    def from_indices(indices: 'Indices'):
+        return Range([(i, i, 1) for i in indices.indices])
+
     def to_json(self):
         ret = []
 
@@ -171,7 +204,7 @@ class Range(Subset):
         return Range(sum_ranges)
 
     def num_elements(self):
-        return reduce(sp.mul.Mul, self.size(), 1)
+        return reduce(sp.Mul, self.size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
@@ -226,6 +259,9 @@ class Range(Subset):
 
     def max_element_approx(self):
         return [_approx(x[1]) for x in self.ranges]
+
+    def min_element_approx(self):
+        return [_approx(x[0]) for x in self.ranges]
 
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
@@ -284,7 +320,7 @@ class Range(Subset):
             else:
                 other = Indices([other for _ in self.ranges])
         mult = -1 if negative else 1
-        if not indices:
+        if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
         for i in indices:
@@ -463,7 +499,7 @@ class Range(Subset):
                         tsize = tokens[3]
                 else:
                     tsize = 1
-            except sympy.core.sympify.SympifyError:
+            except sympy.SympifyError:
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
@@ -539,7 +575,8 @@ class Range(Subset):
         elif self.dims() == other.dims():
             # case 2: subsets have the same dimensions (but possibly different
             # data_dims) -> all non-data dims remain
-            for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+            for idx, ((rb, re, rs),
+                      rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     if isinstance(other, Indices):
                         new_subset.append(rb)
@@ -554,9 +591,9 @@ class Range(Subset):
                         new_subset.append(rb + rs * other[idx])
 
         else:
-            raise ValueError("Dimension mismatch in composition:"
-                             "Subset composed must be either completely"
-                             "stripped of all non-data dimensions"
+            raise ValueError("Dimension mismatch in composition: "
+                             "Subset composed must be either completely "
+                             "stripped of all non-data dimensions "
                              "or be not stripped of latter at all.")
 
         if isinstance(other, Range):
@@ -566,9 +603,22 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self):
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
         shape = self.size()
-        non_ones = [i for i, d in enumerate(shape) if d != 1]
+        non_ones = []
+        offset_indices = []
+        sqz_idx = 0
+        for i, d in enumerate(shape):
+            if i in ignore_indices:
+                non_ones.append(i)
+                sqz_idx += 1
+            elif d != 1:
+                non_ones.append(i)
+                offset_indices.append(sqz_idx)
+                sqz_idx += 1
+            else:
+                pass
         squeezed_ranges = [self.ranges[i] for i in non_ones]
         squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
         if not squeezed_ranges:
@@ -576,7 +626,7 @@ class Range(Subset):
             squeezed_tsizes = [1]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.offset(self, True)
+        self.offset(self, True, indices=offset_indices)
         return non_ones
 
     def unsqueeze(self, axes):
@@ -592,8 +642,10 @@ class Range(Subset):
                 new_ranges.append(self.ranges[i])
                 new_tsizes.append(self.tile_sizes[i])
         if not new_ranges:
-            new_ranges = [self.ranges[-1]]
-            new_tsizes = [self.tile_sizes[-1]]
+            new_ranges = [(symbolic.pystr_to_symbolic(0),
+                           symbolic.pystr_to_symbolic(0),
+                           symbolic.pystr_to_symbolic(1))]
+            new_tsizes = [symbolic.pystr_to_symbolic(1)]
         self.ranges = new_ranges
         self.tile_sizes = new_tsizes
 
@@ -609,6 +661,30 @@ class Range(Subset):
                 rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
             self.tile_sizes[i] = (ts.subs(repl_dict)
                                   if symbolic.issymbolic(ts) else ts)
+
+    def intersects(self, other: 'Range'):
+        for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
+            if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1
+                    or other.tile_sizes[i] != 1):
+                # TODO: This function does not consider strides or tiles
+                return None
+
+            # Special case: ranges match
+            if rng[0] == orng[0] or rng[1] == orng[1]:
+                continue
+
+            # Since conditions can be indeterminate, we check them separately
+            # for being False, then make a check that may raise a TypeError
+            cond1 = (rng[0] <= orng[1])
+            cond2 = (orng[0] <= rng[1])
+            # NOTE: We have to use the "==" operator because of SymPy returning
+            #       a special boolean type!
+            if cond1 == False or cond2 == False:
+                return False
+            if not (cond1 and cond2):
+                return False
+
+        return True
 
 
 @dace.serialize.serializable
@@ -669,6 +745,9 @@ class Indices(Subset):
         return self.indices
 
     def max_element_approx(self):
+        return [_approx(ind) for ind in self.indices]
+
+    def min_element_approx(self):
         return [_approx(ind) for ind in self.indices]
 
     def data_dims(self):
@@ -777,10 +856,17 @@ class Indices(Subset):
     def compose(self, other):
         raise TypeError('Index subsets cannot be composed with other subsets')
 
-    def squeeze(self):
-        num_dim = len(self.indices)
-        self.indices = [0]
-        return [num_dim - 1]
+    def squeeze(self, ignore_indices=None):
+        ignore_indices = ignore_indices or []
+        non_ones = []
+        for i in range(len(self.indices)):
+            if i in ignore_indices:
+                non_ones.append(i)
+        squeezed_indices = [self.indices[i] for i in non_ones]
+        if not squeezed_indices:
+            squeezed_indices = [0]
+        self.indices = squeezed_indices
+        return non_ones
 
     def unsqueeze(self, axes):
         for axis in sorted(axes):
@@ -791,6 +877,22 @@ class Indices(Subset):
             self.indices[i] = (ind.subs(repl_dict)
                                if symbolic.issymbolic(ind) else ind)
 
+    def pop(self, dimensions):
+        new_indices = []
+        for i in range(len(self.indices)):
+            if i not in dimensions:
+                new_indices.append(self.indices[i])
+        self.indices = new_indices
+
+    def intersects(self, other: 'Indices'):
+        return all(ind == oind
+                   for ind, oind in zip(self.indices, other.indices))
+
+    def intersection(self, other: 'Indices'):
+        if self.intersects(other):
+            return self
+        return None
+
 
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     """ Perform union by creating a bounding-box of two subsets. """
@@ -798,9 +900,44 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
         raise ValueError('Dimension mismatch between %s and %s' %
                          (str(subset_a), str(subset_b)))
 
-    result = [(min(arb, brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-        subset_a.min_element(), subset_b.min_element(), subset_a.max_element(),
-        subset_b.max_element())]
+    # Check whether all expressions containing a symbolic value should
+    # always be evaluated to positive. If so, union will yield
+    # a different result respectively.
+    symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+    if not symbolic_positive:
+        result = [(min(arb,
+                       brb), max(are, bre), 1) for arb, brb, are, bre in zip(
+                           subset_a.min_element(), subset_b.min_element(),
+                           subset_a.max_element(), subset_b.max_element())]
+
+    else:
+        result = []
+        for arb, brb, are, bre in zip(subset_a.min_element_approx(),
+                                      subset_b.min_element_approx(),
+                                      subset_a.max_element_approx(),
+                                      subset_b.max_element_approx()):
+            try:
+                minrb = min(arb, brb)
+            except TypeError:
+                if len(arb.free_symbols) == 0:
+                    minrb = arb
+                elif len(brb.free_symbols) == 0:
+                    minrb = brb
+                else:
+                    raise
+
+            try:
+                maxre = max(are, bre)
+            except TypeError:
+                if len(are.free_symbols) == 0:
+                    maxre = bre
+                elif len(bre.free_symbols) == 0:
+                    maxre = are
+                else:
+                    raise
+            result.append((minrb, maxre, 1))
+
     return Range(result)
 
 
@@ -814,14 +951,15 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                  inputs. If union failed, returns None.
     """
     try:
-        if type(subset_a) != type(subset_b):
-            return bounding_box_union(subset_a, subset_b)
-        elif subset_a is not None and subset_b is None:
+
+        if subset_a is not None and subset_b is None:
             return subset_a
         elif subset_b is not None and subset_a is None:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
+        elif type(subset_a) != type(subset_b):
+            return bounding_box_union(subset_a, subset_b)
         elif isinstance(subset_a, Indices):
             # Two indices. If they are adjacent, returns a range that contains both,
             # otherwise, returns a bounding box of the two
@@ -834,5 +972,28 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                 'Unrecognized Subset type %s in union, degenerating to'
                 ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
+    except TypeError:  # cannot determine truth value of Relational
+        return None
+
+
+def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
+    """
+    Returns True if two subsets intersect, False if they do not, or
+    None if the answer cannot be determined.
+
+    :param subset_a: The first subset.
+    :param subset_b: The second subset.
+    :return: True if subsets intersect, False if not, None if indeterminate.
+    """
+    try:
+        if subset_a is None or subset_b is None:
+            return False
+        if isinstance(subset_a, Indices):
+            subset_a = Range.from_indices(subset_a)
+        if isinstance(subset_b, Indices):
+            subset_b = Range.from_indices(subset_b)
+        if type(subset_a) is type(subset_b):
+            return subset_a.intersects(subset_b)
+        return None
     except TypeError:  # cannot determine truth value of Relational
         return None

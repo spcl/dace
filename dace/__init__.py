@@ -1,3 +1,6 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import sys
+from .version import __version__
 from .dtypes import *
 
 # Python frontend
@@ -14,3 +17,13 @@ from .symbolic import symbol
 
 # Run Jupyter notebook code
 from .jupyter import *
+
+
+# Hack that enables using @dace as a decorator
+# See https://stackoverflow.com/a/48100440/6489142
+class DaceModule(sys.modules[__name__].__class__):
+    def __call__(self, *args, **kwargs):
+        return function(*args, **kwargs)
+
+
+sys.modules[__name__].__class__ = DaceModule

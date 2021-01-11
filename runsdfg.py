@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import sys
 import time
@@ -11,4 +12,4 @@ a.apply_strict_transformations()
 print(time.time(), 'saving')
 a.save('strict.sdfg')
 print(time.time(), 'compiling')
-a.compile(optimizer=False)
+a.compile()

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Type inference: traverses code and returns types for all undefined symbols according to C semantics
     infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
@@ -57,10 +58,10 @@ def infer_expr_type(code, symbols=None):
         parsed_ast = ast.parse(symstr(code))
 
     # The parsed AST must only contain one expression
-    if isinstance(parsed_ast.body[0], ast.Expr):
+    if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
         return _dispatch(parsed_ast.body[0], symbols, inferred_symbols)
     else:
-        raise TypeError("Expected an expression")
+        raise TypeError("Expected expression, got: {}".format(type(code)))
 
 
 def _dispatch(tree, symbols, inferred_symbols):
@@ -283,6 +284,11 @@ def _NameConstant(t, symbols, inferred_symbols):
 
 
 def _Constant(t, symbols, inferred_symbols):
+    # String value
+    if isinstance(t.value, (str, bytes)):
+        return dtypes.pointer(dtypes.int8)
+
+    # Numeric value
     return dtypes.result_type_of(
         dtypes.typeclass(type(t.value)),
         dtypes.typeclass(np.min_scalar_type(t.value).name))
@@ -325,7 +331,7 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
+        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n
                 and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)

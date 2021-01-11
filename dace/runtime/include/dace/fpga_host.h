@@ -1,3 +1,4 @@
+// Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #if !defined(DACE_XILINX) && !defined(DACE_INTELFPGA)
@@ -35,8 +36,6 @@ class Context {
 
   std::unordered_map<int, hlslib::ocl::Context> contexts_;
 };
-
-extern Context *_context;
 
 }  // namespace fpga
 

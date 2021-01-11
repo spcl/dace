@@ -1,8 +1,10 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
 from collections import OrderedDict
 import inspect
+import numbers
 import sympy
 from typing import Any, Dict, List, Tuple
 
@@ -30,7 +32,11 @@ def function_to_ast(f):
     # TypeError: X is not a module, class, method, function, traceback, frame,
     # or code object; OR OSError: could not get source code
     except (TypeError, OSError):
-        raise TypeError('cannot obtain source code for dace program')
+        raise TypeError('Cannot obtain source code for dace program. This may '
+                        'happen if you are using the "python" default '
+                        'interpreter. Please either use the "ipython" '
+                        'interpreter, a Jupyter or Colab notebook, or place '
+                        'the source code in a file and import it.')
 
     src_file = inspect.getfile(f)
     _, src_line = inspect.findsource(f)
@@ -49,6 +55,8 @@ def rname(node):
         return str(node.n)
     if isinstance(node, ast.Name):  # form x
         return node.id
+    if isinstance(node, ast.Constant):
+        return str(node.value)
     if isinstance(node, ast.Subscript):  # form A[a:b,...,c:d]
         return rname(node.value)
     if isinstance(node, ast.Attribute):  # form @dace.attr_noparams
@@ -56,7 +64,20 @@ def rname(node):
     if isinstance(node, ast.Call):  # form @dace.attr(...)
         if isinstance(node.func, ast.Name):
             return node.func.id
-        return node.func.value.id + '.' + node.func.attr
+        # Assuming isinstance(node.func, ast.Attribute) == True
+        name = node.func.attr
+        # Handle calls with submodules and methods, e.g. numpy.add.reduce
+        value = node.func.value
+        while isinstance(value, ast.Attribute):
+            name = value.attr + '.' + name
+            value = value.value
+        if isinstance(value, ast.Name):
+            name = value.id + '.' + name
+        else:
+            raise NotImplementedError("Unsupported AST {n} node nested inside "
+                                      "AST call node: {s}".format(
+                                          n=type(value), s=unparse(value)))
+        return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
         return node.name
     if isinstance(node, ast.keyword):
@@ -130,6 +151,15 @@ def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
         return None
+    # Support for SymPy expressions
+    if isinstance(node, sympy.Basic):
+        return sympy.printing.pycode(node)
+    # Support for numerical constants
+    if isinstance(node, numbers.Number):
+        return str(node)
+    # Suport for string
+    if isinstance(node, str):
+        return node
     return astunparse.unparse(node).strip()
 
 
@@ -214,6 +244,17 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
 def negate_expr(node):
     """ Negates an AST expression by adding a `Not` AST node in front of it. 
     """
+
+    # Negation support for SymPy expressions
+    if isinstance(node, sympy.Basic):
+        return sympy.Not(node)
+     # Support for numerical constants
+    if isinstance(node, numbers.Number):
+        return str(not node)
+    # Negation support for strings (most likely dace.Data.Scalar names)
+    if isinstance(node, str):
+        return "not ({})".format(node)
+
     from dace.properties import CodeBlock  # Avoid import loop
     if isinstance(node, CodeBlock):
         node = node.code
@@ -255,8 +296,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                                 or field == 'orelse') and isinstance(
                                     value, ast.Expr):
                             clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname,
-                                       False):
+                            if getattr(self, "visit_TopLevel" + clsname, False):
                                 value = getattr(self, "visit_TopLevel" +
                                                 clsname)(value)
                             else:
@@ -298,10 +338,8 @@ class ExtNodeVisitor(ast.NodeVisitor):
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field == 'orelse'):
                             clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname,
-                                       False):
-                                getattr(self,
-                                        "visit_TopLevel" + clsname)(value)
+                            if getattr(self, "visit_TopLevel" + clsname, False):
+                                getattr(self, "visit_TopLevel" + clsname)(value)
                             else:
                                 self.visit(value)
                         else:
@@ -317,8 +355,11 @@ class ASTFindReplace(ast.NodeTransformer):
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
-            node.id = self.repldict[node.id]
-        return node
+            new_node = ast.copy_location(
+                ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            return new_node
+
+        return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword):
         if node.arg in self.repldict:
@@ -351,7 +392,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Load) and node.id not in self.defined:
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
+                and isinstance(node.id, str) and node.id not in ('inf', 'nan')):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)

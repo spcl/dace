@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
@@ -7,12 +8,12 @@ from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedDiGraph
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation import pattern_matching, helpers
+from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
 @registry.autoregister_params(singlestate=True)
-class MapFission(pattern_matching.Transformation):
+class MapFission(transformation.Transformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
         essentially replicating the map into maps in all of its internal
@@ -33,7 +34,7 @@ class MapFission(pattern_matching.Transformation):
         with the nested SDFGs in question.
     """
     _map_entry = nodes.EntryNode()
-    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), set(), set())
+    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), {}, {})
 
     @staticmethod
     def annotates_memlets():
@@ -59,9 +60,9 @@ class MapFission(pattern_matching.Transformation):
         """
         graph = (subgraph
                  if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
-        sdict = subgraph.scope_dict(node_to_children=True)
+        schildren = subgraph.scope_children()
         ns = [(n, graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else
-              (n, n) for n in sdict[None]
+              (n, n) for n in schildren[None]
               if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
         return ns
@@ -71,8 +72,8 @@ class MapFission(pattern_matching.Transformation):
         """ Returns a set of array names that are local to the fission
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
-        sdict = subgraph.scope_dict(node_to_children=True)
-        subset = gr.SubgraphView(parent, sdict[None])
+        schildren = subgraph.scope_children()
+        subset = gr.SubgraphView(parent, schildren[None])
         if nested:
             return set(node.data for node in subset.nodes()
                        if isinstance(node, nodes.AccessNode)
@@ -231,6 +232,8 @@ class MapFission(pattern_matching.Transformation):
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
+                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(
+                        nsdfg_node)[symname]
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:

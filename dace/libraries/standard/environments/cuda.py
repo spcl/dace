@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 
 
@@ -14,5 +15,7 @@ class CUDA:
     cmake_files = []
 
     headers = []
+    state_fields = []
     init_code = ""
     finalize_code = ""
+    dependencies = []

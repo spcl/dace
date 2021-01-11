@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement a map->for loop transformation.
 """
 
@@ -6,13 +7,13 @@ from dace import data, registry, symbolic
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
 @registry.autoregister_params(singlestate=True)
-class MapToForLoop(pattern_matching.Transformation):
+class MapToForLoop(transformation.Transformation):
     """ Implements the Map to for-loop transformation.
 
         Takes a map and enforces a sequential schedule by transforming it into
@@ -56,8 +57,7 @@ class MapToForLoop(pattern_matching.Transformation):
         loop_from, loop_to, loop_step = map_entry.map.range[0]
 
         # Turn the map scope into a nested SDFG
-        node = nest_state_subgraph(sdfg, graph,
-                                   graph.scope_subgraph(map_entry))
+        node = nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
 
         nsdfg: SDFG = node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
@@ -86,10 +86,11 @@ class MapToForLoop(pattern_matching.Transformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
-                       '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
-                       '%s + %s' % (loop_idx, replace_param(loop_step)))
-
+        loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
+                        '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
+                        '%s + %s' % (loop_idx, replace_param(loop_step)))
+        # store as object fields for external access
+        self.before_state, self.guard, self.after_state = loop_result
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
             src_node = nstate.memlet_path(edge)[0].src
@@ -107,5 +108,8 @@ class MapToForLoop(pattern_matching.Transformation):
             [e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])
         # Remove scope nodes
         nstate.remove_nodes_from([map_entry, map_exit])
+
+        # create object field for external nsdfg access
+        self.nsdfg = nsdfg
 
         return node, nstate

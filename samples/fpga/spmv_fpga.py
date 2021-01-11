@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 from __future__ import print_function
 
 import argparse
@@ -156,13 +156,13 @@ def make_nested_sdfg(parent):
                         dtype,
                         storage=dace.dtypes.StorageType.FPGA_Global)
 
-    compute_entry._in_connectors.add("rowptr")
+    compute_entry.add_in_connector("rowptr")
     state.add_memlet_path(rowptr,
                           compute_entry,
                           dst_conn="rowptr",
                           memlet=dace.memlet.Memlet.simple(rowptr, "0"))
 
-    compute_entry._in_connectors.add("rowend")
+    compute_entry.add_in_connector("rowend")
     state.add_memlet_path(rowend,
                           compute_entry,
                           dst_conn="rowend",

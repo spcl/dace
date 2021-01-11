@@ -1,15 +1,16 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pattern_matching
+from dace.transformation import transformation
 from dace.properties import Property, make_properties
 
 
 @registry.autoregister
 @make_properties
-class GPUTransformSDFG(pattern_matching.Transformation):
+class GPUTransformSDFG(transformation.Transformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
@@ -80,8 +81,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 return False
 
         for state in sdfg.nodes():
-            sdict = state.scope_dict(node_to_children=True)
-            for node in sdict[None]:
+            schildren = state.scope_children()
+            for node in schildren[None]:
                 # If two top-level tasklets are connected with a code->code
                 # memlet, they will transform into an invalid SDFG
                 if (isinstance(node, nodes.CodeNode) and any(
@@ -93,9 +94,6 @@ class GPUTransformSDFG(pattern_matching.Transformation):
     @staticmethod
     def match_to_str(graph, candidate):
         return graph.label
-
-    def modifies_graph(self):
-        return True
 
     def apply(self, sdfg: sd.SDFG):
 
@@ -119,8 +117,8 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode)
-                                    and last_edge.dst_conn and
-                                    not last_edge.dst_conn.startswith('IN_')
+                                    and last_edge.dst_conn
+                                    and not last_edge.dst_conn.startswith('IN_')
                                     and sdict[last_edge.dst] is None):
                                 break
                         else:
@@ -279,10 +277,14 @@ class GPUTransformSDFG(pattern_matching.Transformation):
                 # when they are removed from the graph
                 in_edges = list(state.in_edges(gcode))
                 out_edges = list(state.out_edges(gcode))
-                me.in_connectors = set('IN_' + e.dst_conn for e in in_edges)
-                me.out_connectors = set('OUT_' + e.dst_conn for e in in_edges)
-                mx.in_connectors = set('IN_' + e.src_conn for e in out_edges)
-                mx.out_connectors = set('OUT_' + e.src_conn for e in out_edges)
+                me.in_connectors = {('IN_' + e.dst_conn): None
+                                    for e in in_edges}
+                me.out_connectors = {('OUT_' + e.dst_conn): None
+                                     for e in in_edges}
+                mx.in_connectors = {('IN_' + e.src_conn): None
+                                    for e in out_edges}
+                mx.out_connectors = {('OUT_' + e.src_conn): None
+                                     for e in out_edges}
 
                 # Create memlets through map
                 for e in in_edges:
@@ -307,12 +309,13 @@ class GPUTransformSDFG(pattern_matching.Transformation):
         for i, state in enumerate(sdfg.nodes()):
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
-                    if sdict[node] is None:
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Default
+                    elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
-                    elif (isinstance(node,
-                                     (nodes.EntryNode, nodes.LibraryNode))
-                          and self.sequential_innermaps):
+                else:
+                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
                         node.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################

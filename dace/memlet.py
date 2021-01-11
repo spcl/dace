@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from copy import deepcopy as dcpy
 from functools import reduce
@@ -44,7 +45,6 @@ class Memlet(object):
                          'lambda function. The syntax of the lambda function '
                          'receives two elements: `current` value and `new` '
                          'value, and returns the value after resolution')
-    veclen = Property(dtype=int, desc="Vector length", default=1)
 
     # Code generation and validation hints
     debuginfo = DebugInfoProperty(desc='Line information to track source and '
@@ -62,7 +62,6 @@ class Memlet(object):
                  data: str = None,
                  subset: Union[str, subsets.Subset] = None,
                  other_subset: Union[str, subsets.Subset] = None,
-                 veclen: int = 1,
                  volume: Union[int, str, symbolic.SymbolicType] = None,
                  dynamic: bool = False,
                  wcr: Union[str, ast.AST] = None,
@@ -138,7 +137,6 @@ class Memlet(object):
         self.wcr = wcr
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
-        self.veclen = veclen
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -182,16 +180,15 @@ class Memlet(object):
         node.other_subset = dcpy(self.other_subset, memo=memo)
         node.data = dcpy(self.data, memo=memo)
         node.wcr = dcpy(self.wcr, memo=memo)
-        node._veclen = self._veclen
         node.debuginfo = dcpy(self.debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
+        node._is_data_src = self._is_data_src
 
         # Nullify graph references
         node._sdfg = None
         node._state = None
         node._edge = None
-        node._is_data_src = None
 
         return node
 
@@ -218,7 +215,6 @@ class Memlet(object):
     @staticmethod
     def simple(data,
                subset_str,
-               veclen=1,
                wcr_str=None,
                other_subset_str=None,
                wcr_conflict=True,
@@ -231,8 +227,6 @@ class Memlet(object):
                         AccessNode.
             :param subset_str: The subset of `data` that is going to
                                be accessed in string format. Example: '0:N'.
-            :param veclen: The length of a single unit of access to
-                           the data (used for vectorization optimizations).
             :param wcr_str: A lambda function (as a string) specifying
                             how write-conflicts are resolved. The syntax
                             of the lambda function receives two elements:
@@ -299,7 +293,6 @@ class Memlet(object):
             result.data = data
 
         result.wcr_nonatomic = not wcr_conflict
-        result.veclen = veclen
 
         return result
 
@@ -354,6 +347,11 @@ class Memlet(object):
         self._state = state
         self._edge = edge
 
+        # If memlet is code->code, ensure volume=1
+        if (isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode)
+                and self.volume == 0):
+            self.volume = 1
+
         # Find source/destination of memlet
         try:
             path = state.memlet_path(edge)
@@ -366,6 +364,10 @@ class Memlet(object):
             if path[-1].dst.data == self._data:
                 is_data_src = False
         self._is_data_src = is_data_src
+
+        # If subset is None, fill in with entire array
+        if (self.data is not None and self.subset is None):
+            self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
@@ -387,6 +389,30 @@ class Memlet(object):
             self.volume == other.volume, self.src_subset == other.src_subset,
             self.dst_subset == other.dst_subset, self.wcr == other.wcr
         ])
+
+    def replace(self, repl_dict):
+        """ Substitute a given set of symbols with a different set of symbols.
+            :param repl_dict: A dict of string symbol names to symbols with
+                              which to replace them.
+        """
+        repl_to_intermediate = {}
+        repl_to_final = {}
+        for symbol in repl_dict:
+            if str(symbol) != str(repl_dict[symbol]):
+                intermediate = symbolic.symbol('__dacesym_' + str(symbol))
+                repl_to_intermediate[symbolic.symbol(symbol)] = intermediate
+                repl_to_final[intermediate] = repl_dict[symbol]
+
+        if len(repl_to_intermediate) > 0:
+            if self.volume is not None and symbolic.issymbolic(self.volume):
+                self.volume = self.volume.subs(repl_to_intermediate)
+                self.volume = self.volume.subs(repl_to_final)
+            if self.subset is not None:
+                self.subset.replace(repl_to_intermediate)
+                self.subset.replace(repl_to_final)
+            if self.other_subset is not None:
+                self.other_subset.replace(repl_to_intermediate)
+                self.other_subset.replace(repl_to_final)
 
     def num_elements(self):
         """ Returns the number of elements in the Memlet subset. """
@@ -415,11 +441,31 @@ class Memlet(object):
             return self.subset if self._is_data_src else self.other_subset
         return self.subset
 
+    @src_subset.setter
+    def src_subset(self, new_src_subset):
+        if self._is_data_src is not None:
+            if self._is_data_src:
+                self.subset = new_src_subset
+            else:
+                self.other_subset = new_src_subset
+        else:
+            self.subset = new_src_subset
+
     @property
     def dst_subset(self):
         if self._is_data_src is not None:
             return self.other_subset if self._is_data_src else self.subset
         return self.other_subset
+
+    @dst_subset.setter
+    def dst_subset(self, new_dst_subset):
+        if self._is_data_src is not None:
+            if self._is_data_src:
+                self.other_subset = new_dst_subset
+            else:
+                self.subset = new_dst_subset
+        else:
+            self.other_subset = new_dst_subset
 
     def validate(self, sdfg, state):
         if self.data is not None and self.data not in sdfg.arrays:

@@ -1,6 +1,8 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests that generate various instrumentation reports with timers and
     performance counters. """
 
+import pytest
 import numpy as np
 import sys
 
@@ -12,8 +14,7 @@ N = dace.symbol('N')
 
 
 @dace.program
-def slowmm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N,
-                                                                         N]):
+def slowmm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
     for t in range(20):
 
         @dace.map
@@ -39,7 +40,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
             node.map.instrument = instrumentation
             state.instrument = instrumentation
 
-    if instrumentation == dace.InstrumentationType.CUDA_Events:
+    if instrumentation == dace.InstrumentationType.GPU_Events:
         sdfg.apply_transformations(GPUTransformSDFG)
 
     sdfg(A=A, B=B, C=C, N=N)
@@ -58,17 +59,19 @@ def test_timer():
     onetest(dace.InstrumentationType.Timer)
 
 
+@pytest.mark.papi
 def test_papi():
     # Run a lighter load for the sake of performance
     onetest(dace.InstrumentationType.PAPI_Counters, 4)
 
 
-def test_cuda_events():
-    onetest(dace.InstrumentationType.CUDA_Events)
+@pytest.mark.gpu
+def test_gpu_events():
+    onetest(dace.InstrumentationType.GPU_Events)
 
 
 if __name__ == '__main__':
     test_timer()
     test_papi()
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
-        test_cuda_events()
+        test_gpu_events()

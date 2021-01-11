@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ Types and wrappers used in DaCe's Python frontend. """
 from __future__ import print_function
 import numpy
@@ -19,14 +20,14 @@ def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
 
 
 class stream(object):
-    """ Stream array object in Python. Mostly used in the Python SDFG 
+    """ Stream array object in Python. Mostly used in the Python SDFG
         simulator. """
     def __init__(self, dtype, shape):
         from dace import data
 
         self._type = dtype
         self._shape = shape
-        self.descriptor = data.Stream(dtype, 1, 0, shape, True)
+        self.descriptor = data.Stream(dtype, 0, shape, True)
         self.queue_array = numpy.ndarray(shape, dtype=deque)
         for i in itertools.product(*(range(s) for s in shape)):
             self.queue_array[i] = deque()

@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This sample uses basic grid-search based tuning to adapt memory layouts for
     a simple matrix multiplication. """
 import dace
@@ -80,7 +81,7 @@ def test_configuration(a_trans: bool, b_trans: bool, a_padding: int,
     C = np.zeros([M.get(), N.get()], dtype.type)
 
     # Invoke SDFG: compile without additional transformations and run
-    csdfg = sdfg.compile(optimizer=False)
+    csdfg = sdfg.compile()
     csdfg(A=A,
           B=B,
           C=C,
@@ -118,7 +119,7 @@ if __name__ == '__main__':
                                         tB_padding)
 
             # Obtain the first entry type from the report (there is only one)
-            entry = np.array(list(report.entries.values())[0])
+            entry = np.array(list(report.durations.values())[0])
             print(list(entry))
 
             # Use median value to rank performance

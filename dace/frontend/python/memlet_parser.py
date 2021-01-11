@@ -1,3 +1,4 @@
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
 import re
@@ -135,6 +136,8 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
     else:  # Use entire range
         subset = _ndslice_to_subset(ndslice)
 
+    if isinstance(subset, subsets.Indices):
+        subset = subsets.Range([(i, i, 1) for i in subset])
     return subset
 
 
