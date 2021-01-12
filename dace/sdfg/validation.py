@@ -221,9 +221,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     state_id,
                     nid,
                 )
+            arr = sdfg.arrays[node.data]
+
+            # Verify View references
+            if isinstance(arr, dt.View):
+                from dace.sdfg import utils as sdutil  # Avoid import loops
+                if sdutil.get_view_edge(state, node) is None:
+                    raise InvalidSDFGNodeError(
+                        "Ambiguous or invalid edge to/from a View access node",
+                        sdfg, state_id, nid)
 
             # Find uninitialized transients
-            arr = sdfg.arrays[node.data]
             if (arr.transient and state.in_degree(node) == 0
                     and state.out_degree(node) > 0
                     # Streams do not need to be initialized
@@ -246,7 +254,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         % (node.data, state.label))
 
             # Find writes to input-only arrays
-            only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
+            only_empty_inputs = all(e.data.is_empty()
+                                    for e in state.in_edges(node))
             if (not arr.transient) and (not only_empty_inputs):
                 nsdfg_node = sdfg.parent_nsdfg_node
                 if nsdfg_node is not None:

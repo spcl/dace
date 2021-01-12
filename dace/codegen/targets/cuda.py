@@ -343,7 +343,12 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         if isinstance(nodedesc, dace.data.Stream):
             return self.allocate_stream(sdfg, dfg, state_id, node,
                                         function_stream, declaration_stream,
-                                        allocation_stream)
+                                        allocation_stream)                                        
+        elif isinstance(nodedesc, dace.data.View):
+            return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node,
+                                                   function_stream,
+                                                   declaration_stream,
+                                                   allocation_stream)
 
         result_decl = StringIO()
         result_alloc = StringIO()
@@ -506,6 +511,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node,
                                           function_stream, callsite_stream)
+        elif isinstance(nodedesc, dace.data.View):
+            return
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             callsite_stream.write('%sFree(%s);\n' % (self.backend, dataname),

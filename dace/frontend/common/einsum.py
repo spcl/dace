@@ -5,12 +5,12 @@ from itertools import chain
 from string import ascii_letters
 from typing import Dict, Optional
 
+import dace
 from dace import dtypes, symbolic
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
-
 
 def _is_sequential(index_list):
     if not index_list:
@@ -158,7 +158,8 @@ def prod(iterable):
 
 
 @oprepo.replaces('numpy.einsum')
-def create_einsum_sdfg(sdfg: SDFG,
+def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
+                       sdfg: SDFG,
                        state: SDFGState,
                        einsum_string: str,
                        *arrays: str,

@@ -1334,6 +1334,48 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
+    def add_view(self,
+                  name: str,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  strides=None,
+                  offset=None,
+                  debuginfo=None,
+                  allow_conflicts=False,
+                  total_size=None,
+                  find_new_name=False,
+                  alignment=0,
+                  may_alias=False) -> Tuple[str, dt.View]:
+        """ Adds a view to the SDFG data descriptor store. """
+
+        # convert strings to int if possible
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+
+        if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+            dtype = dtypes.typeclass(dtype)
+
+        desc = dt.View(dtype,
+                        shape,
+                        storage=storage,
+                        allow_conflicts=allow_conflicts,
+                        transient=True,
+                        strides=strides,
+                        offset=offset,
+                        lifetime=dtypes.AllocationLifetime.Scope,
+                        alignment=alignment,
+                        debuginfo=debuginfo,
+                        total_size=total_size,
+                        may_alias=may_alias)
+
+        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+
     def add_stream(self,
                    name: str,
                    dtype,

@@ -275,6 +275,18 @@ class AccessNode(Node):
         if self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
+    def has_writes(self, state):
+        for e in state.in_edges(self):
+            if not e.data.is_empty():
+                return True
+        return False
+
+    def has_reads(self, state):
+        for e in state.out_edges(self):
+            if not e.data.is_empty():
+                return True
+        return False
+
 
 # ------------------------------------------------------------------------------
 
