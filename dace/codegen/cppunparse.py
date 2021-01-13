@@ -320,10 +320,10 @@ class CPPUnparser:
                 (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
                     target.id, self._indent):
 
-                # the target is not already defined: we should try to infer the type
-                if self.type_inference is True:
-                    # if the target type is already known, no need to perform type inference
-                    if target.id not in self.defined_symbols:
+                # if the target is already defined, do not redefine it
+                if target.id not in self.defined_symbols:
+                    # we should try to infer the type
+                    if self.type_inference is True:
                         # Perform type inference
                         # Build dictionary with symbols
                         def_symbols = {}
@@ -346,9 +346,9 @@ class CPPUnparser:
                         else:
                             self.write(dace.dtypes._CTYPES[inferred_type.type] +
                                        " ")
-                else:
-                    self.locals.define(target.id, t.lineno, self._indent)
-                    self.write("auto ")
+                    else:
+                        self.locals.define(target.id, t.lineno, self._indent)
+                        self.write("auto ")
 
             # dispatch target
             self.dispatch(target)
