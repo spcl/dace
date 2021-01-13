@@ -20,13 +20,14 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, issymbolic
 
 import numpy as np
 import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
+
 
 def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
     """ Normalize a list of axes by converting negative dimensions to positive.
@@ -46,27 +47,34 @@ def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
-def _define_local_ex(sdfg: SDFG,
-                     state: SDFGState,
-                     shape: Shape,
-                     dtype: dace.typeclass,
-                     storage: dtypes.StorageType = dtypes.StorageType.Default):
+def _define_local_ex(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    shape: Shape,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default,
+    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
+    name, _ = sdfg.add_temp_transient(shape,
+                                      dtype,
+                                      storage=storage,
+                                      lifetime=lifetime)
     return name
 
 
 @oprepo.replaces('numpy.ndarray')
-def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
+def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape,
                   dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
-    return _define_local_ex(sdfg, state, shape, dtype)
+    return _define_local_ex(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
+    pv: 'ProgramVisitor',
     sdfg: SDFG,
     state: SDFGState,
     dtype: dace.typeclass,
@@ -78,7 +86,8 @@ def _define_local_scalar(
 
 
 @oprepo.replaces('dace.define_stream')
-def _define_stream(sdfg: SDFG,
+def _define_stream(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
                    state: SDFGState,
                    dtype: dace.typeclass,
                    buffer_size: Size = 1):
@@ -90,7 +99,8 @@ def _define_stream(sdfg: SDFG,
 
 @oprepo.replaces('dace.define_streamarray')
 @oprepo.replaces('dace.stream')
-def _define_streamarray(sdfg: SDFG,
+def _define_streamarray(pv: 'ProgramVisitor',
+                        sdfg: SDFG,
                         state: SDFGState,
                         shape: Shape,
                         dtype: dace.typeclass,
@@ -106,7 +116,8 @@ def _define_streamarray(sdfg: SDFG,
 
 
 @oprepo.replaces('dace.reduce')
-def _reduce(sdfg: SDFG,
+def _reduce(pv: 'ProgramVisitor',
+            sdfg: SDFG,
             state: SDFGState,
             redfunction: Callable[[Any, Any], Any],
             in_array: str,
@@ -180,7 +191,13 @@ def _reduce(sdfg: SDFG,
 
 
 @oprepo.replaces('numpy.eye')
-def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
+def eye(pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        N,
+        M=None,
+        k=0,
+        dtype=dace.float64):
     M = M or N
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
@@ -195,7 +212,8 @@ def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
 
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
-def _elementwise(sdfg: SDFG,
+def _elementwise(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
                  state: SDFGState,
                  func: str,
                  in_array: str,
@@ -320,7 +338,7 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
 @oprepo.replaces('math.exp')
-def _exp(sdfg: SDFG, state: SDFGState, input: str):
+def _exp(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'exp')
 
 
@@ -328,7 +346,7 @@ def _exp(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
 @oprepo.replaces('math.sin')
-def _sin(sdfg: SDFG, state: SDFGState, input: str):
+def _sin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sin')
 
 
@@ -336,7 +354,7 @@ def _sin(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
 @oprepo.replaces('math.cos')
-def _cos(sdfg: SDFG, state: SDFGState, input: str):
+def _cos(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'cos')
 
 
@@ -344,7 +362,7 @@ def _cos(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
 @oprepo.replaces('math.sqrt')
-def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
+def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sqrt')
 
 
@@ -352,21 +370,21 @@ def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
 @oprepo.replaces('math.log')
-def _log(sdfg: SDFG, state: SDFGState, input: str):
+def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
 @oprepo.replaces('numpy.conj')
-def _conj(sdfg: SDFG, state: SDFGState, input: str):
+def _conj(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'conj')
 
 
 @oprepo.replaces('real')
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
-def _real(sdfg: SDFG, state: SDFGState, input: str):
+def _real(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'real', _complex_to_scalar(inptype))
 
@@ -374,7 +392,7 @@ def _real(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('imag')
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
-def _imag(sdfg: SDFG, state: SDFGState, input: str):
+def _imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
@@ -382,7 +400,11 @@ def _imag(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
-def _transpose(sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
+def _transpose(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               inpname: str,
+               axes=None):
 
     if axes is None:
         arr1 = sdfg.arrays[inpname]
@@ -427,14 +449,18 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
 
 @oprepo.replaces('numpy.sum')
-def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
 
 
 @oprepo.replaces('numpy.mean')
-def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _mean(pv: 'ProgramVisitor',
+          sdfg: SDFG,
+          state: SDFGState,
+          a: str,
+          axis=None):
 
-    nest = NestedCall(sdfg, state)
+    nest = NestedCall(pv, sdfg, state)
 
     sum = nest(_sum)(a, axis=axis)
 
@@ -456,8 +482,8 @@ def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
-def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg,
+def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
@@ -467,8 +493,8 @@ def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
-def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg,
+def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
@@ -477,23 +503,24 @@ def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(sdfg, state, a, axis, func="max", result_type=result_type)
+def _argmax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(sdfg, state, a, axis, func="min", result_type=result_type)
+def _argmin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
 
-def _argminmax(sdfg: SDFG,
+def _argminmax(pv: 'ProgramVisitor',
+               sdfg: SDFG,
                state: SDFGState,
                a: str,
                axis,
                func,
                result_type=dace.int32,
                return_both=False):
-    nest = NestedCall(sdfg, state)
+    nest = NestedCall(pv, sdfg, state)
 
     assert func in ['min', 'max']
 
@@ -607,11 +634,17 @@ def _argminmax(sdfg: SDFG,
 # Python operation replacements ##############################################
 ##############################################################################
 
+
 def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     """ Implements a general element-wise array unary operator. """
     arr1 = sdfg.arrays[op1]
 
-    name, _ = sdfg.add_temp_transient(arr1.shape, arr1.dtype, arr1.storage)
+    restype, cast = _result_type([arr1], opname)
+    tasklet_code = "__out = {} __in1".format(opcode)
+    if cast:
+        tasklet_code = tasklet_code.replace('__in1', "{}(__in1)".format(cast))
+
+    name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
         "_%s_" % opname,
         {'__i%d' % i: '0:%s' % s
@@ -727,7 +760,7 @@ def _makeunop(op, opcode):
             op1: str,
             op2=None):
         scalar1 = sdfg.arrays[op1]
-        restype = scalar1.dtype
+        restype, _ = _result_type([scalar1], op)
         op2 = sdfg.temp_data_name()
         _, scalar2 = sdfg.add_scalar(op2, restype, transient=True)
         tasklet = state.add_tasklet("_%s_" % op, {'__in'}, {'__out'},
@@ -737,7 +770,7 @@ def _makeunop(op, opcode):
         state.add_edge(node1, None, tasklet, '__in',
                        dace.Memlet.from_array(op1, scalar1))
         state.add_edge(tasklet, '__out', node2, None,
-                        dace.Memlet.from_array(op2, scalar2))
+                       dace.Memlet.from_array(op2, scalar2))
         return op2
 
     @oprepo.replaces_operator('NumConstant', op)
@@ -777,135 +810,310 @@ def _makeunop(op, opcode):
 
 
 def _is_op_arithmetic(op: str):
-    if op in {'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod'}:
+    if op in {
+            'Add', 'Sub', 'Mult', 'Div', 'FloorDiv', 'Pow', 'Mod', 'FloatPow',
+            'Heaviside', 'Arctan2', 'Hypot'
+    }:
         return True
     return False
 
 
 def _is_op_bitwise(op: str):
-    if op in {'LShift', 'RShift', 'BitOr', 'BitXor', 'BitAnd'}:
+    if op in {'LShift', 'RShift', 'BitOr', 'BitXor', 'BitAnd', 'Invert'}:
         return True
     return False
 
 
 def _is_op_boolean(op: str):
-    if op in {'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE'}:
+    if op in {
+            'And', 'Or', 'Not', 'Eq', 'NotEq', 'Lt', 'LtE', 'Gt', 'GtE', 'Is',
+            'NotIs', 'Xor', 'FpBoolean', 'SignBit'
+    }:
         return True
     return False
 
 
-def _sym_type(expr: Union[symbolic.symbol, sp.Expr]) -> dtypes.typeclass:
+def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
+    if isinstance(dtype, dtypes.typeclass):
+        nptype = dtype.type
+    else:
+        nptype = dtype
+    if issubclass(nptype, bool):
+        return True
+    elif issubclass(nptype, np.bool_):
+        return np.bool_(True)
+    elif issubclass(nptype, Integral):
+        return nptype(np.iinfo(nptype).max)
+    else:
+        return nptype(np.finfo(nptype).resolution)
+
+
+def _np_result_type(nptypes):
+    # Fix for np.result_type returning platform-dependent types,
+    # e.g. np.longlong
+    restype = np.result_type(*nptypes)
+    if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
+        for k in dtypes.DTYPE_TO_TYPECLASS.keys():
+            if k == restype.type:
+                return dtypes.DTYPE_TO_TYPECLASS[k]
+    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+
+
+def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
     if isinstance(expr, symbolic.symbol):
         return expr.dtype
-    freesym = [s for s in expr.free_symbols]
-    if len(freesym) == 1:
-        return freesym[0].dtype
-    typeclasses = [s.dtype.type for s in freesym]
-    return dtypes.DTYPE_TO_TYPECLASS[np.result_type(*typeclasses).type]
+    representative_value = expr.subs([(s, _representative_num(s.dtype))
+                                      for s in expr.free_symbols])
+    pyval = eval(astutils.unparse(representative_value))
+    # Overflow check
+    if isinstance(pyval, int) and (pyval > np.iinfo(np.int64).max
+                                   or pyval < np.iinfo(np.int64).min):
+        nptype = np.int64
+    else:
+        nptype = np.result_type(pyval)
+    return _np_result_type([nptype])
 
 
-def _convert_type(dtype1, dtype2, operator) -> Tuple[dace.dtypes.typeclass]:
+def _cast_str(dtype: dtypes.typeclass) -> str:
+    return dtypes.TYPECLASS_TO_STRING[dtype].replace('::', '.')
 
-    complex_types = {dace.complex64, dace.complex128,
-                     np.complex64, np.complex128}
-    float_types = {dace.float16, dace.float32, dace.float64,
-                   np.float16, np.float32, np.float64}
-    signed_types = {dace.int8, dace.int16, dace.int32, dace.int64,
-                    np.int8, np.int16, np.int32, np.int64}
+
+def _result_type(
+    arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic]],
+    operator: str = None
+) -> Tuple[Union[List[dtypes.typeclass], dtypes.typeclass, str], ...]:
+
+    datatypes = []
+    dtypes_for_result = []
+    for arg in arguments:
+        if isinstance(arg, (data.Array, data.Stream)):
+            datatypes.append(arg.dtype)
+            dtypes_for_result.append(arg.dtype.type)
+        elif isinstance(arg, data.Scalar):
+            datatypes.append(arg.dtype)
+            dtypes_for_result.append(_representative_num(arg.dtype))
+        elif isinstance(arg, Number):
+            datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+            dtypes_for_result.append(arg)
+        elif symbolic.issymbolic(arg):
+            datatypes.append(_sym_type(arg))
+            dtypes_for_result.append(_representative_num(_sym_type(arg)))
+        else:
+            raise TypeError("Type {t} of argument {a} is not supported".format(
+                t=type(arg), a=arg))
+
+    complex_types = {
+        dace.complex64, dace.complex128, np.complex64, np.complex128
+    }
+    float_types = {
+        dace.float16, dace.float32, dace.float64, np.float16, np.float32,
+        np.float64
+    }
+    signed_types = {
+        dace.int8, dace.int16, dace.int32, dace.int64, np.int8, np.int16,
+        np.int32, np.int64
+    }
     # unsigned_types = {np.uint8, np.uint16, np.uint32, np.uint64}
 
-    if dtype1 in complex_types:
-        type1 = 3  # complex
-    elif dtype1 in float_types:
-        type1 = 2  # float
-    elif dtype1 in signed_types:
-        type1 = 1  # signed integer, bool
-    else:
-        type1 = 0  # unsigned integer
-
-    if dtype2 in complex_types:
-        type2 = 3  # complex
-    elif dtype2 in float_types:
-        type2 = 2  # float
-    elif dtype2 in signed_types:
-        type2 = 1  # signed integer, bool
-    else:
-        type2 = 0  # unsigned integer
-
-    left_cast = None
-    right_cast = None
-
-    if _is_op_arithmetic(operator):
-
-        # Float division between integers
-        if operator == 'Div' and max(type1, type2) < 2:
-            max_bytes = max(dtype1.bytes, dtype2.bytes)
-            if type1 == type2 and type1 == 0:  # Unsigned integers
-                result_type = eval('dace.uint{}'.format(4 * max_bytes))
-            else:
-                result_type = eval('dace.int{}'.format(4 * max_bytes))
-        # Floor division with at least one complex argument
-        elif operator == 'FloorDiv' and max(type1, type2) == 3:
-            raise TypeError("can't take floor of complex number")
-        # Floor division with at least one float argument
-        elif operator == 'FloorDiv' and max(type1, type2) == 2:
-            result_type = dace.int64
-        # Floor division between integers
-        elif operator == 'FloorDiv' and max(type1, type2) < 2:
-            max_bytes = max(dtype1.bytes, dtype2.bytes)
-            if type1 == type2 and type1 == 0:  # Unsigned integers
-                result_type = eval('dace.uint{}'.format(4 * max_bytes))
-            else:
-                result_type = eval('dace.int{}'.format(4 * max_bytes))
-            # TODO: Improve this performance-wise?
-            right_cast = dace.float64
-        # Power with base integer and exponent signed integer
-        elif (operator == 'Pow' and max(type1, type2) < 2 and
-                dtype2 in signed_types):
-            result_type = dace.float64
-            left_cast = dace.float64
-            right_cast = dace.float64
-        # All other arithmetic operators and cases of the above operators
+    coarse_types = []
+    for dtype in datatypes:
+        if dtype in complex_types:
+            coarse_types.append(3)  # complex
+        elif dtype in float_types:
+            coarse_types.append(2)  # float
+        elif dtype in signed_types:
+            coarse_types.append(1)  # signed integer, bool
         else:
-            # TODO: Does this always make sense?
-            result_type = dace.DTYPE_TO_TYPECLASS[
-                np.result_type(dtype1.type, dtype2.type).type]
-            if max(type1, type2) == 3:
-                if type1 < 3:
-                    left_cast = dtype2
-                elif type2 < 3:
-                    right_cast = dtype1
+            coarse_types.append(0)  # unsigned integer
 
-    elif _is_op_bitwise(operator):
-        # Only integers may be arguments of bitwise and shifting operations
-        if max(type1, type2) > 1:
-            raise TypeError("unsupported operand type(s) for {}: "
-                            "'{}' and '{}'".format(operator, dtype1, dtype2))
+    casting = [None] * len(arguments)
+
+    if len(arguments) == 1:  # Unary operators
+
+        if not operator:
+            result_type = datatypes[0]
+        elif operator == 'USub' and coarse_types[0] == 0:
+            result_type = eval('dace.int{}'.format(8 * datatypes[0].bytes))
+        elif operator == 'Abs' and coarse_types[0] == 3:
+            result_type = eval('dace.float{}'.format(4 * datatypes[0].bytes))
+        elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing',
+                           'Modf', 'Floor', 'Ceil', 'Trunc')
+              and coarse_types[0] == 3):
+            raise TypeError(
+                "ufunc '{}' not supported for complex input".format(operator))
+        elif (operator in ('Fabs', 'Rint', 'Exp', 'Log', 'Sqrt', 'Cbrt',
+                           'Trigonometric', 'Angles', 'FpBoolean', 'Spacing',
+                           'Modf', 'Floor', 'Ceil', 'Trunc')
+              and coarse_types[0] < 2):
+            result_type = dace.float64
+            casting[0] = _cast_str(result_type)
+        elif operator in ('Frexp'):
+            if coarse_types[0] == 3:
+                raise TypeError("ufunc '{}' not supported for complex "
+                                "input".format(operator))
+            result_type = [None, dace.int32]
+            if coarse_types[0] < 2:
+                result_type[0] = dace.float64
+                casting[0] = _cast_str(result_type[0])
+            else:
+                result_type[0] = datatypes[0]
+        elif _is_op_bitwise(operator) and coarse_types[0] > 1:
+            raise TypeError("unsupported operand type for {}: '{}'".format(
+                operator, datatypes[0]))
+        elif _is_op_boolean(operator):
+            result_type = dace.bool_
+            if operator == 'SignBit' and coarse_types[0] < 2:
+                casting[0] = _cast_str(dace.float64)
+        else:
+            result_type = datatypes[0]
+
+    elif len(arguments) == 2:  # Binary operators
+
+        type1 = coarse_types[0]
+        type2 = coarse_types[1]
+        dtype1 = datatypes[0]
+        dtype2 = datatypes[1]
         max_bytes = max(dtype1.bytes, dtype2.bytes)
-        result_type = eval('dace.int{}'.format(4 * max_bytes))
+        left_cast = None
+        right_cast = None
 
-    elif _is_op_boolean(operator):
-        result_type = dace.bool_
+        if _is_op_arithmetic(operator):
 
-    else:
-        result_type = dace.DTYPE_TO_TYPECLASS[
-            np.result_type(dtype1.type, dtype2.type).type]
-        if max(type1, type2) == 3:
-            if type1 < 3:
-                left_cast = dtype2
-            elif type2 < 3:
-                right_cast = dtype1
+            # Float/True division between integers
+            if operator == 'Div' and max(type1, type2) < 2:
+                # NOTE: Leaving this here in case we implement a C/C++ flag
+                # if type1 == type2 and type1 == 0:  # Unsigned integers
+                #     result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                # else:
+                #     result_type = eval('dace.int{}'.format(8 * max_bytes))
+                result_type = dace.float64
+            # Floor division with at least one complex argument
+            # NOTE: NumPy allows this operation
+            # elif operator == 'FloorDiv' and max(type1, type2) == 3:
+            #     raise TypeError("can't take floor of complex number")
+            # Floor division with at least one float argument
+            elif operator == 'FloorDiv' and max(type1, type2) == 2:
+                if type1 == type2:
+                    result_type = eval('dace.float{}'.format(8 * max_bytes))
+                else:
+                    result_type = dace.float64
+            # Floor division between integers
+            elif operator == 'FloorDiv' and max(type1, type2) < 2:
+                if type1 == type2 and type1 == 0:  # Unsigned integers
+                    result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                else:
+                    result_type = eval('dace.int{}'.format(8 * max_bytes))
+            # Power with base integer and exponent signed integer
+            elif (operator == 'Pow' and max(type1, type2) < 2
+                  and dtype2 in signed_types):
+                result_type = dace.float64
+            elif operator == 'FloatPow':
+                # Float power with integers or floats
+                if max(type1, type2) < 3:
+                    result_type = dace.float64
+                # Float power with complex numbers
+                else:
+                    result_type = dace.complex128
+            elif (operator in ('Heaviside', 'Arctan2', 'Hypot')
+                  and max(type1, type2) == 3):
+                raise TypeError(
+                    "ufunc '{}' not supported for complex input".format(
+                        operator))
+            elif (operator in ('Heaviside', 'Arctan2', 'Hypot')
+                  and max(type1, type2) < 2):
+                result_type = dace.float64
+            # All other arithmetic operators and cases of the above operators
+            else:
+                result_type = _np_result_type(dtypes_for_result)
+
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
+
+        elif _is_op_bitwise(operator):
+
+            type1 = coarse_types[0]
+            type2 = coarse_types[1]
+            dtype1 = datatypes[0]
+            dtype2 = datatypes[1]
+
+            # Only integers may be arguments of bitwise and shifting operations
+            if max(type1, type2) > 1:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1,
+                                                       dtype2))
+            result_type = _np_result_type(dtypes_for_result)
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
+
+        elif _is_op_boolean(operator):
+            result_type = dace.bool_
+
+        elif operator in ('Gcd', 'Lcm'):
+            if max(type1, type2) > 1:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1,
+                                                       dtype2))
+            result_type = _np_result_type(dtypes_for_result)
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
+
+        elif operator and operator in ('CopySign', 'NextAfter'):
+            if max(type1, type2) > 2:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1,
+                                                       dtype2))
+            if max(type1, type2) < 2:
+                result_type = dace.float64
+            else:
+                result_type = _np_result_type(dtypes_for_result)
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
+
+        elif operator and operator in ('Ldexp'):
+            if max(type1, type2) > 2 or type2 > 1:
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1,
+                                                       dtype2))
+            if type1 < 2:
+                result_type = dace.float64
+                left_cast = _cast_str(result_type)
+            else:
+                result_type = dtype1
+            if dtype2 != dace.int32:
+                right_cast = _cast_str(dace.int32)
+                if not np.can_cast(dtype2.type, np.int32):
+                    warnings.warn("Second input to {} is of type {}, which "
+                                  "cannot be safely cast to {}".format(
+                                      operator, dtype2, dace.int32))
+
+        else:  # Other binary operators
+            result_type = _np_result_type(dtypes_for_result)
+            if dtype1 != result_type:
+                left_cast = _cast_str(result_type)
+            if dtype2 != result_type:
+                right_cast = _cast_str(result_type)
+
+        casting = [left_cast, right_cast]
+
+    else:  # Operators with 3 or more arguments
+        result_type = _np_result_type(dtypes_for_result)
+        for i, t in enumerate(coarse_types):
+            if t != result_type:
+                casting[i] = _cast_str(result_type)
+
+    return result_type, casting
 
 
-    return result_type, left_cast, right_cast
-
-
-def _array_array_binop(visitor: 'ProgramVisitor',
-                       sdfg: SDFG,
-                       state: SDFGState,
-                       left_operand: str,
-                       right_operand: str,
-                       operator: str,
+def _array_array_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                       left_operand: str, right_operand: str, operator: str,
                        opcode: str):
     '''Both operands are Arrays (or Data in general)'''
 
@@ -916,9 +1124,12 @@ def _array_array_binop(visitor: 'ProgramVisitor',
     right_type = right_arr.dtype
 
     # Implicit Python coversion implemented as casting
+    arguments = [left_arr, right_arr]
     tasklet_args = ['__in1', '__in2']
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
     if right_cast is not None:
@@ -927,8 +1138,8 @@ def _array_array_binop(visitor: 'ProgramVisitor',
     left_shape = left_arr.shape
     right_shape = right_arr.shape
 
-    (out_shape, all_idx_dict, out_idx,
-     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx,
+     right_idx) = _broadcast_together(left_shape, right_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -941,12 +1152,10 @@ def _array_array_binop(visitor: 'ProgramVisitor',
 
     if list(out_shape) == [1]:
         tasklet = state.add_tasklet(
-            '_%s_' % operator,
-            {'__in1', '__in2'},
-            {'__out'},
-            '__out = {i1} {op} {i2}'.format(
-                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
-        )
+            '_%s_' % operator, {'__in1', '__in2'}, {'__out'},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                            op=opcode,
+                                            i2=tasklet_args[1]))
         n1 = state.add_read(left_operand)
         n2 = state.add_read(right_operand)
         n3 = state.add_write(out_operand)
@@ -959,26 +1168,21 @@ def _array_array_binop(visitor: 'ProgramVisitor',
     else:
         state.add_mapped_tasklet(
             "_%s_" % operator,
-            all_idx_dict,
-            {
+            all_idx_dict, {
                 '__in1': Memlet.simple(left_operand, left_idx),
                 '__in2': Memlet.simple(right_operand, right_idx)
             },
-            '__out = {i1} {op} {i2}'.format(
-                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                            op=opcode,
+                                            i2=tasklet_args[1]),
             {'__out': Memlet.simple(out_operand, out_idx)},
-            external_edges=True
-        )
+            external_edges=True)
 
     return out_operand
 
 
-def _array_const_binop(visitor: 'ProgramVisitor',
-                       sdfg: SDFG,
-                       state: SDFGState,
-                       left_operand: str,
-                       right_operand: str,
-                       operator: str,
+def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                       left_operand: str, right_operand: str, operator: str,
                        opcode: str):
     '''Operands are an Array and a Constant'''
 
@@ -990,6 +1194,7 @@ def _array_const_binop(visitor: 'ProgramVisitor',
         right_arr = None
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         right_shape = [1]
+        arguments = [left_arr, right_operand]
         tasklet_args = ['__in1', str(right_operand)]
     else:
         left_arr = None
@@ -999,19 +1204,23 @@ def _array_const_binop(visitor: 'ProgramVisitor',
         right_type = right_arr.dtype
         right_shape = right_arr.shape
         storage = right_arr.storage
+        arguments = [left_operand, right_arr]
         tasklet_args = [str(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
     if right_cast is not None:
-        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace(
+            '::', '.'),
                                             o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx,
-     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx,
+     right_idx) = _broadcast_together(left_shape, right_shape)
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    storage)
@@ -1024,12 +1233,10 @@ def _array_const_binop(visitor: 'ProgramVisitor',
             inp_conn = {'__in2'}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            '_%s_' % operator,
-            inp_conn,
-            {'__out'},
-            '__out = {i1} {op} {i2}'.format(
-                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
-        )
+            '_%s_' % operator, inp_conn, {'__out'},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                            op=opcode,
+                                            i2=tasklet_args[1]))
         n3 = state.add_write(out_operand)
         if left_arr:
             state.add_edge(n1, None, tasklet, '__in1',
@@ -1044,25 +1251,21 @@ def _array_const_binop(visitor: 'ProgramVisitor',
             inp_memlets = {'__in1': Memlet.simple(left_operand, left_idx)}
         else:
             inp_memlets = {'__in2': Memlet.simple(right_operand, right_idx)}
-        state.add_mapped_tasklet(
-            "_%s_" % operator,
-            all_idx_dict,
-            inp_memlets,
-            '__out = {i1} {op} {i2}'.format(
-                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
-            {'__out': Memlet.simple(out_operand, out_idx)},
-            external_edges=True
-        )
+        state.add_mapped_tasklet("_%s_" % operator,
+                                 all_idx_dict,
+                                 inp_memlets,
+                                 '__out = {i1} {op} {i2}'.format(
+                                     i1=tasklet_args[0],
+                                     op=opcode,
+                                     i2=tasklet_args[1]),
+                                 {'__out': Memlet.simple(out_operand, out_idx)},
+                                 external_edges=True)
 
     return out_operand
 
 
-def _array_sym_binop(visitor: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     left_operand: str,
-                     right_operand: str,
-                     operator: str,
+def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                     left_operand: str, right_operand: str, operator: str,
                      opcode: str):
     '''Operands are an Array and a Symbol'''
 
@@ -1074,6 +1277,7 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         right_arr = None
         right_type = _sym_type(right_operand)
         right_shape = [1]
+        arguments = [left_arr, right_operand]
         tasklet_args = ['__in1', astutils.unparse(right_operand)]
     else:
         left_arr = None
@@ -1083,19 +1287,23 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
         right_type = right_arr.dtype
         right_shape = right_arr.shape
         storage = right_arr.storage
+        arguments = [left_operand, right_arr]
         tasklet_args = [astutils.unparse(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
     if right_cast is not None:
-        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace(
+            '::', '.'),
                                             o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx,
-     left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx,
+     right_idx) = _broadcast_together(left_shape, right_shape)
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type,
                                                    storage)
@@ -1108,12 +1316,10 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
             inp_conn = {'__in2'}
             n2 = state.add_read(right_operand)
         tasklet = state.add_tasklet(
-            '_%s_' % operator,
-            inp_conn,
-            {'__out'},
-            '__out = {i1} {op} {i2}'.format(
-                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
-        )
+            '_%s_' % operator, inp_conn, {'__out'},
+            '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                            op=opcode,
+                                            i2=tasklet_args[1]))
         n3 = state.add_write(out_operand)
         if left_arr:
             state.add_edge(n1, None, tasklet, '__in1',
@@ -1128,26 +1334,22 @@ def _array_sym_binop(visitor: 'ProgramVisitor',
             inp_memlets = {'__in1': Memlet.simple(left_operand, left_idx)}
         else:
             inp_memlets = {'__in2': Memlet.simple(right_operand, right_idx)}
-        state.add_mapped_tasklet(
-            "_%s_" % operator,
-            all_idx_dict,
-            inp_memlets,
-            '__out = {i1} {op} {i2}'.format(
-                    i1=tasklet_args[0], op=opcode, i2=tasklet_args[1]),
-            {'__out': Memlet.simple(out_operand, out_idx)},
-            external_edges=True
-        )
+        state.add_mapped_tasklet("_%s_" % operator,
+                                 all_idx_dict,
+                                 inp_memlets,
+                                 '__out = {i1} {op} {i2}'.format(
+                                     i1=tasklet_args[0],
+                                     op=opcode,
+                                     i2=tasklet_args[1]),
+                                 {'__out': Memlet.simple(out_operand, out_idx)},
+                                 external_edges=True)
 
     return out_operand
 
 
-def _scalar_scalar_binop(visitor: 'ProgramVisitor',
-                         sdfg: SDFG,
-                         state: SDFGState,
-                         left_operand: str,
-                         right_operand: str,
-                         operator: str,
-                         opcode: str):
+def _scalar_scalar_binop(visitor: 'ProgramVisitor', sdfg: SDFG,
+                         state: SDFGState, left_operand: str,
+                         right_operand: str, operator: str, opcode: str):
     '''Both operands are Scalars'''
 
     left_scal = sdfg.arrays[left_operand]
@@ -1157,25 +1359,28 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor',
     right_type = right_scal.dtype
 
     # Implicit Python coversion implemented as casting
+    arguments = [left_scal, right_scal]
     tasklet_args = ['__in1', '__in2']
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{}(__in1)".format(str(left_cast).replace('::', '.'))
     if right_cast is not None:
         tasklet_args[1] = "{}(__in2)".format(str(right_cast).replace('::', '.'))
 
     out_operand = sdfg.temp_data_name()
-    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+    _, out_scal = sdfg.add_scalar(out_operand,
+                                  result_type,
+                                  transient=True,
                                   storage=left_scal.storage)
 
     tasklet = state.add_tasklet(
-        '_%s_' % operator,
-        {'__in1', '__in2'},
-        {'__out'},
-        '__out = {i1} {op} {i2}'.format(
-                i1=tasklet_args[0], op=opcode, i2=tasklet_args[1])
-    )
+        '_%s_' % operator, {'__in1', '__in2'}, {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                        op=opcode,
+                                        i2=tasklet_args[1]))
     n1 = state.add_read(left_operand)
     n2 = state.add_read(right_operand)
     n3 = state.add_write(out_operand)
@@ -1189,12 +1394,8 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor',
     return out_operand
 
 
-def _scalar_const_binop(visitor: 'ProgramVisitor',
-                        sdfg: SDFG,
-                        state: SDFGState,
-                        left_operand: str,
-                        right_operand: str,
-                        operator: str,
+def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                        left_operand: str, right_operand: str, operator: str,
                         opcode: str):
     '''Operands are a Scalar and a Constant'''
 
@@ -1204,6 +1405,7 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
         storage = left_scal.storage
         right_scal = None
         right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+        arguments = [left_scal, right_operand]
         tasklet_args = ['__in1', str(right_operand)]
     else:
         left_scal = None
@@ -1211,19 +1413,25 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
+        arguments = [left_operand, right_scal]
         tasklet_args = [str(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
     if right_cast is not None:
-        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace(
+            '::', '.'),
                                             o=tasklet_args[1])
 
     out_operand = sdfg.temp_data_name()
-    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+    _, out_scal = sdfg.add_scalar(out_operand,
+                                  result_type,
+                                  transient=True,
                                   storage=storage)
 
     if left_scal:
@@ -1233,12 +1441,10 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
         inp_conn = {'__in2'}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        '_%s_' % operator,
-        inp_conn,
-        {'__out'},
-        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode,
-                                        i2=tasklet_args[1])
-    )
+        '_%s_' % operator, inp_conn, {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                        op=opcode,
+                                        i2=tasklet_args[1]))
     n3 = state.add_write(out_operand)
     if left_scal:
         state.add_edge(n1, None, tasklet, '__in1',
@@ -1252,12 +1458,8 @@ def _scalar_const_binop(visitor: 'ProgramVisitor',
     return out_operand
 
 
-def _scalar_sym_binop(visitor: 'ProgramVisitor',
-                      sdfg: SDFG,
-                      state: SDFGState,
-                      left_operand: str,
-                      right_operand: str,
-                      operator: str,
+def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                      left_operand: str, right_operand: str, operator: str,
                       opcode: str):
     '''Operands are a Scalar and a Symbol'''
 
@@ -1267,6 +1469,7 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         storage = left_scal.storage
         right_scal = None
         right_type = _sym_type(right_operand)
+        arguments = [left_scal, right_operand]
         tasklet_args = ['__in1', astutils.unparse(right_operand)]
     else:
         left_scal = None
@@ -1274,19 +1477,25 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         right_scal = sdfg.arrays[right_operand]
         right_type = right_scal.dtype
         storage = right_scal.storage
+        arguments = [left_operand, right_scal]
         tasklet_args = [astutils.unparse(left_operand), '__in2']
 
-    result_type, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                       operator)
+    result_type, casting = _result_type(arguments, operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
+
     if left_cast is not None:
         tasklet_args[0] = "{c}({o})".format(c=str(left_cast).replace('::', '.'),
                                             o=tasklet_args[0])
     if right_cast is not None:
-        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'),
+        tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace(
+            '::', '.'),
                                             o=tasklet_args[1])
 
     out_operand = sdfg.temp_data_name()
-    _, out_scal = sdfg.add_scalar(out_operand, result_type, transient=True,
+    _, out_scal = sdfg.add_scalar(out_operand,
+                                  result_type,
+                                  transient=True,
                                   storage=storage)
 
     if left_scal:
@@ -1296,12 +1505,10 @@ def _scalar_sym_binop(visitor: 'ProgramVisitor',
         inp_conn = {'__in2'}
         n2 = state.add_read(right_operand)
     tasklet = state.add_tasklet(
-        '_%s_' % operator,
-        inp_conn,
-        {'__out'},
-        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0], op=opcode,
-                                        i2=tasklet_args[1])
-    )
+        '_%s_' % operator, inp_conn, {'__out'},
+        '__out = {i1} {op} {i2}'.format(i1=tasklet_args[0],
+                                        op=opcode,
+                                        i2=tasklet_args[1]))
     n3 = state.add_write(out_operand)
     if left_scal:
         state.add_edge(n1, None, tasklet, '__in1',
@@ -1330,37 +1537,21 @@ _pyop2symtype = {
 }
 
 
-def _const_const_binop(visitor: 'ProgramVisitor',
-                       sdfg: SDFG,
-                       state: SDFGState,
-                       left_operand: str,
-                       right_operand: str,
-                       operator: str,
+def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                       left_operand: str, right_operand: str, operator: str,
                        opcode: str):
     '''Both operands are Constants or Symbols'''
 
-    if isinstance(left_operand, Number):
-        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    else:
-        left_type = None
-    if isinstance(right_operand, Number):
-        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
-    else:
-        right_type = None
-
-    if left_type and right_type:
-        _, left_cast, right_cast = _convert_type(left_type, right_type,
-                                                 operator)
-    else:
-        left_cast = None
-        right_cast = None
+    _, casting = _result_type([left_operand, right_operand], operator)
+    left_cast = casting[0]
+    right_cast = casting[1]
 
     if isinstance(left_operand, Number) and left_cast is not None:
-        left = left_cast(left_operand)
+        left = eval(left_cast)(left_operand)
     else:
         left = left_operand
     if isinstance(right_operand, Number) and right_cast is not None:
-        right = right_cast(right_operand)
+        right = eval(right_cast)(right_operand)
     else:
         right = right_operand
 
@@ -1521,13 +1712,13 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
                    ('LShift', '<<'), ('RShift', '>>'), ('BitOr', '|'),
                    ('BitXor', '^'), ('BitAnd', '&'), ('And', 'and'),
                    ('Or', 'or'), ('Eq', '=='), ('NotEq', '!='), ('Lt', '<'),
-                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>='),
-                   ('Is', 'is'), ('IsNot', 'is not')]:
+                   ('LtE', '<='), ('Gt', '>'), ('GtE', '>='), ('Is', 'is'),
+                   ('IsNot', 'is not')]:
     _makebinop(op, opcode)
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
-def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
 
@@ -1563,6 +1754,15 @@ def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
                                   arr1.shape[1], arr2.shape[0]))
 
         output_shape = (arr1.shape[0], )
+
+    elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
+
+        if arr1.shape[0] != arr2.shape[0]:
+            raise SyntaxError("Size of vector {} must match number of matrix "
+                              "rows {} must match".format(
+                                  arr1.shape[0], arr2.shape[0]))
+
+        output_shape = (arr2.shape[1], )
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
@@ -1604,35 +1804,617 @@ UfuncOutput = Union[str, None]
 
 # TODO: Add all ufuncs in subsequent PR's.
 ufuncs = dict(
-    add = dict(
-        name="_numpy_add_",
+    add=dict(name="_numpy_add_",
+             operator="Add",
+             inputs=["__in1", "__in2"],
+             outputs=["__out"],
+             code="__out = __in1 + __in2",
+             reduce="lambda a, b: a + b",
+             initial=np.add.identity),
+    subtract=dict(name="_numpy_subtract_",
+                  operator="Sub",
+                  inputs=["__in1", "__in2"],
+                  outputs=["__out"],
+                  code="__out = __in1 - __in2",
+                  reduce="lambda a, b: a - b",
+                  initial=np.subtract.identity),
+    multiply=dict(name="_numpy_multipy_",
+                  operator="Mul",
+                  inputs=["__in1", "__in2"],
+                  outputs=["__out"],
+                  code="__out = __in1 * __in2",
+                  reduce="lambda a, b: a * b",
+                  initial=np.multiply.identity),
+    divide=dict(name="_numpy_divide_",
+                operator="Div",
+                inputs=["__in1", "__in2"],
+                outputs=["__out"],
+                code="__out = __in1 / __in2",
+                reduce="lambda a, b: a / b",
+                initial=np.divide.identity),
+    logaddexp=dict(name="_numpy_logaddexp_",
+                   operator=None,
+                   inputs=["__in1", "__in2"],
+                   outputs=["__out"],
+                   code="__out = log( exp(__in1) + exp(__in2) )",
+                   reduce="lambda a, b: log( exp(a) + exp(b) )",
+                   initial=np.logaddexp.identity),
+    logaddexp2=dict(name="_numpy_logaddexp2_",
+                    operator=None,
+                    inputs=["__in1", "__in2"],
+                    outputs=["__out"],
+                    code="__out = log2( exp2(__in1) + exp2(__in2) )",
+                    reduce="lambda a, b: log( exp2(a) + exp2(b) )",
+                    initial=np.logaddexp2.identity),
+    true_divide=dict(name="_numpy_true_divide_",
+                     operator="Div",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = __in1 / __in2",
+                     reduce="lambda a, b: a / b",
+                     initial=np.true_divide.identity),
+    floor_divide=dict(name="_numpy_floor_divide_",
+                      operator="FloorDiv",
+                      inputs=["__in1", "__in2"],
+                      outputs=["__out"],
+                      code="__out = py_floor(__in1, __in2)",
+                      reduce="lambda a, b: py_floor(a, b)",
+                      initial=np.floor_divide.identity),
+    negative=dict(name="_numpy_negative_",
+                  operator="USub",
+                  inputs=["__in1"],
+                  outputs=["__out"],
+                  code="__out = - __in1",
+                  reduce=None,
+                  initial=np.negative.identity),
+    positive=dict(name="_numpy_positive_",
+                  operator="UAdd",
+                  inputs=["__in1"],
+                  outputs=["__out"],
+                  code="__out = + __in1",
+                  reduce=None,
+                  initial=np.positive.identity),
+    power=dict(name="_numpy_power_",
+               operator="Pow",
+               inputs=["__in1", "__in2"],
+               outputs=["__out"],
+               code="__out = __in1 ** __in2",
+               reduce="lambda a, b: a ** b",
+               initial=np.power.identity),
+    float_power=dict(name="_numpy_float_power_",
+                     operator="FloatPow",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = np_float_pow(__in1, __in2)",
+                     reduce="lambda a, b: np_float_pow(a, b)",
+                     initial=np.float_power.identity),
+    remainder=dict(name="_numpy_remainder_",
+                   operator="Mod",
+                   inputs=["__in1", "__in2"],
+                   outputs=["__out"],
+                   code="__out = py_mod(__in1, __in2)",
+                   reduce="lambda a, b: py_mod(a, b)",
+                   initial=np.remainder.identity),
+    fmod=dict(name="_numpy_fmod_",
+              operator="Mod",
+              inputs=["__in1", "__in2"],
+              outputs=["__out"],
+              code="__out = cpp_mod(__in1, __in2)",
+              reduce="lambda a, b: cpp_mod(a, b)",
+              initial=np.fmod.identity),
+    divmod=dict(name="_numpy_divmod_",
+                operator="Div",
+                inputs=["__in1", "__in2"],
+                outputs=["__out1", "__out2"],
+                code="py_divmod(__in1, __in2, __out1, __out2)",
+                reduce=None,
+                initial=np.divmod.identity),
+    absolute=dict(name="_numpy_absolute_",
+                  operator="Abs",
+                  inputs=["__in1"],
+                  outputs=["__out"],
+                  code="__out = abs(__in1)",
+                  reduce=None,
+                  initial=np.absolute.identity),
+    fabs=dict(name="_numpy_fabs_",
+              operator="Fabs",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = fabs(__in1)",
+              reduce=None,
+              initial=np.fabs.identity),
+    rint=dict(name="_numpy_rint_",
+              operator="Rint",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = round(__in1)",
+              reduce=None,
+              initial=np.rint.identity),
+    sign=dict(name="_numpy_sign_",
+              operator=None,
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = sign(__in1)",
+              reduce=None,
+              initial=np.sign.identity),
+    heaviside=dict(name="_numpy_heaviside_",
+                   operator="Heaviside",
+                   inputs=["__in1", "__in2"],
+                   outputs=["__out"],
+                   code="__out = heaviside(__in1, __in2)",
+                   reduce="lambda a, b: heaviside(a, b)",
+                   initial=np.heaviside.identity),
+    conj=dict(name="_numpy_conj_",
+              operator=None,
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = conj(__in1)",
+              reduce=None,
+              initial=np.conj.identity),
+    conjugate=dict(name="_numpy_conjugate_",
+                   operator=None,
+                   inputs=["__in1"],
+                   outputs=["__out"],
+                   code="__out = conj(__in1)",
+                   reduce=None,
+                   initial=np.conjugate.identity),
+    exp=dict(name="_numpy_exp_",
+             operator="Exp",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = exp(__in1)",
+             reduce=None,
+             initial=np.exp.identity),
+    exp2=dict(name="_numpy_exp2_",
+              operator="Exp",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = exp2(__in1)",
+              reduce=None,
+              initial=np.exp2.identity),
+    log=dict(name="_numpy_log_",
+             operator="Log",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = log(__in1)",
+             reduce=None,
+             initial=np.log.identity),
+    log2=dict(name="_numpy_log2_",
+              operator="Log",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = log2(__in1)",
+              reduce=None,
+              initial=np.log2.identity),
+    log10=dict(name="_numpy_log10_",
+               operator="Log",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = log10(__in1)",
+               reduce=None,
+               initial=np.log10.identity),
+    expm1=dict(name="_numpy_expm1_",
+               operator="Exp",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = expm1(__in1)",
+               reduce=None,
+               initial=np.expm1.identity),
+    log1p=dict(name="_numpy_log1p_",
+               operator="Log",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = log1p(__in1)",
+               reduce=None,
+               initial=np.log1p.identity),
+    sqrt=dict(name="_numpy_sqrt_",
+              operator="Sqrt",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = sqrt(__in1)",
+              reduce=None,
+              initial=np.sqrt.identity),
+    square=dict(name="_numpy_square_",
+                operator=None,
+                inputs=["__in1"],
+                outputs=["__out"],
+                code="__out = __in1 * __in1",
+                reduce=None,
+                initial=np.square.identity),
+    cbrt=dict(name="_numpy_cbrt_",
+              operator="Cbrt",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = cbrt(__in1)",
+              reduce=None,
+              initial=np.cbrt.identity),
+    reciprocal=dict(name="_numpy_reciprocal_",
+                    operator="Div",
+                    inputs=["__in1"],
+                    outputs=["__out"],
+                    code="__out = reciprocal(__in1)",
+                    reduce=None,
+                    initial=np.reciprocal.identity),
+    gcd=dict(name="_numpy_gcd_",
+             operator="Gcd",
+             inputs=["__in1", "__in2"],
+             outputs=["__out"],
+             code="__out = gcd(__in1, __in2)",
+             reduce="lambda a, b: gcd(a, b)",
+             initial=np.gcd.identity),
+    lcm=dict(name="_numpy_lcm_",
+             operator="Lcm",
+             inputs=["__in1", "__in2"],
+             outputs=["__out"],
+             code="__out = lcm(__in1, __in2)",
+             reduce="lambda a, b: lcm(a, b)",
+             initial=np.lcm.identity),
+    sin=dict(name="_numpy_sin_",
+             operator="Trigonometric",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = sin(__in1)",
+             reduce=None,
+             initial=np.sin.identity),
+    cos=dict(name="_numpy_cos_",
+             operator="Trigonometric",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = cos(__in1)",
+             reduce=None,
+             initial=np.cos.identity),
+    tan=dict(name="_numpy_tan_",
+             operator="Trigonometric",
+             inputs=["__in1"],
+             outputs=["__out"],
+             code="__out = tan(__in1)",
+             reduce=None,
+             initial=np.tan.identity),
+    arcsin=dict(name="_numpy_arcsin_",
+                operator="Trigonometric",
+                inputs=["__in1"],
+                outputs=["__out"],
+                code="__out = asin(__in1)",
+                reduce=None,
+                initial=np.arcsin.identity),
+    arccos=dict(name="_numpy_arccos_",
+                operator="Trigonometric",
+                inputs=["__in1"],
+                outputs=["__out"],
+                code="__out = acos(__in1)",
+                reduce=None,
+                initial=np.arccos.identity),
+    arctan=dict(name="_numpy_arctan_",
+                operator="Trigonometric",
+                inputs=["__in1"],
+                outputs=["__out"],
+                code="__out = atan(__in1)",
+                reduce=None,
+                initial=np.arctan.identity),
+    sinh=dict(name="_numpy_sinh_",
+              operator="Trigonometric",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = sinh(__in1)",
+              reduce=None,
+              initial=np.sinh.identity),
+    cosh=dict(name="_numpy_cosh_",
+              operator="Trigonometric",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = cosh(__in1)",
+              reduce=None,
+              initial=np.cosh.identity),
+    tanh=dict(name="_numpy_tanh_",
+              operator="Trigonometric",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = tanh(__in1)",
+              reduce=None,
+              initial=np.tanh.identity),
+    arcsinh=dict(name="_numpy_arcsinh_",
+                 operator="Trigonometric",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = asinh(__in1)",
+                 reduce=None,
+                 initial=np.arcsinh.identity),
+    arccosh=dict(name="_numpy_arccosh_",
+                 operator="Trigonometric",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = acosh(__in1)",
+                 reduce=None,
+                 initial=np.arccos.identity),
+    arctanh=dict(name="_numpy_arctanh_",
+                 operator="Trigonometric",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = atanh(__in1)",
+                 reduce=None,
+                 initial=np.arctanh.identity),
+    arctan2=dict(name="_numpy_arctan2_",
+                 operator="Arctan2",
+                 inputs=["__in1", "__in2"],
+                 outputs=["__out"],
+                 code="__out = atan2(__in1, __in2)",
+                 reduce="lambda a, b: atan2(a, b)",
+                 initial=np.arctan2.identity),
+    hypot=dict(name="_numpy_hypot_",
+               operator="Hypot",
+               inputs=["__in1", "__in2"],
+               outputs=["__out"],
+               code="__out = hypot(__in1, __in2)",
+               reduce="lambda a, b: hypot(a, b)",
+               initial=np.arctan2.identity),
+    degrees=dict(name="_numpy_degrees_",
+                 operator="Angles",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = rad2deg(__in1)",
+                 reduce=None,
+                 initial=np.degrees.identity),
+    rad2deg=dict(name="_numpy_rad2deg_",
+                 operator="Angles",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = rad2deg(__in1)",
+                 reduce=None,
+                 initial=np.rad2deg.identity),
+    radians=dict(name="_numpy_radians_",
+                 operator="Angles",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = deg2rad(__in1)",
+                 reduce=None,
+                 initial=np.radians.identity),
+    deg2rad=dict(name="_numpy_deg2rad_",
+                 operator="Angles",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = deg2rad(__in1)",
+                 reduce=None,
+                 initial=np.deg2rad.identity),
+    bitwise_and=dict(name="_numpy_bitwise_and_",
+                     operator="BitAnd",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = __in1 & __in2",
+                     reduce="lambda a, b: a & b",
+                     initial=np.bitwise_and.identity),
+    bitwise_or=dict(name="_numpy_bitwise_or_",
+                    operator="BitOr",
+                    inputs=["__in1", "__in2"],
+                    outputs=["__out"],
+                    code="__out = __in1 | __in2",
+                    reduce="lambda a, b: a | b",
+                    initial=np.bitwise_or.identity),
+    bitwise_xor=dict(name="_numpy_bitwise_xor_",
+                     operator="BitXor",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = __in1 ^ __in2",
+                     reduce="lambda a, b: a ^ b",
+                     initial=np.bitwise_xor.identity),
+    invert=dict(name="_numpy_invert_",
+                operator="Invert",
+                inputs=["__in1"],
+                outputs=["__out"],
+                code="__out = ~ __in1",
+                reduce=None,
+                initial=np.invert.identity),
+    left_shift=dict(name="_numpy_left_shift_",
+                    operator="LShift",
+                    inputs=["__in1", "__in2"],
+                    outputs=["__out"],
+                    code="__out = __in1 << __in2",
+                    reduce="lambda a, b: a << b",
+                    initial=np.left_shift.identity),
+    right_shift=dict(name="_numpy_right_shift_",
+                     operator="RShift",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = __in1 >> __in2",
+                     reduce="lambda a, b: a >> b",
+                     initial=np.right_shift.identity),
+    greater=dict(name="_numpy_greater_",
+                 operator="Gt",
+                 inputs=["__in1", "__in2"],
+                 outputs=["__out"],
+                 code="__out = __in1 > __in2",
+                 reduce="lambda a, b: a > b",
+                 initial=np.greater.identity),
+    greater_equal=dict(name="_numpy_greater_equal_",
+                       operator="GtE",
+                       inputs=["__in1", "__in2"],
+                       outputs=["__out"],
+                       code="__out = __in1 >= __in2",
+                       reduce="lambda a, b: a >= b",
+                       initial=np.greater_equal.identity),
+    less=dict(name="_numpy_less_",
+              operator="Lt",
+              inputs=["__in1", "__in2"],
+              outputs=["__out"],
+              code="__out = __in1 < __in2",
+              reduce="lambda a, b: a < b",
+              initial=np.less.identity),
+    less_equal=dict(name="_numpy_less_equal_",
+                    operator="LtE",
+                    inputs=["__in1", "__in2"],
+                    outputs=["__out"],
+                    code="__out = __in1 <= __in2",
+                    reduce="lambda a, b: a <= b",
+                    initial=np.less_equal.identity),
+    equal=dict(name="_numpy_equal_",
+               operator="Eq",
+               inputs=["__in1", "__in2"],
+               outputs=["__out"],
+               code="__out = __in1 == __in2",
+               reduce="lambda a, b: a == b",
+               initial=np.equal.identity),
+    not_equal=dict(name="_numpy_not_equal_",
+                   operator="NotEq",
+                   inputs=["__in1", "__in2"],
+                   outputs=["__out"],
+                   code="__out = __in1 != __in2",
+                   reduce="lambda a, b: a != b",
+                   initial=np.not_equal.identity),
+    logical_and=dict(name="_numpy_logical_and_",
+                     operator="And",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = __in1 and __in2",
+                     reduce="lambda a, b: a and b",
+                     initial=np.logical_and.identity),
+    logical_or=dict(name="_numpy_logical_or_",
+                    operator="Or",
+                    inputs=["__in1", "__in2"],
+                    outputs=["__out"],
+                    code="__out = __in1 or __in2",
+                    reduce="lambda a, b: a or b",
+                    initial=np.logical_or.identity),
+    logical_xor=dict(name="_numpy_logical_xor_",
+                     operator="Xor",
+                     inputs=["__in1", "__in2"],
+                     outputs=["__out"],
+                     code="__out = (not __in1) != (not __in2)",
+                     reduce="lambda a, b: (not a) != (not b)",
+                     initial=np.logical_xor.identity),
+    logical_not=dict(name="_numpy_logical_not_",
+                     operator="Not",
+                     inputs=["__in1"],
+                     outputs=["__out"],
+                     code="__out = not __in1",
+                     reduce=None,
+                     initial=np.logical_not.identity),
+    maximum=dict(name="_numpy_maximum_",
+                 operator=None,
+                 inputs=["__in1", "__in2"],
+                 outputs=["__out"],
+                 code="__out = max(__in1, __in2)",
+                 reduce="lambda a, b: max(a, b)",
+                 initial=np.maximum.identity),
+    fmax=dict(name="_numpy_fmax_",
+              operator=None,
+              inputs=["__in1", "__in2"],
+              outputs=["__out"],
+              code="__out = fmax(__in1, __in2)",
+              reduce="lambda a, b: fmax(a, b)",
+              initial=np.fmax.identity),
+    minimum=dict(name="_numpy_minimum_",
+                 operator=None,
+                 inputs=["__in1", "__in2"],
+                 outputs=["__out"],
+                 code="__out = min(__in1, __in2)",
+                 reduce="lambda a, b: min(a, b)",
+                 initial=np.minimum.identity),
+    fmin=dict(name="_numpy_fmin_",
+              operator=None,
+              inputs=["__in1", "__in2"],
+              outputs=["__out"],
+              code="__out = fmin(__in1, __in2)",
+              reduce="lambda a, b: fmin(a, b)",
+              initial=np.fmin.identity),
+    isfinite=dict(name="_numpy_isfinite_",
+                  operator="FpBoolean",
+                  inputs=["__in1"],
+                  outputs=["__out"],
+                  code="__out = isfinite(__in1)",
+                  reduce=None,
+                  initial=np.isfinite.identity),
+    isinf=dict(name="_numpy_isinf_",
+               operator="FpBoolean",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = isinf(__in1)",
+               reduce=None,
+               initial=np.isinf.identity),
+    isnan=dict(name="_numpy_isnan_",
+               operator="FpBoolean",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = isnan(__in1)",
+               reduce=None,
+               initial=np.isnan.identity),
+    signbit=dict(name="_numpy_signbit_",
+                 operator="SignBit",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = signbit(__in1)",
+                 reduce=None,
+                 initial=np.signbit.identity),
+    copysign=dict(name="_numpy_copysign_",
+                  operator="CopySign",
+                  inputs=["__in1", "__in2"],
+                  outputs=["__out"],
+                  code="__out = copysign(__in1, __in2)",
+                  reduce="lambda a, b: copysign(a, b)",
+                  initial=np.copysign.identity),
+    nextafter=dict(name="_numpy_nextafter_",
+                   operator="NextAfter",
+                   inputs=["__in1", "__in2"],
+                   outputs=["__out"],
+                   code="__out = nextafter(__in1, __in2)",
+                   reduce="lambda a, b: nextafter(a, b)",
+                   initial=np.nextafter.identity),
+    spacing=dict(name="_numpy_spacing_",
+                 operator="Spacing",
+                 inputs=["__in1"],
+                 outputs=["__out"],
+                 code="__out = nextafter(__in1, inf) - __in1",
+                 reduce=None,
+                 initial=np.spacing.identity),
+    modf=dict(name="_numpy_modf_",
+              operator="Modf",
+              inputs=["__in1"],
+              outputs=["__out1", "__out2"],
+              code="np_modf(__in1, __out1, __out2)",
+              reduce=None,
+              initial=np.modf.identity),
+    ldexp=dict(
+        name="_numpy_ldexp_",
+        operator="Ldexp",
         inputs=["__in1", "__in2"],
-        outputs=["__out"], code="__out = __in1 + __in2",
-        reduce="lambda a, b: a + b", initial=np.add.identity),
-    subtract = dict(
-        name="_numpy_subtract_",
-        inputs=["__in1", "__in2"],
-        outputs=["__out"], code="__out = __in1 - __in2",
-        reduce="lambda a, b: a - b", initial=np.subtract.identity),
-    multiply = dict(
-        name="_numpy_multipy_",
-        inputs=["__in1", "__in2"],
-        outputs=["__out"], code="__out = __in1 * __in2",
-        reduce="lambda a, b: a * b", initial=np.multiply.identity),
-    # TODO: Will be enabled when proper casting is implemented.
-    # divide = dict(
-    #     name="_numpy_divide_",
-    #     inputs=["__in1", "__in2"],
-    #     outputs=["__out"], code="__out = __in1 / __in2",
-    #     reduce="lambda a, b: a / b", initial=np.divide.identity),
-    minimum = dict(name="_numpy_min_", inputs=["__in1", "__in2"],
-                   outputs=["__out"], code="__out = min(__in1, __in2)",
-                   reduce="lambda a, b: min(a, b)", initial=np.minimum.identity)
+        outputs=["__out"],
+        code="__out = ldexp(__in1, __in2)",
+        # NumPy apparently has np.ldexp.reduce, but for any kind of input array
+        # it returns "TypeError: No loop matching the specified signature and
+        # casting was found for ufunc ldexp". Considering that the method
+        # computes __in1 * 2 ** __in2, it is hard to define a reduction.
+        reduce=None,
+        initial=np.ldexp.identity),
+    frexp=dict(name="_numpy_frexp_",
+               operator="Frexp",
+               inputs=["__in1"],
+               outputs=["__out1", "__out2"],
+               code="np_frexp(__in1, __out1, __out2)",
+               reduce=None,
+               initial=np.frexp.identity),
+    floor=dict(name="_numpy_floor_",
+               operator="Floor",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = floor(__in1)",
+               reduce=None,
+               initial=np.floor.identity),
+    ceil=dict(name="_numpy_ceil_",
+              operator="Ceil",
+              inputs=["__in1"],
+              outputs=["__out"],
+              code="__out = ceil(__in1)",
+              reduce=None,
+              initial=np.ceil.identity),
+    trunc=dict(name="_numpy_trunc_",
+               operator="Trunc",
+               inputs=["__in1"],
+               outputs=["__out"],
+               code="__out = trunc(__in1)",
+               reduce=None,
+               initial=np.trunc.identity),
 )
 
 
-def _get_ufunc_impl(visitor: 'ProgramVisitor',
-                    ast_node: ast.Call,
+def _get_ufunc_impl(visitor: 'ProgramVisitor', ast_node: ast.Call,
                     ufunc_name: str) -> Dict[str, Any]:
     """ Retrieves the implementation details for a NumPy ufunc call.
 
@@ -1651,12 +2433,9 @@ def _get_ufunc_impl(visitor: 'ProgramVisitor',
             "Missing implementation for NumPy ufunc {f}.".format(f=ufunc_name))
 
 
-def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor',
-                                  ast_node: ast.Call,
-                                  ufunc_name: str,
-                                  num_inputs: int,
-                                  num_outputs: int,
-                                  num_args: int):
+def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                                  ufunc_name: str, num_inputs: int,
+                                  num_outputs: int, num_args: int):
     """ Validates the number of positional arguments in a NumPy ufunc call.
 
         :param visitor: ProgramVisitor object handling the ufunc call
@@ -1671,21 +2450,17 @@ def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor',
 
     if num_args > num_inputs + num_outputs:
         raise mem_parser.DaceSyntaxError(
-            visitor,
-            ast_node,
+            visitor, ast_node,
             "Invalid number of arguments in call to numpy.{f} "
             "(expected a maximum of {i} input(s) and {o} output(s), "
-            "but a total of {a} arguments were given).".format(
-                f=ufunc_name, i=num_inputs, o=num_outputs, a=num_args
-            )
-        )
+            "but a total of {a} arguments were given).".format(f=ufunc_name,
+                                                               i=num_inputs,
+                                                               o=num_outputs,
+                                                               a=num_args))
 
 
-def _validate_ufunc_inputs(visitor: 'ProgramVisitor',
-                           ast_node: ast.Call,
-                           sdfg: SDFG,
-                           ufunc_name: str,
-                           num_inputs: int,
+def _validate_ufunc_inputs(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                           sdfg: SDFG, ufunc_name: str, num_inputs: int,
                            num_args: int,
                            args: Sequence[UfuncInput]) -> List[UfuncInput]:
     """ Validates the number of type of inputs in a NumPy ufunc call.
@@ -1708,20 +2483,18 @@ def _validate_ufunc_inputs(visitor: 'ProgramVisitor',
         inputs = args[:num_inputs]
     elif num_args < num_inputs:
         raise mem_parser.DaceSyntaxError(
-            visitor,
-            ast_node,
+            visitor, ast_node,
             "Invalid number of arguments in call to numpy.{f} "
-            "(expected {e} inputs, but {a} were given).".format(
-                f=ufunc_name, e=num_inputs, a=num_args
-            )
-        )
+            "(expected {e} inputs, but {a} were given).".format(f=ufunc_name,
+                                                                e=num_inputs,
+                                                                a=num_args))
     else:
         inputs = args
     if isinstance(inputs, (list, tuple)):
         inputs = list(inputs)
     else:
         inputs = [inputs]
-    
+
     # Validate type of inputs
     for arg in inputs:
         if isinstance(arg, str) and arg in sdfg.arrays.keys():
@@ -1730,24 +2503,17 @@ def _validate_ufunc_inputs(visitor: 'ProgramVisitor',
             pass
         else:
             raise mem_parser.DaceSyntaxError(
-            visitor,
-            ast_node,
-            "Input arguments in call to numpy.{f} must be of dace.data.Data "
-            "type or numerical/boolean constants (invalid argument {a})".format(
-                f=ufunc_name, a=arg
-            )
-        )
-    
+                visitor, ast_node,
+                "Input arguments in call to numpy.{f} must be of dace.data.Data "
+                "type or numerical/boolean constants (invalid argument {a})".
+                format(f=ufunc_name, a=arg))
+
     return inputs
 
 
-def _validate_ufunc_outputs(visitor: 'ProgramVisitor',
-                            ast_node: ast.Call,
-                            sdfg: SDFG,
-                            ufunc_name: str,
-                            num_inputs: int,
-                            num_outputs: int,
-                            num_args: int,
+def _validate_ufunc_outputs(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                            sdfg: SDFG, ufunc_name: str, num_inputs: int,
+                            num_outputs: int, num_args: int,
                             args: Sequence[UfuncInput],
                             kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Validates the number of type of outputs in a NumPy ufunc call.
@@ -1766,25 +2532,22 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor',
         :returns: List of output datanames and None
     """
 
-     # Validate number of outputs
+    # Validate number of outputs
     num_pos_outputs = num_args - num_inputs
     if num_pos_outputs == 0 and "out" not in kwargs.keys():
         outputs = [None] * num_outputs
     elif num_pos_outputs > 0 and "out" in kwargs.keys():
         raise mem_parser.DaceSyntaxError(
-            visitor,
-            ast_node,
+            visitor, ast_node,
             "You cannot specify 'out' in call to numpy.{f} as both a positional"
             " and keyword argument (positional {p}, keyword {w}).".format(
-                f=ufunc_name, p=args[num_outputs, :], k=kwargs['out']
-            )
-        )
+                f=ufunc_name, p=args[num_outputs, :], k=kwargs['out']))
     elif num_pos_outputs > 0:
         outputs = list(args[num_inputs:])
         # TODO: Support the following undocumented NumPy behavior?
         # NumPy allows to specify less than `expected_num_outputs` as
-        # positional arguments. For example, `np.divmod` has 2 outputs, the 
-        # quotient and the remainder. `np.divmod(A, B, C)` works, but 
+        # positional arguments. For example, `np.divmod` has 2 outputs, the
+        # quotient and the remainder. `np.divmod(A, B, C)` works, but
         # `np.divmod(A, B, out=C)` or `np.divmod(A, B, out=(C))` doesn't.
         # In the case of output as a positional argument, C will be set to
         # the quotient of the floor division, while a new array will be
@@ -1797,14 +2560,11 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor',
         outputs = [outputs]
     if len(outputs) != num_outputs:
         raise mem_parser.DaceSyntaxError(
-            visitor,
-            ast_node,
-           "Invalid number of arguments in call to numpy.{f} "
+            visitor, ast_node,
+            "Invalid number of arguments in call to numpy.{f} "
             "(expected {e} outputs, but {a} were given).".format(
-                f=ufunc_name, e=num_outputs, a=len(outputs)
-            )
-        )
-    
+                f=ufunc_name, e=num_outputs, a=len(outputs)))
+
     # Validate outputs
     for arg in outputs:
         if arg is None:
@@ -1813,22 +2573,17 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor',
             pass
         else:
             raise mem_parser.DaceSyntaxError(
-                visitor,
-                ast_node,
+                visitor, ast_node,
                 "Return arguments in call to numpy.{f} must be of "
-                "dace.data.Data type.".format(f=ufunc_name)
-            )
-    
+                "dace.data.Data type.".format(f=ufunc_name))
+
     return outputs
 
 
 def _validate_where_kword(
-    visitor: 'ProgramVisitor',
-    ast_node: ast.Call,
-    sdfg: SDFG,
-    ufunc_name: str,
-    kwargs: Dict[str, Any]
-) -> Tuple[bool, Union[str, bool]]:
+        visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG,
+        ufunc_name: str, kwargs: Dict[str,
+                                      Any]) -> Tuple[bool, Union[str, bool]]:
     """ Validates the 'where' keyword argument passed to a NumPy ufunc call.
 
         :param visitor: ProgramVisitor object handling the ufunc call
@@ -1856,22 +2611,17 @@ def _validate_where_kword(
                 visitor, ast_node,
                 "Values for the 'where' keyword that are a sequence of boolean "
                 " constants are unsupported. Please, pass these values to the "
-                " {n} call through a DaCe boolean array.".format(n=ufunc_name)
-            )
+                " {n} call through a DaCe boolean array.".format(n=ufunc_name))
         else:
             # NumPy defaults to "where=True" for invalid values for the keyword
             pass
-    
+
     return has_where, where
 
 
 def _validate_shapes(
-    visitor: 'ProgramVisitor',
-    ast_node: ast.Call,
-    sdfg: SDFG,
-    ufunc_name: str,
-    inputs: List[UfuncInput],
-    outputs: List[UfuncOutput]
+    visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, ufunc_name: str,
+    inputs: List[UfuncInput], outputs: List[UfuncOutput]
 ) -> Tuple[Shape, Tuple[Tuple[str, str], ...], str, List[str]]:
     """ Validates the data shapes of inputs and outputs to a NumPy ufunc call.
 
@@ -1898,11 +2648,9 @@ def _validate_shapes(
         result = _broadcast(shapes)
     except SyntaxError as e:
         raise mem_parser.DaceSyntaxError(
-            visitor,
-            ast_node,
+            visitor, ast_node,
             "Shape validation in numpy.{f} call failed. The following error "
-            "occured : {m}".format(f=ufunc_name, m=str(e))
-        )
+            "occured : {m}".format(f=ufunc_name, m=str(e)))
     return result
 
 
@@ -1928,6 +2676,7 @@ def _broadcast(
 
     def get_idx(i):
         return "__i" + str(max_i - i - 1)
+
     def to_string(idx):
         return ", ".join(reversed(idx))
 
@@ -1949,17 +2698,16 @@ def _broadcast(
             else:
                 raise SyntaxError(
                     "Operands could not be broadcast together with shapes {}.".
-                    format(','.join(str(shapes)))
-                )
+                    format(','.join(str(shapes))))
 
     out_shape = tuple(reversed([map_lengths[idx] for idx in output_indices]))
     map_indices = [(k, "0:" + str(map_lengths[k]))
-                    for k in reversed(output_indices)]
+                   for k in reversed(output_indices)]
     output_indices = to_string(output_indices)
     input_indices = [to_string(idx) for idx in input_indices]
 
     if not out_shape:
-        out_shape = (1,)
+        out_shape = (1, )
         output_indices = "0"
 
     return out_shape, map_indices, output_indices, input_indices
@@ -1969,9 +2717,10 @@ def _create_output(sdfg: SDFG,
                    inputs: List[UfuncInput],
                    outputs: List[UfuncOutput],
                    output_shape: Shape,
-                   output_dtype: dtypes.typeclass,
+                   output_dtype: Union[dtypes.typeclass,
+                                       List[dtypes.typeclass]],
                    storage: dtypes.StorageType = None,
-                   force_scalar: bool = False,) -> List[UfuncOutput]:
+                   force_scalar: bool = False) -> List[UfuncOutput]:
     """ Creates output data for storing the result of a NumPy ufunc call.
 
         :param sdfg: SDFG object
@@ -2003,24 +2752,38 @@ def _create_output(sdfg: SDFG,
     # Set storage
     storage = storage or dtypes.StorageType.Default
 
+    # Validate datatypes
+    if isinstance(output_dtype, (list, tuple)):
+        if len(output_dtype) == 1:
+            datatypes = [output_dtype[0]] * len(outputs)
+        elif len(output_dtype) == len(outputs):
+            datatypes = output_dtype
+        else:
+            raise ValueError("Missing output datatypes")
+    else:
+        datatypes = [output_dtype] * len(outputs)
+
     # Create output data (if needed)
-    for i, arg in enumerate(outputs):
+    for i, (arg, datatype) in enumerate(zip(outputs, datatypes)):
         if arg is None:
             if (len(output_shape) == 1 and output_shape[0] == 1
                     and (is_output_scalar or force_scalar)):
                 output_name = sdfg.temp_data_name()
-                sdfg.add_scalar(output_name, output_dtype,
-                                transient=True, storage=storage)
+                sdfg.add_scalar(output_name,
+                                output_dtype,
+                                transient=True,
+                                storage=storage)
                 outputs[i] = output_name
             else:
-                outputs[i], _ = sdfg.add_temp_transient(output_shape,
-                                                        output_dtype)
+                outputs[i], _ = sdfg.add_temp_transient(output_shape, datatype)
 
     return outputs
 
 
-def _set_tasklet_params(ufunc_impl: Dict[str, Any],
-                        inputs: List[UfuncInput]) -> Dict[str, Any]:
+def _set_tasklet_params(
+        ufunc_impl: Dict[str, Any],
+        inputs: List[UfuncInput],
+        casting: List[dtypes.typeclass] = None) -> Dict[str, Any]:
     """ Sets the tasklet parameters for a NumPy ufunc call.
 
         :param ufunc_impl: Information on how the ufunc must be implemented
@@ -2039,14 +2802,20 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
     # Remove input connectors related to constants
     # and fix constants/symbols in the tasklet code
     for i, arg in reversed(list(enumerate(inputs))):
+        inp_conn = inp_connectors[i]
+        if casting and casting[i]:
+            repl = "{c}({o})".format(c=str(casting[i]).replace('::', '.'),
+                                     o=inp_conn)
+            code = code.replace(inp_conn, repl)
         if isinstance(arg, (Number, sp.Basic)):
             inp_conn = inp_connectors[i]
             code = code.replace(inp_conn, astutils.unparse(arg))
             inp_connectors.pop(i)
-    
 
-    return dict(name=name, inputs=inp_connectors,
-                outputs=out_connectors, code=code)
+    return dict(name=name,
+                inputs=inp_connectors,
+                outputs=out_connectors,
+                code=code)
 
 
 def _create_subgraph(visitor: 'ProgramVisitor',
@@ -2112,8 +2881,8 @@ def _create_subgraph(visitor: 'ProgramVisitor',
         for i, arg in enumerate(outputs):
             if isinstance(arg, str) and arg in sdfg.arrays.keys():
                 out_node = state.add_write(arg)
-                state.add_edge(tasklet, tasklet_params['outputs'][i],
-                               out_node, None,
+                state.add_edge(tasklet, tasklet_params['outputs'][i], out_node,
+                               None,
                                dace.Memlet.from_array(arg, sdfg.arrays[arg]))
         if has_where and isinstance(where, str) and where in sdfg.arrays.keys():
             visitor._add_state(label=cond_state.label + '_true')
@@ -2147,7 +2916,7 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                         nested_sdfg.add_array(conn_name, [1], arg_data.dtype)
                     else:
                         raise NotImplementedError
-                
+
                 for arg in outputs:
                     arg_data = sdfg.arrays[arg]
                     conn_name = nested_sdfg.temp_data_name()
@@ -2158,15 +2927,17 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                         nested_sdfg.add_array(conn_name, [1], arg_data.dtype)
                     else:
                         raise NotImplementedError
-                
-                cond_state = nested_sdfg.add_state(
-                    label=state.label + "_where_cond", is_start_state = True)
+
+                cond_state = nested_sdfg.add_state(label=state.label +
+                                                   "_where_cond",
+                                                   is_start_state=True)
                 where_data = sdfg.arrays[where]
                 if isinstance(where_data, data.Scalar):
                     name = nested_sdfg_inputs[where]
                 elif isinstance(where_data, data.Array):
                     name = nested_sdfg.temp_data_name()
-                    nested_sdfg.add_scalar(name, where_data.dtype,
+                    nested_sdfg.add_scalar(name,
+                                           where_data.dtype,
                                            transient=True)
                     r = cond_state.add_read(nested_sdfg_inputs[where][0])
                     w = cond_state.add_write(name)
@@ -2174,8 +2945,8 @@ def _create_subgraph(visitor: 'ProgramVisitor',
 
                 sdfg._temp_transients = nested_sdfg._temp_transients
 
-                true_state = nested_sdfg.add_state(
-                    label=cond_state.label + '_where_true')
+                true_state = nested_sdfg.add_state(label=cond_state.label +
+                                                   '_where_true')
                 cond = name
                 cond_else = 'not ({})'.format(cond)
                 nested_sdfg.add_edge(cond_state, true_state,
@@ -2199,17 +2970,15 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                         out_data = nested_sdfg.arrays[out_name]
                         out_node = true_state.add_write(out_name)
                         true_state.add_edge(
-                            tasklet, tasklet_params['outputs'][i],
-                            out_node, None,
-                            dace.Memlet.from_array(out_name, out_data))
+                            tasklet, tasklet_params['outputs'][i], out_node,
+                            None, dace.Memlet.from_array(out_name, out_data))
 
-                false_state = nested_sdfg.add_state(
-                    label=state.label + '_where_false')
+                false_state = nested_sdfg.add_state(label=state.label +
+                                                    '_where_false')
                 nested_sdfg.add_edge(cond_state, false_state,
                                      dace.InterstateEdge(cond_else))
                 nested_sdfg.add_edge(true_state, false_state,
                                      dace.InterstateEdge())
-
 
                 codenode = state.add_nested_sdfg(
                     nested_sdfg, sdfg,
@@ -2219,17 +2988,21 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                 for arg in inputs + [where]:
                     n = state.add_read(arg)
                     conn, idx = nested_sdfg_inputs[arg]
-                    state.add_memlet_path(
-                        n, me, codenode,
-                        memlet=dace.Memlet("{a}[{i}]".format(a=n, i=idx)),
-                        dst_conn=conn)
+                    state.add_memlet_path(n,
+                                          me,
+                                          codenode,
+                                          memlet=dace.Memlet("{a}[{i}]".format(
+                                              a=n, i=idx)),
+                                          dst_conn=conn)
                 for arg in outputs:
                     n = state.add_write(arg)
                     conn, idx = nested_sdfg_outputs[arg]
-                    state.add_memlet_path(
-                        codenode, mx, n,
-                        memlet=dace.Memlet("{a}[{i}]".format(a=n, i=idx)),
-                        src_conn=conn)
+                    state.add_memlet_path(codenode,
+                                          mx,
+                                          n,
+                                          memlet=dace.Memlet("{a}[{i}]".format(
+                                              a=n, i=idx)),
+                                          src_conn=conn)
                 return
 
         input_memlets = dict()
@@ -2243,22 +3016,31 @@ def _create_subgraph(visitor: 'ProgramVisitor',
             out_conn: Memlet.simple(arg, output_indices)
             for arg, out_conn in zip(outputs, tasklet_params['outputs'])
         }
-        state.add_mapped_tasklet(
-            tasklet_params['name'],
-            map_indices,
-            input_memlets,
-            tasklet_params['code'],
-            output_memlets,
-            external_edges=True
-        )
+        state.add_mapped_tasklet(tasklet_params['name'],
+                                 map_indices,
+                                 input_memlets,
+                                 tasklet_params['code'],
+                                 output_memlets,
+                                 external_edges=True)
+
+
+def _flatten_args(args: Sequence[UfuncInput]) -> Sequence[UfuncInput]:
+    """ Flattens arguments of a NumPy ufunc. This is useful in cases where
+        one of the arguments is the result of another operation or ufunc, which
+        may be a list of Dace data.
+    """
+    flat_args = []
+    for arg in args:
+        if isinstance(arg, list):
+            flat_args.extend(arg)
+        else:
+            flat_args.append(arg)
+    return flat_args
 
 
 @oprepo.replaces_ufunc('ufunc')
-def implement_ufunc(visitor: 'ProgramVisitor',
-                    ast_node: ast.Call,
-                    sdfg: SDFG,
-                    state: SDFGState,
-                    ufunc_name: str,
+def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG,
+                    state: SDFGState, ufunc_name: str,
                     args: Sequence[UfuncInput],
                     kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements a NumPy ufunc.
@@ -2276,6 +3058,9 @@ def implement_ufunc(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
+    # Flatten arguments
+    args = _flatten_args(args)
+
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
@@ -2283,37 +3068,31 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     num_inputs = len(ufunc_impl['inputs'])
     num_outputs = len(ufunc_impl['outputs'])
     num_args = len(args)
-    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
-                                  num_inputs, num_outputs, num_args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name, num_inputs,
+                                  num_outputs, num_args)
     inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
                                     num_inputs, num_args, args)
     outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
-                                      num_inputs, num_outputs, num_args,
-                                      args, kwargs)
+                                      num_inputs, num_outputs, num_args, args,
+                                      kwargs)
 
     # Validate 'where' keyword
     has_where, where = _validate_where_kword(visitor, ast_node, sdfg,
                                              ufunc_name, kwargs)
-    
+
     # Validate data shapes and apply NumPy broadcasting rules
     inp_shapes = copy.deepcopy(inputs)
     if has_where:
         inp_shapes += [where]
-    (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
-         visitor, ast_node, sdfg, ufunc_name, inp_shapes, outputs)
-    
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+    (out_shape, map_indices, out_indices,
+     inp_indices) = _validate_shapes(visitor, ast_node, sdfg, ufunc_name,
+                                     inp_shapes, outputs)
+
+    # Infer result type
+    result_type, casting = _result_type([
+        sdfg.arrays[arg] if isinstance(arg, str) and arg in sdfg.arrays else arg
+        for arg in inputs
+    ], ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
         if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
@@ -2323,20 +3102,27 @@ def implement_ufunc(visitor: 'ProgramVisitor',
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
-    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
 
     # Create subgraph
-    _create_subgraph(visitor, sdfg, state, inputs, outputs, map_indices,
-                     inp_indices, out_indices, out_shape, tasklet_params,
-                     has_where=has_where, where=where)
+    _create_subgraph(visitor,
+                     sdfg,
+                     state,
+                     inputs,
+                     outputs,
+                     map_indices,
+                     inp_indices,
+                     out_indices,
+                     out_shape,
+                     tasklet_params,
+                     has_where=has_where,
+                     where=where)
 
     return outputs
 
 
-def _validate_keepdims_kword(visitor: 'ProgramVisitor',
-                             ast_node: ast.Call,
-                             ufunc_name: str,
-                             kwargs: Dict[str, Any]) -> bool:
+def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                             ufunc_name: str, kwargs: Dict[str, Any]) -> bool:
     """ Validates the 'keepdims' keyword argument of a NumPy ufunc call.
 
         :param visitor: ProgramVisitor object handling the ufunc call
@@ -2360,18 +3146,14 @@ def _validate_keepdims_kword(visitor: 'ProgramVisitor',
                     f=ufunc_name, v=keepdims))
         if not isinstance(keepdims, bool):
             keepdims = bool(keepdims)
-    
+
     return keepdims
 
 
 def _validate_axis_kword(
-    visitor: 'ProgramVisitor',
-    ast_node: ast.Call,
-    sdfg: SDFG,
-    inputs: List[UfuncInput],
-    kwargs: Dict[str, Any],
-    keepdims: bool
-) -> Tuple[Tuple[int, ...], Union[Shape, None], Shape]:
+        visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG,
+        inputs: List[UfuncInput], kwargs: Dict[str, Any],
+        keepdims: bool) -> Tuple[Tuple[int, ...], Union[Shape, None], Shape]:
     """ Validates the 'axis' keyword argument of a NumPy ufunc call.
 
         :param visitor: ProgramVisitor object handling the ufunc call
@@ -2388,7 +3170,7 @@ def _validate_axis_kword(
     """
 
     # Validate 'axis' keyword
-    axis = (0,)
+    axis = (0, )
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
         inp_shape = sdfg.arrays[inputs[0]].shape
     else:
@@ -2405,26 +3187,25 @@ def _validate_axis_kword(
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Axis {a} is out of bounds for data of dimension {d}".format(
-                    a=axis, d=inp_shape
-                )
-            )
+                    a=axis, d=inp_shape))
         for a in axis:
             if a >= len(inp_shape):
                 raise mem_parser.DaceSyntaxError(
-                visitor, ast_node,
-                "Axis {a} is out of bounds for data of dimension {d}".format(
-                    a=a, d=inp_shape
-                )
-            )
+                    visitor, ast_node,
+                    "Axis {a} is out of bounds for data of dimension {d}".
+                    format(a=a, d=inp_shape))
         if keepdims:
-            intermediate_shape = [d for i, d in enumerate(inp_shape)
-                                  if i not in axis]
-            expected_out_shape = [d if i not in axis else 1
-                                  for i, d in enumerate(inp_shape)]
+            intermediate_shape = [
+                d for i, d in enumerate(inp_shape) if i not in axis
+            ]
+            expected_out_shape = [
+                d if i not in axis else 1 for i, d in enumerate(inp_shape)
+            ]
         else:
             intermediate_shape = None
-            expected_out_shape = [d for i, d in enumerate(inp_shape)
-                                  if i not in axis]
+            expected_out_shape = [
+                d for i, d in enumerate(inp_shape) if i not in axis
+            ]
         expected_out_shape = expected_out_shape or [1]
     else:
         if keepdims:
@@ -2433,16 +3214,13 @@ def _validate_axis_kword(
         else:
             intermediate_shape = None
             expected_out_shape = [1]
-    
+
     return axis, intermediate_shape, expected_out_shape
 
 
 @oprepo.replaces_ufunc('reduce')
-def implement_ufunc_reduce(visitor: 'ProgramVisitor',
-                           ast_node: ast.Call,
-                           sdfg: SDFG,
-                           state: SDFGState,
-                           ufunc_name: str,
+def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                           sdfg: SDFG, state: SDFGState, ufunc_name: str,
                            args: Sequence[UfuncInput],
                            kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'reduce' method of a NumPy ufunc.
@@ -2460,6 +3238,9 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
+    # Flatten arguments
+    args = _flatten_args(args)
+
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
@@ -2467,17 +3248,17 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
     num_inputs = 1
     num_outputs = 1
     num_args = len(args)
-    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
-                                  num_inputs, num_outputs, num_args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name, num_inputs,
+                                  num_outputs, num_args)
     inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
                                     num_inputs, num_args, args)
     outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
-                                      num_inputs, num_outputs, num_args,
-                                      args, kwargs)
+                                      num_inputs, num_outputs, num_args, args,
+                                      kwargs)
 
     # Validate 'keepdims' keyword
     keepdims = _validate_keepdims_kword(visitor, ast_node, ufunc_name, kwargs)
-    
+
     # Validate 'axis' keyword
     axis, intermediate_shape, expected_out_shape = _validate_axis_kword(
         visitor, ast_node, sdfg, inputs, kwargs, keepdims)
@@ -2487,7 +3268,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
     if 'where' in kwargs.keys():
         warnings.warn("Keyword argument 'where' in 'reduce' method of NumPy "
                       "ufunc calls is unsupported. It will be ignored.")
-    
+
     # Validate data shapes and apply NumPy broadcasting rules
     # In the case of reduce we may only validate the broadcasting of the
     # single input with the 'where' value. Since 'where' is currently
@@ -2499,24 +3280,25 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Output parameter for reduction operation {f} does not have "
-                "enough dimensions (output shape {o}, expected shape {e})."
-                .format(f=ufunc_name, o=out_shape, e=expected_out_shape))
+                "enough dimensions (output shape {o}, expected shape {e}).".
+                format(f=ufunc_name, o=out_shape, e=expected_out_shape))
         if len(out_shape) > len(expected_out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Output parameter for reduction operation {f} has too many "
-                "dimensions (output shape {o}, expected shape {e})."
-                .format(f=ufunc_name, o=out_shape, e=expected_out_shape))
+                "dimensions (output shape {o}, expected shape {e}).".format(
+                    f=ufunc_name, o=out_shape, e=expected_out_shape))
         if (list(out_shape) != list(expected_out_shape)):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Output parameter for reduction operation {f} has non-reduction"
                 " dimension not equal to the input one (output shape {o}, "
-                "expected shape {e}).".format(
-                    f=ufunc_name, o=out_shape, e=expected_out_shape))
+                "expected shape {e}).".format(f=ufunc_name,
+                                              o=out_shape,
+                                              e=expected_out_shape))
     else:
         out_shape = expected_out_shape
-    
+
     # No casting needed
     arg = inputs[0]
     if isinstance(arg, str):
@@ -2528,7 +3310,11 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         result_type = _sym_type(arg)
 
     # Create output data (if needed)
-    outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type,
+    outputs = _create_output(sdfg,
+                             inputs,
+                             outputs,
+                             out_shape,
+                             result_type,
                              force_scalar=True)
     if keepdims:
         if (len(intermediate_shape) == 1 and intermediate_shape[0] == 1):
@@ -2539,7 +3325,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                 intermediate_shape, result_type)
     else:
         intermediate_name = outputs[0]
-    
+
     # Validate 'initial' keyword
     # This is set to be ufunc.identity, when it exists
     initial = ufunc_impl['initial']
@@ -2564,36 +3350,44 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
                             if i not in axis
                         },
                         inputs={
-                            "__inp": dace.Memlet("{a}[{i}]".format(
-                                a=inputs[0], i=','.join([
+                            "__inp":
+                            dace.Memlet("{a}[{i}]".format(
+                                a=inputs[0],
+                                i=','.join([
                                     "0" if i in axis else "__i{i}".format(i=i)
                                     for i in range(len(inpdata.shape))
-                            ])))
+                                ])))
                         },
                         outputs={
-                            "__out": dace.Memlet("{a}[{i}]".format(
-                                a=intermediate_name, i=','.join([
+                            "__out":
+                            dace.Memlet("{a}[{i}]".format(
+                                a=intermediate_name,
+                                i=','.join([
                                     "__i{i}".format(i=i)
                                     for i in range(len(inpdata.shape))
                                     if i not in axis
-                            ])))
+                                ])))
                         },
                         code="__out = __inp",
-                        external_edges=True
-                    )
+                        external_edges=True)
                 else:
                     r = state.add_read(inputs[0])
                     w = state.add_write(intermediate_name)
-                    state.add.nedge(
-                        r, w, dace.Memlet.from_array(inputs[0], inpdata))
+                    state.add.nedge(r, w,
+                                    dace.Memlet.from_array(inputs[0], inpdata))
                 state = visitor._add_state(state.label + 'b')
-            else: 
+            else:
                 initial = intermediate_name
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-        _reduce(sdfg, state, ufunc_impl['reduce'], inputs[0], intermediate_name,
-                axis=axis, identity=initial)
+        _reduce(visitor, sdfg,
+                state,
+                ufunc_impl['reduce'],
+                inputs[0],
+                intermediate_name,
+                axis=axis,
+                identity=initial)
     else:
         tasklet = state.add_tasklet(state.label + "_tasklet", {}, {'__out'},
                                     "__out = {}".format(inputs[0]))
@@ -2601,7 +3395,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
         datadesc = sdfg.arrays[intermediate_name]
         state.add_edge(tasklet, '__out', out_node, None,
                        dace.Memlet.from_array(intermediate_name, datadesc))
-    
+
     if keepdims:
         intermediate_node = None
         for n in state.nodes():
@@ -2620,11 +3414,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor',
 
 
 @oprepo.replaces_ufunc('accumulate')
-def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
-                               ast_node: ast.Call,
-                               sdfg: SDFG,
-                               state: SDFGState,
-                               ufunc_name: str,
+def implement_ufunc_accumulate(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                               sdfg: SDFG, state: SDFGState, ufunc_name: str,
                                args: Sequence[UfuncInput],
                                kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'accumulate' method of a NumPy ufunc.
@@ -2642,6 +3433,9 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
+    # Flatten arguments
+    args = _flatten_args(args)
+
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
@@ -2649,14 +3443,14 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     num_inputs = 1
     num_outputs = 1
     num_args = len(args)
-    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
-                                  num_inputs, num_outputs, num_args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name, num_inputs,
+                                  num_outputs, num_args)
     inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
                                     num_inputs, num_args, args)
     outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
-                                      num_inputs, num_outputs, num_args,
-                                      args, kwargs)
-    
+                                      num_inputs, num_outputs, num_args, args,
+                                      kwargs)
+
     # No casting needed
     arg = inputs[0]
     if isinstance(arg, str) and arg in sdfg.arrays.keys():
@@ -2670,7 +3464,7 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     else:
         raise mem_parser.DaceSyntaxError(
             visitor, ast_node, "Can accumulate only on a dace.data.Array.")
-    
+
     # Validate 'axis' keyword argument
     axis = 0
     if 'axis' in kwargs.keys():
@@ -2681,8 +3475,7 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Value of keyword argument 'axis' in 'accumulate' method of {f}"
-                " must be an integer (value {v}).".format(
-                    f=ufunc_name, v=axis))
+                " must be an integer (value {v}).".format(f=ufunc_name, v=axis))
         if axis >= len(out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
@@ -2690,20 +3483,24 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
                 "{l}".format(a=axis, l=len(out_shape)))
         # Normalize negative axis
         axis = normalize_axes([axis], len(out_shape))[0]
-    
+
     # Create output data (if needed)
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Create subgraph
     shape = datadesc.shape
-    map_range = {"__i{}".format(i): "0:{}".format(s)
-                 for i, s in enumerate(shape) if i != axis}
-    input_idx = ','.join(["__i{}".format(i)
-                          if i != axis else "0:{}".format(shape[i])
-                          for i in range(len(shape))])
-    output_idx = ','.join(["__i{}".format(i)
-                           if i != axis else "0:{}".format(shape[i])
-                           for i in range(len(shape))])
+    map_range = {
+        "__i{}".format(i): "0:{}".format(s)
+        for i, s in enumerate(shape) if i != axis
+    }
+    input_idx = ','.join([
+        "__i{}".format(i) if i != axis else "0:{}".format(shape[i])
+        for i in range(len(shape))
+    ])
+    output_idx = ','.join([
+        "__i{}".format(i) if i != axis else "0:{}".format(shape[i])
+        for i in range(len(shape))
+    ])
 
     nested_sdfg = dace.SDFG(state.label + "_for_loop")
     nested_sdfg._temp_transients = sdfg._temp_transients
@@ -2713,23 +3510,21 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     strides = [datadesc.strides[axis]]
     nested_sdfg.add_array(inpconn, shape, result_type, strides=strides)
     nested_sdfg.add_array(outconn, shape, result_type, strides=strides)
-    
+
     init_state = nested_sdfg.add_state(label="init")
     r = init_state.add_read(inpconn)
     w = init_state.add_write(outconn)
-    init_state.add_nedge(r, w, dace.Memlet("{a}[{i}] -> {oi}".format(
-        a=inpconn, i='0', oi='0')))
+    init_state.add_nedge(
+        r, w, dace.Memlet("{a}[{i}] -> {oi}".format(a=inpconn, i='0', oi='0')))
 
     body_state = nested_sdfg.add_state(label="body")
     r1 = body_state.add_read(inpconn)
     r2 = body_state.add_read(outconn)
     w = body_state.add_write(outconn)
-    t = body_state.add_tasklet(
-        name=state.label + "_for_loop_tasklet",
-        inputs=ufunc_impl['inputs'],
-        outputs=ufunc_impl['outputs'],
-        code=ufunc_impl['code']
-    )
+    t = body_state.add_tasklet(name=state.label + "_for_loop_tasklet",
+                               inputs=ufunc_impl['inputs'],
+                               outputs=ufunc_impl['outputs'],
+                               code=ufunc_impl['code'])
 
     loop_idx = "__i{}".format(axis)
     loop_idx_m1 = "__i{} - 1".format(axis)
@@ -2744,34 +3539,34 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor',
     init_expr = str(1)
     cond_expr = "__i{i} < {s}".format(i=axis, s=shape[0])
     incr_expr = "__i{} + 1".format(axis)
-    nested_sdfg.add_loop(init_state, body_state, None, loop_idx,
-                         init_expr, cond_expr, incr_expr)
+    nested_sdfg.add_loop(init_state, body_state, None, loop_idx, init_expr,
+                         cond_expr, incr_expr)
 
     sdfg._temp_transients = nested_sdfg._temp_transients
 
     r = state.add_read(inputs[0])
     w = state.add_write(outputs[0])
-    codenode = state.add_nested_sdfg(nested_sdfg, sdfg,
-                                        {inpconn}, {outconn})
+    codenode = state.add_nested_sdfg(nested_sdfg, sdfg, {inpconn}, {outconn})
     me, mx = state.add_map(state.label + '_map', map_range)
-    state.add_memlet_path(
-        r, me, codenode,
-        memlet=dace.Memlet("{a}[{i}]".format(a=inputs[0], i=input_idx)),
-        dst_conn=inpconn)
-    state.add_memlet_path(
-        codenode, mx, w,
-        memlet=dace.Memlet("{a}[{i}]".format(a=outputs[0], i=output_idx)),
-        src_conn=outconn)
+    state.add_memlet_path(r,
+                          me,
+                          codenode,
+                          memlet=dace.Memlet("{a}[{i}]".format(a=inputs[0],
+                                                               i=input_idx)),
+                          dst_conn=inpconn)
+    state.add_memlet_path(codenode,
+                          mx,
+                          w,
+                          memlet=dace.Memlet("{a}[{i}]".format(a=outputs[0],
+                                                               i=output_idx)),
+                          src_conn=outconn)
 
     return outputs
 
 
 @oprepo.replaces_ufunc('outer')
-def implement_ufunc_outer(visitor: 'ProgramVisitor',
-                          ast_node: ast.Call,
-                          sdfg: SDFG,
-                          state: SDFGState,
-                          ufunc_name: str,
+def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call,
+                          sdfg: SDFG, state: SDFGState, ufunc_name: str,
                           args: Sequence[UfuncInput],
                           kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'outer' method of a NumPy ufunc.
@@ -2789,6 +3584,9 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
         :returns: List of output datanames
     """
 
+    # Flatten arguments
+    args = _flatten_args(args)
+
     # Get the ufunc implementation details
     ufunc_impl = _get_ufunc_impl(visitor, ast_node, ufunc_name)
 
@@ -2796,13 +3594,13 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     num_inputs = len(ufunc_impl['inputs'])
     num_outputs = len(ufunc_impl['outputs'])
     num_args = len(args)
-    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name,
-                                  num_inputs, num_outputs, num_args)
+    _validate_ufunc_num_arguments(visitor, ast_node, ufunc_name, num_inputs,
+                                  num_outputs, num_args)
     inputs = _validate_ufunc_inputs(visitor, ast_node, sdfg, ufunc_name,
                                     num_inputs, num_args, args)
     outputs = _validate_ufunc_outputs(visitor, ast_node, sdfg, ufunc_name,
-                                      num_inputs, num_outputs, num_args,
-                                      args, kwargs)
+                                      num_inputs, num_outputs, num_args, args,
+                                      kwargs)
 
     # Validate 'where' keyword
     has_where, where = _validate_where_kword(visitor, ast_node, sdfg,
@@ -2822,13 +3620,14 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
             elif isinstance(datadesc, data.Array):
                 shape = datadesc.shape
                 out_shape.extend(shape)
-                map_vars.extend(["__i{i}_{j}".format(i=i, j=j)
-                                 for j in range(len(shape))])
+                map_vars.extend(
+                    ["__i{i}_{j}".format(i=i, j=j) for j in range(len(shape))])
                 map_range.update({
                     "__i{i}_{j}".format(i=i, j=j): "0:{}".format(sz)
-                    for j, sz in enumerate(shape)})
-                input_idx = ','.join(["__i{i}_{j}".format(i=i, j=j)
-                                      for j in range(len(shape))])
+                    for j, sz in enumerate(shape)
+                })
+                input_idx = ','.join(
+                    ["__i{i}_{j}".format(i=i, j=j) for j in range(len(shape))])
                 if output_idx:
                     output_idx = ','.join([output_idx, input_idx])
                 else:
@@ -2851,34 +3650,27 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "'where' shape {w} could not be broadcast together with 'out' "
-                "shape {o}.".format(w=where_shape, o=out_shape)
-            )
+                "shape {o}.".format(w=where_shape, o=out_shape))
         if list(bcast_out_shape) != list(out_shape):
             raise mem_parser.DaceSyntaxError(
                 visitor, ast_node,
                 "Broadcasting 'where' shape {w} together with expected 'out' "
                 "shape {o} resulted in a different output shape {no}. This is "
-                "currently unsupported.".format(
-                    w=where_shape, o=out_shape, no=bcast_out_shape))
+                "currently unsupported.".format(w=where_shape,
+                                                o=out_shape,
+                                                no=bcast_out_shape))
         where_idx = bcast_inp_indices[1]
         for i in range(len(out_shape)):
             where_idx = where_idx.replace("__i{}".format(i), map_vars[i])
         input_indices.append(where_idx)
     else:
         input_indices.append(None)
-    
-    # Placeholder for applying NumPy casting rules
-    input_dtypes = []
-    for arg in inputs:
-        if isinstance(arg, str):
-            datadesc = sdfg.arrays[arg]
-            input_dtypes.append(datadesc.dtype)
-        elif isinstance(arg, Number):
-            input_dtypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-        elif isinstance(arg, sp.Basic):
-            input_dtypes.append(_sym_type(arg))
-    input_types = [d.type for d in input_dtypes]
-    result_type = dace.DTYPE_TO_TYPECLASS[np.result_type(*input_types).type]
+
+    # Infer result type
+    result_type, casting = _result_type([
+        sdfg.arrays[arg] if isinstance(arg, str) and arg in sdfg.arrays else arg
+        for arg in inputs
+    ], ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
         if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
@@ -2888,27 +3680,131 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor',
     outputs = _create_output(sdfg, inputs, outputs, out_shape, result_type)
 
     # Set tasklet parameters
-    tasklet_params = _set_tasklet_params(ufunc_impl, inputs)
+    tasklet_params = _set_tasklet_params(ufunc_impl, inputs, casting=casting)
 
     # Create subgraph
-    _create_subgraph(visitor, sdfg, state, inputs, outputs, map_range,
-                     input_indices, output_idx, out_shape, tasklet_params,
-                     has_where=has_where, where=where)
+    _create_subgraph(visitor,
+                     sdfg,
+                     state,
+                     inputs,
+                     outputs,
+                     map_range,
+                     input_indices,
+                     output_idx,
+                     out_shape,
+                     tasklet_params,
+                     has_where=has_where,
+                     where=where)
 
     return outputs
 
 
+@oprepo.replaces('numpy.reshape')
+def reshape(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            arr: str,
+            newshape: Union[str, symbolic.SymbolicType,
+                            Tuple[Union[str, symbolic.SymbolicType]]],
+            order='C') -> str:
+    desc = sdfg.arrays[arr]
+
+    # "order" determines stride orders
+    fortran_strides = False
+    if order == 'F' or (order == 'A' and desc.strides[0] == 1):
+        # FORTRAN strides
+        fortran_strides = True
+
+    # New shape and strides as symbolic expressions
+    newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
+    if fortran_strides:
+        strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
+    else:
+        strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
+
+    newarr, _ = sdfg.add_view(arr,
+                              newshape,
+                              desc.dtype,
+                              storage=desc.storage,
+                              strides=strides,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size,
+                              may_alias=desc.may_alias,
+                              alignment=desc.alignment,
+                              find_new_name=True)
+
+    # Register view with DaCe program visitor
+    pv.views[newarr] = arr
+
+    return newarr
+
+
+@oprepo.replaces_method('Array', 'view')
+@oprepo.replaces_method('Scalar', 'view')
+@oprepo.replaces_method('View', 'view')
+def view(pv: 'ProgramVisitor',
+         sdfg: SDFG,
+         state: SDFGState,
+         arr: str,
+         dtype,
+         type=None) -> str:
+    if type is not None:
+        raise ValueError('View to numpy types is not supported')
+
+    desc = sdfg.arrays[arr]
+
+    # Change size of array based on the differences in bytes
+    bytemult = desc.dtype.bytes / dtype.bytes
+    bytediv = dtype.bytes / desc.dtype.bytes
+    contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
+
+    # For cases that can be recognized, if contiguous dimension is too small
+    # raise an exception similar to numpy
+    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and bytemult < 1
+            and desc.shape[contigdim] % bytediv != 0):
+        raise ValueError(
+            'When changing to a larger dtype, its size must be a divisor of '
+            'the total size in bytes of the last axis of the array.')
+
+    # Create new shape and strides for view
+    newshape = list(desc.shape)
+    newstrides = [
+        s * bytemult if i != contigdim else s
+        for i, s in enumerate(desc.strides)
+    ]
+    newshape[contigdim] *= bytemult
+
+    newarr, _ = sdfg.add_view(arr,
+                              newshape,
+                              dtype,
+                              storage=desc.storage,
+                              strides=newstrides,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size * bytemult,
+                              may_alias=desc.may_alias,
+                              alignment=desc.alignment,
+                              find_new_name=True)
+
+    # Register view with DaCe program visitor
+    pv.views[newarr] = arr
+
+    return newarr
+
+
 # Datatype converter #########################################################
+
 
 def _make_datatype_converter(typeclass: str):
     if typeclass in {"int", "float", "complex"}:
         dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
     else:
         dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]
+
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
     @oprepo.replaces("numpy.{}".format(typeclass))
-    def _converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput):
+    def _converter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                   arg: UfuncInput):
         return _datatype_converter(sdfg, state, arg, dtype=dtype)
 
 
@@ -2916,9 +3812,7 @@ for typeclass in dtypes.TYPECLASS_STRINGS:
     _make_datatype_converter(typeclass)
 
 
-def _datatype_converter(sdfg: SDFG,
-                        state: SDFGState,
-                        arg: UfuncInput,
+def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
                         dtype: dtypes.typeclass) -> UfuncOutput:
     """ Out-of-place datatype conversion of the input argument.
 
@@ -2931,8 +3825,8 @@ def _datatype_converter(sdfg: SDFG,
     """
 
     # Get shape and indices
-    (out_shape, map_indices, out_indices, inp_indices) = _validate_shapes(
-         None, None, sdfg, None, [arg], [None])
+    (out_shape, map_indices, out_indices,
+     inp_indices) = _validate_shapes(None, None, sdfg, None, [arg], [None])
 
     # Create output data
     outputs = _create_output(sdfg, [arg], [None], out_shape, dtype)
@@ -2947,8 +3841,16 @@ def _datatype_converter(sdfg: SDFG,
     tasklet_params = _set_tasklet_params(impl, [arg])
 
     # Visitor input only needed when `has_where == True`.
-    _create_subgraph(None, sdfg, state, [arg], outputs, map_indices,
-                     inp_indices, out_indices, out_shape, tasklet_params,
-                     has_where=False, where=None)
-    
+    _create_subgraph(None,
+                     sdfg,
+                     state, [arg],
+                     outputs,
+                     map_indices,
+                     inp_indices,
+                     out_indices,
+                     out_shape,
+                     tasklet_params,
+                     has_where=False,
+                     where=None)
+
     return outputs

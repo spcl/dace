@@ -119,10 +119,7 @@ def _test_dot(implementation, dtype, sdfg):
     ref = np.dot(x, y)
 
     diff = abs(result[0] - ref)
-    if diff >= 1e-6 * ref:
-        print("Unexpected result returned from dot product: "
-              "got {}, expected {}".format(result[0], ref))
-        sys.exit(1)
+    assert diff < 1e-6 * ref
 
     print("Test ran successfully for {}.".format(implementation))
 

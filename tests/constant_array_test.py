@@ -24,9 +24,7 @@ def stencil3x3(A, B):
                kernel[2, 2] * input[2, 2])
 
 
-if __name__ == "__main__":
-    print("==== Program start ====")
-
+def test():
     print('Conv2D %dx%d' % (N.get(), N.get()))
 
     A = dace.ndarray([N, N], dtype=dace.float32)
@@ -50,10 +48,7 @@ if __name__ == "__main__":
     sdfg(A=A, B=B, N=N)
 
     # Regression
-    regression = ndimage.convolve(regression,
-                                  KERNEL,
-                                  mode='constant',
-                                  cval=0.0)
+    regression = ndimage.convolve(regression, KERNEL, mode='constant', cval=0.0)
 
     residual = np.linalg.norm(B[1:N.get() - 1, 1:N.get() - 1] - regression) / (
         (N.get() - 2)**2)
@@ -62,5 +57,8 @@ if __name__ == "__main__":
     #print(A.view(type=np.ndarray))
     #print(regression.view(type=np.ndarray))
 
-    print("==== Program end ====")
-    exit(0 if residual <= 0.05 else 1)
+    assert residual <= 0.05
+
+
+if __name__ == "__main__":
+    test()

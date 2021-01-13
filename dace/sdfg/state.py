@@ -3,7 +3,7 @@
 
 import collections
 import copy
-from dace.subsets import Range
+from dace.subsets import Range, Subset
 from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs,
                   symbolic)
 from dace.sdfg import nodes as nd
@@ -30,8 +30,7 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
         return old_dinfo
 
     caller = getframeinfo(stack()[2][0])
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0,
-                            caller.filename)
+    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
 
 class StateGraphView(object):
@@ -79,8 +78,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self,
-                    edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -126,8 +124,7 @@ class StateGraphView(object):
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst)
-                                 if e.src_conn == "OUT_" +
-                                 curedge.dst_conn[3:])
+                                 if e.src_conn == "OUT_" + curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
 
@@ -148,8 +145,7 @@ class StateGraphView(object):
             (isinstance(edge.dst, nd.EntryNode) and edge.dst_conn is not None
              and edge.dst_conn.startswith('IN_'))):
             propagate_forward = True
-        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None)
-                or
+        if ((isinstance(edge.src, nd.ExitNode) and edge.src_conn is not None) or
             (isinstance(edge.dst, nd.ExitNode) and edge.dst_conn is not None)):
             propagate_backward = True
 
@@ -335,9 +331,22 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, False, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            if validate and len(result) != self.number_of_nodes():
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                leftover_nodes = set(self.nodes()) - result.keys()
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(leftover_nodes))
 
             # Cache result
             self._scope_dict_toparent_cached = result
@@ -348,9 +357,9 @@ class StateGraphView(object):
         return result
 
     def scope_children(
-            self,
-            return_ids: bool = False,
-            validate: bool = True
+        self,
+        return_ids: bool = False,
+        validate: bool = True
     ) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
         """ Returns a dictionary that maps each SDFG entry node to its children,
             not including the children of children entry nodes. The key `None`
@@ -371,9 +380,24 @@ class StateGraphView(object):
             node_queue = collections.deque(self.source_nodes())
             eq = _scope_dict_inner(self, node_queue, None, True, result)
 
-            # Sanity check
+            # Sanity checks
             if validate and len(eq) != 0:
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
+
+            entry_nodes = set(n for n in self.nodes()
+                              if isinstance(n, nd.EntryNode)) | {None}
+            if (validate and len(result) != len(entry_nodes)):
+                cycles = self.find_cycles()
+                if cycles:
+                    raise ValueError('Found cycles in state %s: %s' %
+                                     (self.label, list(cycles)))
+                raise RuntimeError(
+                    "Some nodes were not processed: {}".format(entry_nodes -
+                                                               result.keys()))
 
             # Cache result
             self._scope_dict_tochildren_cached = result
@@ -453,26 +477,55 @@ class StateGraphView(object):
 
         return defined_syms
 
+    def _read_and_write_sets(
+        self
+    ) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
+        """
+        Determines what data is read and written in this subgraph, returning
+        dictionaries from data containers to all subsets that are read/written.
+        """
+        read_set = collections.defaultdict(list)
+        write_set = collections.defaultdict(list)
+        from dace.sdfg import utils  # Avoid cyclic import
+        subgraphs = utils.concurrent_subgraphs(self)
+        for sg in subgraphs:
+            rs = collections.defaultdict(list)
+            ws = collections.defaultdict(list)
+            # Traverse in topological order, so data that is written before it
+            # is read is not counted in the read set
+            for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
+                if isinstance(n, nd.AccessNode):
+                    for e in sg.in_edges(n):
+                        # skip empty memlets
+                        if e.data.is_empty():
+                            continue
+                        # Store all subsets that have been written
+                        ws[n.data].append(e.data.subset)
+                    for e in sg.out_edges(n):
+                        # skip empty memlets
+                        if e.data.is_empty():
+                            continue
+                        if n.data in ws:
+                            if any(s.covers(e.data.subset) for s in ws[n.data]):
+                                continue
+                        rs[n.data].append(e.data.subset)
+            # Union all subgraphs, so an array that was excluded from the read
+            # set because it was written first is still included if it is read
+            # in another subgraph
+            for data, accesses in rs.items():
+                read_set[data] += accesses
+            for data, accesses in ws.items():
+                write_set[data] += accesses
+        return read_set, write_set
+
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data is read and written in this subgraph. Writes
-        with conflict resolution are included as both reads and writes.
+        Determines what data is read and written in this subgraph.
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
-        read_set = set()
-        write_set = set()
-        for n in self.data_nodes():
-            in_edges = self.in_edges(n)
-            if len(in_edges) > 0:
-                write_set.add(n.data)
-            for e in in_edges:
-                if e.data.wcr is not None:
-                    read_set.add(n.data)
-                    break
-            if len(self.out_edges(n)) > 0:
-                read_set.add(n.data)
-        return read_set, write_set
+        read_set, write_set = self._read_and_write_sets()
+        return set(read_set.keys()), set(write_set.keys())
 
     def arglist(self) -> Dict[str, dt.Data]:
         """
@@ -619,10 +672,7 @@ class StateGraphView(object):
             for k, v in self.arglist().items()
         ]
 
-    def scope_subgraph(self,
-                       entry_node,
-                       include_entry=True,
-                       include_exit=True):
+    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
         from dace.sdfg.scope import _scope_subgraph
         return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
@@ -654,7 +704,8 @@ class StateGraphView(object):
 
 
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
+class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
+                StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -666,10 +717,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                       default=False,
                       desc="Do not synchronize at the end of the state")
 
-    instrument = Property(
-        choices=dtypes.InstrumentationType,
-        desc="Measure execution statistics with given method",
-        default=dtypes.InstrumentationType.No_Instrumentation)
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -688,6 +738,9 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         key_type=str,
         value_type=symbolic.pystr_to_symbolic,
         desc='Full storage location identifier (e.g., rank, GPU ID)')
+
+    def __repr__(self) -> str:
+        return f"SDFGState ({self.label})"
 
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
@@ -787,8 +840,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
                             str(type(memlet)))
 
         self._clear_scopedict_cache()
-        result = super(SDFGState, self).add_edge(u, u_connector, v,
-                                                 v_connector, memlet)
+        result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector,
+                                                 memlet)
         memlet.try_initialize(self.parent, self, result)
         return result
 
@@ -929,8 +982,7 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self,
-                                              as_edges=True):
+            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
                 for e in path:
                     symbols.update(e.data.new_symbols(symbols))
         except ValueError:
@@ -1102,17 +1154,21 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
             ndrange = {k: v for k, v in ndrange}
         else:
             params = list(ndrange.keys())
-        map_range = SubsetProperty.from_string(", ".join(
-            [ndrange[p] for p in params]))
+
+        if ndrange and isinstance(next(iter(ndrange.values())), tuple):
+            map_range = sbs.Range([ndrange[p] for p in params])
+        else:
+            map_range = SubsetProperty.from_string(", ".join(
+                [ndrange[p] for p in params]))
         return params, map_range
 
     def add_map(
-        self,
-        name,
-        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
-        schedule=dtypes.ScheduleType.Default,
-        unroll=False,
-        debuginfo=None,
+            self,
+            name,
+            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+            schedule=dtypes.ScheduleType.Default,
+            unroll=False,
+            debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
@@ -1336,12 +1392,12 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-        self,
-        wcr,
-        axes,
-        identity=None,
-        schedule=dtypes.ScheduleType.Default,
-        debuginfo=None,
+            self,
+            wcr,
+            axes,
+            identity=None,
+            schedule=dtypes.ScheduleType.Default,
+            debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation
@@ -1557,8 +1613,8 @@ class SDFGState(OrderedMultiDiConnectorGraph, StateGraphView):
         # Innermost edge memlet
         cur_memlet = memlet
 
-        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and
-                                   src_node.data == cur_memlet.data)
+        cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode)
+                                   and src_node.data == cur_memlet.data)
 
         # Verify that connectors exist
         if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors")

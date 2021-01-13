@@ -275,6 +275,18 @@ class AccessNode(Node):
         if self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
+    def has_writes(self, state):
+        for e in state.in_edges(self):
+            if not e.data.is_empty():
+                return True
+        return False
+
+    def has_reads(self, state):
+        for e in state.out_edges(self):
+            if not e.data.is_empty():
+                return True
+        return False
+
 
 # ------------------------------------------------------------------------------
 
@@ -444,10 +456,11 @@ class NestedSDFG(CodeNode):
                  schedule=dtypes.ScheduleType.Default,
                  location=None,
                  debuginfo=None):
+        from dace.sdfg import SDFG
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg = sdfg
+        self.sdfg: SDFG = sdfg
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
@@ -523,6 +536,10 @@ class NestedSDFG(CodeNode):
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG: %s' %
                              (missing_symbols))
+        extra_symbols = self.symbol_mapping.keys() - symbols
+        if len(extra_symbols) > 0:
+            # TODO: Elevate to an error?
+            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
         self.sdfg.validate()

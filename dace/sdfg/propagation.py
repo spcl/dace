@@ -571,6 +571,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
         # In each cycle, try to identify a valid loop guard state.
         guard = None
         begin = None
+        itvar = None
         for v in cycle:
             # Try to identify a valid for-loop guard.
             in_edges = sdfg.in_edges(v)
@@ -584,19 +585,20 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
             # All incoming guard edges must set exactly one variable and it must
             # be the same for all of them.
-            itvar = None
+            itvars = set()
             for iedge in in_edges:
-                if len(iedge.data.assignments) == 1:
-                    if itvar is None:
-                        itvar = list(iedge.data.assignments.keys())[0]
-                    elif itvar not in iedge.data.assignments:
-                        itvar = None
-                        break
+                if len(iedge.data.assignments) > 0:
+                    if not itvars:
+                        itvars = set(iedge.data.assignments.keys())
+                    else:
+                        itvars &= set(iedge.data.assignments.keys())
                 else:
-                    itvar = None
+                    itvars = None
                     break
-            if itvar is None:
+            if not itvars or len(itvars) > 1:
                 continue
+            itvar = next(iter(itvars))
+            itvarsym = pystr_to_symbolic(itvar)
 
             # The outgoing edges must be negations of one another.
             if out_edges[0].data.condition_sympy() != (sympy.Not(
@@ -607,10 +609,12 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # to the guard via 'increment' edge) is part of this cycle. If not,
             # we're looking at the guard for a nested cycle, which we ignore for
             # this cycle.
-            increment_edge = in_edges[0]
-            if pystr_to_symbolic(itvar) in pystr_to_symbolic(
-                    in_edges[1].data.assignments[itvar]).free_symbols:
-                increment_edge = in_edges[1]
+            increment_edge = None
+            for iedge in in_edges:
+                if itvarsym in pystr_to_symbolic(
+                        iedge.data.assignments[itvar]).free_symbols:
+                    increment_edge = iedge
+                    break
             if increment_edge.src not in cycle:
                 continue
 
@@ -632,17 +636,15 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             begin = loop_state
             break
 
-        if guard is not None and begin is not None:
+        if guard is not None and begin is not None and itvar is not None:
             # A guard state was identified, see if it has valid for-loop ranges
             # and annotate the loop as such.
 
             # Ensure that this guard's loop wasn't annotated yet.
-            guard_inedges = sdfg.in_edges(guard)
-            itervar = list(guard_inedges[0].data.assignments.keys())[0]
-            if itervar in begin.ranges:
+            if itvar in begin.ranges:
                 continue
 
-            res = find_for_loop(sdfg, guard, begin)
+            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
             if res is None:
                 # No range detected, mark as unbounded.
                 unannotated_cycle_states.extend(cycle)
@@ -657,7 +659,9 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                 if (stride < 0) == True:
                     rng = (stop, start, -stride)
 
-                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin],
+                loop_states = sdutils.dfs_conditional(
+                    sdfg,
+                    sources=[begin],
                     condition=lambda _, child: child != guard)
                 for v in loop_states:
                     v.ranges[itervar] = subsets.Range([rng])
@@ -887,13 +891,16 @@ def propagate_states(sdfg) -> None:
                             (outer_itvar * outer_stride + outer_start)
                         })
                         loop_executions = Sum(
-                            exec_repl, (outer_itvar, 0,
-                            ceiling((outer_stop - outer_start) / outer_stride)))
+                            exec_repl,
+                            (outer_itvar, 0,
+                             ceiling(
+                                 (outer_stop - outer_start) / outer_stride)))
                     loop_executions = loop_executions.doit()
 
                     loop_state = state.condition_edge.dst
-                    end_state = (out_edges[0].dst if out_edges[1].dst
-                                 == loop_state else out_edges[1].dst)
+                    end_state = (out_edges[0].dst
+                                 if out_edges[1].dst == loop_state else
+                                 out_edges[1].dst)
 
                     traversal_q.append((end_state, state.executions,
                                         proposed_dynamic, itvar_stack))
@@ -1097,23 +1104,37 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-            if symbolic.issymbolic(iedge.data.volume):
-                if any(str(s) not in parent_sdfg.symbols
-                        for s in iedge.data.volume.free_symbols):
-                    iedge.data.volume = 0
-                    iedge.data.dynamic = True
+            try:
+                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+                if symbolic.issymbolic(iedge.data.volume):
+                    if any(
+                            str(s) not in parent_sdfg.symbols
+                            for s in iedge.data.volume.free_symbols):
+                        iedge.data.volume = 0
+                        iedge.data.dynamic = True
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                iedge.data.volume = 0
+                iedge.data.dynamic = True
     for oedge in parent_state.out_edges(nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-            if symbolic.issymbolic(oedge.data.volume):
-                if any(str(s) not in parent_sdfg.symbols
-                        for s in oedge.data.volume.free_symbols):
-                    oedge.data.volume = 0
-                    oedge.data.dynamic = True
+            try:
+                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+                if symbolic.issymbolic(oedge.data.volume):
+                    if any(
+                            str(s) not in parent_sdfg.symbols
+                            for s in oedge.data.volume.free_symbols):
+                        oedge.data.volume = 0
+                        oedge.data.dynamic = True
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                oedge.data.volume = 0
+                oedge.data.dynamic = True
 
 
 def propagate_memlets_sdfg(sdfg):
@@ -1357,6 +1378,9 @@ def propagate_subset(memlets: List[Memlet],
 
     new_subset = None
     for md in memlets:
+        if md.is_empty():
+            continue
+
         tmp_subset = None
 
         subset = None

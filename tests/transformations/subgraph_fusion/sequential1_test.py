@@ -12,7 +12,7 @@ N = dace.symbol('N')
 
 
 @dace.program
-def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+def program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 
     for i in dace.map[0:N]:
         with dace.tasklet:
@@ -30,7 +30,7 @@ def test_program(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 def test_sequential():
     N.set(1000)
 
-    sdfg = test_program.to_sdfg()
+    sdfg = program.to_sdfg()
     state = sdfg.nodes()[0]
 
     A = np.random.rand(N.get()).astype(np.float64)
@@ -40,6 +40,7 @@ def test_sequential():
 
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C1, N=N)
+    del csdfg
 
     fusion(sdfg, state)
     csdfg = sdfg.compile()

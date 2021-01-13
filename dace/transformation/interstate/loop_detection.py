@@ -61,16 +61,13 @@ class DetectLoop(transformation.Transformation):
         if len(guard_outedges) != 2:
             return False
 
-        # All incoming edges to the guard must set exactly one variable and
-        # it must be the same one.
+        # All incoming edges to the guard must set the same variable
         itvar = None
         for iedge in guard_inedges:
-            if len(iedge.data.assignments) != 1:
-                return False
             if itvar is None:
-                itvar = list(iedge.data.assignments.keys())[0]
-            elif itvar not in iedge.data.assignments:
-                return False
+                itvar = set(iedge.data.assignments.keys())
+            else:
+                itvar &= iedge.data.assignments.keys()
         if itvar is None:
             return False
 
@@ -84,10 +81,12 @@ class DetectLoop(transformation.Transformation):
                                                        sdfg.start_state)
         loop_nodes = sdutil.dfs_conditional(
             sdfg, sources=[begin], condition=lambda _, child: child != guard)
-        backedge_found = False
+        backedge = None
         for node in loop_nodes:
-            if any(e.dst == guard for e in graph.out_edges(node)):
-                backedge_found = True
+            for e in graph.out_edges(node):
+                if e.dst == guard:
+                    backedge = e
+                    break
 
             # Traverse the dominator tree upwards, if we reached the guard,
             # the node is in the loop. If we reach the starting state
@@ -100,7 +99,14 @@ class DetectLoop(transformation.Transformation):
             else:
                 return False
 
-        if not backedge_found:
+        if backedge is None:
+            return False
+
+        # The backedge must assignment the iteration variable
+        itvar &= backedge.data.assignments.keys()
+        if len(itvar) != 1:
+            # Either no consistent iteration variable sound, or too many
+            # consistent iteration variables found
             return False
 
         return True
@@ -120,7 +126,10 @@ class DetectLoop(transformation.Transformation):
 
 
 def find_for_loop(
-    sdfg: sd.SDFG, guard: sd.SDFGState, entry: sd.SDFGState
+    sdfg: sd.SDFG,
+    guard: sd.SDFGState,
+    entry: sd.SDFGState,
+    itervar: Optional[str] = None
 ) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType,
                                   symbolic.SymbolicType], Tuple[
                                       List[sd.SDFGState], sd.SDFGState]]]:
@@ -137,7 +146,8 @@ def find_for_loop(
     # Extract state transition edge information
     guard_inedges = sdfg.in_edges(guard)
     condition_edge = sdfg.edges_between(guard, entry)[0]
-    itervar = list(guard_inedges[0].data.assignments.keys())[0]
+    if itervar is None:
+        itervar = list(guard_inedges[0].data.assignments.keys())[0]
     condition = condition_edge.data.condition_sympy()
 
     # Find the stride edge. All in-edges to the guard except for the stride edge

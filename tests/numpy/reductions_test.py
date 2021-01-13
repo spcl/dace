@@ -93,7 +93,8 @@ def test_return_both():
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(sdfg,
+    _, (outval, outidx) = _argminmax(None,
+                                     sdfg,
                                      state,
                                      "IN",
                                      1,

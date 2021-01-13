@@ -22,7 +22,7 @@ def inline_chain_test(A):
                 out = intmp + 1
 
 
-if __name__ == '__main__':
+def test():
     A = np.random.rand(20, 20).astype(np.float64)
     refA = np.ndarray([20, 20], dtype=np.float64)
     refA[:] = A
@@ -31,4 +31,7 @@ if __name__ == '__main__':
 
     diff = np.linalg.norm(A - (refA + 2)) / 400
     print('Difference:', diff)
-    exit(1 if diff > 1e-5 else 0)
+    assert diff <= 1e-5
+
+if __name__ == "__main__":
+    test()

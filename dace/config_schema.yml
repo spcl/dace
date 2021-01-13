@@ -156,6 +156,7 @@ required:
                     Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
                     generating code.
 
+
             autobuild_bitstreams:
                 type: bool
                 default: true
@@ -175,6 +176,14 @@ required:
                 description: >
                     If set to true, if multiple nested SDFGs with equivalent contents exist,
                     the code is generated only once.
+
+            inline_sdfgs:
+                type: bool
+                default: false
+                title: Inline all nested SDFGs
+                description: >
+                    If set to true, inlines all nested SDFGs upon code generation by default.
+
 
             #############################################
             # CPU compiler
@@ -356,6 +365,14 @@ required:
                         default: xilinx_u250_xdma_201830_2
                         title: Target platform for Xilinx
                         description: Platform name of Vitis/SDx/SDAccel target.
+
+                    frequency:
+                        type: str 
+                        default: '' 
+                        title: Target frequency for Xilinx kernels
+                        description: >
+                            Target frequency when compiling kernels for Xilinx.
+                            Will not necessarily be achieved in practice.
 
                     enable_debugging:
                         type: bool
@@ -630,6 +647,15 @@ required:
         title: Instrumentation
         description: Instrumentation preferences
         required:
+            report_each_invocation:
+                type: bool
+                title: Save report for each invocation
+                default: true
+                description: >
+                    Save an instrumentation report file for each invocation of
+                    the SDFG, rather than one report that spans from SDFG
+                    initialization to finalization.
+
             papi:
                 type: dict
                 title: PAPI
@@ -746,3 +772,16 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+                    fpga:
+                        type: dict
+                        title: FPGA 
+                        description: FPGA-specific BLAS options. 
+                        required:
+                            default_stream_depth:
+                                type: int
+                                default: 32
+                                title: Default FPGA stream depth
+                                description: >
+                                    Default FPGA stream depth used in the BLAS
+                                    library nodes and the corresponding
+                                    streaming transformations

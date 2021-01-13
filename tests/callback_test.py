@@ -4,7 +4,7 @@ import numpy
 
 
 def failed_test():
-    raise NotImplementedError("Callback test failed")
+    raise AssertionError('Should not be called')
 
 
 def mysquarer(inp):
@@ -24,9 +24,9 @@ def arraysquarer(outp_array, inp_array):
     np.copyto(outp_array, np.square(inp_array))
 
 
-M = dace.symbolic.symbol()
-N = dace.symbolic.symbol()
-O = dace.symbolic.symbol()
+M = dace.symbolic.symbol('M')
+N = dace.symbolic.symbol('N')
+O = dace.symbolic.symbol('O')
 giveandtake = dace.symbol('giveandtake', dace.callback(dace.uint32,
                                                        dace.uint32))
 take = dace.symbol('take', dace.callback(None, dace.uint32))
@@ -62,20 +62,11 @@ def callback_with_arrays(out_arr, in_arr):
         arrfunc(out, inp)
 
 
-if __name__ == "__main__":
-
+def test_callback():
     A = dace.ndarray((2, ), dtype=dace.int32)
     B = dace.ndarray((2, ), dtype=dace.int32)
-
     A[:] = 5
     B[:] = 0
-
-    M.set(2)
-    N.set(3)
-    O.set(4)
-
-    arr_in = numpy.random.randn(M.get(), N.get(), O.get())
-    arr_out = dace.ndarray((M, N, O), dtype=dace.float64)
 
     callback_test(
         A,
@@ -86,7 +77,21 @@ if __name__ == "__main__":
         donothing=failed_test,
     )
     for b in B:
-        if b != 25:
-            failed_test()
+        assert b == 25
+
+
+def test_callback_with_arrays():
+    M.set(2)
+    N.set(3)
+    O.set(4)
+
+    arr_in = numpy.random.randn(M.get(), N.get(), O.get())
+    arr_out = dace.ndarray((M, N, O), dtype=dace.float64)
+
     callback_with_arrays(arr_out, arr_in, arrfunc=arraysquarer)
     assert numpy.linalg.norm(arr_out - numpy.square(arr_in)) < 1e-10
+
+
+if __name__ == "__main__":
+    test_callback()
+    test_callback_with_arrays()

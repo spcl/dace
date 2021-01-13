@@ -30,5 +30,9 @@ def myprogram(A, B, cst):
     bla(A, B, cst)
 
 
-if __name__ == '__main__':
+def test():
     myprogram.compile(dp.float32[W, H], dp.float32[H, W], dp.int32)
+
+
+if __name__ == "__main__":
+    test()

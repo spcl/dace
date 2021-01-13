@@ -7,9 +7,9 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nd, graph as gr
-from dace import data as dt, dtypes, subsets as sbs
+from dace import data as dt, dtypes, memlet as mm, subsets as sbs
 from string import ascii_uppercase
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -105,7 +105,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
-    :return: A generator of edges in the lastvisit depth-first-search.
+    :return: A generator of nodes in the lastvisit depth-first-search.
 
     @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
@@ -207,11 +207,11 @@ def change_edge_dest(graph: gr.OrderedDiGraph,
         The function finds all edges in the graph that have node A as their
         destination. It then creates a new edge for each one found,
         using the same source nodes and data, but node B as the destination.
-        Afterwards, it deletes the edges found and inserts the new ones into 
+        Afterwards, it deletes the edges found and inserts the new ones into
         the graph.
 
         :param graph: The graph upon which the edge transformations will be
-                      applied.  
+                      applied.
         :param node_a: The original destination of the edges.
         :param node_b: The new destination of the edges to be transformed.
     """
@@ -234,9 +234,9 @@ def change_edge_src(graph: gr.OrderedDiGraph,
                     node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph]):
     """ Changes the sources of edges from node A to node B.
 
-        The function finds all edges in the graph that have node A as their 
-        source. It then creates a new edge for each one found, using the same 
-        destination nodes and data, but node B as the source. Afterwards, it 
+        The function finds all edges in the graph that have node A as their
+        source. It then creates a new edge for each one found, using the same
+        destination nodes and data, but node B as the source. Afterwards, it
         deletes the edges
         found and inserts the new ones into the graph.
 
@@ -262,7 +262,7 @@ def change_edge_src(graph: gr.OrderedDiGraph,
 def find_source_nodes(graph):
     """ Finds the source nodes of a graph.
 
-        The function finds the source nodes of a graph, i.e. the nodes with 
+        The function finds the source nodes of a graph, i.e. the nodes with
         zero in-degree.
 
         :param graph: The graph whose source nodes are being searched for.
@@ -307,7 +307,7 @@ def merge_maps(
     # Create merged map by inheriting attributes from outer map and using
     # the merge functions for parameters and ranges.
     merged_map = copy.deepcopy(outer_map)
-    merged_map.label = 'merged_' + outer_map.label
+    merged_map.label = outer_map.label
     merged_map.params = param_merge(outer_map.params, inner_map.params)
     merged_map.range = range_merge(outer_map.range, inner_map.range)
 
@@ -562,6 +562,76 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
     return False
 
 
+def get_view_edge(
+    state: SDFGState, view: nd.AccessNode
+) -> Tuple[nd.AccessNode, gr.MultiConnectorEdge[mm.Memlet]]:
+    """
+    Given a view access node, returns the viewed access node and 
+    incoming/outgoing edge which points to it.
+    See the ruleset in the documentation of ``dace.data.View``.
+
+    :param state: The state in which the view resides.
+    :param view: The view access node.
+    :return: An edge pointing to the viewed data or None if view is invalid.
+    :see: ``dace.data.View``
+    """
+
+    in_edges = state.in_edges(view)
+    out_edges = state.out_edges(view)
+
+    # Invalid case: No data to view
+    if len(in_edges) == 0 or len(out_edges) == 0:
+        return None
+
+    # If there is one edge (in/out) that leads (via memlet path) to an access
+    # node, and the other side (out/in) has a different number of edges.
+    if len(in_edges) == 1 and len(out_edges) != 1:
+        return in_edges[0]
+    if len(out_edges) == 1 and len(in_edges) != 1:
+        return out_edges[0]
+    if len(out_edges) == len(in_edges) and len(out_edges) != 1:
+        return None
+
+    in_edge = in_edges[0]
+    out_edge = out_edges[0]
+
+    # If there is one incoming and one outgoing edge, and one leads to a code
+    # node, the one that leads to an access node is the viewed data.
+    inmpath = state.memlet_path(in_edge)
+    outmpath = state.memlet_path(out_edge)
+    src_is_data, dst_is_data = False, False
+    if isinstance(inmpath[0].src, nd.AccessNode):
+        src_is_data = True
+    if isinstance(outmpath[-1].dst, nd.AccessNode):
+        dst_is_data = True
+
+    if src_is_data and not dst_is_data:
+        return in_edge
+    if not src_is_data and dst_is_data:
+        return out_edge
+    if not src_is_data and not dst_is_data:
+        return None
+
+    # If both sides lead to access nodes, if one memlet's data points to the
+    # view it cannot point to the viewed node.
+    if in_edge.data.data == view.data and out_edge.data.data != view.data:
+        return out_edge
+    if in_edge.data.data != view.data and out_edge.data.data == view.data:
+        return in_edge
+    if in_edge.data.data == view.data and out_edge.data.data == view.data:
+        return None
+
+    # If both memlets' data are the respective access nodes, the access
+    # node at the highest scope is the one that is viewed.
+    if isinstance(in_edge.src, nd.EntryNode):
+        return in_edge
+    if isinstance(out_edge.dst, nd.ExitNode):
+        return out_edge
+
+    # If both access nodes reside in the same scope, the input data is viewed.
+    return in_edge
+
+
 def dynamic_map_inputs(state: SDFGState,
                        map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
     """
@@ -767,21 +837,37 @@ def local_transients(sdfg, dfg, entry_node):
 
 
 def trace_nested_access(node, state, sdfg):
-    """ 
+    """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
 
     :param node: An access node.
     :param state: State in which the access node is located.
     :param sdfg: SDFG in which the access node is located.
-    :return: A list of scopes (node, state, sdfg) in which the given
-                data is accessed, from outermost scope to innermost scope.
+    :return: A list of scopes ((input_node, output_node), (memlet_read, memlet_write), state, sdfg) in which
+             the given data is accessed, from outermost scope to innermost
+             scope.
     """
-    if node.access == dtypes.AccessType.ReadWrite:
-        raise NotImplementedError("Access node must be read or write only")
-    curr_node = node
     curr_sdfg = sdfg
-    trace = [(node, state, sdfg)]
+    curr_read = None
+    memlet_read = None
+    for m in state.out_edges(node):
+        if not m.data.is_empty():
+            curr_read = node
+            memlet_read = m.data
+            break
+
+    curr_write = None
+    memlet_write = None
+    for m in state.in_edges(node):
+        if not m.data.is_empty():
+            curr_write = node
+            memlet_read = m.data
+            break
+
+    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)
+             ]
+
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
         # Find the nested SDFG containing ourself in the parent state
@@ -792,24 +878,36 @@ def trace_nested_access(node, state, sdfg):
         else:
             raise ValueError("{} not found in its parent state {}".format(
                 curr_sdfg.name, curr_state.label))
-        if node.access == dtypes.AccessType.ReadOnly:
+        if curr_read is not None:
             for e in curr_state.in_edges(nested_sdfg):
-                if e.dst_conn == curr_node.data:
+                if e.dst_conn == curr_read.data:
                     # See if the input to this connector traces back to an
                     # access node. If not, just give up here
-                    curr_node = find_input_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, nd.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
-        if node.access == dtypes.AccessType.WriteOnly:
+                    n = find_input_arraynode(curr_state, e)
+                    if isinstance(n, nd.AccessNode):
+                        curr_read = n
+                        memlet_read = e.data
+                        break
+            else:
+                curr_read = None
+                memlet_read = None
+        if curr_write is not None:
             for e in curr_state.out_edges(nested_sdfg):
-                if e.src_conn == curr_node.data:
+                if e.src_conn == curr_write.data:
                     # See if the output of this connector traces back to an
                     # access node. If not, just give up here
-                    curr_node = find_output_arraynode(curr_state, e)
-                    curr_sdfg = curr_state.parent  # Exit condition
-                    if isinstance(curr_node, nd.AccessNode):
-                        trace.append((curr_node, curr_state, curr_sdfg))
-                    break
+                    n = find_output_arraynode(curr_state, e)
+                    if isinstance(curr_write, nd.AccessNode):
+                        curr_write = n
+                        memlet_write = e.data
+                        break
+            else:
+                curr_write = None
+                memlet_write = None
+        if curr_read is not None or curr_write is not None:
+            trace.append(((curr_read, curr_write), (memlet_read, memlet_write),
+                          curr_state, curr_state.parent))
+        else:
+            break
+        curr_sdfg = curr_state.parent  # Recurse
     return list(reversed(trace))

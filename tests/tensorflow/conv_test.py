@@ -1,16 +1,13 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-try:
-    import tensorflow as tf
-except ImportError:
-    print("WARNING: Tensorflow not found, skipping test")
-    exit(0)
-
-from tensorflow.python.ops import gen_nn_ops
+import pytest
 import numpy as np
-import dace
-from dace.frontend.tensorflow import TFSession
 
-if __name__ == '__main__':
+
+@pytest.mark.tensorflow
+def test_conv():
+    import tensorflow as tf
+    from tensorflow.python.ops import gen_nn_ops
+    from dace.frontend.tensorflow import TFSession
     inp_shape = [10, 10, 10, 10]
     filter_shape = [3, 3, 10, 3]
     strides = [1, 3, 3, 1]
@@ -145,3 +142,11 @@ if __name__ == '__main__':
                         tf.linalg.norm(output_tf -
                                        output_dace).eval(session=sess_tf))
                     raise AssertionError("Convolution filter grad test failed")
+
+
+if __name__ == '__main__':
+    try:
+        import tensorflow
+        test_conv()
+    except ImportError:
+        pass
