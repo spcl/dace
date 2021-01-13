@@ -43,8 +43,8 @@ def make_sdfg(dtype, name="pipeline_test"):
     post_write = post_state.add_write("b")
     post_state.add_memlet_path(post_read,
                                post_write,
-                               memlet=dace.Memlet.simple(post_write,
-                                                         "0:N, 0:K, 0:M"))
+                               memlet=dace.Memlet.simple(
+                                   post_write, "0:N, 0:K, 0:M"))
 
     # Compute state
     read_memory = state.add_read("a_device")
@@ -73,11 +73,17 @@ def make_sdfg(dtype, name="pipeline_test"):
                                      init_size=k * m,
                                      init_overlap=True,
                                      drain_size=k * m,
-                                     drain_overlap=True, additional_variables={'user_var':0})
-
+                                     drain_overlap=True,
+                                     additional_variables={'user_var': 0})
+    # for the sake of testing, use the additional user_var to set to zero the last element of each row
     tasklet = state.add_tasklet(
-        name, {"_in"}, {"_out"},
-        """_out = _in + (1 if {} else (3 if {} else 2))""".format(
+        name, {"_in"}, {"_out"},"""\
+_out = _in + (0 if user_var==M-1 else (1 if {} else (3 if {} else 2)))
+if user_var == M-1:
+    user_var = 0
+else:
+    user_var = user_var + 1 
+""".format(
             entry.pipeline.init_condition(), entry.pipeline.drain_condition()))
 
     # Container-to-container copies between arrays and streams
@@ -99,20 +105,18 @@ def make_sdfg(dtype, name="pipeline_test"):
                           entry,
                           tasklet,
                           dst_conn="_in",
-                          memlet=dace.Memlet.simple(
-                              consume_input_stream.data,
-                              "0",
-                              num_accesses=-1))
+                          memlet=dace.Memlet.simple(consume_input_stream.data,
+                                                    "0",
+                                                    num_accesses=-1))
 
     # Buffer to output stream
     state.add_memlet_path(tasklet,
                           exit,
                           produce_output_stream,
                           src_conn="_out",
-                          memlet=dace.Memlet.simple(
-                              produce_output_stream.data,
-                              "0",
-                              num_accesses=-1))
+                          memlet=dace.Memlet.simple(produce_output_stream.data,
+                                                    "0",
+                                                    num_accesses=-1))
 
     return sdfg
 
@@ -129,15 +133,15 @@ if __name__ == "__main__":
     jacobi = make_sdfg(dtype=dtype)
     jacobi.specialize({"N": n, "K": k, "M": m})
 
-    a = np.arange(n*k*m, dtype=dtype).reshape((n, k, m))
+    a = np.arange(n * k * m, dtype=dtype).reshape((n, k, m))
     b = np.empty((n, k, m), dtype=dtype)
 
     jacobi(a=a, b=b)
 
     ref = copy.copy(a)
-    ref[0, :, :] += 1
-    ref[1:-1, :, :] += 2
-    ref[-1, :, :] += 3
+    ref[0, :, 0:-1] += 1
+    ref[1:-1, :, 0:-1] += 2
+    ref[-1, :, 0:-1] += 3
 
     if (b != ref).any():
         print(b)
