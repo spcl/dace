@@ -321,7 +321,7 @@ class CPPUnparser:
                     target.id, self._indent):
 
                 # if the target is already defined, do not redefine it
-                if target.id not in self.defined_symbols:
+                if self.defined_symbols is None or target.id not in self.defined_symbols:
                     # we should try to infer the type
                     if self.type_inference is True:
                         # Perform type inference
