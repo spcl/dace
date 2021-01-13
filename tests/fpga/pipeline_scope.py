@@ -73,7 +73,7 @@ def make_sdfg(dtype, name="pipeline_test"):
                                      init_size=k * m,
                                      init_overlap=True,
                                      drain_size=k * m,
-                                     drain_overlap=True)
+                                     drain_overlap=True, additional_variables={'user_var':0})
 
     tasklet = state.add_tasklet(
         name, {"_in"}, {"_out"},
