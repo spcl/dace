@@ -19,46 +19,22 @@ from dace import dtypes
 from dace import data as dace_data
 
 
-def find_duplicate_in_connectors(state: dace_state.SDFGState, nested_sdfg: nodes.NestedSDFG):
-    """ Returns map from connector names to lists of duplicate edges
-    """
+def find_duplicate_connectors(state: dace_state.SDFGState, nested_sdfg: nodes.NestedSDFG):
     duplicate_edges_dict = {}
 
     in_edges = state.in_edges(nested_sdfg)
-
-    checked_connectors = {}
-    for e in in_edges:
-        access_node = e.src
-        memlet: Memlet = e.data
-        range = memlet.subset
-        inp = (access_node, range)
-        conn_name = e.dst_conn
-        if inp in checked_connectors:
-            # we found a duplicate
-            original_conn = checked_connectors[inp]
-            duplicate_edges_dict[original_conn].append(e)
-        else:
-            # not a duplicate
-            checked_connectors[inp] = conn_name
-            duplicate_edges_dict[conn_name] = []
-
-    return duplicate_edges_dict
-
-
-def find_duplicate_out_connectors(state: dace_state.SDFGState, nested_sdfg: nodes.NestedSDFG):
-    """ Returns map from connector names to lists of duplicate edges
-    """
-    duplicate_edges_dict = {}
-
     out_edges = state.out_edges(nested_sdfg)
 
     checked_connectors = {}
-    for e in out_edges:
-        access_node = e.dst
+
+    # we process out_edges first because they have more priority to be preserved if duplicates
+    # found among inputs and outputs simultaneously
+    for e in out_edges + in_edges:
+        access_node = e.src if e in in_edges else e.dst
+        conn_name = e.dst_conn if e in in_edges else e.src_conn
         memlet: Memlet = e.data
         range = memlet.subset
-        inp = (access_node, range)
-        conn_name = e.src_conn
+        inp = (access_node.data, range)
         if inp in checked_connectors:
             # we found a duplicate
             original_conn = checked_connectors[inp]
@@ -107,8 +83,7 @@ def merge_symbols(sdfg: dace_sdfg.SDFG, name: str, dup_name: str):
 @registry.autoregister_params(singlestate=True)
 class CleanNestedSDFGConnectors(transformation.Transformation):
     """
-    Removes duplicate connectors
-    TODO: make description more detailed
+    Removes duplicate connectors.
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -127,26 +102,16 @@ class CleanNestedSDFGConnectors(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg, strict=False):
-        nested_sdfg = state.nodes()[candidate[CleanNestedSDFGConnectors.nested_sdfg]]
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[CleanNestedSDFGConnectors.nested_sdfg]]
 
-        duplicate_in_connectors = find_duplicate_in_connectors(state, nested_sdfg)
-        duplicate_out_connectors = find_duplicate_out_connectors(state, nested_sdfg)
+        duplicate_connectors = find_duplicate_connectors(state, nested_sdfg)
 
-        for orig_conn, edge_list in duplicate_in_connectors.items():
-            if edge_list:
-                return True
-
-        for orig_conn, edge_list in duplicate_out_connectors.items():
+        for orig_conn, edge_list in duplicate_connectors.items():
             if edge_list:
                 return True
 
         # duplicates not found
         return False
-
-    @staticmethod
-    def match_to_str(state: dace_state.SDFGState, candidate):
-        nested_sdfg = state.nodes()[candidate[CleanNestedSDFGConnectors.nested_sdfg]]
-        return str(nested_sdfg)
 
     def apply(self, sdfg: dace_sdfg.SDFG):
 
@@ -154,25 +119,17 @@ class CleanNestedSDFGConnectors(transformation.Transformation):
         candidate = self.subgraph
         nested_sdfg: dace_nodes.NestedSDFG = state.nodes()[candidate[CleanNestedSDFGConnectors.nested_sdfg]]
 
-        in_edges = state.in_edges(nested_sdfg)
-        out_edges = state.out_edges(nested_sdfg)
-
-        duplicate_in_connectors = find_duplicate_in_connectors(state, nested_sdfg)
-        duplicate_out_connectors = find_duplicate_out_connectors(state, nested_sdfg)
+        duplicate_connectors = find_duplicate_connectors(state, nested_sdfg)
 
         # remove duplicate connectors
-        for orig_conn, edge_list in duplicate_in_connectors.items():
+        for orig_conn, edge_list in duplicate_connectors.items():
             for e in edge_list:
                 dup_conn = e.dst_conn
                 state.remove_edge(e)
-                nested_sdfg.remove_in_connector(dup_conn)
-                merge_symbols(nested_sdfg.sdfg, orig_conn, dup_conn)
-
-        for orig_conn, edge_list in duplicate_out_connectors.items():
-            for e in edge_list:
-                dup_conn = e.src_conn
-                state.remove_edge(e)
-                nested_sdfg.remove_out_connector(dup_conn)
+                if e.src == nested_sdfg:
+                    nested_sdfg.remove_out_connector(dup_conn)
+                else:
+                    nested_sdfg.remove_in_connector(dup_conn)
                 merge_symbols(nested_sdfg.sdfg, orig_conn, dup_conn)
 
 
@@ -278,3 +235,38 @@ class NestTransients(transformation.Transformation):
         nested_data_obj = nested_sdfg.sdfg.data(connector_name)
 
         nested_data_obj.transient = True
+
+
+@registry.autoregister_params(singlestate=True)
+class RemoveDanglingAccessNodes(transformation.Transformation):
+
+    access_node = transformation.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(
+                RemoveDanglingAccessNodes.access_node,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg, strict=False):
+        access_node: nodes.AccessNode = state.nodes()[candidate[RemoveDanglingAccessNodes.access_node]]
+
+        if access_node.has_reads(state) or access_node.has_writes(state):
+            return False
+
+        return True
+
+    def apply(self, sdfg: dace_sdfg.SDFG):
+
+        state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
+        candidate = self.subgraph
+        access_node: dace_nodes.AccessNode = state.nodes()[candidate[RemoveDanglingAccessNodes.access_node]]
+
+        state.remove_node(access_node)
