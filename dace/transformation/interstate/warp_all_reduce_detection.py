@@ -85,6 +85,20 @@ def add_all_reduce_init_tasklet(state: dace_state.SDFGState, wcr: str):
 
     return warp_all_reduce_init_tasklet
 
+
+def replace_access_nodes(state: dace_sdfg, old_name: str, new_name: str):
+    old_access_nodes = [n for n in state.nodes()
+                        if isinstance(n, nodes.AccessNode) and n.data == old_name]
+
+    for n in old_access_nodes:
+        new_node = state.add_access(new_name)
+        for e in state.in_edges(n):
+            state.add_edge(e.src, e.src_conn, new_node, None, Memlet(data=new_name, subset=e.data.subset))
+        for e in state.out_edges(n):
+            state.add_edge(new_node, None, e.dst, e.dst_conn, Memlet(data=new_name, subset=e.data.subset))
+        state.remove_node(n)
+
+
 @registry.autoregister_params()
 class WarpAllReduceDetection(transformation.Transformation):
 
@@ -178,6 +192,11 @@ class WarpAllReduceDetection(transformation.Transformation):
         all_reduce_write_state.add_edge(in_reduced_access, None, all_reduce_write_tasklet, 'in', Memlet(all_reduce_name))
         all_reduce_write_state.add_edge(all_reduce_write_tasklet, 'out', out_reduced_access, None,
                                         Memlet(data=out_edge.data.data, subset=out_edge.data.subset))
+
+        # replace access nodes in the subsequent states that refer to the result of reduction
+        for e in sdfg.bfs_edges(accumulate_state):
+            state: dace_state.SDFGState = e.dst
+            replace_access_nodes(state, out_access.data, all_reduce_name)
 
         # connect new states with edges
         for e in sdfg.in_edges(accumulate_state):
