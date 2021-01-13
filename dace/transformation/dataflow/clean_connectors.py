@@ -80,6 +80,52 @@ def merge_symbols(sdfg: dace_sdfg.SDFG, name: str, dup_name: str):
         state.replace(dup_name, name)
 
 
+def is_conn_write_only(nsdfg: nodes.NestedSDFG, conn: str):
+    # detect states that contain reads or writes
+    read_states = set() # states that contain reads
+    write_states = set() # states that contain writes
+
+    for state in nsdfg.sdfg.nodes():
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            node: nodes.AccessNode
+            for edge in state.out_edges(node):
+                if edge.data.is_empty():
+                    continue
+                # if we reached this line, then we found read
+                read_states.add(state)
+            for edge in state.in_edges(node):
+                if edge.data.is_empty():
+                    continue
+                # if we reached this line, then we found write
+                write_states.add(state)
+                if edge.data.wcr:
+                    # if it is wcr node, then this is read-write
+                    read_states.add(state)
+
+    # treat read/write states as read-only
+    write_states -= read_states
+
+    # build set of states that potentially read global values
+    if nsdfg.sdfg.start_state in write_states:
+        return True
+
+    use_global = {nsdfg.sdfg.start_state}
+
+    def propagate_condition(src, dst, data):
+        return dst not in write_states
+
+    for e in nsdfg.sdfg.dfs_edges(nsdfg.sdfg.start_state, propagate_condition):
+        use_global.add(e.dst)
+
+    # check that all reads use can't potentially use global value
+    if read_states.intersection(use_global):
+        return False
+
+    return True
+
+
 @registry.autoregister_params(singlestate=True)
 class CleanNestedSDFGConnectors(transformation.Transformation):
     """
@@ -165,6 +211,7 @@ class NestTransients(transformation.Transformation):
         data_name = access_node.data
         data_obj = sdfg.data(data_name)
 
+
         # access node should point to data object
         if not isinstance(data_obj, dace_data.Data):
             return False # probably this means that access node corresponds to symbol
@@ -174,6 +221,12 @@ class NestTransients(transformation.Transformation):
         edges = state.edges_between(nested_sdfg, access_node)
         # if there are more than 1 edge, try applying CleanNestedSDFGConnectors transformation first
         if len(edges) != 1:
+            return False
+
+        edge: dace_graph.MultiConnectorEdge = edges[0]
+
+        # if connector is used for both reading and writing we can't move transient inside
+        if not is_conn_write_only(nested_sdfg, edge.src_conn):
             return False
 
         # data object should be transient
