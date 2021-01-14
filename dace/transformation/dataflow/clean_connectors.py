@@ -90,6 +90,8 @@ def is_conn_write_only(nsdfg: nodes.NestedSDFG, conn: str):
             if not isinstance(node, nodes.AccessNode):
                 continue
             node: nodes.AccessNode
+            if node.data != conn:
+                continue
             for edge in state.out_edges(node):
                 if edge.data.is_empty():
                     continue
