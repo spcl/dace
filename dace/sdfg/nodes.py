@@ -1006,7 +1006,7 @@ class PipelineEntry(MapEntry):
         result = super().new_symbols(sdfg, state, symbols)
         for param in self.map.params:
             result[param] = dtypes.int64  # Overwrite params from Map
-        for param in self.pipeline.additional_variables:
+        for param in self.pipeline.additional_iterators:
             result[param] = dtypes.int64
         result[self.pipeline.iterator_str()] = dtypes.int64
         try:
@@ -1053,9 +1053,9 @@ class Pipeline(Map):
         dtype=bool,
         default=True,
         desc="Whether to increment regular map indices during pipeline drain.")
-    additional_variables = Property(
+    additional_iterators = Property(
         dtype=dict,
-        desc="Additional variables, managed by the user inside the scope.")
+        desc="Additional iterators, managed by the user inside the scope.")
 
     def __init__(self,
                  *args,
@@ -1063,14 +1063,14 @@ class Pipeline(Map):
                  init_overlap=False,
                  drain_size=0,
                  drain_overlap=False,
-                 additional_variables={},
+                 additional_iterators={},
                  **kwargs):
         super(Pipeline, self).__init__(*args, **kwargs)
         self.init_size = init_size
         self.init_overlap = init_overlap
         self.drain_size = drain_size
         self.drain_overlap = drain_overlap
-        self.additional_variables = additional_variables
+        self.additional_iterators = additional_iterators
 
     def iterator_str(self):
         return "__" + "".join(self.params)

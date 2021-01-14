@@ -986,7 +986,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 for i in range(len(node.map.range)):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
-                for var, value in node.pipeline.additional_variables.items():
+                for var, value in node.pipeline.additional_iterators.items():
                     result.write("long {} = {};\n".format(
                         var, value))
 
