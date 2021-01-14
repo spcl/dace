@@ -80,17 +80,16 @@ def merge_symbols(sdfg: dace_sdfg.SDFG, name: str, dup_name: str):
         state.replace(dup_name, name)
 
 
-def is_conn_write_only(nsdfg: nodes.NestedSDFG, conn: str):
-    # detect states that contain reads or writes
+def find_read_write_states(sdfg: dace_sdfg.SDFG, array: str):
     read_states = set() # states that contain reads
     write_states = set() # states that contain writes
 
-    for state in nsdfg.sdfg.nodes():
+    for state in sdfg.nodes():
         for node in state.nodes():
             if not isinstance(node, nodes.AccessNode):
                 continue
             node: nodes.AccessNode
-            if node.data != conn:
+            if node.data != array:
                 continue
             for edge in state.out_edges(node):
                 if edge.data.is_empty():
@@ -105,6 +104,28 @@ def is_conn_write_only(nsdfg: nodes.NestedSDFG, conn: str):
                 if edge.data.wcr:
                     # if it is wcr node, then this is read-write
                     read_states.add(state)
+
+    return read_states, write_states
+
+
+def find_writes_without_reads(sdfg: dace_sdfg.SDFG, array: str):
+    read_states, write_states = find_read_write_states(sdfg, array)
+
+    write_without_read = set()
+    for ws in write_states - read_states:
+        read_not_found = True
+        for e in sdfg.bfs_edges(ws):
+            if e.dst in read_states:
+                read_not_found = False
+        if read_not_found:
+            write_without_read.add(ws)
+
+    return write_without_read
+
+
+def is_conn_write_only(nsdfg: nodes.NestedSDFG, conn: str):
+    # detect states that contain reads or writes
+    read_states, write_states = find_read_write_states(nsdfg.sdfg, conn)
 
     # treat read/write states as read-only
     write_states -= read_states
@@ -126,6 +147,23 @@ def is_conn_write_only(nsdfg: nodes.NestedSDFG, conn: str):
         return False
 
     return True
+
+
+def replace_accesses(state: dace_state.SDFGState, old_name: str, new_name: str):
+    for node in state:
+        if not isinstance(node, nodes.AccessNode):
+            continue
+        node: nodes.AccessNode
+        if node.data != old_name:
+            continue
+        new_node = state.add_access(new_name)
+        for e in state.in_edges(node):
+            new_memlet = Memlet() if e.data.is_empty() else Memlet(data=new_name, subset=e.data.subset)
+            state.add_edge(e.src, e.src_conn, new_node, None, new_memlet)
+        for e in state.out_edges(node):
+            new_memlet = Memlet() if e.data.is_empty() else Memlet(data=new_name, subset=e.data.subset)
+            state.add_edge(new_node, None, e.dst, e.dst_conn, Memlet(data=new_name, subset=e.data.subset))
+        state.remove_node(node)
 
 
 @registry.autoregister_params(singlestate=True)
@@ -290,6 +328,107 @@ class NestTransients(transformation.Transformation):
         nested_data_obj = nested_sdfg.sdfg.data(connector_name)
 
         nested_data_obj.transient = True
+
+
+@registry.autoregister_params(singlestate=True)
+class CleanNestedWrites(transformation.Transformation):
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
+    access_node = transformation.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @staticmethod
+    def expressions():
+        return [
+            sdutil.node_path_graph(
+                NestTransients.nested_sdfg,
+                NestTransients.access_node,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg: dace_sdfg.SDFG, strict=False):
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[NestTransients.nested_sdfg]]
+        access_node: nodes.AccessNode = state.nodes()[candidate[NestTransients.access_node]]
+
+
+        data_name = access_node.data
+        data_obj = sdfg.data(data_name)
+
+        # access node should point to data object
+        if not isinstance(data_obj, dace_data.Data):
+            return False # probably this means that access node corresponds to symbol
+
+        data_obj: dace_data.Data
+
+        edges = state.edges_between(nested_sdfg, access_node)
+        # if there are more than 1 edge, try applying CleanNestedSDFGConnectors transformation first
+        if len(edges) != 1:
+            return False
+
+        edge: dace_graph.MultiConnectorEdge = edges[0]
+
+        if is_conn_write_only(nested_sdfg, edge.src_conn):
+            return False # you should use CleanConnectors transformation instead
+
+        # data object should be transient
+        if not data_obj.transient:
+            return False
+
+        # data object should be write only in all states starting from the current state
+        states_to_check = {state}
+        for e in sdfg.bfs_edges(state):
+            states_to_check.add(e.dst)
+
+        for other_state in states_to_check:
+
+            for an in other_state.nodes():
+                if not isinstance(an, nodes.AccessNode):
+                    continue # skip non-access nodes
+
+                an: nodes.AccessNode
+                if an.data != data_name:
+                    continue # skip access nodes that point to other data objects
+
+                for e in other_state.out_edges(an):
+                    e: dace_graph.MultiConnectorEdge
+                    memlet = e.data
+                    if not memlet.is_empty():
+                        # we found non-empty outgoing memlet, so this data object is read at some point in future,
+                        # therefore we can't apply the transformation.
+                        return False
+
+        # find writes that doesn't have reads in the following states
+        states_with_writes_without_reads = find_writes_without_reads(nested_sdfg.sdfg, edge.src_conn)
+        if not states_with_writes_without_reads:
+            return False
+
+        return True
+
+    def apply(self, sdfg: dace_sdfg.SDFG):
+        state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
+        candidate = self.subgraph
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[NestTransients.nested_sdfg]]
+        access_node: nodes.AccessNode = state.nodes()[candidate[NestTransients.access_node]]
+
+        data_name = access_node.data
+        data_obj: dace_data.Data = sdfg.data(data_name)
+
+        edges = state.edges_between(nested_sdfg, access_node)
+        edge = edges[0]
+        connector_name = edge.src_conn
+
+        states_with_writes_without_reads = find_writes_without_reads(nested_sdfg.sdfg, connector_name)
+
+        # create stub transient array that will be used to make useless writes
+        transient_name = "t_" + connector_name
+        nested_sdfg.sdfg.add_transient(name=transient_name, shape=data_obj.shape, dtype=data_obj.dtype)
+
+        # replace useless writes with writes to stub transient array
+        for state in states_with_writes_without_reads:
+            replace_accesses(state, connector_name, transient_name)
 
 
 @registry.autoregister_params(singlestate=True)
