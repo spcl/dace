@@ -462,7 +462,7 @@ class StateGraphView(object):
             defined_syms.update(edge.data.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
-        sdict = self.scope_dict()
+        sdict = state.scope_dict()
         scope_nodes = []
         for source_node in self.source_nodes():
             curnode = source_node
@@ -471,7 +471,7 @@ class StateGraphView(object):
                 scope_nodes.append(curnode)
 
         for snode in dtypes.deduplicate(list(reversed(scope_nodes))):
-            defined_syms.update(snode.new_symbols(defined_syms))
+            defined_syms.update(snode.new_symbols(sdfg, state, defined_syms))
 
         return defined_syms
 
