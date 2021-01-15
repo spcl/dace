@@ -388,8 +388,7 @@ if(DACE_ENABLE_RTL)
         get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
         get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
         set (RTL_XO "${RTL_KERNEL}.xo")
-        #function (rtllib_rtl_target RTLLIB_XO RTLLIB_KERNEL RTLLIB_SRC_DIR RTLLIB_TCL_DIR RTLLIB_TMP_DIR RTLLIB_LOG_DIR RTLLIB_GEN_DIR RTLLIB_MODULES)
-        rtllib_rtl_target(${RTL_XO} ${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_TEMP_DIR} ${RTL_LOG_DIR} ${RTL_GENERATED_DIR} "${RTLLIB_DIR}/rtl")
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO})
         set (DACE_VITIS_KERNELS_HW_EMU ${DACE_VITIS_KERNELS_HW_EMU} ${RTL_XO})
         set (DACE_VITIS_KERNELS_HW ${DACE_VITIS_KERNELS_HW} ${RTL_XO})
     endforeach()
@@ -549,7 +548,6 @@ if(DACE_ENABLE_XILINX)
     set(DACE_VITIS_KERNELS_HW)
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
-      message(${DACE_KERNEL_FILE})
       # Compile .xo files
 
       # The kernel name is given by the file name

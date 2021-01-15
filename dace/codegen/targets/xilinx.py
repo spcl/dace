@@ -119,7 +119,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""
 DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
-    
+
     __state->fpga_context = new dace::fpga::Context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
@@ -416,14 +416,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name,
                                         global_data_parameters,
                                         scalar_parameters, symbol_parameters,
-                                        module_stream, kernel_stream):
+                                        module_stream, kernel_stream,
+                                        external_streams):
 
         # Write header
         module_stream.write(
             """#include <dace/xilinx/device.h>
 #include <dace/math.h>
-#include <dace/complex.h>
-#include <hls_stream.h>""", sdfg)
+#include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream)
         module_stream.write("\n", sdfg)
 
@@ -436,8 +436,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         scalars = list(sorted(scalars, key=lambda t: t[0]))
 
         # Build kernel signature
+        # TODO aoeu
         array_args = []
-        for is_output, dataname, data, interface in arrays:
+        for is_output, dataname, data, interface in arrays + external_streams:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True, interface)
             if kernel_arg:
@@ -450,9 +451,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Write kernel signature
         kernel_stream.write(
-            "DACE_EXPORTED void {}({}{}) {{\n".format(kernel_name,
-                                                    ', '.join(kernel_args),
-                                                    ', hls::stream<int> &to_rtl, hls::stream<int> &from_rtl'),
+            "DACE_EXPORTED void {}({}) {{\n".format(kernel_name,
+                                                    ', '.join(kernel_args)),
             sdfg, state_id)
 
         # Insert interface pragmas
@@ -537,6 +537,22 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args_module = []
         added = set()
 
+        # TODO aoeu
+        rtl_tasks = [n.language == dace.dtypes.Language.SystemVerilog for n in subgraph.nodes() if isinstance(n, dace.nodes.Tasklet)]
+        if True in rtl_tasks:
+            entry_stream.write(f'// HLSLIB_DATAFLOW_FUNCTION({name})')
+            module_stream.write(f'// void {name}() {{ }}\n\n')
+            # Skip RTL modules
+            # Should still generate the node:
+            ignore_stream = CodeIOStream()
+            self._dispatcher.dispatch_subgraph(sdfg,
+                                           subgraph,
+                                           state_id,
+                                           ignore_stream,
+                                           ignore_stream,
+                                           skip_entry_node=False)
+            return
+
         parameters = list(sorted(parameters, key=lambda t: t[1]))
         arrays = dtypes.deduplicate(
             [p for p in parameters if not isinstance(p[2], dace.data.Scalar)])
@@ -608,10 +624,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     unrolled_loops += 1
 
         # TODO aoeu
-        kernel_args_call.append("to_rtl")
-        kernel_args_call.append("from_rtl")
-        kernel_args_module.append("hls::stream<int> &to_rtl")
-        kernel_args_module.append("hls::stream<int> &from_rtl")
+        #kernel_args_call.append("to_rtl")
+        #kernel_args_call.append("from_rtl")
+        #kernel_args_module.append("hls::stream<int> &to_rtl")
+        #kernel_args_module.append("hls::stream<int> &from_rtl")
 
         # Generate caller code in top-level function
         entry_stream.write(
@@ -650,14 +666,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
         # TODO aoeu
-        module_body_stream.write('''
-        dace::ArrayInterface<int> fpga_A(fpga_A_in, nullptr);
-        dace::ArrayInterface<int> fpga_B(nullptr, fpga_B_out);
-
-        to_rtl.write(fpga_A[0]);
-        *(fpga_B).ptr_out() = from_rtl.read();
-        ''')
-        if False:# and len(in_args) > 0 or len(out_args) > 0:
+        #module_body_stream.write('''
+        #dace::ArrayInterface<int> fpga_A(fpga_A_in, nullptr);
+        #dace::ArrayInterface<int> fpga_B(nullptr, fpga_B_out);
+#
+        #to_rtl.write(fpga_A[0]);
+        #*(fpga_B).ptr_out() = from_rtl.read();
+        #''')
+        #if False:# and len(in_args) > 0 or len(out_args) > 0:
+        if len(in_args) > 0 or len(out_args) > 0:
             # Add ArrayInterface objects to wrap input and output pointers to
             # the same array
             module_body_stream.write("\n")
@@ -698,12 +715,18 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                module_body_stream)
 
         # TODO aoeu
-        ignore_stream = CodeIOStream()
+        #ignore_stream = CodeIOStream()
+        #self._dispatcher.dispatch_subgraph(sdfg,
+        #                                   subgraph,
+        #                                   state_id,
+        #                                   ignore_stream,
+        #                                   ignore_stream,
+        #                                   skip_entry_node=False)
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
                                            state_id,
-                                           ignore_stream,
-                                           ignore_stream,
+                                           module_stream,
+                                           module_body_stream,
                                            skip_entry_node=False)
 
         module_stream.write(module_body_stream.getvalue(), sdfg, state_id)
@@ -718,7 +741,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
-         nested_global_transients) = self.make_parameters(
+         nested_global_transients, external_streams) = self.make_parameters(
              sdfg, state, subgraphs)
 
         # Scalar parameters are never output
@@ -751,8 +774,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                              global_data_parameters,
                                              scalar_parameters,
                                              symbol_parameters, module_stream,
-                                             entry_stream)
-
+                                             entry_stream, external_streams)
+        # TODO aoeu
         # Emit allocations
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,

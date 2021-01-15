@@ -251,6 +251,7 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
+        external_streams = []
 
         for subgraph in subgraphs:
             data_to_node.update({
@@ -261,12 +262,27 @@ class FPGACodeGen(TargetCodeGenerator):
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
+            # TODO aoeu
             for n in subgraph.source_nodes():
-                candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
+                dsts = [e.dst for e in state.out_edges(n)]
+                srcs = [e.src for e in state.in_edges(n)]
+                tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
+                external = True in [t.language == dace.dtypes.Language.SystemVerilog for t in tasks]
+                if external:
+                    external_streams += [(False, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.out_edges(n)]
+                else:
+                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
                                for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
-                candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
-                               for e in state.out_edges(n)]
+                dsts = [e.dst for e in state.out_edges(n)]
+                srcs = [e.src for e in state.in_edges(n)]
+                tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
+                external = True in [t.language == dace.dtypes.Language.SystemVerilog for t in tasks]
+                if external:
+                    external_streams += [(True, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.in_edges(n)]
+                else:
+                    candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
+                                   for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -329,6 +345,9 @@ class FPGACodeGen(TargetCodeGenerator):
             subgraph_parameters[subgraph] = dace.dtypes.deduplicate(
                 subgraph_parameters[subgraph])
 
+        # TODO aoeu
+        external_streams = dace.dtypes.deduplicate(external_streams)
+
         # Deduplicate
         global_data_parameters = dace.dtypes.deduplicate(global_data_parameters)
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
@@ -341,7 +360,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         return (global_data_parameters, top_level_local_data,
                 subgraph_parameters, scalar_parameters, symbol_parameters,
-                nested_global_transients)
+                nested_global_transients, external_streams)
 
     def generate_nested_state(self, sdfg, state, nest_name, subgraphs,
                               function_stream, callsite_stream):

@@ -5,7 +5,7 @@ from dace.transformation.dataflow import TrivialMapElimination
 import numpy as np
 
 # add sdfg
-sdfg = dace.SDFG('rtl_tasklet_scalar')
+sdfg = dace.SDFG('add_fortytwo')
 
 # add state
 state = sdfg.add_state()
@@ -35,8 +35,9 @@ sdfg.validate()
 
 # apply the transformations
 sdfg.apply_transformations(FPGATransformState)
-sdfg.apply_transformations_repeated(StreamingMemory)
+sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
 sdfg.apply_transformations_repeated(TrivialMapElimination)
+sdfg.save('_dacegraphs/program.sdfg')
 
 ######################################################################
 

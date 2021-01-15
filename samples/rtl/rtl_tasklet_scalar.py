@@ -17,6 +17,8 @@ state = sdfg.add_state()
 # add arrays
 sdfg.add_array('A', [1], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
+#A = state.add_stream('A', dtype=dace.int32)
+#B = state.add_stream('B', dtype=dace.int32)
 
 # add custom cpp tasklet
 tasklet = state.add_tasklet(name='rtl_tasklet',
@@ -64,20 +66,32 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     assign m_axis_b_tvalid = (m_axis_b_tdata >= 100) ? 1'b1:1'b0;
     ''',
                             language=dace.Language.SystemVerilog)
+#tasklet = state.add_tasklet('htsn', ['a'], ['b'], 'b = a+42')
 
 # add input/output array
 A = state.add_read('A')
 B = state.add_write('B')
 
+mentry, mexit = state.add_map('aoeu_map', dict(i='0:1'))
+
 # connect input/output array with the tasklet
-state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0'))
-state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
+#state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0'))
+#state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
+state.add_memlet_path(A, mentry, tasklet, dst_conn='a', memlet=dace.Memlet.simple('A', '0'))
+state.add_memlet_path(tasklet, mexit, B, src_conn='b', memlet=dace.Memlet.simple('B', '0'))
 
 # validate sdfg
 sdfg.validate()
 
-from dace.transformation.interstate import FPGATransformSDFG
-sdfg.apply_transformations(FPGATransformSDFG)
+from dace.transformation.dataflow import StreamingMemory
+from dace.transformation.interstate import FPGATransformState
+from dace.transformation.dataflow import TrivialMapElimination
+#sdfg.apply_transformations(NestSDFG)
+sdfg.apply_transformations(FPGATransformState)
+sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
+sdfg.apply_transformations_repeated(TrivialMapElimination)
+sdfg.save('_dacegraphs/program.sdfg')
+#quit()
 
 ######################################################################
 
