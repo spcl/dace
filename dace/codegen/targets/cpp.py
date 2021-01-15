@@ -738,6 +738,18 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
 
             memlets[vconn] = (memlet, False, None, conntype)
 
+    # To prevent variables-redefinition, build dictionary with all the previously defined symbols
+    defined_symbols = state_dfg.symbols_defined_at(node)
+
+    defined_symbols.update({
+        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+        for k, v in sdfg.constants.items()
+    })
+
+    for connector, (memlet, _, _, conntype) in memlets.items():
+        if connector is not None:
+            defined_symbols.update({connector: conntype})
+
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
                           node)
     for stmt in body:
@@ -753,7 +765,11 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
+            cppunparse.CPPUnparser(rk,
+                                   ldepth + 1,
+                                   locals,
+                                   result,
+                                   defined_symbols=defined_symbols)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 

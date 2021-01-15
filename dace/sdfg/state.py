@@ -431,14 +431,12 @@ class StateGraphView(object):
                 freesyms |= set(map(str, n.desc(sdfg).free_symbols))
 
             freesyms |= n.free_symbols
-
         # Free symbols from memlets
         for e in self.edges():
             freesyms |= e.data.free_symbols
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
-
         return freesyms - new_symbols
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
@@ -1426,6 +1424,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                      init_overlap=False,
                      drain_size=0,
                      drain_overlap=False,
+                     additional_iterators={},
                      schedule=dtypes.ScheduleType.FPGA_Device,
                      debuginfo=None,
                      **kwargs) -> Tuple[nd.PipelineEntry, nd.PipelineExit]:
@@ -1446,6 +1445,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             :param drain_size:    Number of iterations of draining phase.
             :param drain_overlap: Whether the draining phase overlaps with
                                   the "main" streaming phase of the loop.
+            :param additional_iterators: a dictionary containing additional
+                                  iterators that will be created for this scope and that are not
+                                  automatically managed by the scope code.
+                                  The dictionary takes the form 'variable_name' -> init_value
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
@@ -1455,6 +1458,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
                                init_overlap=init_overlap,
                                drain_size=drain_size,
                                drain_overlap=drain_overlap,
+                               additional_iterators=additional_iterators,
                                schedule=schedule,
                                debuginfo=debuginfo,
                                **kwargs)
