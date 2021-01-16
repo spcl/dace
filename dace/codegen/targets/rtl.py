@@ -446,9 +446,11 @@ for(int i = 0; i < {veclen}; i++){{
         tasklet = node
 
         # construct variables paths
-        unique_name: str = "top_{}_{}_{}".format(sdfg.sdfg_id,
-                                                 sdfg.node_id(state),
-                                                 state.node_id(tasklet))
+        #unique_name: str = "top_{}_{}_{}".format(sdfg.sdfg_id,
+        #                                         sdfg.node_id(state),
+        #                                         state.node_id(tasklet))
+        # TODO ask andreas about naming
+        unique_name = tasklet.name
 
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
