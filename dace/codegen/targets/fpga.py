@@ -347,6 +347,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         # TODO aoeu
         external_streams = dace.dtypes.deduplicate(external_streams)
+        top_level_local_data = [name for name in top_level_local_data if name not in [sname for _, sname, _, _ in external_streams]]
 
         # Deduplicate
         global_data_parameters = dace.dtypes.deduplicate(global_data_parameters)

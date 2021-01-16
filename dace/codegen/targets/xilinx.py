@@ -257,6 +257,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             else:
                 dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
+        if isinstance(data, dace.data.Stream):
+            ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype,
+                                                data.dtype.veclen, 1)#buffer_size)
+            return "{} &{}".format(ctype, var_name)
         else:
             return data.as_arg(with_types=True, name=var_name)
 
@@ -436,9 +440,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         scalars = list(sorted(scalars, key=lambda t: t[0]))
 
         # Build kernel signature
-        # TODO aoeu
         array_args = []
-        for is_output, dataname, data, interface in arrays + external_streams:
+        for is_output, dataname, data, interface in arrays:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
                                                    True, interface)
             if kernel_arg:
@@ -446,13 +449,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = array_args + [
             v.as_arg(with_types=True, name=k) for k, v in scalars
         ]
-
         kernel_args = dace.dtypes.deduplicate(kernel_args)
+
+        # TODO aoeu
+        stream_args = []
+        for is_output, dataname, data, interface in external_streams:
+            kernel_arg = self.make_kernel_argument(data, dataname, is_output,
+                                                   True, interface)
+            if kernel_arg:
+                stream_args.append(kernel_arg)
 
         # Write kernel signature
         kernel_stream.write(
             "DACE_EXPORTED void {}({}) {{\n".format(kernel_name,
-                                                    ', '.join(kernel_args)),
+                                                    ', '.join(kernel_args + stream_args)),
             sdfg, state_id)
 
         # Insert interface pragmas
@@ -714,14 +724,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                module_stream,
                                                module_body_stream)
 
-        # TODO aoeu
-        #ignore_stream = CodeIOStream()
-        #self._dispatcher.dispatch_subgraph(sdfg,
-        #                                   subgraph,
-        #                                   state_id,
-        #                                   ignore_stream,
-        #                                   ignore_stream,
-        #                                   skip_entry_node=False)
         self._dispatcher.dispatch_subgraph(sdfg,
                                            subgraph,
                                            state_id,
