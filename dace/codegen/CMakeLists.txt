@@ -68,6 +68,8 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_XILINX_HOST_FILES ${DACE_XILINX_HOST_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_XILINX_KERNEL_FILES ${DACE_XILINX_KERNEL_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".ini")
+      set(DACE_XILINX_CONFIG_FILE ${DACE_FILE})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "intel_fpga")
     set(DACE_ENABLE_INTELFPGA ON)
@@ -627,7 +629,7 @@ if(DACE_ENABLE_XILINX)
       OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
-      --config "${CMAKE_BINARY_DIR}/link.ini"
+      --config "${DACE_XILINX_CONFIG_FILE}"
       -l
       -t hw_emu
       ${DACE_VITIS_KERNELS_HW_EMU}

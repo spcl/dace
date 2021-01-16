@@ -84,6 +84,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._other_codes = {
         }  # any other kind of generated file if any (name, code object)
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
+        self._stream_connections = {} # { name: [src, dst] }
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
@@ -187,6 +188,14 @@ class FPGACodeGen(TargetCodeGenerator):
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
+            # TODO aoeu
+            # Emit the connections ini file
+            if len(self._stream_connections) > 0:
+                ini_stream = CodeIOStream()
+                ini_stream.write('[connectivity]')
+                for _, (src, dst) in self._stream_connections.items():
+                    ini_stream.write('stream_connect={}:{}'.format(src, dst))
+                self._other_codes['link.ini'] = ini_stream
         else:  # self._in_device_code == True
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
             allocated = set()

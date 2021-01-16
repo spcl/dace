@@ -191,7 +191,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                            "Xilinx",
                            target_type="device"))
 
-        return [host_code_obj] + kernel_code_objs
+        others = [
+            CodeObject(
+                ''.join(name.split('.')[:-1]),
+                other_code.getvalue(),
+                name.split('.')[-1],
+                XilinxCodeGen,
+                "Xilinx",
+                target_type="device"
+            )
+            for name, other_code in self._other_codes.items()
+        ]
+
+        return [host_code_obj] + kernel_code_objs + others
 
     @staticmethod
     def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
@@ -554,9 +566,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # TODO aoeu
         rtl_tasks = [n.language == dace.dtypes.Language.SystemVerilog for n in subgraph.nodes() if isinstance(n, dace.nodes.Tasklet)]
-        if True in rtl_tasks:
+        if True in rtl_tasks: # TODO ask if the assumption of an entire module being RTL is safe
             entry_stream.write(f'// HLSLIB_DATAFLOW_FUNCTION({name})')
             module_stream.write(f'// void {name}() {{ }}\n\n')
+            # TODO _1 in names are due to vitis
+            for node in subgraph.source_nodes():
+                for edge in state.out_edges(node):
+                    self._stream_connections[node.data][1] = '{}_top_1.s_axis_{}'.format(edge.dst, edge.dst_conn)
+            for node in subgraph.sink_nodes():
+                for edge in state.in_edges(node):
+                    self._stream_connections[node.data][0] = '{}_top_1.m_axis_{}'.format(edge.src, edge.src_conn)
             # Skip RTL modules
             # Should still generate the node:
             ignore_stream = CodeIOStream()
@@ -787,6 +806,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream, entry_stream)
+        for is_output, name, node, _ in external_streams:
+            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
+            if name not in self._stream_connections:
+                self._stream_connections[name] = [None, None]
+            # TODO is_output seems reversed...
+            self._stream_connections[name][1 if is_output else 0] = '{}_1.{}'.format(kernel_name, name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,
