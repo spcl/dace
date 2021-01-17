@@ -288,6 +288,25 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
+def nest_sdfg_subgraph(subgraph: SubgraphView,
+                       name: Optional[str] = None,
+                       full_data: bool = True) -> nodes.NestedSDFG:
+    """ 
+    Turns a multi-state, SDFG subgraph into a nested SDFG. Operates in-place.
+    :param subgraph: The SDFG subgraph to nest.
+    :param state: The state containing the subgraph.
+    :param subgraph: Subgraph to nest.
+    :param name: An optional name for the nested SDFG.
+    :param full_data: If True, nests entire input/output data.
+    :return: The nested SDFG node.
+    :raise KeyError: Some or all nodes in the subgraph are not located in
+                        this state, or the state does not belong to the given
+                        SDFG.
+    :raise ValueError: The subgraph is contained in more than one scope.
+    """
+    pass
+
+
 def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     '''
     Given a subgraph, adds a new SDFG state before the state that contains it,
@@ -471,8 +490,8 @@ def split_interstate_edges(sdfg: SDFG) -> None:
 
 
 def are_subsets_contiguous(subset_a: subsets.Subset,
-                            subset_b: subsets.Subset,
-                            dim: int = None) -> bool:
+                           subset_b: subsets.Subset,
+                           dim: int = None) -> bool:
 
     if dim is not None:
         # A version that only checks for contiguity in certain
@@ -480,7 +499,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset,
         if (not isinstance(subset_a, subsets.Range)
                 or not isinstance(subset_b, subsets.Range)):
             raise NotImplementedError('Contiguous subset check only '
-                                        'implemented for ranges')
+                                      'implemented for ranges')
 
         # Other dimensions must be equal
         for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
@@ -502,7 +521,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset,
     bbunion = subsets.bounding_box_union(subset_a, subset_b)
     try:
         if bbunion.num_elements() == (subset_a.num_elements() +
-                                        subset_b.num_elements()):
+                                      subset_b.num_elements()):
             return True
     except TypeError:
         pass
@@ -520,8 +539,7 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset],
     """
     # Currently O(n^3) worst case. TODO: improve
     subset_set = set(
-        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
-                                                    ) else s
+        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s
         for s in subset_list)
     while True:
         for sa, sb in itertools.product(subset_set, subset_set):
