@@ -1718,6 +1718,9 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
+@oprepo.replaces_operator('View', 'MatMult')
+@oprepo.replaces_operator('Array', 'MatMult', 'View')
+@oprepo.replaces_operator('View', 'MatMult', 'Array')
 def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop

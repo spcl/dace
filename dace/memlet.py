@@ -137,6 +137,7 @@ class Memlet(object):
         self.wcr = wcr
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
+        self.allow_oob = allow_oob
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)

@@ -1015,14 +1015,14 @@ def isallowed(var, allow_recursive=False):
 
         :param allow_recursive: whether to allow dicts or lists containing constants.
     """
-    from dace.symbolic import symbol
+    from dace.symbolic import issymbolic
 
     if allow_recursive:
         if isinstance(var, (list, tuple)):
             return all(isallowed(v, allow_recursive=False) for v in var)
 
-    return isconstant(var) or ismodule(var) or isinstance(
-        var, symbol) or isinstance(var, typeclass)
+    return isconstant(var) or ismodule(var) or issymbolic(
+        var) or isinstance(var, typeclass)
 
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
