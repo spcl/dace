@@ -81,8 +81,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
-        self._other_codes = {
-        }  # any other kind of generated file if any (name, code object)
+        # any other kind of generated file if any (name, code object)
+        self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
 
         # Register additional FPGA dispatchers
@@ -285,7 +285,7 @@ class FPGACodeGen(TargetCodeGenerator):
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
             # For each subgraph, keep a listing of array to current interface ID
-            data_to_interface: Dict[str, int] = {} 
+            data_to_interface: Dict[str, int] = {}
 
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are

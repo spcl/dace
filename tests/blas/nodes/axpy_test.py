@@ -48,7 +48,7 @@ def run_test(configs, target, implementation, overwrite_y=False):
         ref_result = reference_result(a, b_ref, alpha)
 
         program = None
-        if target == "fpga":
+        if target == "fpga_stream":
             program = stream_fpga_graph(config[1],
                                         config[2],
                                         implementation,
@@ -58,17 +58,12 @@ def run_test(configs, target, implementation, overwrite_y=False):
                                        config[2],
                                        implementation,
                                        test_case=config[3],
-                                       expansion="fpga")
-        elif target == "intel_fpga_unroll":
-            program = array_fpga_graph(config[1],
-                                       config[2],
-                                       implementation,
-                                       test_case=config[3])
+                                       expansion="pure")
         else:
             program = pure_graph(config[1], config[2], test_case=config[3])
 
         ref_norm = 0
-        if target in ["fpga", "intel_fpga_unroll", "fpga_array"]:
+        if target in ["fpga_stream", "fpga_array"]:
 
             # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
             queue = Queue()
@@ -94,16 +89,10 @@ def run_test(configs, target, implementation, overwrite_y=False):
                 .format(implementation, target), config)
 
 
-# ---------- ----------
-# Ref result
-# ---------- ----------
 def reference_result(x_in, y_in, alpha):
     return scipy.linalg.blas.saxpy(x_in, y_in, a=alpha)
 
 
-# ---------- ----------
-# Pure graph program
-# ---------- ----------
 def pure_graph(veclen, precision, implementation="pure", test_case="0"):
 
     n = dace.symbol("n")
@@ -126,28 +115,28 @@ def pure_graph(veclen, precision, implementation="pure", test_case="0"):
     y_in = test_state.add_read('y1')
     z_out = test_state.add_write('z1')
 
-    saxpy_node = blas.axpy.Axpy("axpy", precision)
-    saxpy_node.implementation = implementation
+    axpy_node = blas.axpy.Axpy("axpy", a)
+    axpy_node.implementation = implementation
 
     test_state.add_memlet_path(x_in,
-                               saxpy_node,
+                               axpy_node,
                                dst_conn='_x',
                                memlet=Memlet.simple(x_in,
                                                     "0:n/{}".format(veclen)))
     test_state.add_memlet_path(y_in,
-                               saxpy_node,
+                               axpy_node,
                                dst_conn='_y',
                                memlet=Memlet.simple(y_in,
                                                     "0:n/{}".format(veclen)))
 
-    test_state.add_memlet_path(saxpy_node,
+    test_state.add_memlet_path(axpy_node,
                                z_out,
                                src_conn='_res',
                                memlet=Memlet.simple(z_out,
                                                     "0:n/{}".format(veclen)))
 
     # test_sdfg.expand_library_nodes()
-    saxpy_node.expand(test_sdfg, test_state, vec_width=veclen)
+    axpy_node.expand(test_sdfg, test_state, vec_width=veclen)
 
     return test_sdfg.compile()
 
@@ -163,9 +152,6 @@ def test_pure():
     run_test(configs, "pure", "pure")
 
 
-# ---------- ----------
-# FPGA graph programs
-# ---------- ----------
 def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
 
     DATATYPE = precision
@@ -185,8 +171,8 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.add_array('y1', shape=[n / veclen], dtype=vec_type)
     test_sdfg.add_array('z1', shape=[n / veclen], dtype=vec_type)
 
-    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, a=a)
-    saxpy_node.implementation = 'fpga'
+    axpy_node = blas.axpy.Axpy("axpy", a=a)
+    axpy_node.implementation = 'pure'
 
     x_stream = streaming.StreamReadVector('x1', n, DATATYPE, veclen=veclen)
 
@@ -197,13 +183,13 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
     preState, postState = streaming.fpga_setup_connect_streamers(
         test_sdfg,
         test_state,
-        saxpy_node, [x_stream, y_stream], ['_x', '_y'],
-        saxpy_node, [z_stream], ['_res'],
+        axpy_node, [x_stream, y_stream], ['_x', '_y'],
+        axpy_node, [z_stream], ['_res'],
         input_memory_banks=[0, 1],
         output_memory_banks=[2])
 
     # test_sdfg.expand_library_nodes()
-    saxpy_node.expand(test_sdfg, test_state, vec_width=veclen)
+    axpy_node.expand(test_sdfg, test_state, vec_width=veclen)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
@@ -215,8 +201,8 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
 def array_fpga_graph(veclen,
                      precision,
                      vendor,
-                     test_case="0",
-                     expansion='IntelFPGAUnrolled'):
+                     test_case,
+                     expansion):
 
     DATATYPE = precision
 
@@ -224,15 +210,12 @@ def array_fpga_graph(veclen,
     a = dace.symbol("a")
 
     test_name = "array_axpy_test_" + vendor + "_" + test_case
-    if expansion == 'IntelFPGAUnrolled':
-        test_name = "axpy_test_intel_" + test_case
 
     test_sdfg = dace.SDFG(test_name)
     test_sdfg.add_symbol(a.name, DATATYPE)
 
-    vec_type = precision if expansion == 'IntelFPGAUnrolled' else dace.vector(
-        precision, veclen)
-    n_adj = n if expansion == 'IntelFPGAUnrolled' else n / veclen
+    vec_type = dace.vector(precision, veclen)
+    n_adj = n / veclen
 
     test_sdfg.add_array('x1', shape=[n_adj], dtype=vec_type)
     test_sdfg.add_array('y1', shape=[n_adj], dtype=vec_type)
@@ -296,18 +279,18 @@ def array_fpga_graph(veclen,
     y = fpga_state.add_read("device_y")
     z = fpga_state.add_write("device_z")
 
-    saxpy_node = blas.axpy.Axpy("axpy", DATATYPE, a=a)
-    saxpy_node.implementation = expansion
+    axpy_node = blas.axpy.Axpy("axpy", a=a)
+    axpy_node.implementation = expansion
 
     fpga_state.add_memlet_path(x,
-                               saxpy_node,
+                               axpy_node,
                                dst_conn="_x",
                                memlet=Memlet.simple(x, "0:{}".format(n_adj)))
     fpga_state.add_memlet_path(y,
-                               saxpy_node,
+                               axpy_node,
                                dst_conn="_y",
                                memlet=Memlet.simple(y, "0:{}".format(n_adj)))
-    fpga_state.add_memlet_path(saxpy_node,
+    fpga_state.add_memlet_path(axpy_node,
                                z,
                                src_conn="_res",
                                memlet=Memlet.simple(z, "0:{}".format(n_adj)))
@@ -324,8 +307,7 @@ def array_fpga_graph(veclen,
     test_sdfg.fill_scope_connectors()
     test_sdfg.validate()
 
-    # test_sdfg.~~~()
-    saxpy_node.expand(test_sdfg, fpga_state, vec_width=veclen)
+    axpy_node.expand(test_sdfg, fpga_state, vec_width=veclen)
 
     mode = "simulation" if vendor == "xilinx" else "emulator"
     dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
@@ -356,9 +338,7 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "intel_fpga" or args.target == "xilinx":
-        _test_fpga("fpga", args.target)
+        _test_fpga("fpga_stream", args.target)
         _test_fpga("fpga_array", args.target)
-    elif args.target == "intel_fpga_unroll":
-        _test_fpga("intel_fpga_unroll", "intel_fpga")
     else:
         test_pure()
