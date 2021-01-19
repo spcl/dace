@@ -187,10 +187,16 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from dot product")
         out_memlet = out_edges[0].data
+        dt_dims_0 = in_memlets[0].subset.data_dims()
+        dt_dims_1 = in_memlets[1].subset.data_dims()
         size = in_memlets[0].subset.size()
-        if len(size) != 1:
+        if dt_dims_0 > 1 or dt_dims_1 > 1:
             raise ValueError(
                 "dot product only supported on 1-dimensional arrays")
+        # TODO: Stride support (or validation check) needed
+        # if len(size) != 1:
+        #     raise ValueError(
+        #         "dot product only supported on 1-dimensional arrays")
         if size != in_memlets[1].subset.size():
             raise ValueError("Inputs to dot product must have equal size")
         if out_memlet.subset.num_elements() != 1:
