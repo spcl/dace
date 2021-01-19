@@ -3874,3 +3874,81 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
                      where=None)
 
     return outputs
+
+
+# Replacements that need ufuncs ###############################################
+# TODO: Fix by separating to difference modules and importing
+
+
+@oprepo.replaces('dace.dot')
+@oprepo.replaces('numpy.dot')
+def dot(pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        op_a: str,
+        op_b: str,
+        op_out=None):
+    
+
+    # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
+    # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
+    # TODO: Add/improve validation
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    arr_a = sdfg.arrays[op_a]
+    arr_b = sdfg.arrays[op_b]
+
+    if len(arr_a.shape) == 2 and len(arr_b.shape == 2):
+        # Matrix multiplication
+        # TODO: `If op_out`, then this is not correct. We need np.matmult,
+        # but it is not implemented yet
+        return _matmult(pv, sdfg, state, op_a, op_b)
+    
+    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1] or
+            isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
+        # Case dot(N-D, 0-D), intepreted as np.multiply(a, b)
+        node = ast.Call()
+        ufunc_name = 'multiply'
+        args = [op_a, op_b]
+        if op_out:
+            args.append(op_out)
+        return ufunc_impl(pv, node, ufunc_name, sdfg, state, args)
+    
+    if len(arr_a.shape) > 2 or len(arr_b.shape) > 2:
+        raise NotImplementedError
+
+    if arr_a.shape[0] != arr_b.shape[0]:
+        raise SyntaxError()
+
+    if op_out:
+        if not isinstance(op_out, str) or not op_out in sdfg.arrays.keys():
+            raise SyntaxError()
+    else:
+        # Infer result type
+        restype, _ = _result_type([arr_a, arr_b], 'Mul')
+        op_out = sdfg.temp_data_name()
+        sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage)
+
+    # TODO: Is there an issue with using the DOT library node if the
+    # datatypes do not agree?
+    arr_out = sdfg.arrays[op_out]
+
+    from dace.libraries.blas.nodes.dot import Dot  # Avoid import loop
+
+    acc_a = state.add_read(op_a)
+    acc_b = state.add_read(op_b)
+    acc_out = state.add_write(op_out)
+
+    tasklet = Dot('_Dot_', restype)
+    state.add_node(tasklet)
+    state.add_edge(acc_a, None, tasklet, '_x',
+                   dace.Memlet.from_array(op_a, arr_a))
+    state.add_edge(acc_b, None, tasklet, '_y',
+                   dace.Memlet.from_array(op_b, arr_b))
+    state.add_edge(tasklet, '_result', acc_out, None,
+                   dace.Memlet.from_array(op_out, arr_out))
+
+    return op_out
