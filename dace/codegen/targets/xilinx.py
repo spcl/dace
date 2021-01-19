@@ -271,7 +271,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             return "{} *{}".format(dtype.ctype, var_name)
         if isinstance(data, dace.data.Stream):
             ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype,
-                                                data.dtype.veclen, 1)#buffer_size)
+                                                data.dtype.veclen, data.buffer_size)
             return "{} &{}".format(ctype, var_name)
         else:
             return data.as_arg(with_types=True, name=var_name)
