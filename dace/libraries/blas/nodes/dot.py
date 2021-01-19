@@ -96,7 +96,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
-    def make_sdfg(dtype, n):
+    def make_sdfg(node, func, n):
         code = "_result = cblas_{}({}, _x, 1, _y, 1);".format(func, n)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -116,7 +116,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
-        return ExpandDotOpenBLAS.make_sdfg(node.dtype, node.n)
+        return ExpandDotOpenBLAS.make_sdfg(node, func, node.n)
 
 
 @dace.library.expansion
