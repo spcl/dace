@@ -96,6 +96,16 @@ class ExpandDotOpenBLAS(ExpandTransformation):
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
+    def make_sdfg(dtype, n):
+        code = "_result = cblas_{}({}, _x, 1, _y, 1);".format(func, n)
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+    @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         dtype = node.dtype
@@ -106,13 +116,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
-        code = "_result = cblas_{}(n, _x, 1, _y, 1);".format(func)
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
-        return tasklet
+        return ExpandDotOpenBLAS.make_sdfg(node.dtype, node.n)
 
 
 @dace.library.expansion
@@ -169,14 +173,17 @@ class Dot(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     dtype = dace.properties.TypeClassProperty(allow_none=True)
+    n = dace.properties.SymbolicProperty(allow_none=False,
+                                         default=dace.symbolic.symbol("n"))
 
-    def __init__(self, name, dtype=None, *args, **kwargs):
+    def __init__(self, name, dtype=None, n=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
                          outputs={"_result"},
                          **kwargs)
         self.dtype = dtype
+        self.n = n or dace.symbolic.symbol("n")
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
