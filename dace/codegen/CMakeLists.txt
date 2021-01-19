@@ -624,12 +624,16 @@ if(DACE_ENABLE_XILINX)
       ${DACE_VITIS_KERNELS_SW_EMU}
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
+    unset (VITIS_CONFIG_LINK)
 
+    if (EXISTS ${DACE_XILINX_CONFIG_FILE})
+        set (VITIS_CONFIG_LINK --config "${DACE_XILINX_CONFIG_FILE}")
+    endif()
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
-      --config "${DACE_XILINX_CONFIG_FILE}"
+      ${VITIS_CONFIG_LINK}
       -l
       -t hw_emu
       ${DACE_VITIS_KERNELS_HW_EMU}
@@ -645,6 +649,7 @@ if(DACE_ENABLE_XILINX)
       OUTPUT ${DACE_PROGRAM_NAME}_hw.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}
       ${VITIS_BUILD_FLAGS}
+      ${VITIS_CONFIG_LINK}
       -l
       -t hw
       ${DACE_VITIS_KERNELS_HW}
