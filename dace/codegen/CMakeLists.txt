@@ -547,7 +547,7 @@ if(DACE_ENABLE_XILINX)
     # and then link together the generated .xo files
     set(DACE_VITIS_KERNELS_SW_EMU)
     #set(DACE_VITIS_KERNELS_HW_EMU)
-    set(DACE_VITIS_KERNELS_HW)
+    #set(DACE_VITIS_KERNELS_HW)
 
     foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
       # Compile .xo files
