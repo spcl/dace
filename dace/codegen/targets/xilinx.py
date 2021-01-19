@@ -571,9 +571,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             module_stream.write(f'// void {name}() {{ }}\n\n')
             # TODO _1 in names are due to vitis
             for node in subgraph.source_nodes():
+                if node.data not in self._stream_connections:
+                    self._stream_connections[node.data] = [None, None]
                 for edge in state.out_edges(node):
                     self._stream_connections[node.data][1] = '{}_top_1.s_axis_{}'.format(edge.dst, edge.dst_conn)
             for node in subgraph.sink_nodes():
+                if node.data not in self._stream_connections:
+                    self._stream_connections[node.data] = [None, None]
                 for edge in state.in_edges(node):
                     self._stream_connections[node.data][0] = '{}_top_1.m_axis_{}'.format(edge.src, edge.src_conn)
             # Skip RTL modules
