@@ -19,9 +19,6 @@ import dace.sdfg.nodes
 from dace import dtypes
 from dace.memlet import Memlet
 
-from dace.libraries.blas.utility.initialization import fpga_init_array
-from dace.libraries.blas.utility.memory_operations import fpga_stream_to_local
-
 from dace.libraries.blas.utility.fpga_helper import StreamReadVector
 from dace.libraries.blas.utility.fpga_helper import StreamReadMatrixFull, StreamWriteMatrixFull
 
