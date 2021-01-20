@@ -180,9 +180,6 @@ class ExpandGemmPure(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) +
-                             ".")
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
 
 
@@ -194,8 +191,11 @@ class ExpandGemmMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        dtype = node.dtype
         func = to_blastype(dtype.type).lower() + 'gemm'
+        (_, adesc, ashape,
+         astrides), (_, bdesc, bshape,
+                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        dtype = adesc.dtype.base_type
         if dtype == dace.float32:
             alpha = "1.0f"
             beta = "0.0f"
@@ -211,9 +211,6 @@ class ExpandGemmMKL(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
-        (_, adesc, ashape,
-         astrides), (_, bdesc, bshape,
-                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, cdesc.dtype.ctype, func)
@@ -242,25 +239,6 @@ class ExpandGemmCuBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        dtype = node.dtype
-        func = '%sgemm' % to_blastype(dtype.type)
-        if dtype == dace.float16:
-            cdtype = '__half'
-            factort = 'Half'
-        elif dtype == dace.float32:
-            cdtype = 'float'
-            factort = 'Float'
-        elif dtype == dace.float64:
-            cdtype = 'double'
-            factort = 'Double'
-        elif dtype == dace.complex64:
-            cdtype = 'cuComplex'
-            factort = 'Complex64'
-        elif dtype == dace.complex128:
-            cdtype = 'cuDoubleComplex'
-            factort = 'Complex128'
-        else:
-            raise ValueError("Unsupported type: " + str(dtype))
 
         # TODO: Fix
         if node.alpha != 1.0 or node.beta != 0.0:
@@ -287,6 +265,26 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                     cdesc: Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
+
+        dtype = adesc.dtype.base_type
+        func = '%sgemm' % to_blastype(dtype.type)
+        if dtype == dace.float16:
+            cdtype = '__half'
+            factort = 'Half'
+        elif dtype == dace.float32:
+            cdtype = 'float'
+            factort = 'Float'
+        elif dtype == dace.float64:
+            cdtype = 'double'
+            factort = 'Double'
+        elif dtype == dace.complex64:
+            cdtype = 'cuComplex'
+            factort = 'Complex64'
+        elif dtype == dace.complex128:
+            cdtype = 'cuDoubleComplex'
+            factort = 'Complex128'
+        else:
+            raise ValueError("Unsupported type: " + str(dtype))
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
@@ -389,7 +387,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    dtype = dace.properties.TypeClassProperty(allow_none=True)
     transA = Property(dtype=bool,
                       desc="Whether to transpose A before multiplying")
     transB = Property(dtype=bool,
@@ -405,7 +402,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 
     def __init__(self,
                  name,
-                 dtype=None,
                  location=None,
                  transA=False,
                  transB=False,
@@ -415,7 +411,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                          location=location,
                          inputs={"_a", "_b"},
                          outputs={"_c"})
-        self.dtype = dtype
         self.transA = transA
         self.transB = transB
         self.alpha = alpha
@@ -466,13 +461,20 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemm')
 @oprepo.replaces('dace.libraries.blas.Gemm')
-def gemv_libnode(sdfg: SDFG, state: SDFGState, A, B, C, alpha, beta, trans_a=False, trans_b=False):
+def gemv_libnode(sdfg: SDFG,
+                 state: SDFGState,
+                 A,
+                 B,
+                 C,
+                 alpha,
+                 beta,
+                 trans_a=False,
+                 trans_b=False):
     # Add nodes
     A_in, B_in = (state.add_read(name) for name in (A, B))
     C_out = state.add_write(C)
 
     libnode = Gemm('gemm',
-                   dtype=sdfg.arrays[A].dtype,
                    transA=trans_a,
                    transB=trans_b,
                    alpha=alpha,
@@ -490,4 +492,3 @@ def gemv_libnode(sdfg: SDFG, state: SDFGState, A, B, C, alpha, beta, trans_a=Fal
     #     state.add_edge(C_in, None, libnode, '_c', mm.Memlet(C))
 
     return []
-
