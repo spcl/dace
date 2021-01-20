@@ -20,47 +20,47 @@ from dace.libraries.standard.memory import aligned_ndarray
 from multiprocessing import Process, Queue
 
 
-def run_program(program, a, b, c, alpha, testN, ref_result, queue):
+def run_program(program, x, y, z, a, n, ref, queue):
 
-    program(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
-    ref_norm = np.linalg.norm(c - ref_result) / testN
+    program(x1=x, y1=y, a=a, z1=z, n=np.int32(n))
+    ref_norm = np.linalg.norm(z - ref) / n
 
     queue.put(ref_norm)
 
 
 def run_test(configs, target, implementation, overwrite_y=False):
 
-    testN = int(2**13)
+    n = int(1 << 13)
 
     for config in configs:
 
-        prec = np.float32 if config[2] == dace.float32 else np.float64
-        a = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
-                            alignment=256)
-        b = aligned_ndarray(np.random.uniform(0, 100, testN).astype(prec),
-                            alignment=256)
-        b_ref = b.copy()
+        a, veclen, dtype, test_case = config
 
-        c = aligned_ndarray(np.zeros(testN).astype(prec), alignment=256)
-        alpha = np.float32(
-            config[0]) if config[2] == dace.float32 else np.float64(config[0])
+        x = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type),
+                            alignment=256)
+        y = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type),
+                            alignment=256)
+        y_ref = y.copy()
 
-        ref_result = reference_result(a, b_ref, alpha)
+        z = aligned_ndarray(np.zeros(n).astype(dtype.type), alignment=256)
+        a = dtype(a)
+
+        ref_result = reference_result(x, y_ref, a)
 
         program = None
         if target == "fpga_stream":
-            program = stream_fpga_graph(config[1],
-                                        config[2],
+            program = stream_fpga_graph(veclen,
+                                        dtype,
                                         implementation,
-                                        test_case=config[3])
+                                        test_case=test_case)
         elif target == "fpga_array":
-            program = array_fpga_graph(config[1],
-                                       config[2],
+            program = array_fpga_graph(veclen,
+                                       dtype,
                                        implementation,
-                                       test_case=config[3],
-                                       expansion="pure")
+                                       test_case=test_case,
+                                       expansion="fpga")
         else:
-            program = pure_graph(config[1], config[2], test_case=config[3])
+            program = pure_graph(veclen, dtype, test_case=test_case)
 
         ref_norm = 0
         if target in ["fpga_stream", "fpga_array"]:
@@ -68,18 +68,17 @@ def run_test(configs, target, implementation, overwrite_y=False):
             # Run FPGA tests in a different process to avoid issues with Intel OpenCL tools
             queue = Queue()
             p = Process(target=run_program,
-                        args=(program, a, b, c, alpha, testN, ref_result,
-                              queue))
+                        args=(program, x, y, z, a, n, ref_result, queue))
             p.start()
             p.join()
             ref_norm = queue.get()
 
         elif overwrite_y:
-            program(x1=a, y1=b, a=alpha, z1=b, n=np.int32(testN))
-            ref_norm = np.linalg.norm(b - ref_result) / testN
+            program(x1=x, y1=y, a=a, z1=z, n=np.int32(n))
+            ref_norm = np.linalg.norm(y - ref_result) / n
         else:
-            program(x1=a, y1=b, a=alpha, z1=c, n=np.int32(testN))
-            ref_norm = np.linalg.norm(c - ref_result) / testN
+            program(x1=x, y1=y, a=a, z1=z, n=np.int32(n))
+            ref_norm = np.linalg.norm(z - ref_result) / n
 
         passed = ref_norm < 1e-5
 
@@ -171,8 +170,8 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
     test_sdfg.add_array('y1', shape=[n / veclen], dtype=vec_type)
     test_sdfg.add_array('z1', shape=[n / veclen], dtype=vec_type)
 
-    axpy_node = blas.axpy.Axpy("axpy", a=a)
-    axpy_node.implementation = 'pure'
+    axpy_node = blas.axpy.Axpy("axpy", n=n, a=a)
+    axpy_node.implementation = "fpga"
 
     x_stream = streaming.StreamReadVector('x1', n, DATATYPE, veclen=veclen)
 
@@ -198,11 +197,7 @@ def stream_fpga_graph(veclen, precision, vendor, test_case="0"):
     return test_sdfg.compile()
 
 
-def array_fpga_graph(veclen,
-                     precision,
-                     vendor,
-                     test_case,
-                     expansion):
+def array_fpga_graph(veclen, precision, vendor, test_case, expansion):
 
     DATATYPE = precision
 
@@ -321,8 +316,8 @@ def _test_fpga(type, vendor):
     print("Run BLAS test: AXPY fpga", vendor + "...")
 
     configs = [(0.0, 1, dace.float32, "0"), (1.0, 1, dace.float32, "1"),
-               (random.random(), 1, dace.float32, "2"),
-               (1.0, 1, dace.float64, "3"), (1.0, 4, dace.float64, "4")]
+               (0.5, 1, dace.float32, "2"), (1.0, 1, dace.float64, "3"),
+               (1.0, 4, dace.float64, "4")]
 
     run_test(configs, type, vendor)
 
@@ -338,7 +333,9 @@ if __name__ == "__main__":
     args = cmdParser.parse_args()
 
     if args.target == "intel_fpga" or args.target == "xilinx":
-        _test_fpga("fpga_stream", args.target)
         _test_fpga("fpga_array", args.target)
-    else:
+        _test_fpga("fpga_stream", args.target)
+    elif args.target == "pure":
         test_pure()
+    else:
+        raise RuntimeError(f"Unknown target \"{args.target}\".")

@@ -4,7 +4,8 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
-from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic)
+from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState,
+                  symbolic)
 from dace.frontend.common import op_repository as oprepo
 
 from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
@@ -16,7 +17,11 @@ class ExpandAxpyVectorized(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state: SDFGState, parent_sdfg, **kwargs):
+    def expansion(node,
+                  parent_state: SDFGState,
+                  parent_sdfg,
+                  schedule=dace.ScheduleType.Default,
+                  **kwargs):
         node.validate(parent_sdfg, parent_state)
 
         x_outer = parent_sdfg.arrays[next(
@@ -25,9 +30,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
             parent_state.in_edges_by_connector(node, "_y")).data.data]
         res_outer = parent_sdfg.arrays[next(
             parent_state.out_edges_by_connector(node, "_res")).data.data]
-        n = x_outer.shape[0]
 
         a = node.a
+        n = node.n / x_outer.dtype.veclen
 
         axpy_sdfg = dace.SDFG("axpy")
         axpy_state = axpy_sdfg.add_state("axpy")
@@ -48,7 +53,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
         z_out = axpy_state.add_write("_res")
 
         vec_map_entry, vec_map_exit = axpy_state.add_map(
-            "axpy", {"i": f"0:{n}"})
+            "axpy", {"i": f"0:{n}"}, schedule=schedule)
 
         axpy_tasklet = axpy_state.add_tasklet(
             "axpy", ["x_conn", "y_conn"], ["z_conn"],
@@ -79,6 +84,21 @@ class ExpandAxpyVectorized(ExpandTransformation):
         return axpy_sdfg
 
 
+@dace.library.expansion
+class ExpandAxpyFpga(ExpandTransformation):
+
+    environments = []
+
+    @staticmethod
+    def expansion(node, parent_state: SDFGState, parent_sdfg, **kwargs):
+        return ExpandAxpyVectorized.expansion(
+            node,
+            parent_state,
+            parent_sdfg,
+            schedule=dace.ScheduleType.FPGA_Device,
+            **kwargs)
+
+
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
@@ -88,23 +108,25 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        # Works for both CPU and FPGA, both streaming and non-streaming
         "pure": ExpandAxpyVectorized,
+        "fpga": ExpandAxpyFpga,
     }
     default_implementation = None
 
     # Object fields
-    dtype = dace.properties.TypeClassProperty(allow_none=True)
     a = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("a"))
+    n = dace.properties.SymbolicProperty(allow_none=False,
+                                         default=dace.symbolic.symbol("n"))
 
-    def __init__(self, name, a=None, *args, **kwargs):
+    def __init__(self, name, a=None, n=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_x", "_y"},
                          outputs={"_res"},
                          **kwargs)
         self.a = a or dace.symbolic.symbol("a")
+        self.n = n or dace.symbolic.symbol("n")
 
     def compare(self, other):
 
