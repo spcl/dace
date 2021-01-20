@@ -7,9 +7,6 @@ from dace.memlet import Memlet
 import dace.libraries.blas as blas
 
 
-# ---------- ----------
-# Pure graph program (CPU)
-# ---------- ----------
 def pure_graph(dtype, transposed, expansion, veclen):
     n = dace.symbol("n")
     m = dace.symbol("m")
@@ -38,9 +35,7 @@ def pure_graph(dtype, transposed, expansion, veclen):
     x = state.add_read("x")
     result = state.add_write("y")
 
-    gemv_node = blas.Gemv("gemv",
-                          dtype=dace.float32,
-                          transA=transposed)
+    gemv_node = blas.Gemv("gemv", transA=transposed, beta="beta")
     gemv_node.implementation = expansion
 
     state.add_memlet_path(A,
@@ -51,14 +46,12 @@ def pure_graph(dtype, transposed, expansion, veclen):
     state.add_memlet_path(x,
                           gemv_node,
                           dst_conn="_x",
-                          memlet=Memlet.simple(x,
-                                               "0:{}".format(x_size)))
+                          memlet=Memlet.simple(x, "0:{}".format(x_size)))
     y = state.add_read("y")
     state.add_memlet_path(y,
                           gemv_node,
                           dst_conn="_y",
-                          memlet=Memlet.simple(y,
-                                               "0:{}".format(y_size)))
+                          memlet=Memlet.simple(y, "0:{}".format(y_size)))
     state.add_memlet_path(gemv_node,
                           result,
                           src_conn="_y",
@@ -66,9 +59,6 @@ def pure_graph(dtype, transposed, expansion, veclen):
     return sdfg
 
 
-# ---------- ----------
-# Intel FPGA graph
-# ---------- ----------
 def fpga_graph(dtype, transposed, expansion, vec_width):
 
     vtype = dace.vector(dtype, vec_width)
@@ -95,36 +85,48 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     copy_in_state = sdfg.add_state("copy_to_device")
 
     sdfg.add_array("A", shape=[n, m], dtype=vtype)
-    sdfg.add_array("x", shape=[x_size], dtype=vtype if not transposed else dtype)
+    sdfg.add_array("x",
+                   shape=[x_size],
+                   dtype=vtype if not transposed else dtype)
     sdfg.add_array("y", shape=[y_size], dtype=vtype if transposed else dtype)
 
     in_host_A = copy_in_state.add_read("A")
     in_host_x = copy_in_state.add_read("x")
     in_host_y = copy_in_state.add_read("y")
 
-    sdfg.add_array("device_A", shape=[A_rows, A_cols], dtype=vtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_A",
+                   shape=[A_rows, A_cols],
+                   dtype=vtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
-    sdfg.add_array("device_x", shape=[x_size], dtype=vtype if not transposed else dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_x",
+                   shape=[x_size],
+                   dtype=vtype if not transposed else dtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
-    sdfg.add_array("device_y", shape=[y_size], dtype=vtype if transposed else dtype, storage=dace.dtypes.StorageType.FPGA_Global,
+    sdfg.add_array("device_y",
+                   shape=[y_size],
+                   dtype=vtype if transposed else dtype,
+                   storage=dace.dtypes.StorageType.FPGA_Global,
                    transient=True)
 
     in_device_A = copy_in_state.add_write("device_A")
     in_device_x = copy_in_state.add_write("device_x")
     in_device_y = copy_in_state.add_write("device_y")
 
-    copy_in_state.add_memlet_path(
-        in_host_A, in_device_A,
-        memlet=Memlet.simple(in_host_A, "0:{}, 0:{}".format(A_rows, A_cols))
-    )
-    copy_in_state.add_memlet_path(
-        in_host_x, in_device_x,
-        memlet=Memlet.simple(in_host_x, "0:{}".format(x_size))
-    )
-    copy_in_state.add_memlet_path(
-        in_host_y, in_device_y,
-        memlet=Memlet.simple(in_host_y, "0:{}".format(y_size))
-    )
+    copy_in_state.add_memlet_path(in_host_A,
+                                  in_device_A,
+                                  memlet=Memlet.simple(
+                                      in_host_A,
+                                      "0:{}, 0:{}".format(A_rows, A_cols)))
+    copy_in_state.add_memlet_path(in_host_x,
+                                  in_device_x,
+                                  memlet=Memlet.simple(in_host_x,
+                                                       "0:{}".format(x_size)))
+    copy_in_state.add_memlet_path(in_host_y,
+                                  in_device_y,
+                                  memlet=Memlet.simple(in_host_y,
+                                                       "0:{}".format(y_size)))
 
     ###########################################################################
     # Copy data from FPGA
@@ -134,10 +136,10 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     out_device = copy_out_state.add_read("device_y")
     out_host = copy_out_state.add_write("y")
 
-    copy_out_state.add_memlet_path(
-        out_device, out_host,
-        memlet=Memlet.simple(out_host, "0:{}".format(y_size))
-    )
+    copy_out_state.add_memlet_path(out_device,
+                                   out_host,
+                                   memlet=Memlet.simple(out_host,
+                                                        "0:{}".format(y_size)))
 
     ########################################################################
     # FPGA State
@@ -150,7 +152,6 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     y_out = fpga_state.add_write("device_y")
 
     gemv_node = blas.Gemv("gemv",
-                          dtype=dace.float32,
                           transA=transposed,
                           alpha=alpha,
                           beta=beta)
@@ -159,30 +160,32 @@ def fpga_graph(dtype, transposed, expansion, vec_width):
     fpga_state.add_memlet_path(A,
                                gemv_node,
                                dst_conn="_A",
-                               memlet=Memlet.simple(A, "0:{}, 0:{}".format(n, m)))
+                               memlet=Memlet.simple(A,
+                                                    "0:{}, 0:{}".format(n, m)))
 
     fpga_state.add_memlet_path(x,
                                gemv_node,
                                dst_conn="_x",
-                               memlet=Memlet.simple(x, "0:{}".format("{}".format(x_size))))
+                               memlet=Memlet.simple(
+                                   x, "0:{}".format("{}".format(x_size))))
 
     if beta != 0:
         y_in = fpga_state.add_read("device_y")
         fpga_state.add_memlet_path(y_in,
                                    gemv_node,
                                    dst_conn="_y",
-                                   memlet=Memlet.simple(y_in, "0:{}".format(y_size)))
+                                   memlet=Memlet.simple(y_in,
+                                                        "0:{}".format(y_size)))
     fpga_state.add_memlet_path(gemv_node,
                                y_out,
                                src_conn="_y",
-                               memlet=Memlet.simple(y_out, "0:{}".format(y_size)))
+                               memlet=Memlet.simple(y_out,
+                                                    "0:{}".format(y_size)))
 
     ######################################
     # Interstate edges
-    sdfg.add_edge(copy_in_state, fpga_state,
-                  dace.sdfg.sdfg.InterstateEdge())
-    sdfg.add_edge(fpga_state, copy_out_state,
-                  dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(copy_in_state, fpga_state, dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(fpga_state, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
 
     gemv_node.expand(sdfg, fpga_state, tile_size_x=16, tile_size_y=16)
 
@@ -212,15 +215,15 @@ if __name__ == "__main__":
     transposed = args.transposed
     if args.target == "pure":
         sdfg = pure_graph(dace.float32, transposed, "pure", args.vectorize)
-    elif args.target == "intel_fpga":
-        sdfg = fpga_graph(dace.float32, transposed, "IntelFPGA", args.vectorize)
     elif args.target == "tiles_by_column":
         if not transposed and args.vectorize > 1:
             raise NotImplementedError(
                 "Non-transposed vectorized tile-by-column NYI.")
-        sdfg = fpga_graph(dace.float32, transposed, "TilesByColumn", args.vectorize)
+        sdfg = fpga_graph(dace.float32, transposed, "FPGA_TilesByColumn",
+                          args.vectorize)
     elif args.target == "accumulate":
-        sdfg = fpga_graph(dace.float32, transposed, "Accumulate", args.vectorize)
+        sdfg = fpga_graph(dace.float32, transposed, "FPGA_Accumulate",
+                          args.vectorize)
     else:
         print("Unsupported target")
         exit(-1)
