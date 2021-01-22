@@ -659,7 +659,9 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                 if (stride < 0) == True:
                     rng = (stop, start, -stride)
 
-                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin],
+                loop_states = sdutils.dfs_conditional(
+                    sdfg,
+                    sources=[begin],
                     condition=lambda _, child: child != guard)
                 for v in loop_states:
                     v.ranges[itervar] = subsets.Range([rng])
@@ -889,13 +891,16 @@ def propagate_states(sdfg) -> None:
                             (outer_itvar * outer_stride + outer_start)
                         })
                         loop_executions = Sum(
-                            exec_repl, (outer_itvar, 0,
-                            ceiling((outer_stop - outer_start) / outer_stride)))
+                            exec_repl,
+                            (outer_itvar, 0,
+                             ceiling(
+                                 (outer_stop - outer_start) / outer_stride)))
                     loop_executions = loop_executions.doit()
 
                     loop_state = state.condition_edge.dst
-                    end_state = (out_edges[0].dst if out_edges[1].dst
-                                 == loop_state else out_edges[1].dst)
+                    end_state = (out_edges[0].dst
+                                 if out_edges[1].dst == loop_state else
+                                 out_edges[1].dst)
 
                     traversal_q.append((end_state, state.executions,
                                         proposed_dynamic, itvar_stack))
@@ -1099,23 +1104,37 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
-            iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-            if symbolic.issymbolic(iedge.data.volume):
-                if any(str(s) not in parent_sdfg.symbols
-                        for s in iedge.data.volume.free_symbols):
-                    iedge.data.volume = 0
-                    iedge.data.dynamic = True
+            try:
+                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+                if symbolic.issymbolic(iedge.data.volume):
+                    if any(
+                            str(s) not in parent_sdfg.symbols
+                            for s in iedge.data.volume.free_symbols):
+                        iedge.data.volume = 0
+                        iedge.data.dynamic = True
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                iedge.data.volume = 0
+                iedge.data.dynamic = True
     for oedge in parent_state.out_edges(nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
-            oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-            if symbolic.issymbolic(oedge.data.volume):
-                if any(str(s) not in parent_sdfg.symbols
-                        for s in oedge.data.volume.free_symbols):
-                    oedge.data.volume = 0
-                    oedge.data.dynamic = True
+            try:
+                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+                if symbolic.issymbolic(oedge.data.volume):
+                    if any(
+                            str(s) not in parent_sdfg.symbols
+                            for s in oedge.data.volume.free_symbols):
+                        oedge.data.volume = 0
+                        oedge.data.dynamic = True
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                oedge.data.volume = 0
+                oedge.data.dynamic = True
 
 
 def propagate_memlets_sdfg(sdfg):

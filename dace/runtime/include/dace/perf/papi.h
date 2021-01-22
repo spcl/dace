@@ -418,9 +418,22 @@ public:
         else if(m_flags == ValueSetType::marker_section_start)
         {
             entry_name = "papi_section_start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ") ";
-            rep.add((entry_name + "bytes").c_str(), static_cast<double>(m_values[0]));
-            if(m_values[1] != 0)
-                rep.add((entry_name + "input_bytes").c_str(), static_cast<double>(m_values[1]));
+            const char *counter_name = (entry_name + "bytes").c_str();
+            rep.add_counter(
+                (entry_name + "bytes").c_str(),
+                "papi",
+                counter_name,
+                static_cast<double>(m_values[0])
+            );
+            if(m_values[1] != 0) {
+                const char *ip_counter_name = (entry_name + "input_bytes").c_str();
+                rep.add_counter(
+                    (entry_name + "input_bytes").c_str(),
+                    "papi",
+                    ip_counter_name,
+                    static_cast<double>(m_values[1])
+                );
+            }
             return;
         }
         else if(m_flags == ValueSetType::OMP_marker_parfor_start)
@@ -440,7 +453,13 @@ public:
         for(const auto& e : event_tags)
         {
             if(e == 0) continue; // Skip unnecessary/invalid entries
-            rep.add((entry_name + std::to_string(e)).c_str(), static_cast<double>(m_values[i]));
+            const char *counter_name = (entry_name + std::to_string(e)).c_str();
+            rep.add_counter(
+                (entry_name + std::to_string(e)).c_str(),
+                "papi",
+                counter_name,
+                static_cast<double>(m_values[i])
+            );
             ++i;
         }
     }
@@ -599,14 +618,24 @@ public:
         {
 #ifndef NO_RUNTIME_BYTEMOVEMENT_ACCUMULATION
             byte_counter_size_t bm = collectBytesMoved();
-            this->m_report.add("papi_moved_bytes", static_cast<double>(bm));
+            this->m_report.add_counter(
+                "papi_moved_bytes",
+                "papi",
+                "papi_moved_bytes",
+                static_cast<double>(bm)
+            );
 #endif
             // Also store contention
             uint64_t cont = 0;
             cont = m_contention_value.exchange(cont);
             
             if(cont != 0)
-                this->m_report.add("papi_contention", static_cast<double>(cont));
+                this->m_report.add_counter(
+                    "papi_contention",
+                    "papi",
+                    "papi_contention",
+                    static_cast<double>(cont)
+                );
         }
         m_values.clear();
         m_values.resize(store_reserve_size);

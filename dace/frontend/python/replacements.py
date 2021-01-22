@@ -20,7 +20,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, issymbolic
 
 import numpy as np
 import sympy as sp
@@ -47,31 +47,38 @@ def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
-def _define_local_ex(sdfg: SDFG,
-                     state: SDFGState,
-                     shape: Shape,
-                     dtype: dace.typeclass,
-                     storage: dtypes.StorageType = dtypes.StorageType.Default):
+def _define_local_ex(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    shape: Shape,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default,
+    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage)
+    name, _ = sdfg.add_temp_transient(shape,
+                                      dtype,
+                                      storage=storage,
+                                      lifetime=lifetime)
     return name
 
 
 @oprepo.replaces('numpy.ndarray')
-def _define_local(sdfg: SDFG, state: SDFGState, shape: Shape,
+def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape,
                   dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
-    return _define_local_ex(sdfg, state, shape, dtype)
+    return _define_local_ex(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
-        sdfg: SDFG,
-        state: SDFGState,
-        dtype: dace.typeclass,
-        storage: dtypes.StorageType = dtypes.StorageType.Default):
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    dtype: dace.typeclass,
+    storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True, storage=storage)
@@ -79,7 +86,8 @@ def _define_local_scalar(
 
 
 @oprepo.replaces('dace.define_stream')
-def _define_stream(sdfg: SDFG,
+def _define_stream(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
                    state: SDFGState,
                    dtype: dace.typeclass,
                    buffer_size: Size = 1):
@@ -91,7 +99,8 @@ def _define_stream(sdfg: SDFG,
 
 @oprepo.replaces('dace.define_streamarray')
 @oprepo.replaces('dace.stream')
-def _define_streamarray(sdfg: SDFG,
+def _define_streamarray(pv: 'ProgramVisitor',
+                        sdfg: SDFG,
                         state: SDFGState,
                         shape: Shape,
                         dtype: dace.typeclass,
@@ -107,7 +116,8 @@ def _define_streamarray(sdfg: SDFG,
 
 
 @oprepo.replaces('dace.reduce')
-def _reduce(sdfg: SDFG,
+def _reduce(pv: 'ProgramVisitor',
+            sdfg: SDFG,
             state: SDFGState,
             redfunction: Callable[[Any, Any], Any],
             in_array: str,
@@ -181,7 +191,13 @@ def _reduce(sdfg: SDFG,
 
 
 @oprepo.replaces('numpy.eye')
-def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
+def eye(pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        N,
+        M=None,
+        k=0,
+        dtype=dace.float64):
     M = M or N
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
@@ -196,7 +212,8 @@ def eye(sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
 
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
-def _elementwise(sdfg: SDFG,
+def _elementwise(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
                  state: SDFGState,
                  func: str,
                  in_array: str,
@@ -321,7 +338,7 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
 @oprepo.replaces('math.exp')
-def _exp(sdfg: SDFG, state: SDFGState, input: str):
+def _exp(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'exp')
 
 
@@ -329,7 +346,7 @@ def _exp(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
 @oprepo.replaces('math.sin')
-def _sin(sdfg: SDFG, state: SDFGState, input: str):
+def _sin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sin')
 
 
@@ -337,7 +354,7 @@ def _sin(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
 @oprepo.replaces('math.cos')
-def _cos(sdfg: SDFG, state: SDFGState, input: str):
+def _cos(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'cos')
 
 
@@ -345,7 +362,7 @@ def _cos(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
 @oprepo.replaces('math.sqrt')
-def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
+def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sqrt')
 
 
@@ -353,21 +370,21 @@ def _sqrt(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
 @oprepo.replaces('math.log')
-def _log(sdfg: SDFG, state: SDFGState, input: str):
+def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
 @oprepo.replaces('numpy.conj')
-def _conj(sdfg: SDFG, state: SDFGState, input: str):
+def _conj(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'conj')
 
 
 @oprepo.replaces('real')
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
-def _real(sdfg: SDFG, state: SDFGState, input: str):
+def _real(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'real', _complex_to_scalar(inptype))
 
@@ -375,7 +392,7 @@ def _real(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('imag')
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
-def _imag(sdfg: SDFG, state: SDFGState, input: str):
+def _imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
@@ -383,7 +400,11 @@ def _imag(sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
-def _transpose(sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
+def _transpose(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               inpname: str,
+               axes=None):
 
     if axes is None:
         arr1 = sdfg.arrays[inpname]
@@ -428,14 +449,18 @@ def _transpose(sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
 
 @oprepo.replaces('numpy.sum')
-def _sum(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
 
 
 @oprepo.replaces('numpy.mean')
-def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _mean(pv: 'ProgramVisitor',
+          sdfg: SDFG,
+          state: SDFGState,
+          a: str,
+          axis=None):
 
-    nest = NestedCall(sdfg, state)
+    nest = NestedCall(pv, sdfg, state)
 
     sum = nest(_sum)(a, axis=axis)
 
@@ -457,8 +482,8 @@ def _mean(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
-def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg,
+def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
@@ -468,8 +493,8 @@ def _max(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
-def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(sdfg,
+def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
@@ -478,23 +503,24 @@ def _min(sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(sdfg, state, a, axis, func="max", result_type=result_type)
+def _argmax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(sdfg, state, a, axis, func="min", result_type=result_type)
+def _argmin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+    return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
 
-def _argminmax(sdfg: SDFG,
+def _argminmax(pv: 'ProgramVisitor',
+               sdfg: SDFG,
                state: SDFGState,
                a: str,
                axis,
                func,
                result_type=dace.int32,
                return_both=False):
-    nest = NestedCall(sdfg, state)
+    nest = NestedCall(pv, sdfg, state)
 
     assert func in ['min', 'max']
 
@@ -868,7 +894,6 @@ def _result_type(
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, Number):
             datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
-            print(arg, type(arg), dtypes.DTYPE_TO_TYPECLASS[type(arg)])
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
@@ -1693,7 +1718,10 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
-def _matmult(visitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+@oprepo.replaces_operator('View', 'MatMult')
+@oprepo.replaces_operator('Array', 'MatMult', 'View')
+@oprepo.replaces_operator('View', 'MatMult', 'Array')
+def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
 
@@ -3356,7 +3384,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-        _reduce(sdfg,
+        _reduce(visitor, sdfg,
                 state,
                 ufunc_impl['reduce'],
                 inputs[0],
@@ -3674,6 +3702,98 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call,
     return outputs
 
 
+@oprepo.replaces('numpy.reshape')
+def reshape(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            arr: str,
+            newshape: Union[str, symbolic.SymbolicType,
+                            Tuple[Union[str, symbolic.SymbolicType]]],
+            order='C') -> str:
+    desc = sdfg.arrays[arr]
+
+    # "order" determines stride orders
+    fortran_strides = False
+    if order == 'F' or (order == 'A' and desc.strides[0] == 1):
+        # FORTRAN strides
+        fortran_strides = True
+
+    # New shape and strides as symbolic expressions
+    newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
+    if fortran_strides:
+        strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
+    else:
+        strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
+
+    newarr, _ = sdfg.add_view(arr,
+                              newshape,
+                              desc.dtype,
+                              storage=desc.storage,
+                              strides=strides,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size,
+                              may_alias=desc.may_alias,
+                              alignment=desc.alignment,
+                              find_new_name=True)
+
+    # Register view with DaCe program visitor
+    pv.views[newarr] = arr
+
+    return newarr
+
+
+@oprepo.replaces_method('Array', 'view')
+@oprepo.replaces_method('Scalar', 'view')
+@oprepo.replaces_method('View', 'view')
+def view(pv: 'ProgramVisitor',
+         sdfg: SDFG,
+         state: SDFGState,
+         arr: str,
+         dtype,
+         type=None) -> str:
+    if type is not None:
+        raise ValueError('View to numpy types is not supported')
+
+    desc = sdfg.arrays[arr]
+
+    # Change size of array based on the differences in bytes
+    bytemult = desc.dtype.bytes / dtype.bytes
+    bytediv = dtype.bytes / desc.dtype.bytes
+    contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
+
+    # For cases that can be recognized, if contiguous dimension is too small
+    # raise an exception similar to numpy
+    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and bytemult < 1
+            and desc.shape[contigdim] % bytediv != 0):
+        raise ValueError(
+            'When changing to a larger dtype, its size must be a divisor of '
+            'the total size in bytes of the last axis of the array.')
+
+    # Create new shape and strides for view
+    newshape = list(desc.shape)
+    newstrides = [
+        s * bytemult if i != contigdim else s
+        for i, s in enumerate(desc.strides)
+    ]
+    newshape[contigdim] *= bytemult
+
+    newarr, _ = sdfg.add_view(arr,
+                              newshape,
+                              dtype,
+                              storage=desc.storage,
+                              strides=newstrides,
+                              allow_conflicts=desc.allow_conflicts,
+                              total_size=desc.total_size * bytemult,
+                              may_alias=desc.may_alias,
+                              alignment=desc.alignment,
+                              find_new_name=True)
+
+    # Register view with DaCe program visitor
+    pv.views[newarr] = arr
+
+    return newarr
+
+
 # Datatype converter #########################################################
 
 
@@ -3686,7 +3806,8 @@ def _make_datatype_converter(typeclass: str):
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
     @oprepo.replaces("numpy.{}".format(typeclass))
-    def _converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput):
+    def _converter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                   arg: UfuncInput):
         return _datatype_converter(sdfg, state, arg, dtype=dtype)
 
 

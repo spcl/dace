@@ -100,8 +100,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
-                         is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else
+                         unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -111,21 +112,25 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code)
 
-        host_code.write("""
-dace::fpga::Context *dace::fpga::_context;
+        params_comma = self._global_sdfg.signature(with_arrays=False)
+        if params_comma:
+            params_comma = ', ' + params_comma
 
-DACE_EXPORTED int __dace_init_xilinx({signature}) {{
+        host_code.write("""
+DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
-    dace::fpga::_context = new dace::fpga::Context();
-    dace::fpga::_context->Get().MakeProgram({kernel_file_name});
+    
+    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED void __dace_exit_xilinx({signature}) {{
-    delete dace::fpga::_context;
+DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
+    delete __state->fpga_context;
 }}
 
-{host_code}""".format(signature=self._global_sdfg.signature(),
+{host_code}""".format(signature=params_comma,
+                      sdfg=self._global_sdfg,
                       environment_variables=set_env_vars,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([

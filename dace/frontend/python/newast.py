@@ -1109,6 +1109,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.numbers = dict()  # Dict[str, str]
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
+        self.views: Dict[str, str] = {}  # Keeps track of views
 
         # Keep track of map symbols from upper scopes
         map_symbols = map_symbols or set()
@@ -1195,6 +1196,24 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr.transient = False
                 self.outputs[arrname] = Memlet.from_array(arrname, arr)
         ####
+
+        # Map view access nodes to their respective data
+        for state in self.sdfg.nodes():
+            for vnode in list(state.data_nodes()):
+                if vnode.data in self.views:
+                    if state.in_degree(vnode) == 0:
+                        aname = self.views[vnode.data]
+                        arr = self.sdfg.arrays[aname]
+                        r = state.add_read(aname)
+                        state.add_nedge(r, vnode, Memlet.from_array(aname, arr))
+                    elif state.out_degree(vnode) == 0:
+                        aname = self.views[vnode.data]
+                        arr = self.sdfg.arrays[aname]
+                        w = state.add_write(aname)
+                        state.add_nedge(vnode, w, Memlet.from_array(aname, arr))
+                    else:
+                        raise ValueError(f'View "{vnode.data}" already has'
+                                         'both incoming and outgoing edges')
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
@@ -1733,7 +1752,7 @@ class ProgramVisitor(ExtNodeVisitor):
         return new_params, map_inputs
 
     def _parse_consume_inputs(
-            self, node: ast.FunctionDef
+        self, node: ast.FunctionDef
     ) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
             :return: A 5-tuple of Stream name, internal stream name,
@@ -2196,8 +2215,8 @@ class ProgramVisitor(ExtNodeVisitor):
             end_loop_state = self.last_state
 
             # Add loop to SDFG
-            loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0)
-                                == True) else '<'
+            loop_cond = '>' if ((
+                pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             _, loop_guard, loop_end = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0],
                 astutils.unparse(ast_ranges[0][0]), '%s %s %s' %
@@ -3117,24 +3136,18 @@ class ProgramVisitor(ExtNodeVisitor):
         if num_args == 0:
             shape_node = self._get_keyword_value(node.keywords, "shape")
             shape = self._parse_shape(shape_node)
-            print(shape)
             dtype_node = self._get_keyword_value(node.keywords, "dtype")
             dtype = self._parse_dtype(dtype_node)
-            print(dtype)
         elif num_args == 1:
             shape_node = node.args[0]
             shape = self._parse_shape(shape_node)
-            print(shape)
             dtype_node = self._get_keyword_value(node.keywords, "dtype")
             dtype = self._parse_dtype(dtype_node)
-            print(dtype)
         elif num_args >= 2:
             shape_node = node.args[0]
             shape = self._parse_shape(shape_node)
-            print(shape)
             dtype_node = node.args[1]
             dtype = self._parse_dtype(dtype_node)
-            print(dtype)
 
         return (shape, dtype)
 
@@ -3479,6 +3492,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 return rets[0]
             return rets
 
+        # Set arguments
+        args = []
+
         # TODO: If the function is a callback, implement it as a tasklet
 
         # NumPy ufunc support
@@ -3497,21 +3513,27 @@ class ProgramVisitor(ExtNodeVisitor):
                 if ufunc_name in replacements.ufuncs.keys() and func:
                     found_ufunc = True
 
+        # Check if this is a method called on an object
+        if ('.' in funcname and len(modname) > 0 and modname in self.defined):
+            methodname = funcname[len(modname) + 1:]
+            classname = type(self.defined[modname]).__name__
+            func = oprepo.Replacements.get_method(classname, methodname)
+            if func is None:
+                raise DaceSyntaxError(
+                    self, node,
+                    'Method "%s" is not registered for object type "%s"' %
+                    (methodname, classname))
+            # Add object as first argument
+            args.append(self.scope_vars[modname])
         # Otherwise, try to find a default implementation for the SDFG
-        if not found_ufunc:
+        elif not found_ufunc:
             func = oprepo.Replacements.get(funcname)
             if func is None:
-                # Check for SDFG as fallback
-                func = oprepo.Replacements.get(funcname)
-                if func is None:
-                    raise DaceSyntaxError(
-                        self, node,
-                        'Function "%s" is not registered with an SDFG '
-                        'implementation' % funcname)
-                print('WARNING: Function "%s" is not registered with an %s '
-                      'implementation, falling back to SDFG' % funcname)
+                raise DaceSyntaxError(
+                    self, node, 'Function "%s" is not registered with an SDFG '
+                    'implementation' % funcname)
 
-        args = [self._parse_function_arg(arg) for arg in node.args]
+        args.extend([self._parse_function_arg(arg) for arg in node.args])
         keywords = {
             arg.arg: self._parse_function_arg(arg.value)
             for arg in node.keywords
@@ -3524,7 +3546,7 @@ class ProgramVisitor(ExtNodeVisitor):
             result = func(self, node, self.sdfg, self.last_state, ufunc_name,
                           args, keywords)
         else:
-            result = func(self.sdfg, self.last_state, *args, **keywords)
+            result = func(self, self.sdfg, self.last_state, *args, **keywords)
 
         self.last_state.set_default_lineinfo(None)
 

@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.7]
+        python-version: [3.8]
         strict-xforms: [1,0]
 
     steps:
@@ -33,7 +33,6 @@ jobs:
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
         pip install flake8 pytest coverage codecov
-        pip install tensorflow==1.15.0
         pip install -e ".[testing]"
 
     - name: Test dependencies
@@ -47,7 +46,7 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
-        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator"
+        pytest --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow"
         codecov
     - name: Run other tests
       run: |

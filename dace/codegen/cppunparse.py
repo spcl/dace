@@ -89,8 +89,13 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr",
-                  "inf": "INFINITY", "nan": "NAN"}
+_py2c_reserved = {
+    "True": "true",
+    "False": "false",
+    "None": "nullptr",
+    "inf": "INFINITY",
+    "nan": "NAN"
+}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
@@ -315,33 +320,38 @@ class CPPUnparser:
                 (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
                     target.id, self._indent):
 
-                # the target is not already defined: we should try to infer the type
-                if self.type_inference is True:
-                    # Perform type inference
-                    # Build dictionary with symbols
-                    def_symbols = {}
-                    def_symbols.update(self.locals.get_name_type_associations())
-                    def_symbols.update(self.defined_symbols)
-                    inferred_symbols = type_inference.infer_types(
-                        t, def_symbols)
-                    inferred_type = inferred_symbols[target.id]
+                # if the target is already defined, do not redefine it
+                if self.defined_symbols is None or target.id not in self.defined_symbols:
+                    # we should try to infer the type
+                    if self.type_inference is True:
+                        # Perform type inference
+                        # Build dictionary with symbols
+                        def_symbols = {}
+                        def_symbols.update(
+                            self.locals.get_name_type_associations())
+                        def_symbols.update(self.defined_symbols)
+                        inferred_symbols = type_inference.infer_types(
+                            t, def_symbols)
+                        inferred_type = inferred_symbols[target.id]
 
-                    self.locals.define(target.id, t.lineno, self._indent,
-                                       inferred_type)
-                    if self.language == dace.dtypes.Language.OpenCL and inferred_type.veclen > 1:
-                        # if the veclen is greater than one, this should be defined with a vector data type
-                        self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],inferred_type.veclen))
+                        self.locals.define(target.id, t.lineno, self._indent,
+                                           inferred_type)
+                        if self.language == dace.dtypes.Language.OpenCL and (
+                                inferred_type is not None
+                                and inferred_type.veclen > 1):
+                            # if the veclen is greater than one, this should be defined with a vector data type
+                            self.write("{}{} ".format(
+                                dace.dtypes._OCL_VECTOR_TYPES[
+                                    inferred_type.type], inferred_type.veclen))
+                        else:
+                            self.write(dace.dtypes._CTYPES[inferred_type.type] +
+                                       " ")
                     else:
-                        self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
-                else:
-                    self.locals.define(target.id, t.lineno, self._indent)
-                    self.write("auto ")
+                        self.locals.define(target.id, t.lineno, self._indent)
+                        self.write("auto ")
 
             # dispatch target
             self.dispatch(target)
-            #if not infer_type:
-            #   inferred_type = self.dispatch(target, True)
-            #self.dtype = inferred_type
 
         self.write(" = ")
         self.dispatch(t.value)
@@ -937,8 +947,8 @@ class CPPUnparser:
         if (isinstance(t.value, (ast.Num, ast.Constant))
                 and isinstance(t.value.n, int)):
             self.write(" ")
-        if (isinstance(t.value, ast.Name) and
-                t.value.id in ("dace::math", "dace::cmath")):
+        if (isinstance(t.value, ast.Name)
+                and t.value.id in ("dace::math", "dace::cmath")):
             self.write("::")
         else:
             self.write(".")

@@ -32,9 +32,11 @@
     </div>
 </div>  
 <div id="filepicker"><form>
-    <input type="file" accept=".sdfg,.json"> <input type="button" id="reload" value="Refresh">
+    <input type="file" id="sdfg-file-input" accept=".sdfg,.json"> <input type="button" id="reload" value="Refresh">
     <input type="button" id="outline" value="SDFG Outline">
 </form></div>
+<input type="file" accept=".json" id="instrumentation-report-file-input" style="display: none;">
+<input type="button" value="Load Instrumentation Report" id="load-instrumentation-report-btn" onclick="$('#instrumentation-report-file-input').click();">
 <div><form>
     <input id="search" type="text" placeholder="Search in graph elements">
     <input type="button" id="search-btn" value="Search">
