@@ -328,8 +328,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             # passed to the allocator
                             top_level_local_data.append(dataname)
                     else:
-                        raise ValueError("Unsupported storage type: {}".format(
-                            data.storage))
+                        raise ValueError("Unsupported storage type for "
+                                         f"{dataname}: {data.storage}")
                 else:
                     raise TypeError("Unsupported data type: {}".format(
                         type(data).__name__))
