@@ -908,15 +908,21 @@ class CPUCodeGen(TargetCodeGenerator):
                         result,
                     )
 
-    def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype):
+    def make_ptr_assignment(self,
+                            src_expr,
+                            src_dtype,
+                            dst_expr,
+                            dst_dtype,
+                            codegen=None):
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
         :return: String of C++ performing the write.
         """
+        codegen = codegen or self
         # If there is a type mismatch, cast pointer
-        dst_expr = self.make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype,
-                                             True, DefinedType.Pointer)
+        dst_expr = codegen.make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype,
+                                                True, DefinedType.Pointer)
         return f"{dst_expr} = {src_expr};"
 
     def memlet_view_ctor(self, sdfg, memlet, dtype, is_output):

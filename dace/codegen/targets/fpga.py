@@ -1395,4 +1395,6 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
     def make_ptr_assignment(self, *args, **kwargs):
-        return self._cpu_codegen.make_ptr_assignment(*args, **kwargs)
+        return self._cpu_codegen.make_ptr_assignment(*args,
+                                                     codegen=self,
+                                                     **kwargs)

@@ -8,8 +8,6 @@ from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState,
                   symbolic)
 from dace.frontend.common import op_repository as oprepo
 
-from dace.libraries.blas.utility.fpga_helper import StreamWriteVector, StreamReadVector
-
 
 @dace.library.expansion
 class ExpandAxpyVectorized(ExpandTransformation):

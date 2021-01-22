@@ -10,63 +10,24 @@ from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
 
-import dace.libraries.blas.utility.fpga_helper as streaming
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.dataflow import StreamingMemory
 
 
-def fpga_graph(veclen, precision, vendor, test_case, expansion):
+def pure_graph(implementation, dtype, veclen):
 
-    DATATYPE = precision
+    sdfg_name = f"dot_{implementation}_{dtype.ctype}_w{veclen}"
+    sdfg = dace.SDFG(sdfg_name)
+
+    state = sdfg.add_state("dot")
 
     n = dace.symbol("n")
     a = dace.symbol("a")
 
-    vendor_mark = "x" if vendor == "xilinx" else "i"
-    test_sdfg = dace.SDFG("dot_test_" + vendor_mark + "_" + test_case)
-    test_state = test_sdfg.add_state("test_state")
+    vtype = dace.vector(dtype, veclen)
 
-    vec_type = dace.vector(precision, veclen)
-
-    test_sdfg.add_array('x', shape=[n / veclen], dtype=vec_type)
-    test_sdfg.add_array('y', shape=[n / veclen], dtype=vec_type)
-    test_sdfg.add_array('r', shape=[1], dtype=precision)
-
-    dot_node = blas.Dot("dot")
-    dot_node.implementation = expansion
-
-    x_stream = streaming.StreamReadVector('x', n, DATATYPE, veclen=veclen)
-
-    y_stream = streaming.StreamReadVector('y', n, DATATYPE, veclen=veclen)
-
-    z_stream = streaming.StreamWriteVector('r', 1, DATATYPE)
-
-    pre_state, post_state = streaming.fpga_setup_connect_streamers(
-        test_sdfg,
-        test_state,
-        dot_node, [x_stream, y_stream], ['_x', '_y'],
-        dot_node, [z_stream], ['_result'],
-        input_memory_banks=[0, 1],
-        output_memory_banks=[2])
-
-    test_sdfg.expand_library_nodes()
-
-    mode = "simulation" if vendor == "xilinx" else "emulator"
-    dace.config.Config.set("compiler", "fpga_vendor", value=vendor)
-    dace.config.Config.set("compiler", vendor, "mode", value=mode)
-
-    test_sdfg.fill_scope_connectors()
-
-    return test_sdfg
-
-
-def pure_graph(dtype):
-    n = dace.symbol("n")
-
-    sdfg = dace.SDFG("dot_product")
-
-    state = sdfg.add_state("dot")
-
-    sdfg.add_array("x", [n], dtype)
-    sdfg.add_array("y", [n], dtype)
+    sdfg.add_array("x", [n / veclen], vtype)
+    sdfg.add_array("y", [n / veclen], vtype)
     sdfg.add_array("r", [1], dtype)
 
     x = state.add_read("x")
@@ -74,21 +35,32 @@ def pure_graph(dtype):
     result = state.add_write("r")
 
     dot_node = blas.Dot("dot")
-    dot_node.implementation = "pure"
+    dot_node.implementation = implementation
 
     state.add_memlet_path(x,
                           dot_node,
                           dst_conn="_x",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
+                          memlet=Memlet(f"x[0:{n}/{veclen}]"))
     state.add_memlet_path(y,
                           dot_node,
                           dst_conn="_y",
-                          memlet=Memlet.simple(y, "0:n", num_accesses=n))
+                          memlet=Memlet(f"y[0:{n}/{veclen}]"))
     state.add_memlet_path(dot_node,
                           result,
                           src_conn="_result",
-                          memlet=Memlet.simple(result, "0", num_accesses=1))
+                          memlet=Memlet(f"r[0]"))
 
+    return sdfg
+
+
+def fpga_graph(implementation, dtype, veclen):
+    sdfg = pure_graph(implementation, dtype, veclen)
+    sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated(
+        [InlineSDFG, StreamingMemory], [{}, {
+            "storage": dace.StorageType.FPGA_Local
+        }])
     return sdfg
 
 
@@ -104,17 +76,11 @@ if __name__ == "__main__":
     if args.target == "pure":
         sdfg = pure_graph(dace.float32)
     elif args.target == "intel_fpga":
-        sdfg = fpga_graph(args.vector_length,
-                          dace.float32,
-                          args.target,
-                          "0",
-                          expansion="FPGA_Accumulate")
+        dace.Config.set("compiler", "fpga_vendor", value="intel_fpga")
+        sdfg = fpga_graph("FPGA_Accumulate", dace.float32, args.vector_length)
     elif args.target == "xilinx":
-        sdfg = fpga_graph(args.vector_length,
-                          dace.float32,
-                          args.target,
-                          "0",
-                          expansion="FPGA_PartialSums")
+        dace.Config.set("compiler", "fpga_vendor", value="xilinx")
+        sdfg = fpga_graph("FPGA_PartialSums", dace.float32, args.vector_length)
     else:
         print(f"Unsupported target: {args.target}")
         exit(-1)
@@ -136,7 +102,5 @@ if __name__ == "__main__":
 
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
-        print("Unexpected result returned from dot product: "
+        raise ValueError("Unexpected result returned from dot product: "
               "got {}, expected {}".format(result[0], ref))
-    else:
-        print("Ok")

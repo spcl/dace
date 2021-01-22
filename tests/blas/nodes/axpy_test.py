@@ -36,11 +36,12 @@ def run_test(configs, target):
         ref_result = reference_result(x, y_ref, a)
 
         if target == "fpga_stream":
-            program = stream_fpga_graph(veclen, dtype, "fpga", i)
+            sdfg = stream_fpga_graph(veclen, dtype, "fpga", i)
         elif target == "fpga_array":
-            program = fpga_graph(veclen, dtype, "fpga", i)
+            sdfg = fpga_graph(veclen, dtype, "fpga", i)
         else:
-            program = pure_graph(veclen, dtype, "fpga", i)
+            sdfg = pure_graph(veclen, dtype, "fpga", i)
+        program = sdfg.compile()
 
         if target in ["fpga_stream", "fpga_array"]:
             program(x=x, y=y, a=a, n=np.int32(n))
@@ -124,9 +125,7 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
 
 
 def _test_fpga(target):
-    configs = [(0.0, 1, dace.float32), (1.0, 1, dace.float32),
-               (0.5, 1, dace.float32), (1.0, 1, dace.float64),
-               (1.0, 4, dace.float64)]
+    configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     run_test(configs, target)
 
 
