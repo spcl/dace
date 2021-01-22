@@ -18,8 +18,8 @@ def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
     sdfg.add_edge(pre_state, state, dace.InterstateEdge())
     sdfg.add_edge(state, post_state, dace.InterstateEdge())
 
-    _, desc_input_host = sdfg.add_array("a", (n, m // veclen), vtype)
-    _, desc_output_host = sdfg.add_array("b", (n, m // veclen), vtype)
+    _, desc_input_host = sdfg.add_array("a", (n, m / veclen), vtype)
+    _, desc_output_host = sdfg.add_array("b", (n, m / veclen), vtype)
     desc_input_device = copy.copy(desc_input_host)
     desc_input_device.storage = dace.StorageType.FPGA_Global
     desc_input_device.location["bank"] = 0
@@ -37,7 +37,7 @@ def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
     pre_state.add_memlet_path(pre_read,
                               pre_write,
                               memlet=dace.Memlet.simple(
-                                  pre_write, "0:N, 0:M//{}".format(veclen)))
+                                  pre_write, "0:N, 0:M/{}".format(veclen)))
 
     # Device to host
     post_read = post_state.add_read("b_device")
@@ -45,7 +45,7 @@ def make_sdfg(name="fpga_stcl_test", dtype=dace.float32, veclen=8):
     post_state.add_memlet_path(post_read,
                                post_write,
                                memlet=dace.Memlet.simple(
-                                   post_write, "0:N, 0:M//{}".format(veclen)))
+                                   post_write, "0:N, 0:M/{}".format(veclen)))
 
     # Compute state
     read_memory = state.add_read("a_device")
@@ -76,12 +76,12 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
 
     entry, exit = state.add_pipeline(name, {
         "i": "0:N",
-        "j": "0:M//{}".format(veclen),
+        "j": "0:M/{}".format(veclen),
     },
                                      schedule=dace.ScheduleType.FPGA_Device,
-                                     init_size=m // veclen,
+                                     init_size=m / veclen,
                                      init_overlap=False,
-                                     drain_size=m // veclen,
+                                     drain_size=m / veclen,
                                      drain_overlap=True)
 
     # Unrolled map
@@ -95,16 +95,16 @@ result = 0.25 * (north + west + east + south)""".format(W=veclen))
                           produce_input_stream,
                           memlet=dace.Memlet.simple(
                               read_memory.data,
-                              "0:N, 0:M//{}".format(veclen),
+                              "0:N, 0:M/{}".format(veclen),
                               other_subset_str="0",
-                              num_accesses=n * (m // veclen)))
+                              num_accesses=n * (m / veclen)))
     state.add_memlet_path(consume_output_stream,
                           write_memory,
                           memlet=dace.Memlet.simple(
                               write_memory.data,
-                              "0:N, 0:M//{}".format(veclen),
+                              "0:N, 0:M/{}".format(veclen),
                               other_subset_str="0",
-                              num_accesses=n * (m // veclen)))
+                              num_accesses=n * (m / veclen)))
 
     # Container-to-container copy from vectorized stream to non-vectorized
     # buffer

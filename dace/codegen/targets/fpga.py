@@ -1394,13 +1394,5 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
-    def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype):
-        """
-        Write source to destination, where the source is a scalar, and the
-        destination is a pointer.
-        :return: String of C++ performing the write.
-        """
-        return self.make_write(DefinedType.Pointer, dst_dtype, None,
-                               "&" + dst_expr, None, src_expr, None,
-                               dst_dtype.veclen < src_dtype.veclen,
-                               src_dtype.veclen)
+    def make_ptr_assignment(self, *args, **kwargs):
+        return self._cpu_codegen.make_ptr_assignment(*args, **kwargs)

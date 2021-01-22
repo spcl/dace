@@ -1313,7 +1313,7 @@ __kernel void \\
         if dst_dtype != src_dtype:
             if is_scalar:
                 expr = f"*({vtype} *)(&{dst_expr})"
-            elif dst_dtype.base_type != src_dtype:
+            elif src_dtype.base_type != dst_dtype:
                 expr = f"({vtype})(&{expr})"
             elif defined_type == DefinedType.Pointer:
                 expr = "&" + expr
