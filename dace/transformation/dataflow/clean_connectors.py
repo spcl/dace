@@ -466,6 +466,13 @@ class NestTransients(transformation.Transformation):
 
 @registry.autoregister_params(singlestate=True)
 class CleanNestedWrites(transformation.Transformation):
+    """
+    Detects unused outputs of nested SDFGs and removes them
+    by replacing writes with writes to unused transient.
+    It is similar to NestTransients, but works even when transient can't be nested completely,
+    for example, if it is both input and output to the nested SDFG.
+    """
+
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
     access_node = transformation.PatternNode(nodes.AccessNode)
 
@@ -477,16 +484,15 @@ class CleanNestedWrites(transformation.Transformation):
     def expressions():
         return [
             sdutil.node_path_graph(
-                NestTransients.nested_sdfg,
-                NestTransients.access_node,
+                CleanNestedWrites.nested_sdfg,
+                CleanNestedWrites.access_node,
             )
         ]
 
     @staticmethod
     def can_be_applied(state: dace_state.SDFGState, candidate, expr_index, sdfg: dace_sdfg.SDFG, strict=False):
-        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[NestTransients.nested_sdfg]]
-        access_node: nodes.AccessNode = state.nodes()[candidate[NestTransients.access_node]]
-
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[CleanNestedWrites.nested_sdfg]]
+        access_node: nodes.AccessNode = state.nodes()[candidate[CleanNestedWrites.access_node]]
 
         data_name = access_node.data
         data_obj = sdfg.data(data_name)
@@ -504,15 +510,12 @@ class CleanNestedWrites(transformation.Transformation):
 
         edge: dace_graph.MultiConnectorEdge = edges[0]
 
-        if is_conn_write_only(nested_sdfg, edge.src_conn):
-            return False # you should use CleanConnectors transformation instead
-
         # data object should be transient
         if not data_obj.transient:
             return False
 
-        # data object should be write only in all states starting from the current state
-        states_to_check = {state}
+        # data object should not be read in all states starting from the current state
+        states_to_check = set()
         for e in sdfg.bfs_edges(state):
             states_to_check.add(e.dst)
 
@@ -535,6 +538,7 @@ class CleanNestedWrites(transformation.Transformation):
                         return False
 
         # find writes that doesn't have reads in the following states
+        # otherwise this transformation have nothing to do
         states_with_writes_without_reads = find_writes_without_reads(nested_sdfg.sdfg, edge.src_conn)
         if not states_with_writes_without_reads:
             return False
@@ -544,8 +548,8 @@ class CleanNestedWrites(transformation.Transformation):
     def apply(self, sdfg: dace_sdfg.SDFG):
         state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
         candidate = self.subgraph
-        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[NestTransients.nested_sdfg]]
-        access_node: nodes.AccessNode = state.nodes()[candidate[NestTransients.access_node]]
+        nested_sdfg: nodes.NestedSDFG = state.nodes()[candidate[CleanNestedWrites.nested_sdfg]]
+        access_node: nodes.AccessNode = state.nodes()[candidate[CleanNestedWrites.access_node]]
 
         data_name = access_node.data
         data_obj: dace_data.Data = sdfg.data(data_name)
