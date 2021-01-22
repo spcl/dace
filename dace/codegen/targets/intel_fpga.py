@@ -1309,6 +1309,7 @@ __kernel void \\
                              destination.
         """
         vtype = self.make_vector_type(src_dtype, False)
+        expr = dst_expr
         if dst_dtype != src_dtype:
             if is_scalar:
                 expr = f"*({vtype} *)(&{dst_expr})"
