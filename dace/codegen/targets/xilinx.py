@@ -100,9 +100,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -119,7 +118,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""
 DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
-    
+
     __state->fpga_context = new dace::fpga::Context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;

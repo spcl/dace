@@ -163,7 +163,7 @@ class CPUCodeGen(TargetCodeGenerator):
                       node: nodes.AccessNode, global_stream: CodeIOStream,
                       declaration_stream: CodeIOStream,
                       allocation_stream: CodeIOStream):
-        """ 
+        """
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
         """
@@ -179,7 +179,7 @@ class CPUCodeGen(TargetCodeGenerator):
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
         self.allocate_array(sdfg, dfg, state_id, viewed_dnode,
-                            global_stream, declaration_stream, 
+                            global_stream, declaration_stream,
                             allocation_stream)
 
         # Emit memlet as a reference and register defined variable
@@ -210,7 +210,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
 
         alloc_name = cpp.ptr(name, nodedesc)
-        
+
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node,
                                       function_stream, declaration_stream,
@@ -851,15 +851,13 @@ class CPUCodeGen(TargetCodeGenerator):
                     if memlet.wcr is not None:
                         nc = not cpp.is_write_conflicted(
                             dfg, edge, sdfg_schedule=self._toplevel_schedule)
-                        result.write(
-                            codegen.write_and_resolve_expr(
-                                sdfg,
-                                memlet,
-                                nc,
-                                out_local_name,
-                                in_local_name,
-                                dtype=node.out_connectors[uconn]) + ';', sdfg,
-                            state_id, node)
+                        write_expr = codegen.write_and_resolve_expr(
+                            sdfg,
+                            memlet,
+                            nc,
+                            out_local_name,
+                            in_local_name,
+                            dtype=node.out_connectors[uconn]) + ";"
                     else:
                         if isinstance(node, nodes.NestedSDFG):
                             # This case happens with nested SDFG outputs,
@@ -869,7 +867,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             memlet.data)
 
                         if defined_type == DefinedType.Scalar:
-                            expr = memlet.data
+                            write_expr = f"{memlet.data} = {in_local_name};"
                         elif defined_type == DefinedType.ArrayInterface:
                             # Special case: No need to write anything between
                             # array interfaces going out
@@ -879,25 +877,23 @@ class CPUCodeGen(TargetCodeGenerator):
                             except KeyError:
                                 deftype = None
                             if deftype == DefinedType.ArrayInterface:
-                                return
-
-                            expr = '*(%s + %s).ptr_out()' % (
-                                memlet.data,
-                                cpp.cpp_array_expr(
-                                    sdfg, memlet, with_brackets=False))
+                                continue
+                            array_expr = cpp.cpp_array_expr(sdfg,
+                                                            memlet,
+                                                            with_brackets=False)
+                            write_expr = (
+                                f"*({memlet.data} + {array_expr}).ptr_out() "
+                                f"= {in_local_name};")
                         else:
+                            desc_dtype = sdfg.arrays[memlet.data].dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet)
-                            # If there is a type mismatch, cast pointer
-                            expr = codegen.make_ptr_vector_cast(
-                                sdfg, expr, memlet, conntype, is_scalar,
-                                defined_type)
+                            write_expr = codegen.make_ptr_assignment(
+                                in_local_name, conntype, expr, desc_dtype)
 
-                        result.write(
-                            "%s = %s;\n" % (expr, in_local_name),
-                            sdfg,
-                            state_id,
-                            node,
-                        )
+                    # Write out
+                    result.write(write_expr, sdfg, state_id, node)
+
+
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
                 if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
@@ -911,6 +907,17 @@ class CPUCodeGen(TargetCodeGenerator):
                         function_stream,
                         result,
                     )
+
+    def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype):
+        """
+        Write source to destination, where the source is a scalar, and the
+        destination is a pointer.
+        :return: String of C++ performing the write.
+        """
+        # If there is a type mismatch, cast pointer
+        dst_expr = self.make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype,
+                                             True, DefinedType.Pointer)
+        return f"{dst_expr} = {src_expr};"
 
     def memlet_view_ctor(self, sdfg, memlet, dtype, is_output):
         memlet_params = []
@@ -1062,7 +1069,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if expr != ptr:
                 expr = '%s[%s]' % (ptr, expr)
             # If there is a type mismatch, cast pointer
-            expr = codegen.make_ptr_vector_cast(sdfg, expr, memlet, conntype,
+            expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype,
                                                 is_scalar, var_type)
 
         defined = None

@@ -803,9 +803,8 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']'
 
-                expr = self.make_ptr_vector_cast(sdfg,
-                                                 in_memlet.data + offset_expr,
-                                                 in_memlet,
+                expr = self.make_ptr_vector_cast(in_memlet.data + offset_expr,
+                                                 desc.dtype,
                                                  node.in_connectors[vconn],
                                                  False, defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
@@ -860,7 +859,7 @@ __kernel void \\
                     else:
                         typedef = "{}*".format(vec_type)
                     expr = self.make_ptr_vector_cast(
-                        sdfg, out_memlet.data + offset_expr, out_memlet,
+                        out_memlet.data + offset_expr, desc.dtype,
                         node.out_connectors[uconn], False, defined_type)
                     memlet_references.append((typedef, uconn, expr))
                     # Register defined variable
@@ -1297,13 +1296,23 @@ __kernel void \\
         return self.make_write(defined_type, dtype, memlet.data, memlet.data,
                                offset, inname, memlet.wcr, False, 1)
 
-    def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
+    def make_ptr_vector_cast(self, dst_expr, dst_dtype, src_dtype, is_scalar,
                              defined_type):
-        vtype = self.make_vector_type(conntype, False)
-        if conntype != sdfg.arrays[memlet.data].dtype:
+        """
+        Cast a destination pointer so the source expression can be written to
+        it.
+        :param dst_expr: Expression of the target pointer.
+        :param dst_dtype: Type of the target pointer.
+        :param src_dtype: Type of the variable that needs to be written.
+        :param is_scalar: Whether the variable to be written is a scalar.
+        :param defined_type: The code generated variable type of the
+                             destination.
+        """
+        vtype = self.make_vector_type(src_dtype, False)
+        if dst_dtype != src_dtype:
             if is_scalar:
-                expr = f"*({vtype} *)(&{expr})"
-            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+                expr = f"*({vtype} *)(&{dst_expr})"
+            elif dst_dtype.base_type != src_dtype:
                 expr = f"({vtype})(&{expr})"
             elif defined_type == DefinedType.Pointer:
                 expr = "&" + expr
