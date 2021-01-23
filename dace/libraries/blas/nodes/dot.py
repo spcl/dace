@@ -131,8 +131,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
         desc_x, _, _ = node.validate(sdfg, state)
 
-        dtype = desc_x.base_type
-        veclen = desc_x.veclen
+        dtype = desc_x.dtype.base_type
+        veclen = desc_x.dtype.veclen
         n = n or node.n
         if veclen != 1:
             n /= veclen
