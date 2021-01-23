@@ -145,7 +145,6 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
             gemm = Gemm(node.name,
-                        dtype=node.dtype,
                         location=node.location,
                         alpha=1.0,
                         beta=0.0)
@@ -154,7 +153,6 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             # Batched matrix and matrix -> batched matrix multiplication
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
             batched = BatchedMatMul(node.name,
-                                    dtype=node.dtype,
                                     location=node.location)
             return batched
         elif len(size_a) == 2 and len(size_b) == 1:
@@ -164,7 +162,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_a"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
-            gemv = Gemv(node.name, dtype=node.dtype, location=node.location)
+            gemv = Gemv(node.name, location=node.location)
             return gemv
         elif len(size_a) == 1 and len(size_b) == 2:
             # Vector and matrix -> GEMV with transposed matrix
@@ -174,7 +172,6 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             b[0].dst_conn = "_a"
             c[0].src_conn = "_y"
             gemv = Gemv(node.name,
-                        dtype=node.dtype,
                         location=node.location,
                         transA=True)
             return gemv
@@ -185,7 +182,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"
             c[0].src_conn = "_result"
-            dot = Dot(node.name, dtype=node.dtype, location=node.location)
+            dot = Dot(node.name, location=node.location)
             return dot
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
@@ -206,12 +203,8 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "specialize"
 
-    # Object fields
-    dtype = dace.properties.TypeClassProperty(allow_none=True)
-
-    def __init__(self, name, dtype=None, location=None):
+    def __init__(self, name, location=None):
         super().__init__(name,
                          location=location,
                          inputs={"_a", "_b"},
                          outputs={"_c"})
-        self.dtype = dtype

@@ -1791,7 +1791,7 @@ def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, 
     acc2 = state.add_read(op2)
     acc3 = state.add_write(op3)
 
-    tasklet = MatMul('_MatMult_', restype)
+    tasklet = MatMul('_MatMult_')
     state.add_node(tasklet)
     state.add_edge(acc1, None, tasklet, '_a', dace.Memlet.from_array(op1, arr1))
     state.add_edge(acc2, None, tasklet, '_b', dace.Memlet.from_array(op2, arr2))
