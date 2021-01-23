@@ -40,7 +40,7 @@ def run_test(configs, target):
         elif target == "fpga_array":
             sdfg = fpga_graph(veclen, dtype, "fpga", i)
         else:
-            sdfg = pure_graph(veclen, dtype, "fpga", i)
+            sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
         if target in ["fpga_stream", "fpga_array"]:
@@ -101,10 +101,8 @@ def pure_graph(veclen, dtype, implementation, test_case):
 
 
 def test_pure():
-    configs = [(1.0, 1, dace.float32), (0.0, 1, dace.float32),
-               (random.random(), 1, dace.float32), (1.0, 1, dace.float64),
-               (1.0, 4, dace.float64)]
-    run_test(configs, "pure", "pure")
+    configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
+    run_test(configs, "pure")
 
 
 def fpga_graph(veclen, dtype, test_case, expansion):
