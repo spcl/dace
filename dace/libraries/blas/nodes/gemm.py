@@ -191,11 +191,11 @@ class ExpandGemmMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        func = to_blastype(dtype.type).lower() + 'gemm'
         (_, adesc, ashape,
          astrides), (_, bdesc, bshape,
                      bstrides), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
+        func = to_blastype(dtype.type).lower() + 'gemm'
         # TODO: Fix w.r.t. other alpha/beta values
         if dtype == dace.float32:
             alpha = "1.0f"
