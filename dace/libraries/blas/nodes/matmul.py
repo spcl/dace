@@ -159,7 +159,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             # Matrix and vector -> GEMV
             from dace.libraries.blas.nodes.gemv import Gemv
             # Rename inputs to match dot naming
-            a[0].dst_conn = "_a"
+            a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
             gemv = Gemv(node.name, location=node.location)
@@ -169,7 +169,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.gemv import Gemv
             # Rename inputs to match dot naming
             a[0].dst_conn = "_x"
-            b[0].dst_conn = "_a"
+            b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
             gemv = Gemv(node.name,
                         location=node.location,
