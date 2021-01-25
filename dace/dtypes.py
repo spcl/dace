@@ -13,6 +13,13 @@ from dace.registry import extensible_enum
 
 
 @extensible_enum
+class DeviceType(aenum.AutoNumberEnum):
+    CPU = ()  #: Multi-core CPU
+    GPU = ()  #: GPU (AMD or NVIDIA)
+    FPGA = ()  #: FPGA (Intel or Xilinx)
+
+
+@extensible_enum
 class StorageType(aenum.AutoNumberEnum):
     """ Available data storage types in the SDFG. """
 
@@ -1021,8 +1028,9 @@ def isallowed(var, allow_recursive=False):
         if isinstance(var, (list, tuple)):
             return all(isallowed(v, allow_recursive=False) for v in var)
 
-    return isconstant(var) or ismodule(var) or issymbolic(
-        var) or isinstance(var, typeclass)
+    return isconstant(var) or ismodule(var) or issymbolic(var) or isinstance(
+        var, typeclass)
+
 
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
@@ -1120,8 +1128,11 @@ def can_access(schedule: ScheduleType, storage: StorageType):
         return True
 
     if schedule in [
-            ScheduleType.GPU_Device, ScheduleType.GPU_Persistent,
-            ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Default,
+            ScheduleType.GPU_Device,
+            ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic,
+            ScheduleType.GPU_Default,
     ]:
         return storage in [
             StorageType.GPU_Global, StorageType.GPU_Shared,
@@ -1172,10 +1183,8 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # GPU-local memory
     if storage == StorageType.GPU_Shared:
         return schedule in [
-            ScheduleType.GPU_Device,
-            ScheduleType.GPU_ThreadBlock,
-            ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent,
+            ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock,
+            ScheduleType.GPU_ThreadBlock_Dynamic, ScheduleType.GPU_Persistent,
             ScheduleType.GPU_Default
         ]
 

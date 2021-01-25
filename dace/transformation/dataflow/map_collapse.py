@@ -34,8 +34,10 @@ class MapCollapse(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         # Check the edges between the entries of the two maps.
-        outer_map_entry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
-        inner_map_entry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]
+        outer_map_entry: nodes.MapEntry = graph.nodes()[candidate[
+            MapCollapse._outer_map_entry]]
+        inner_map_entry: nodes.MapEntry = graph.nodes()[candidate[
+            MapCollapse._inner_map_entry]]
 
         # Check that inner map range is independent of outer range
         map_deps = set()
@@ -80,6 +82,10 @@ class MapCollapse(transformation.Transformation):
         # to the outer map's exit is the inner map's exit.
         for src, _, _dest, _, _ in graph.in_edges(outer_map_exit):
             if src != inner_map_exit:
+                return False
+
+        if strict:
+            if inner_map_entry.map.schedule != outer_map_entry.map.schedule:
                 return False
 
         return True
