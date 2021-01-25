@@ -474,8 +474,8 @@ for(int i = 0; i < {veclen}; i++){{
                 environments=None))
 
         if self.mode == 'xilinx':
-            buses = { name : 's_axis' for name in tasklet.in_connectors }
-            buses.update({ name : 'm_axis' for name in tasklet.out_connectors })
+            buses = { name : ('s_axis', tasklet.in_connectors[name].veclen) for name in tasklet.in_connectors }
+            buses.update({ name : ('m_axis', tasklet.out_connectors[name].veclen) for name in tasklet.out_connectors })
             # rtllib TODO currently semi hardcoded
             rtllib_config = {
                     "name" : unique_name,
