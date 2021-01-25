@@ -245,9 +245,6 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         if node.alpha != 1.0 or node.beta != 0.0:
             raise NotImplementedError('Only alpha = 1 and beta = 0 supported')
 
-        alpha = "__state->cublas_handle.Constants(__dace_cuda_device).%sPone()" % factort
-        beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
-
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None
         for e in state.in_edges(node):
@@ -286,6 +283,11 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             factort = 'Complex128'
         else:
             raise ValueError("Unsupported type: " + str(dtype))
+
+        alpha = ("__state->cublas_handle.Constants(__dace_cuda_device)."
+                 f"{factort}Pone()")
+        beta = ("__state->cublas_handle.Constants(__dace_cuda_device)."
+                f"{factort}Zero()")
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
