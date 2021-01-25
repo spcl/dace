@@ -74,7 +74,7 @@ if __name__ == "__main__":
     size = args.N
 
     if args.target == "pure":
-        sdfg = pure_graph(dace.float32)
+        sdfg = pure_graph("pure", dace.float32, args.vector_length)
     elif args.target == "intel_fpga":
         dace.Config.set("compiler", "fpga_vendor", value="intel_fpga")
         sdfg = fpga_graph("FPGA_Accumulate", dace.float32, args.vector_length)

@@ -83,8 +83,8 @@ run_all() {
 
     ## BLAS
     run_sample blas/nodes/axpy_test axpy_test_fpga_1_w4_1 1 --target fpga 
-    run_sample blas/nodes/dot_test dot_test_x_0 1 --target xilinx
-    run_sample blas/nodes/gemv_test gemv_fpga_test 1 --target tiles_by_column
+    run_sample blas/nodes/dot_test dot_FPGA_PartialSums_float_w16_1 1 --target xilinx
+    run_sample blas/nodes/gemv_test gemv_FPGA_TilesByColumn_float_False_w1_1 1 --target tiles_by_column
     run_sample blas/nodes/ger_test ger_test_w8_x16_y32 1 --target fpga 
 
     # Multiple gearboxing
