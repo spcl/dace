@@ -22,6 +22,7 @@ def pure_graph(dtype,
     n = dace.symbol("n")
     m = dace.symbol("m")
     m /= veclen
+    vtype = dace.vector(dtype, veclen)
 
     state = sdfg.add_state("gemv_compute")
 
@@ -30,9 +31,9 @@ def pure_graph(dtype,
     x_size = n if transposed else m
     y_size = m if transposed else n
 
-    sdfg.add_array("A", shape=[A_rows, A_cols], dtype=dtype)
-    sdfg.add_array("x", shape=[x_size], dtype=dtype)
-    sdfg.add_array("y", shape=[y_size], dtype=dtype)
+    sdfg.add_array("A", shape=[A_rows, A_cols], dtype=vtype)
+    sdfg.add_array("x", shape=[x_size], dtype=dtype if transposed else vtype)
+    sdfg.add_array("y", shape=[y_size], dtype=vtype if transposed else dtype)
 
     A = state.add_read("A")
     x = state.add_read("x")
@@ -83,7 +84,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=512)
-    parser.add_argument("M", type=int, nargs="?", default=512)
+    parser.add_argument("M", type=int, nargs="?", default=256)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     # parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
