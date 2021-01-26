@@ -373,8 +373,9 @@ reduce_out = prev + result_in""")
 @dace.library.expansion
 class ExpandDotFPGAAccumulate(ExpandTransformation):
     """
-    Version of DOT that assumes that native accumulation of the data type is
-    (e.g., 32-bit floating point on Stratix 10).
+    Version of DOT that assumes that native II=1 accumulation of the data type
+    is possible on the target architecture (e.g., 32-bit floating point on
+    Stratix 10).
     """
 
     environments = []
