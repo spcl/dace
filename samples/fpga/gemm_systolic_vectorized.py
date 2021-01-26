@@ -425,7 +425,7 @@ if __name__ == "__main__":
         sdfg(A=A, B=B, C=C)
     else:
         sdfg(A=A, B=B, C=C, N=N, K=K)
-    diff = np.linalg.norm(C_regression - C) / float(M.get() * K.get())
+    diff = np.linalg.norm(C_regression - C) / float(N.get() * M.get())
     if diff > 1e-6:
         raise ValueError(f"Verification failed, difference: {diff}")
     else:
