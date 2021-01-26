@@ -34,6 +34,9 @@ class ExpandGemvPure(ExpandTransformation):
         dtype_x = outer_array_x.dtype.type
         dtype_y = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_x).type]
 
+        if outer_array_a.dtype.veclen > 1 or outer_array_x.dtype.veclen > 1:
+            raise NotImplementedError("Vectorization for pure GEMV NYI.")
+
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
         else:
@@ -81,30 +84,29 @@ class ExpandGemvPure(ExpandTransformation):
              for i, d in enumerate(shape_y)}, {},
             "out = 0", {
                 "out":
-                dace.Memlet.simple(
-                    mul_out, ",".join(["_o%d" % i
-                                       for i in range(len(shape_y))]))
+                dace.Memlet("{}[{}]".format(mul_out, ",".join(
+                    ["_o%d" % i for i in range(len(shape_y))])))
             },
             external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet(
-            "_GEMV_", {"__i%d" % i: "0:%s" % s
-                       for i, s in enumerate([N, M])},
-            {
-                "__A":
-                dace.Memlet.simple(
-                    "_A", "__i1, __i0" if node.transA else "__i0, __i1"),
-                "__x":
-                dace.Memlet.simple("_x", "__i1")
-            },
-            mul_program, {
-                "__out":
-                dace.Memlet.simple(
-                    mul_out, "__i0", wcr_str="lambda x, y: x + y")
-            },
-            external_edges=True,
-            output_nodes=output_nodes)
+        state.add_mapped_tasklet("_GEMV_", {
+            "__i%d" % i: "0:%s" % s
+            for i, s in enumerate([N, M])
+        }, {
+            "__A":
+            dace.Memlet(
+                "_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
+            "__x":
+            dace.Memlet("_x[__i1]")
+        },
+                                 mul_program, {
+                                     "__out":
+                                     dace.Memlet(f"{mul_out}[__i0]",
+                                                 wcr="lambda x, y: x + y")
+                                 },
+                                 external_edges=True,
+                                 output_nodes=output_nodes)
 
         add_program = "__y_out = ({} * __y_in) + __tmp".format(node.beta)
 
@@ -112,14 +114,14 @@ class ExpandGemvPure(ExpandTransformation):
 
         # addition map
         if node.beta != 0:
-            state.add_mapped_tasklet(
-                "_Add_", {"__i": "0:{}".format(N)}, {
-                    "__y_in": dace.Memlet.simple("_y", memlet_idx),
-                    "__tmp": dace.Memlet.simple(mul_out, "__i"),
-                },
-                add_program, {"__y_out": dace.Memlet.simple("_y", "__i")},
-                external_edges=True,
-                input_nodes={mul_out: access_tmp})
+            state.add_mapped_tasklet("_Add_", {"__i": "0:{}".format(N)}, {
+                "__y_in": dace.Memlet(f"_y[{memlet_idx}]"),
+                "__tmp": dace.Memlet(f"{mul_out}[__i]"),
+            },
+                                     add_program,
+                                     {"__y_out": dace.Memlet("_y[__i]")},
+                                     external_edges=True,
+                                     input_nodes={mul_out: access_tmp})
 
         return sdfg
 
