@@ -641,11 +641,23 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                               memlet=dace.Memlet(f"_A[{subset}]"))
 
         # Write out tile of y
+        write_y_entry, write_y_exit = state.add_map(
+            "write_y", {"iy": f"0:{tile_size_y}"},
+            schedule=dace.ScheduleType.FPGA_Device)
+        write_y_tasklet = state.add_tasklet("write_y", {"y_in"}, {"y_out"},
+                                            "y_out = y_in")
         subset = ("0" if isinstance(desc_y, dt.Stream) else
-                  f"ty * {tile_size_y}:(ty + 1) * {tile_size_y}")
+                  f"ty * {tile_size_y} + iy")
         state.add_memlet_path(y_local_write,
+                              write_y_entry,
+                              write_y_tasklet,
+                              dst_conn="y_in",
+                              memlet=dace.Memlet("y_local[iy]"))
+        state.add_memlet_path(write_y_tasklet,
+                              write_y_exit,
                               y_tile_exit,
                               write_y,
+                              src_conn="y_out",
                               memlet=dace.Memlet(f"_y[{subset}]"))
 
         return sdfg
