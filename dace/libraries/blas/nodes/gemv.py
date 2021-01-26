@@ -84,8 +84,9 @@ class ExpandGemvPure(ExpandTransformation):
              for i, d in enumerate(shape_y)}, {},
             "out = 0", {
                 "out":
-                dace.Memlet("{}[{}]".format(mul_out, ",".join(
-                    ["_o%d" % i for i in range(len(shape_y))])))
+                dace.Memlet("{}[{}]".format(
+                    mul_out, ",".join(["_o%d" % i
+                                       for i in range(len(shape_y))])))
             },
             external_edges=True)
 
@@ -132,11 +133,16 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
     This FPGA-oriented expansion iterates over the input matrix A in simple
     row-major order, with optional tiling in both dimensions, where the tiles
     are also traversed in simple row-major order. This means that y is only
-    written once, but x is read for every tile in the y-dimension. The
-    implementation requires accumulation on the output, and does NOT assume
+    written once, but x is read for every tile in the y-dimension.
+
+    The implementation requires accumulation on the output, and does NOT assume
     native accumulation for the given data type. Instead it uses multiple
     partial sums to ensure that II=1, and only writes the final accumulated
-    value once it has been combined from the partial sums."""
+    value once it has been combined from the partial sums.
+
+    This works for both transposed and non-transposed A, but vectorization is
+    only implemented for non-transposed A.
+    """
     # The above corresponds to gemv_v1 in FBLAS
 
     environments = []
@@ -152,14 +158,12 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param tile_size_x: Tile size along the dimension of the vector x, also
-                            referred to as "N" in BLAS terminology. If set to
-                            None, no tiling is used, corresponding to setting
-                            the tile size equal to the full size of x.
-        :param tile_size_y: Tile size along the dimension of the vector y, also
-                            referred to as "M" in BLAS terminology. If set to
-                            None, no tiling is used, corresponding to setting
-                            the tile size equal to the full size of y.
+        :param tile_size_x: Tile size along the dimension of the vector x. If
+                            set to None, no tiling is used, corresponding to
+                            setting the tile size equal to the full size of x.
+        :param tile_size_y: Tile size along the dimension of the vector y. If
+                            set to None, no tiling is used, corresponding to
+                            setting the tile size equal to the full size of y.
         :param num_partial_sums: The number of distinct registers to accumulate
                                  contributions to the final sum into. Should be
                                  a power of two, and should be higher than the
@@ -194,6 +198,10 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         desc_y = desc_y.clone()
         desc_y.transient = False
         sdfg.add_datadesc("_y", desc_y)
+
+        if node.transA and desc_a.dtype.veclen > 0:
+            raise NotImplementedError(
+                "Vectorization not implemented for transposed A.")
 
         # Create accesses
         read_a = state.add_read("_A")
@@ -476,34 +484,32 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
     """
     FPGA-oriented expansion that reads the input matrix A in column-major
     order, such that consecutive values are accumulated into different
-    registers, avoiding a loop-carried dependency due to accumulation. The
-    matrix can optionally be tiled, where the tiles will be traversed in
+    registers, avoiding a loop-carried dependency due to accumulation.
+
+    The matrix can optionally be tiled, where the tiles will be traversed in
     row-major order in order to bound the size of the output buffer to the tile
     size. The tile size on y must be larger than the latency of addition for
     the given data type.
+
+    This expansion supports both transposed A and non-transposed A, but
+    vectorization is only implemented for transposed A.
     """
     # This corresponds to gemv_v2 in FBLAS
 
     environments = []
 
     @staticmethod
-    def expansion(node,
-                  state,
-                  sdfg,
-                  tile_size_x=None,
-                  tile_size_y=None):
+    def expansion(node, state, sdfg, tile_size_x=None, tile_size_y=None):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
-        :param tile_size_x: Tile size along the dimension of the vector x, also
-                            referred to as "N" in BLAS terminology. If set to
-                            None, no tiling is used, corresponding to setting
-                            the tile size equal to the full size of x.
-        :param tile_size_y: Tile size along the dimension of the vector y, also
-                            referred to as "M" in BLAS terminology. If set to
-                            None, no tiling is used, corresponding to setting
-                            the tile size equal to the full size of y.
+        :param tile_size_x: Tile size along the dimension of the vector x. If
+                            set to None, no tiling is used, corresponding to
+                            setting the tile size equal to the full size of x.
+        :param tile_size_y: Tile size along the dimension of the vector y. If
+                            set to None, no tiling is used, corresponding to
+                            setting the tile size equal to the full size of y.
         """
 
         node.validate(sdfg, state)
@@ -533,6 +539,10 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         desc_y = desc_y.clone()
         desc_y.transient = False
         sdfg.add_datadesc("_y", desc_y)
+
+        if not node.transA and desc_a.dtype.veclen > 0:
+            raise NotImplementedError(
+                "Vectorization not implemented for non-transposed A.")
 
         # Create accesses
         read_a = state.add_read("_A")
@@ -735,16 +745,16 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                 subset.squeeze()
                 size_y_in = subset.size()
 
-        if self.transA:
-            size_a = list(reversed(size_a))
-
         if len(size_a) != 2 or len(size_x) != 1:
             raise ValueError(
                 "Matrix-vector product only supported on matrix-vector input")
 
-        if size_a[1] != size_x[0]:
-            raise ValueError("Inputs to matrix-matrix product "
-                             "must agree in the k-dimension")
+        a_cols = size_a[1] if not self.transA else size_a[0]
+        a_rows = size_a[0] if not self.transA else size_a[1]
+
+        if a_cols != size_x[0]:
+            raise ValueError(f"Columns of A ({a_cols}) don't match "
+                             f"size of x ({size_x[0]}).")
 
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
@@ -757,7 +767,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         size_y_out = out_subset.size()
         if size_y_in is not None and size_y_in != size_y_out:
             raise ValueError("Input y-vector must match output y-vector.")
-        if (len(size_y_out) != 1 or size_y_out[0] != size_a[0]):
+        if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
             raise ValueError("Vector input to GEMV must match matrix rows.")
 
 

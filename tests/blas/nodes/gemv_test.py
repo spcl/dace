@@ -28,8 +28,8 @@ def pure_graph(dtype,
 
     A_rows = m
     A_cols = n
-    x_size = m if transposed else n
-    y_size = n if transposed else m
+    x_size = n if not transposed else m
+    y_size = m if not transposed else n
 
     sdfg.add_array("A", shape=[A_rows, A_cols], dtype=vtype)
     sdfg.add_array("x", shape=[x_size], dtype=dtype if transposed else vtype)
@@ -80,8 +80,8 @@ def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x,
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=512)
     parser.add_argument("M", type=int, nargs="?", default=256)
+    parser.add_argument("N", type=int, nargs="?", default=512)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     # parser.add_argument("beta", type=int, nargs="?", default=0)
     parser.add_argument("--transposed",
@@ -94,8 +94,8 @@ if __name__ == "__main__":
     parser.add_argument("--tile-size-y", type=int, default=32)
 
     args = parser.parse_args()
-    n = args.N
     m = args.M
+    n = args.N
     alpha = args.alpha
     # beta = args.beta
     beta = 0  # TODO: GEMV is not currently implemented for beta != 0
@@ -128,9 +128,9 @@ if __name__ == "__main__":
         print("Unsupported target")
         exit(-1)
 
-    A = np.random.rand(n, m).astype(np.float32)
-    x = np.random.rand(n if transposed else m).astype(np.float32)
-    y = np.random.rand(m if transposed else n).astype(np.float32)
+    A = np.random.rand(m, n).astype(np.float32)
+    x = np.random.rand(n if not transposed else m).astype(np.float32)
+    y = np.random.rand(m if not transposed else n).astype(np.float32)
 
     y_copy = np.copy(y)
 
