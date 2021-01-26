@@ -31,7 +31,6 @@ class ExpandDotPure(ExpandTransformation):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
         if shape_x != shape_y or tuple(shape_result) != (1, ):
-            import pdb; pdb.set_trace()
             raise SyntaxError("Invalid shapes to dot product.")
 
         N = shape_x[0]
