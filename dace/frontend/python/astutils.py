@@ -6,7 +6,7 @@ from collections import OrderedDict
 import inspect
 import numbers
 import sympy
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from dace import dtypes, symbolic
 
@@ -251,7 +251,7 @@ def negate_expr(node):
     # Negation support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
-     # Support for numerical constants
+    # Support for numerical constants
     if isinstance(node, numbers.Number):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
@@ -367,6 +367,17 @@ class ASTFindReplace(ast.NodeTransformer):
     def visit_keyword(self, node: ast.keyword):
         if node.arg in self.repldict:
             node.arg = self.repldict[node.arg]
+        return self.generic_visit(node)
+
+
+class RemoveSubscripts(ast.NodeTransformer):
+    def __init__(self, keywords: Set[str]):
+        self.keywords = keywords
+
+    def visit_Subscript(self, node: ast.Subscript):
+        if rname(node) in self.keywords:
+            return ast.copy_location(node.value, node)
+        
         return self.generic_visit(node)
 
 

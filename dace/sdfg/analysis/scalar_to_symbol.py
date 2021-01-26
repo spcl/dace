@@ -493,6 +493,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         for ise in dst.sdfg.edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
+                            for aname, aval in ise.data.assignments.items():
+                                vast = ast.parse(aval)
+                                vast = astutils.RemoveSubscripts({tmp_symname
+                                                                  }).visit(vast)
+                                ise.data.assignments[aname] = astutils.unparse(
+                                    vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
