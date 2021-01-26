@@ -127,30 +127,52 @@ class ExpandGemvPure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGemvAccumulate(ExpandTransformation):
-    # This corresponds to gemv_v1 in FBLAS
+class ExpandGemvFpgaAccumulate(ExpandTransformation):
+    """
+    This FPGA-oriented expansion iterates over the input matrix A in simple
+    row-major order, with optional tiling in both dimensions, where the tiles
+    are also traversed in simple row-major order. This means that y is only
+    written once, but x is read for every tile in the y-dimension. The
+    implementation requires accumulation on the output, and does NOT assume
+    native accumulation for the given data type. Instead it uses multiple
+    partial sums to ensure that II=1, and only writes the final accumulated
+    value once it has been combined from the partial sums."""
+    # The above corresponds to gemv_v1 in FBLAS
 
     environments = []
 
     @staticmethod
     def expansion(node,
-                  state,
-                  sdfg,
+                  parent_state,
+                  parent_sdfg,
                   tile_size_x=None,
                   tile_size_y=None,
-                  num_partial_sums=16,
-                  **kwargs):
+                  num_partial_sums=16):
+        """
+        :param node: Node to expand.
+        :param parent_state: State that the node is in.
+        :param parent_sdfg: SDFG that the node is in.
+        :param tile_size_x: Tile size along the dimension of the vector x, also
+                            referred to as "N" in BLAS terminology.
+        :param tile_size_y: Tile size along the dimension of the vector y, also
+                            referred to as "M" in BLAS terminology.
+        :param num_partial_sums: The number of distinct registers to accumulate
+                                 contributions to the final sum into. Should be
+                                 a power of two, and should be higher than the
+                                 latency of adding two numbers of the given
+                                 data type.
+        """
 
-        node.validate(sdfg, state)
+        node.validate(parent_sdfg, parent_state)
 
-        for e in state.in_edges(node):
+        for e in parent_state.in_edges(node):
             if e.dst_conn == "_A":
-                desc_a = sdfg.arrays[e.data.data]
+                desc_a = parent_sdfg.arrays[e.data.data]
             elif e.dst_conn == "_x":
-                desc_x = sdfg.arrays[e.data.data]
-        for e in state.out_edges(node):
+                desc_x = parent_sdfg.arrays[e.data.data]
+        for e in parent_state.out_edges(node):
             if e.src_conn == "_y":
-                desc_y = sdfg.arrays[e.data.data]
+                desc_y = parent_sdfg.arrays[e.data.data]
 
         sdfg = dace.SDFG("gemv")
         state = sdfg.add_state("gemv")
@@ -446,7 +468,7 @@ buffer_out = prev + val""")
 
 
 @dace.library.expansion
-class ExpandGemvTilesByColumn(ExpandTransformation):
+class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
     # This corresponds to gemv_v2 in FBLAS
 
     environments = []
@@ -635,8 +657,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandGemvPure,
-        "FPGA_Accumulate": ExpandGemvAccumulate,
-        "FPGA_TilesByColumn": ExpandGemvTilesByColumn,
+        "FPGA_Accumulate": ExpandGemvFpgaAccumulate,
+        "FPGA_TilesByColumn": ExpandGemvFpgaTilesByColumn,
     }
     default_implementation = None
 
