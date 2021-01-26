@@ -39,10 +39,7 @@ def pure_graph(dtype,
     x = state.add_read("x")
     result = state.add_write("y")
 
-    gemv_node = blas.Gemv("gemv",
-                          transA=transposed,
-                          alpha=alpha,
-                          beta=beta)
+    gemv_node = blas.Gemv("gemv", transA=transposed, alpha=alpha, beta=beta)
     gemv_node.implementation = expansion
 
     state.add_memlet_path(A,

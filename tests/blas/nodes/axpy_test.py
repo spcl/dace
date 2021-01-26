@@ -118,7 +118,6 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
         [InlineSDFG, StreamingMemory], [{}, {
             "storage": dace.StorageType.FPGA_Local
         }])
-    sdfg.save("test.sdfg")
     return sdfg
 
 
