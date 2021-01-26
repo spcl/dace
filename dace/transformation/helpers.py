@@ -106,9 +106,9 @@ def nest_state_subgraph(sdfg: SDFG,
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode)
                 and node.data not in subgraph_transients):
-            if state.out_degree(node) > 0:
+            if node.has_reads(state):
                 input_arrays.add(node.data)
-            if state.in_degree(node) > 0:
+            if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
 
     # Create the nested SDFG
@@ -307,9 +307,9 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     # Mark boundary access nodes to keep after fission
     nodes_to_remove = set(subgraph.nodes())
     nodes_to_remove -= set(n for n in subgraph.source_nodes()
-                           if state.in_degree(n) > 0)
+                           if state.out_degree(n) > 1)
     nodes_to_remove -= set(n for n in subgraph.sink_nodes()
-                           if state.out_degree(n) > 0)
+                           if state.in_degree(n) > 1)
     state.remove_nodes_from(nodes_to_remove)
 
     for n in subgraph.nodes():

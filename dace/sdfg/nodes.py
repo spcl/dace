@@ -275,6 +275,18 @@ class AccessNode(Node):
         if self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
+    def has_writes(self, state):
+        for e in state.in_edges(self):
+            if not e.data.is_empty():
+                return True
+        return False
+
+    def has_reads(self, state):
+        for e in state.out_edges(self):
+            if not e.data.is_empty():
+                return True
+        return False
+
 
 # ------------------------------------------------------------------------------
 
@@ -1000,6 +1012,8 @@ class PipelineEntry(MapEntry):
         result = super().new_symbols(sdfg, state, symbols)
         for param in self.map.params:
             result[param] = dtypes.int64  # Overwrite params from Map
+        for param in self.pipeline.additional_iterators:
+            result[param] = dtypes.int64
         result[self.pipeline.iterator_str()] = dtypes.int64
         try:
             result[self.pipeline.init_condition()] = dtypes.bool
@@ -1045,6 +1059,9 @@ class Pipeline(Map):
         dtype=bool,
         default=True,
         desc="Whether to increment regular map indices during pipeline drain.")
+    additional_iterators = Property(
+        dtype=dict,
+        desc="Additional iterators, managed by the user inside the scope.")
 
     def __init__(self,
                  *args,
@@ -1052,12 +1069,14 @@ class Pipeline(Map):
                  init_overlap=False,
                  drain_size=0,
                  drain_overlap=False,
+                 additional_iterators={},
                  **kwargs):
         super(Pipeline, self).__init__(*args, **kwargs)
         self.init_size = init_size
         self.init_overlap = init_overlap
         self.drain_size = drain_size
         self.drain_overlap = drain_overlap
+        self.additional_iterators = additional_iterators
 
     def iterator_str(self):
         return "__" + "".join(self.params)
