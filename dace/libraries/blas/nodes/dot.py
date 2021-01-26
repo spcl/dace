@@ -30,6 +30,10 @@ class ExpandDotPure(ExpandTransformation):
         dtype_result = outer_array_res.dtype.type
         sdfg = dace.SDFG(node.label + "_sdfg")
 
+        if outer_array_x.dtype.veclen > 1 or outer_array_y.dtype.veclen > 1:
+            raise NotImplementedError(
+                "Pure expansion not implemented for vector types.")
+
         if shape_x != shape_y or tuple(shape_result) != (1, ):
             raise SyntaxError("Invalid shapes to dot product.")
 
@@ -61,20 +65,16 @@ class ExpandDotPure(ExpandTransformation):
         init_state.add_memlet_path(init_tasklet,
                                    init_write,
                                    src_conn="_out",
-                                   memlet=dace.Memlet.simple(init_write.data,
-                                                             "0",
-                                                             num_accesses=1))
+                                   memlet=dace.Memlet("_result[0]"))
 
         # Multiplication map
         state.add_mapped_tasklet(
             "_DOT_", {"__i": "0:{}".format(N)}, {
-                "__x": dace.Memlet.simple("_x", "__i"),
-                "__y": dace.Memlet.simple("_y", "__i")
+                "__x": dace.Memlet("_x[__i]"),
+                "__y": dace.Memlet("_y[__i]")
             },
-            mul_program, {
-                "__out":
-                dace.Memlet.simple(mul_out, "0", wcr_str="lambda x, y: x + y")
-            },
+            mul_program,
+            {"__out": dace.Memlet(f"{mul_out}[0]", wcr="lambda x, y: x + y")},
             external_edges=True,
             output_nodes=output_nodes)
 
