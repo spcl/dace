@@ -19,17 +19,17 @@ def pure_graph(dtype,
 
     sdfg = dace.SDFG(f"gemv_{expansion}_{dtype}_{transposed}_w{veclen}")
 
-    n = dace.symbol("n")
     m = dace.symbol("m")
-    m /= veclen
+    n = dace.symbol("n")
+    n /= veclen
     vtype = dace.vector(dtype, veclen)
 
     state = sdfg.add_state("gemv_compute")
 
-    A_rows = n
-    A_cols = m
-    x_size = n if transposed else m
-    y_size = m if transposed else n
+    A_rows = m
+    A_cols = n
+    x_size = m if transposed else n
+    y_size = n if transposed else m
 
     sdfg.add_array("A", shape=[A_rows, A_cols], dtype=vtype)
     sdfg.add_array("x", shape=[x_size], dtype=dtype if transposed else vtype)

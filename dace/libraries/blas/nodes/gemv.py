@@ -153,9 +153,13 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
         :param tile_size_x: Tile size along the dimension of the vector x, also
-                            referred to as "N" in BLAS terminology.
+                            referred to as "N" in BLAS terminology. If set to
+                            None, no tiling is used, corresponding to setting
+                            the tile size equal to the full size of x.
         :param tile_size_y: Tile size along the dimension of the vector y, also
-                            referred to as "M" in BLAS terminology.
+                            referred to as "M" in BLAS terminology. If set to
+                            None, no tiling is used, corresponding to setting
+                            the tile size equal to the full size of y.
         :param num_partial_sums: The number of distinct registers to accumulate
                                  contributions to the final sum into. Should be
                                  a power of two, and should be higher than the
@@ -469,6 +473,15 @@ buffer_out = prev + val""")
 
 @dace.library.expansion
 class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
+    """
+    FPGA-oriented expansion that reads the input matrix A in column-major
+    order, such that consecutive values are accumulated into different
+    registers, avoiding a loop-carried dependency due to accumulation. The
+    matrix can optionally be tiled, where the tiles will be traversed in
+    row-major order in order to bound the size of the output buffer to the tile
+    size. The tile size on y must be larger than the latency of addition for
+    the given data type.
+    """
     # This corresponds to gemv_v2 in FBLAS
 
     environments = []
@@ -478,8 +491,20 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                   state,
                   sdfg,
                   tile_size_x=None,
-                  tile_size_y=None,
-                  **kwargs):
+                  tile_size_y=None):
+        """
+        :param node: Node to expand.
+        :param parent_state: State that the node is in.
+        :param parent_sdfg: SDFG that the node is in.
+        :param tile_size_x: Tile size along the dimension of the vector x, also
+                            referred to as "N" in BLAS terminology. If set to
+                            None, no tiling is used, corresponding to setting
+                            the tile size equal to the full size of x.
+        :param tile_size_y: Tile size along the dimension of the vector y, also
+                            referred to as "M" in BLAS terminology. If set to
+                            None, no tiling is used, corresponding to setting
+                            the tile size equal to the full size of y.
+        """
 
         node.validate(sdfg, state)
 
