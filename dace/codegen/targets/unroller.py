@@ -36,7 +36,6 @@ class UnrollCodeGen(TargetCodeGenerator):
 
         index_list = []
         for begin, end, stride in entry_node.map.range:
-            # begin, end, stride = (sym2cpp(r) for r in rng)
             l = []
             while begin <= end:
                 l.append(begin)
