@@ -64,13 +64,12 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     assign m_axis_b_tvalid = (m_axis_b_tdata >= 100) ? 1'b1:1'b0;
     ''',
                             language=dace.Language.SystemVerilog)
-#tasklet = state.add_tasklet('htsn', ['a'], ['b'], 'b = a+42')
 
 # add input/output array
 A = state.add_read('A')
 B = state.add_write('B')
 
-mentry, mexit = state.add_map('aoeu_map', dict(i='0:1'))
+mentry, mexit = state.add_map('rtl_map', dict(i='0:1'))
 
 # connect input/output array with the tasklet
 state.add_memlet_path(A, mentry, tasklet, dst_conn='a', memlet=dace.Memlet.simple('A', '0'))
@@ -85,7 +84,6 @@ from dace.transformation.dataflow import TrivialMapElimination
 sdfg.apply_transformations(FPGATransformState)
 sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
 sdfg.apply_transformations_repeated(TrivialMapElimination)
-sdfg.save('_dacegraphs/program.sdfg')
 
 ######################################################################
 

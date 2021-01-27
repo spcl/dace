@@ -51,31 +51,30 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
-    typedef enum logic [1:0] {READY, BUSY, DONE} state_e;
-    state_e state;
+    reg ready;
     reg [31:0] accum;
 
     always@(posedge ap_aclk) begin
         if (ap_areset) begin // case: reset
+            s_axis_a_tready <= 1'b1;
             m_axis_b_tvalid <= 1'b0;
             m_axis_b_tdata <= 0;
-            state <= READY;
-        end else if (s_axis_a_tvalid && s_axis_a_tready) begin
+            ready <= 1'b1;
+        end else if (ready && s_axis_a_tvalid && s_axis_a_tready) begin
+            s_axis_a_tready <= 1'b0;
             m_axis_b_tvalid <= 1'b1;
-            accum <= 0;
+            accum = 0;
             for (integer i = 0; i < VECLEN; i = i + 1) begin
-                accum <= accum + s_axis_a_tdata[i];
+                accum = accum + s_axis_a_tdata[i];
             end
             m_axis_b_tdata = accum;
-            state <= BUSY;
-        end else begin
-            m_axis_b_tvalid <= m_axis_b_tvalid && !m_axis_b_tready;
-            m_axis_b_tdata <= m_axis_b_tdata;
-            state <= DONE;
+            ready <= 1'b0;
+        end else if (!ready && m_axis_b_tvalid && m_axis_b_tready) begin
+            s_axis_a_tready <= 1'b1;
+            m_axis_b_tvalid <= 1'b0;
+            ready <= 1'b1;
         end
     end
-
-    assign s_axis_a_tready = m_axis_b_tready;
     ''',
                             language=dace.Language.SystemVerilog)
 
@@ -127,7 +126,7 @@ sdfg.validate()
 if __name__ == '__main__':
 
     # init data structures
-    N.set(8)
+    N.set(8192)
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get()//veclen,)).astype(np.int32)
 
