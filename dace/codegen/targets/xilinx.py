@@ -817,8 +817,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
             if name not in self._stream_connections:
                 self._stream_connections[name] = [None, None]
-            # TODO is_output seems reversed...
-            self._stream_connections[name][1 if is_output else 0] = '{}_1.{}'.format(kernel_name, name)
+            self._stream_connections[name][0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,

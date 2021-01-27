@@ -279,7 +279,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
                 external = True in [t.language == dace.dtypes.Language.SystemVerilog for t in tasks]
                 if external:
-                    external_streams += [(False, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.out_edges(n)]
+                    external_streams += [(True, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.out_edges(n)]
                 else:
                     candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
                                    for e in state.in_edges(n)]
@@ -291,7 +291,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
                 external = True in [t.language == dace.dtypes.Language.SystemVerilog for t in tasks]
                 if external:
-                    external_streams += [(True, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.in_edges(n)]
+                    external_streams += [(False, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.in_edges(n)]
                 else:
                     candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
                                    for e in state.out_edges(n)]
