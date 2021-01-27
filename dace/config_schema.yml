@@ -485,13 +485,13 @@ required:
                         default: false
                         title: Verilator Enable Debug
                         description: Enable/disable verbose internal state debug output.
-                    mode: # TODO rtllib
+                    mode:
                         type: str
                         default: simulator
                         title: Compilation mode
                         description: >
                           Target of FPGA kernel build
-                          (emulator/simulator/hardware).
+                          Can be either (simulator/xilinx).
 
             #############################################
             # MPI compiler
