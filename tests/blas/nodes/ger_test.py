@@ -116,30 +116,30 @@ if __name__ == "__main__":
     veclen = args.veclen
 
     if args.target == "pure":
-
         ger_node, state, sdfg = pure_graph("pure", dace.float32, veclen)
         ger_node.expand(sdfg, state)
         sdfg.apply_transformations_repeated([InlineSDFG])
-        run_test(sdfg, args.target)
-
     elif args.target == "fpga":
-
         sdfg = fpga_graph(dace.float32, veclen, tile_size_x, tile_size_y)
-        x = aligned_ndarray(np.random.rand(m).astype(np.float32))
-        y = aligned_ndarray(np.random.rand(n).astype(np.float32))
-        A = aligned_ndarray(np.random.rand(m, n).astype(np.float32))
-        A_ref = A.copy()
-
-        sdfg(x=x, y=y, A=A, m=dace.int32(m), n=dace.int32(n), alpha=alpha)
-
-        A_ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=A_ref)
-
-        diff = np.linalg.norm(A_ref - A)
-        if diff >= args.eps * n * m:
-            raise RuntimeError(f"Validation failed: {diff}")
-        else:
-            print("Validation successful.")
-
     else:
         print("Unsupported target")
         exit(-1)
+
+    x = aligned_ndarray(np.random.rand(m).astype(np.float32), alignment=4*veclen)
+    y = aligned_ndarray(np.random.rand(n).astype(np.float32), alignment=4*veclen)
+    A = aligned_ndarray(np.random.rand(m, n).astype(np.float32), alignment=4*veclen)
+    res = aligned_ndarray(np.empty(A.shape, dtype=A.dtype), alignment=4*veclen)
+    ref = aligned_ndarray(np.empty(A.shape, dtype=A.dtype), alignment=4*veclen)
+    res[:] = A[:]
+    ref[:] = A[:]
+
+    sdfg(x=x, y=y, A=A, res=res, m=dace.int32(m), n=dace.int32(n), alpha=alpha)
+
+    ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=ref)
+
+    diff = np.linalg.norm(res - ref)
+    if diff >= args.eps * n * m:
+        raise RuntimeError(f"Validation failed: {diff}")
+    else:
+        print("Validation successful.")
+
