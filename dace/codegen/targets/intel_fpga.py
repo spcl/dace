@@ -1374,10 +1374,10 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # If we don't have a memlet for this target, it could be the case
             # that on the right hand side we have a constant (a Name or a subscript)
             # If this is the case, we try to infer the type, otherwise we fallback to generic visit
-            if (isinstance(node.value, ast.Name)
-                    and node.value.id in self.constants) or (
-                        isinstance(node.value, ast.Subscript)
-                        and node.value.value.id in self.constants):
+            if ((isinstance(node.value, ast.Name)
+                 and node.value.id in self.constants)
+                    or (isinstance(node.value, ast.Subscript)
+                        and node.value.value.id in self.constants)):
                 dtype = infer_expr_type(astunparse.unparse(node.value),
                                         self.dtypes)
                 value = cppunparse.cppunparse(self.visit(node.value),
@@ -1420,7 +1420,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             self.width_converters.add((True, ocltype, veclen))
             unpack_str = "unpack_{}{}".format(ocltype, veclen)
 
-        if veclen_lhs > veclen_rhs:
+        if veclen_lhs > veclen_rhs and isinstance(dtype_rhs, dace.pointer):
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((False, ocltype, veclen))
