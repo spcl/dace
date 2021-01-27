@@ -188,7 +188,6 @@ class FPGACodeGen(TargetCodeGenerator):
             # Generate kernel code
             self.generate_kernel(sdfg, state, kernel_name, subgraphs,
                                  function_stream, callsite_stream)
-            # TODO aoeu
             # Emit the connections ini file
             if len(self._stream_connections) > 0:
                 ini_stream = CodeIOStream()
@@ -260,7 +259,8 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
-        external_streams = []
+        external_streams = [] # type: List[Tuple(bool,str,Data,bool)]
+        # [(Is an output, dataname string, data object, interface)]
 
         for subgraph in subgraphs:
             data_to_node.update({
@@ -271,8 +271,9 @@ class FPGACodeGen(TargetCodeGenerator):
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
-            # TODO aoeu
             for n in subgraph.source_nodes():
+                # Check if the node is connected to an RTL tasklet, in which
+                # case it should be an external stream
                 dsts = [e.dst for e in state.out_edges(n)]
                 srcs = [e.src for e in state.in_edges(n)]
                 tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
@@ -281,8 +282,10 @@ class FPGACodeGen(TargetCodeGenerator):
                     external_streams += [(False, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.out_edges(n)]
                 else:
                     candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
-                               for e in state.in_edges(n)]
+                                   for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
+                # Check if the node is connected to an RTL tasklet, in which
+                # case it should be an external stream
                 dsts = [e.dst for e in state.out_edges(n)]
                 srcs = [e.src for e in state.in_edges(n)]
                 tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
@@ -354,14 +357,13 @@ class FPGACodeGen(TargetCodeGenerator):
             subgraph_parameters[subgraph] = dace.dtypes.deduplicate(
                 subgraph_parameters[subgraph])
 
-        # TODO aoeu
-        external_streams = dace.dtypes.deduplicate(external_streams)
-        top_level_local_data = [name for name in top_level_local_data if name not in [sname for _, sname, _, _ in external_streams]]
-
         # Deduplicate
         global_data_parameters = dace.dtypes.deduplicate(global_data_parameters)
         top_level_local_data = dace.dtypes.deduplicate(top_level_local_data)
-        top_level_local_data = [data_to_node[n] for n in top_level_local_data]
+        external_streams = dace.dtypes.deduplicate(external_streams)
+
+        stream_names = [sname for _, sname, _, _ in external_streams]
+        top_level_local_data = [data_to_node[name] for name in top_level_local_data if name not in stream_names]
 
         symbol_parameters = {
             k: dt.Scalar(v)

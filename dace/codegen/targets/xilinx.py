@@ -191,6 +191,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                            "Xilinx",
                            target_type="device"))
 
+        # Emit the .ini file
         others = [
             CodeObject(
                 ''.join(name.split('.')[:-1]),
@@ -463,7 +464,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
         kernel_args = dace.dtypes.deduplicate(kernel_args)
 
-        # TODO aoeu
         stream_args = []
         for is_output, dataname, data, interface in external_streams:
             kernel_arg = self.make_kernel_argument(data, dataname, is_output,
@@ -506,7 +506,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_stream.write(
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
-        # TODO aoeu
+
         for arg in stream_args:
             var_name = re.findall(r"\w+", arg)[-1]
             kernel_stream.write(
@@ -564,22 +564,39 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args_module = []
         added = set()
 
-        # TODO aoeu
-        rtl_tasks = [n.language == dace.dtypes.Language.SystemVerilog for n in subgraph.nodes() if isinstance(n, dace.nodes.Tasklet)]
-        if True in rtl_tasks: # TODO ask if the assumption of an entire module being RTL is safe
+        # Check if we are generating an RTL module, in which case only the
+        # accesses to the streams should be handled
+        rtl_module = False
+        for n in subgraph.nodes():
+            if isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
+                rtl_module = True
+                break
+        if rtl_module:
+            # TODO should these placeholders still be generated?
             entry_stream.write(f'// HLSLIB_DATAFLOW_FUNCTION({name})')
             module_stream.write(f'// void {name}() {{ }}\n\n')
-            # TODO _1 in names are due to vitis
+
+            # _1 in names are due to vitis
             for node in subgraph.source_nodes():
                 if node.data not in self._stream_connections:
                     self._stream_connections[node.data] = [None, None]
                 for edge in state.out_edges(node):
-                    self._stream_connections[node.data][1] = '{}_top_1.s_axis_{}'.format(edge.dst, edge.dst_conn)
+                    rtl_name = "{}_{}_{}_{}".format(edge.dst,
+                                                    sdfg.sdfg_id,
+                                                    sdfg.node_id(state),
+                                                    state.node_id(edge.dst))
+                    self._stream_connections[node.data][1] = '{}_top_1.s_axis_{}'.format(rtl_name, edge.dst_conn)
+
             for node in subgraph.sink_nodes():
                 if node.data not in self._stream_connections:
                     self._stream_connections[node.data] = [None, None]
                 for edge in state.in_edges(node):
-                    self._stream_connections[node.data][0] = '{}_top_1.m_axis_{}'.format(edge.src, edge.src_conn)
+                    rtl_name = "{}_{}_{}_{}".format(edge.src,
+                                                    sdfg.sdfg_id,
+                                                    sdfg.node_id(state),
+                                                    state.node_id(edge.src))
+                    self._stream_connections[node.data][0] = '{}_top_1.m_axis_{}'.format(rtl_name, edge.src_conn)
+
             # Skip RTL modules
             # Should still generate the node:
             ignore_stream = CodeIOStream()
@@ -661,12 +678,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
                     unrolled_loops += 1
 
-        # TODO aoeu
-        #kernel_args_call.append("to_rtl")
-        #kernel_args_call.append("from_rtl")
-        #kernel_args_module.append("hls::stream<int> &to_rtl")
-        #kernel_args_module.append("hls::stream<int> &from_rtl")
-
         # Generate caller code in top-level function
         entry_stream.write(
             "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(
@@ -703,15 +714,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if isinstance(arg, dace.data.Array)
             and arg.storage == dace.dtypes.StorageType.FPGA_Global and out
         }
-        # TODO aoeu
-        #module_body_stream.write('''
-        #dace::ArrayInterface<int> fpga_A(fpga_A_in, nullptr);
-        #dace::ArrayInterface<int> fpga_B(nullptr, fpga_B_out);
-#
-        #to_rtl.write(fpga_A[0]);
-        #*(fpga_B).ptr_out() = from_rtl.read();
-        #''')
-        #if False:# and len(in_args) > 0 or len(out_args) > 0:
+
         if len(in_args) > 0 or len(out_args) > 0:
             # Add ArrayInterface objects to wrap input and output pointers to
             # the same array
@@ -805,7 +808,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                              scalar_parameters,
                                              symbol_parameters, module_stream,
                                              entry_stream, external_streams)
-        # TODO aoeu
+
         # Emit allocations
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,

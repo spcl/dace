@@ -87,6 +87,7 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+    # TODO I'm not sure the tcl files are needed in CMake?
     elseif(DACE_FILE_EXT MATCHES ".tcl")
       set(DACE_TCL_FILES ${DACE_TCL_FILES} ${DACE_FILE})
     endif()
@@ -366,7 +367,6 @@ if(DACE_ENABLE_RTL)
 
     endforeach()
   elseif (${DACE_RTL_MODE} STREQUAL "xilinx")
-    # TODO rtllib
     # Get all of the kernel names
     list(APPEND RTL_KERNELS "")
     foreach(RTL_FILE ${DACE_RTL_FILES})
@@ -469,19 +469,19 @@ if(DACE_ENABLE_XILINX)
           --advanced.prop kernel.${DACE_KERNEL_NAME}.kernel_flags="${DACE_XILINX_SYNTHESIS_FLAGS}")
     endif()
 
+    # Load kernel memory interface assignments, if they exist
     if (EXISTS ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv)
-    # Load kernel memory interface assignments
-    file(STRINGS
-         ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv
-         _ASSIGNMENTS)
-    foreach(_ASSIGNMENT ${_ASSIGNMENTS})
-      string(REPLACE "," ";" _ASSIGNMENT ${_ASSIGNMENT})
-      list(GET _ASSIGNMENT 0 _INTERFACE_NAME)
-      list(GET _ASSIGNMENT 1 _INTERFACE_TYPE)
-      list(GET _ASSIGNMENT 2 _INTERFACE_INDEX)
-      set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
-          --sp "${DACE_KERNEL_NAME}_1.m_axi_${_INTERFACE_NAME}:${_INTERFACE_TYPE}[${_INTERFACE_INDEX}]")
-    endforeach()
+      file(STRINGS
+          ${DACE_KERNEL_DIRECTORY}/${DACE_KERNEL_NAME}_memory_interfaces.csv
+          _ASSIGNMENTS)
+      foreach(_ASSIGNMENT ${_ASSIGNMENTS})
+        string(REPLACE "," ";" _ASSIGNMENT ${_ASSIGNMENT})
+        list(GET _ASSIGNMENT 0 _INTERFACE_NAME)
+        list(GET _ASSIGNMENT 1 _INTERFACE_TYPE)
+        list(GET _ASSIGNMENT 2 _INTERFACE_INDEX)
+        set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS}
+            --sp "${DACE_KERNEL_NAME}_1.m_axi_${_INTERFACE_NAME}:${_INTERFACE_TYPE}[${_INTERFACE_INDEX}]")
+      endforeach()
     endif()
 
   endforeach()
@@ -546,6 +546,7 @@ if(DACE_ENABLE_XILINX)
     # for the general case we have to first compile each kernel
     # and then link together the generated .xo files
     set(DACE_VITIS_KERNELS_SW_EMU)
+    # TODO These overwrites the kernels added by the RTL back-end. Double check if they are required.
     #set(DACE_VITIS_KERNELS_HW_EMU)
     #set(DACE_VITIS_KERNELS_HW)
 
@@ -624,11 +625,12 @@ if(DACE_ENABLE_XILINX)
       ${DACE_VITIS_KERNELS_SW_EMU}
       -o ${DACE_PROGRAM_NAME}_sw_emu.xclbin
       DEPENDS ${DACE_PROGRAM_NAME}_sw_emu.xo)
-    unset (VITIS_CONFIG_LINK)
 
+    unset (VITIS_CONFIG_LINK)
     if (EXISTS ${DACE_XILINX_CONFIG_FILE})
         set (VITIS_CONFIG_LINK --config "${DACE_XILINX_CONFIG_FILE}")
     endif()
+
     add_custom_command(
       OUTPUT ${DACE_PROGRAM_NAME}_hw_emu.xclbin
       COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_COMPILER}

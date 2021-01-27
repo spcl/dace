@@ -103,7 +103,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
         """
         if isinstance(edge.src, nodes.AccessNode) and isinstance(
-                edge.dst, nodes.Tasklet):# and self.mode == 'simulator':  # handle AccessNode->Tasklet
+                edge.dst, nodes.Tasklet):# TODO remove? and self.mode == 'simulator':  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn],
                           dtypes.pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
@@ -187,8 +187,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                                             "verilator_flags")
         verilator_lint_warnings = config.Config.get_bool(
             "compiler", "rtl", "verilator_lint_warnings")
-        mode: str = config.Config.get(
-            "compiler", "rtl", "mode")
+        mode: str = config.Config.get("compiler", "rtl", "mode")
+
         # create options list
         options = [
             "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
@@ -346,7 +346,6 @@ for(int i = 0; i < {veclen}; i++){{
 
     def generate_cpp_num_elements(self, tasklet):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        #return "int num_elements = {};".format(1)
         ins = [f'int num_elements_{name} = 1;' for name in tasklet.in_connectors]
         outs = [f'int num_elements_{name} = 1;' for name in tasklet.out_connectors]
         return ins + outs
@@ -434,6 +433,10 @@ for(int i = 0; i < {veclen}; i++){{
         return [template.format(name=name, debug_write_output_hs=debug_write_output_hs) for name in tasklet.out_connectors]
 
     def generate_running_condition(self, tasklet):
+        # TODO should be changed with free-running kernels. Currently only
+        # one element is supported. Additionally, this should not be used as
+        # condition, as the amount of input and output elements might not be
+        # equal to each other.
         return [f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors]
 
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
@@ -446,11 +449,10 @@ for(int i = 0; i < {veclen}; i++){{
         tasklet = node
 
         # construct variables paths
-        #unique_name: str = "top_{}_{}_{}".format(sdfg.sdfg_id,
-        #                                         sdfg.node_id(state),
-        #                                         state.node_id(tasklet))
-        # TODO ask andreas about naming
-        unique_name = tasklet.name
+        unique_name: str = "{}_{}_{}_{}".format(tasklet.name,
+                                                sdfg.sdfg_id,
+                                                sdfg.node_id(state),
+                                                state.node_id(tasklet))
 
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
@@ -476,7 +478,8 @@ for(int i = 0; i < {veclen}; i++){{
         if self.mode == 'xilinx':
             buses = { name : ('s_axis', tasklet.in_connectors[name].veclen) for name in tasklet.in_connectors }
             buses.update({ name : ('m_axis', tasklet.out_connectors[name].veclen) for name in tasklet.out_connectors })
-            # rtllib TODO currently semi hardcoded
+            # TODO handle scalars
+            # TODO handle ip cores
             rtllib_config = {
                     "name" : unique_name,
                     "buses" : buses,

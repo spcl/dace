@@ -17,8 +17,6 @@ state = sdfg.add_state()
 # add arrays
 sdfg.add_array('A', [1], dtype=dace.int32)
 sdfg.add_array('B', [1], dtype=dace.int32)
-#A = state.add_stream('A', dtype=dace.int32)
-#B = state.add_stream('B', dtype=dace.int32)
 
 # add custom cpp tasklet
 tasklet = state.add_tasklet(name='rtl_tasklet',
@@ -75,8 +73,6 @@ B = state.add_write('B')
 mentry, mexit = state.add_map('aoeu_map', dict(i='0:1'))
 
 # connect input/output array with the tasklet
-#state.add_edge(A, None, tasklet, 'a', dace.Memlet.simple('A', '0'))
-#state.add_edge(tasklet, 'b', B, None, dace.Memlet.simple('B', '0'))
 state.add_memlet_path(A, mentry, tasklet, dst_conn='a', memlet=dace.Memlet.simple('A', '0'))
 state.add_memlet_path(tasklet, mexit, B, src_conn='b', memlet=dace.Memlet.simple('B', '0'))
 
@@ -86,12 +82,10 @@ sdfg.validate()
 from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.interstate import FPGATransformState
 from dace.transformation.dataflow import TrivialMapElimination
-#sdfg.apply_transformations(NestSDFG)
 sdfg.apply_transformations(FPGATransformState)
 sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local))
 sdfg.apply_transformations_repeated(TrivialMapElimination)
 sdfg.save('_dacegraphs/program.sdfg')
-#quit()
 
 ######################################################################
 
