@@ -467,7 +467,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
          scalar_parameters, symbol_parameters,
-         nested_global_transients) = self.make_parameters(
+         nested_global_transients, external_streams) = self.make_parameters(
              sdfg, state, subgraphs)
 
         # Ignore interface ID in this backend
