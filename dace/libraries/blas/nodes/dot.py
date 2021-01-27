@@ -12,6 +12,9 @@ from dace.frontend.common import op_repository as oprepo
 
 @dace.library.expansion
 class ExpandDotPure(ExpandTransformation):
+    """
+    Naive backend-agnostic expansion of DOT.
+    """
 
     environments = []
 
@@ -158,7 +161,15 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandDotFPGAPartialSums(ExpandTransformation):
+class ExpandDotFpgaPartialSums(ExpandTransformation):
+    """
+    FPGA-expansion of DOT that does NOT assume that native accumulation of the
+    data type is possible (e.g., floating point on Xilinx devices or float64
+    on Stratix 10).
+
+    To achieve II=1, accumulation is done into multiple partial sums, which are
+    reduced at the end of the computation.
+    """
 
     environments = []
 
@@ -167,12 +178,16 @@ class ExpandDotFPGAPartialSums(ExpandTransformation):
                   parent_state,
                   parent_sdfg,
                   n=None,
-                  partial_width=8,
-                  **kwargs):
+                  partial_width=8):
         """
-        Expand Dot library node for FPGA with streams as inputs/outputs.
-        :param n: Total size of buffer (can be symbolic).
-        :param partial_width: Width of the inner reduction buffer.
+        :param node: The node to expand.
+        :param parent_state: The state that the node is in.
+        :param parent_sdfg: The SDFG that the node is in.
+        :param n: Override the vector dimension. If this is not set, the value
+                  specified in the node is used.
+        :param partial_width: Width of the inner reduction buffer. Must be
+                              larger than the latency of addition on the given
+                              data type.
         """
         desc_x, desc_y, desc_res = node.validate(parent_sdfg, parent_state)
 
@@ -371,7 +386,7 @@ reduce_out = prev + result_in""")
 
 
 @dace.library.expansion
-class ExpandDotFPGAAccumulate(ExpandTransformation):
+class ExpandDotFpgaAccumulate(ExpandTransformation):
     """
     Version of DOT that assumes that native II=1 accumulation of the data type
     is possible on the target architecture (e.g., 32-bit floating point on
@@ -385,8 +400,14 @@ class ExpandDotFPGAAccumulate(ExpandTransformation):
                   parent_state,
                   parent_sdfg,
                   n=None,
-                  partial_width=8,
                   **kwargs):
+        """
+        :param node: The node to expand.
+        :param parent_state: The state that the node is in.
+        :param parent_sdfg: The SDFG that the node is in.
+        :param n: Override the vector dimension. If this is not set, the value
+                  specified in the node is used.
+        """
 
         desc_x, desc_y, desc_res = node.validate(parent_sdfg, parent_state)
 
@@ -558,8 +579,8 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandDotOpenBLAS,
         "MKL": ExpandDotMKL,
         "cuBLAS": ExpandDotCuBLAS,
-        "FPGA_PartialSums": ExpandDotFPGAPartialSums,
-        "FPGA_Accumulate": ExpandDotFPGAAccumulate,
+        "FPGA_PartialSums": ExpandDotFpgaPartialSums,
+        "FPGA_Accumulate": ExpandDotFpgaAccumulate,
     }
     default_implementation = None
 

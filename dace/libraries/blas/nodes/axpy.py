@@ -11,6 +11,9 @@ from dace.frontend.common import op_repository as oprepo
 
 @dace.library.expansion
 class ExpandAxpyVectorized(ExpandTransformation):
+    """
+    Generic expansion of AXPY with support for vectorized data types.
+    """
 
     environments = []
 
@@ -18,8 +21,14 @@ class ExpandAxpyVectorized(ExpandTransformation):
     def expansion(node,
                   parent_state: SDFGState,
                   parent_sdfg,
-                  schedule=dace.ScheduleType.Default,
-                  **kwargs):
+                  schedule=dace.ScheduleType.Default):
+        """
+        :param node: Node to expand.
+        :param parent_state: State that the node is in.
+        :param parent_sdfg: SDFG that the node is in.
+        :param schedule: The schedule to set on maps in the expansion. For FPGA
+                         expansion, this should be set to FPGA_Device.
+        """
         node.validate(parent_sdfg, parent_state)
 
         x_outer = parent_sdfg.arrays[next(
@@ -84,11 +93,20 @@ class ExpandAxpyVectorized(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandAxpyFpga(ExpandTransformation):
+    """
+    FPGA expansion which uses the generic implementation, but sets the map
+    schedule to be executed on FPGA.
+    """
 
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state: SDFGState, parent_sdfg, **kwargs):
+    def expansion(node, parent_state: SDFGState, parent_sdfg: SDFG, **kwargs):
+        """
+        :param node: Node to expand.
+        :param parent_state: State that the node is in.
+        :param parent_sdfg: SDFG that the node is in.
+        """
         return ExpandAxpyVectorized.expansion(
             node,
             parent_state,
@@ -100,8 +118,9 @@ class ExpandAxpyFpga(ExpandTransformation):
 @dace.library.node
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
-    Executes a * _x + _y. It implements the BLAS AXPY operation a vector-scalar
-    product with a vector addition.
+    Implements the BLAS AXPY operation, which computes a*x + y, where the
+    vectors x and y are of size n. Expects input connectrs "_x" and "_y", and
+    output connector "_res".
     """
 
     # Global properties

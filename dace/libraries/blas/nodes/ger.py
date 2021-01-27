@@ -22,6 +22,9 @@ from dace.memlet import Memlet
 
 @library.expansion
 class ExpandGerPure(ExpandTransformation):
+    """
+    Generic expansion of GER.
+    """
 
     environments = []
 
@@ -96,6 +99,10 @@ class ExpandGerPure(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandGerFpga(ExpandTransformation):
+    """
+    FPGA-specific expansion of GER with support for vectorization and tiling
+    in both dimensions.
+    """
 
     environments = []
 
@@ -103,11 +110,21 @@ class ExpandGerFpga(ExpandTransformation):
     def expansion(node,
                   state,
                   sdfg,
-                  n=None,
                   m=None,
+                  n=None,
                   tile_size_x=None,
-                  tile_size_y=None,
-                  **kwargs):
+                  tile_size_y=None):
+        """
+        :param node: Node to expand.
+        :param state: State that the node is in.
+        :param sdfg: SDFG that the node is in.
+        :param m: Override the number of rows.
+        :param n: Override the number of columns.
+        :param tile_size_x: Tile size along the M-dimension (rows of A, size of
+                            vector x).
+        :param tile_size_x: Tile size along the N-dimension (columns of A,
+                            size of vector y).
+        """
         node.validate(sdfg, state)
 
         for e in state.in_edges(node):
@@ -259,6 +276,13 @@ class ExpandGerFpga(ExpandTransformation):
 
 @library.node
 class Ger(LibraryNode):
+    """
+    Implements the BLAS operation GER, which computes alpha*x*y^T + A (i.e.,
+    the outer product of two vectors x and y added to a matrix A).
+
+    The node expects input connectors "_x", "_y", and "_A", and output
+    connector "_res".
+    """
 
     # Global properties
     implementations = {"pure": ExpandGerPure, "FPGA": ExpandGerFpga}
@@ -273,8 +297,6 @@ class Ger(LibraryNode):
     m = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("m"))
 
-    veclen = dace.properties.SymbolicProperty(allow_none=False, default=1)
-
     alpha = SymbolicProperty(
         default=1,
         desc=
@@ -287,7 +309,6 @@ class Ger(LibraryNode):
                  m_tile=1,
                  n=dace.symbolic.symbol("n"),
                  m=dace.symbolic.symbol("m"),
-                 veclen=1,
                  alpha=1,
                  location=None):
         super().__init__(name,
@@ -298,8 +319,6 @@ class Ger(LibraryNode):
         self.n_tile = n_tile
         self.m_tile = m_tile
 
-        self.veclen = veclen
-
         self.n = n
         self.m = m
 
@@ -307,8 +326,7 @@ class Ger(LibraryNode):
 
     def compare(self, other):
 
-        if (self.veclen == other.veclen
-                and self.implementation == other.implementation
+        if (self.implementation == other.implementation
                 and self.n_tile == other.n_tile
                 and self.m_tile == other.m_tile):
 
