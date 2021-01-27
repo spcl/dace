@@ -30,7 +30,7 @@ class ExpandGerPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        node.validate(sdfg, state)
+        node.validate(parent_sdfg, parent_state)
         inputs = ('_A', '_x', '_y')
         outputs = ('_res', )
         in_edges = [
@@ -125,15 +125,9 @@ class ExpandGerFpga(ExpandTransformation):
         :param tile_size_x: Tile size along the N-dimension (columns of A,
                             size of vector y).
         """
-        node.validate(sdfg, state)
 
-        for e in state.in_edges(node):
-            if e.dst_conn == "_A":
-                desc_a_in = sdfg.arrays[e.data.data]
-            elif e.dst_conn == "_x":
-                desc_x = sdfg.arrays[e.data.data]
-            elif e.dst_conn == "_y":
-                desc_y = sdfg.arrays[e.data.data]
+        desc_a_in, desc_x, desc_y = node.validate(sdfg, state)
+        desc_a_out = None
         for e in state.out_edges(node):
             if e.src_conn == "_res":
                 desc_a_out = sdfg.arrays[e.data.data]
@@ -161,11 +155,6 @@ class ExpandGerFpga(ExpandTransformation):
 
         size_x = m
         size_y = n / veclen
-
-        if tile_size_x is None:
-            tile_size_x = node.m_tile
-        if tile_size_y is None:
-            tile_size_y = node.n_tile
 
         num_tiles_x = f"{size_x} / {tile_size_x}"
         num_tiles_y = f"{size_y} / {tile_size_y}"
@@ -289,8 +278,8 @@ class Ger(LibraryNode):
     default_implementation = None
 
     # Object fields
-    n_tile = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    m_tile = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    n_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1)
+    m_tile_size = dace.properties.SymbolicProperty(allow_none=False, default=1)
 
     n = dace.properties.SymbolicProperty(allow_none=False,
                                          default=dace.symbolic.symbol("n"))
@@ -305,8 +294,6 @@ class Ger(LibraryNode):
 
     def __init__(self,
                  name,
-                 n_tile=1,
-                 m_tile=1,
                  n=dace.symbolic.symbol("n"),
                  m=dace.symbolic.symbol("m"),
                  alpha=1,
@@ -316,9 +303,6 @@ class Ger(LibraryNode):
                          inputs={"_x", "_y", "_A"},
                          outputs={"_res"})
 
-        self.n_tile = n_tile
-        self.m_tile = m_tile
-
         self.n = n
         self.m = m
 
@@ -327,8 +311,8 @@ class Ger(LibraryNode):
     def compare(self, other):
 
         if (self.implementation == other.implementation
-                and self.n_tile == other.n_tile
-                and self.m_tile == other.m_tile):
+                and self.n_tile_size == other.n_tile
+                and self.m_tile_size == other.m_tile):
 
             return True
         else:
@@ -399,6 +383,8 @@ class Ger(LibraryNode):
             raise ValueError(
                 "Output matrix must match input matrix a and outer product x*yT."
             )
+
+        return desc_a, desc_x, desc_y
 
 
 # Numpy replacement

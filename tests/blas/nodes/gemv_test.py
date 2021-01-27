@@ -9,7 +9,6 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
 
 
-
 def pure_graph(dtype,
                transposed,
                expansion,
