@@ -62,12 +62,11 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
             state <= READY;
         end else if (s_axis_a_tvalid && s_axis_a_tready) begin
             m_axis_b_tvalid <= 1'b1;
-            //accum <= 0;
-            //for (integer i = 0; i < VECLEN; i = i + 1) begin
-            //    accum <= accum + s_axis_a_tdata[i];
-            //end
-            //m_axis_b_tdata = accum;
-            m_axis_b_tdata = s_axis_a_tdata[2];
+            accum <= 0;
+            for (integer i = 0; i < VECLEN; i = i + 1) begin
+                accum <= accum + s_axis_a_tdata[i];
+            end
+            m_axis_b_tdata = accum;
             state <= BUSY;
         end else begin
             m_axis_b_tvalid <= m_axis_b_tvalid && !m_axis_b_tready;
