@@ -16,6 +16,8 @@ from .trivial_map_range_elimination import TrivialMapRangeElimination
 # Data movement
 from .strip_mining import StripMining
 from .tiling import MapTiling
+from .tiling_with_overlap import MapTilingWithOverlap
+from .buffer_tiling import BufferTiling
 from .vectorization import Vectorization
 
 # Data-related
