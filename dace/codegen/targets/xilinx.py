@@ -100,9 +100,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -193,14 +192,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Emit the .ini file
         others = [
-            CodeObject(
-                ''.join(name.split('.')[:-1]),
-                other_code.getvalue(),
-                name.split('.')[-1],
-                XilinxCodeGen,
-                "Xilinx",
-                target_type="device"
-            )
+            CodeObject(''.join(name.split('.')[:-1]),
+                       other_code.getvalue(),
+                       name.split('.')[-1],
+                       XilinxCodeGen,
+                       "Xilinx",
+                       target_type="device")
             for name, other_code in self._other_codes.items()
         ]
 
@@ -272,7 +269,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             return "{} *{}".format(dtype.ctype, var_name)
         if isinstance(data, dace.data.Stream):
             ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype,
-                                                data.dtype.veclen, data.buffer_size)
+                                                    data.dtype.veclen,
+                                                    data.buffer_size)
             return "{} &{}".format(ctype, var_name)
         else:
             return data.as_arg(with_types=True, name=var_name)
@@ -473,9 +471,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Write kernel signature
         kernel_stream.write(
-            "DACE_EXPORTED void {}({}) {{\n".format(kernel_name,
-                                                    ', '.join(kernel_args + stream_args)),
-            sdfg, state_id)
+            "DACE_EXPORTED void {}({}) {{\n".format(
+                kernel_name, ', '.join(kernel_args + stream_args)), sdfg,
+            state_id)
 
         # Insert interface pragmas
         num_mapped_args = 0
@@ -568,7 +566,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # accesses to the streams should be handled
         rtl_module = False
         for n in subgraph.nodes():
-            if isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
+            if isinstance(
+                    n, dace.nodes.Tasklet
+            ) and n.language == dace.dtypes.Language.SystemVerilog:
                 rtl_module = True
                 break
         if rtl_module:
@@ -581,31 +581,33 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 if node.data not in self._stream_connections:
                     self._stream_connections[node.data] = [None, None]
                 for edge in state.out_edges(node):
-                    rtl_name = "{}_{}_{}_{}".format(edge.dst,
-                                                    sdfg.sdfg_id,
+                    rtl_name = "{}_{}_{}_{}".format(edge.dst, sdfg.sdfg_id,
                                                     sdfg.node_id(state),
                                                     state.node_id(edge.dst))
-                    self._stream_connections[node.data][1] = '{}_top_1.s_axis_{}'.format(rtl_name, edge.dst_conn)
+                    self._stream_connections[
+                        node.data][1] = '{}_top_1.s_axis_{}'.format(
+                            rtl_name, edge.dst_conn)
 
             for node in subgraph.sink_nodes():
                 if node.data not in self._stream_connections:
                     self._stream_connections[node.data] = [None, None]
                 for edge in state.in_edges(node):
-                    rtl_name = "{}_{}_{}_{}".format(edge.src,
-                                                    sdfg.sdfg_id,
+                    rtl_name = "{}_{}_{}_{}".format(edge.src, sdfg.sdfg_id,
                                                     sdfg.node_id(state),
                                                     state.node_id(edge.src))
-                    self._stream_connections[node.data][0] = '{}_top_1.m_axis_{}'.format(rtl_name, edge.src_conn)
+                    self._stream_connections[
+                        node.data][0] = '{}_top_1.m_axis_{}'.format(
+                            rtl_name, edge.src_conn)
 
             # Skip RTL modules
             # Should still generate the node:
             ignore_stream = CodeIOStream()
             self._dispatcher.dispatch_subgraph(sdfg,
-                                           subgraph,
-                                           state_id,
-                                           ignore_stream,
-                                           ignore_stream,
-                                           skip_entry_node=False)
+                                               subgraph,
+                                               state_id,
+                                               ignore_stream,
+                                               ignore_stream,
+                                               skip_entry_node=False)
             return
 
         parameters = list(sorted(parameters, key=lambda t: t[1]))
@@ -773,9 +775,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         """Main entry function for generating a Xilinx kernel."""
 
         (global_data_parameters, top_level_local_data, subgraph_parameters,
-         scalar_parameters, symbol_parameters,
-         nested_global_transients, external_streams) = self.make_parameters(
-             sdfg, state, subgraphs)
+         scalar_parameters, symbol_parameters, nested_global_transients,
+         external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
         # Scalar parameters are never output
         sc_parameters = [(False, pname, param, None)
@@ -814,10 +815,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
                                                module_stream, entry_stream)
         for is_output, name, node, _ in external_streams:
-            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
+            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
+                                                     node.ctype)
             if name not in self._stream_connections:
                 self._stream_connections[name] = [None, None]
-            self._stream_connections[name][0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
+            self._stream_connections[name][
+                0 if is_output else 1] = '{}_1.{}'.format(kernel_name, name)
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs,
                               subgraph_parameters, sc_parameters,

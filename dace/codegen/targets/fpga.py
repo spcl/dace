@@ -84,7 +84,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._other_codes = {
         }  # any other kind of generated file if any (name, code object)
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
-        self._stream_connections = {} # { name: [src, dst] }
+        self._stream_connections = {}  # { name: [src, dst] }
 
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
@@ -103,7 +103,10 @@ class FPGACodeGen(TargetCodeGenerator):
              ]))
 
         self._dispatcher.register_node_dispatcher(
-            self, predicate=lambda sdfg, node: self._in_device_code and not (isinstance(node, nodes.Tasklet) and node.language == dace.dtypes.Language.SystemVerilog))
+            self,
+            predicate=lambda sdfg, node: self._in_device_code and not (
+                isinstance(node, nodes.Tasklet) and node.language == dace.dtypes
+                .Language.SystemVerilog))
 
         fpga_storage = [
             dace.dtypes.StorageType.FPGA_Global,
@@ -259,7 +262,7 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
-        external_streams = [] # type: List[Tuple(bool,str,Data,bool)]
+        external_streams = []  # type: List[Tuple(bool,str,Data,bool)]
         # [(Is an output, dataname string, data object, interface)]
 
         for subgraph in subgraphs:
@@ -276,24 +279,40 @@ class FPGACodeGen(TargetCodeGenerator):
                 # case it should be an external stream
                 dsts = [e.dst for e in state.out_edges(n)]
                 srcs = [e.src for e in state.in_edges(n)]
-                tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
-                external = True in [t.language == dace.dtypes.Language.SystemVerilog for t in tasks]
+                tasks = [
+                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
+                ]
+                external = True in [
+                    t.language == dace.dtypes.Language.SystemVerilog
+                    for t in tasks
+                ]
                 if external:
-                    external_streams += [(True, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.out_edges(n)]
+                    external_streams += [(True, e.data.data,
+                                          subsdfg.arrays[e.data.data], None)
+                                         for e in state.out_edges(n)]
                 else:
-                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data])
+                    candidates += [(False, e.data.data,
+                                    subsdfg.arrays[e.data.data])
                                    for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
                 dsts = [e.dst for e in state.out_edges(n)]
                 srcs = [e.src for e in state.in_edges(n)]
-                tasks = [t for t in dsts+srcs if isinstance(t, dace.nodes.Tasklet)]
-                external = True in [t.language == dace.dtypes.Language.SystemVerilog for t in tasks]
+                tasks = [
+                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
+                ]
+                external = True in [
+                    t.language == dace.dtypes.Language.SystemVerilog
+                    for t in tasks
+                ]
                 if external:
-                    external_streams += [(False, e.data.data, subsdfg.arrays[e.data.data], None) for e in state.in_edges(n)]
+                    external_streams += [(False, e.data.data,
+                                          subsdfg.arrays[e.data.data], None)
+                                         for e in state.in_edges(n)]
                 else:
-                    candidates += [(True, e.data.data, subsdfg.arrays[e.data.data])
+                    candidates += [(True, e.data.data,
+                                    subsdfg.arrays[e.data.data])
                                    for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
@@ -309,10 +328,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage ==
-                                    dace.dtypes.StorageType.FPGA_Global and
-                                    n.data not in nested_global_transients_seen
-                                ):
+                                    and n.desc(scope).storage
+                                    == dace.dtypes.StorageType.FPGA_Global
+                                    and n.data
+                                    not in nested_global_transients_seen):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -335,10 +354,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         global_data_parameters.append(
                             (is_output, dataname, data, interface_id))
                         global_data_names.add(dataname)
-                    elif (data.storage in (
-                            dace.dtypes.StorageType.FPGA_Local,
-                            dace.dtypes.StorageType.FPGA_Registers,
-                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage
+                          in (dace.dtypes.StorageType.FPGA_Local,
+                              dace.dtypes.StorageType.FPGA_Registers,
+                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -363,7 +382,10 @@ class FPGACodeGen(TargetCodeGenerator):
         external_streams = dace.dtypes.deduplicate(external_streams)
 
         stream_names = [sname for _, sname, _, _ in external_streams]
-        top_level_local_data = [data_to_node[name] for name in top_level_local_data if name not in stream_names]
+        top_level_local_data = [
+            data_to_node[name] for name in top_level_local_data
+            if name not in stream_names
+        ]
 
         symbol_parameters = {
             k: dt.Scalar(v)
@@ -506,10 +528,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             dataname, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
-            elif (nodedesc.storage in (
-                    dace.dtypes.StorageType.FPGA_Local,
-                    dace.dtypes.StorageType.FPGA_Registers,
-                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage
+                  in (dace.dtypes.StorageType.FPGA_Local,
+                      dace.dtypes.StorageType.FPGA_Registers,
+                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise cgx.CodegenError(
@@ -759,10 +781,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(
-                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage ==
-                                    dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:

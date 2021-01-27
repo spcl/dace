@@ -20,6 +20,7 @@ from templates.package import generate_from_config as rtllib_package
 from templates.synth import generate_from_config as rtllib_synth
 from templates.top import generate_from_config as rtllib_top
 
+
 @registry.autoregister_params(name='rtl')
 class RTLCodeGen(target.TargetCodeGenerator):
     """ RTL Code Generator (SystemVerilog) """
@@ -55,8 +56,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
-        self.mode: str = config.Config.get(
-            "compiler", "rtl", "mode")
+        self.mode: str = config.Config.get("compiler", "rtl", "mode")
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                       state_id: int, node: nodes.Node,
@@ -103,7 +103,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
         """
         if isinstance(edge.src, nodes.AccessNode) and isinstance(
-                edge.dst, nodes.Tasklet):# TODO remove? and self.mode == 'simulator':  # handle AccessNode->Tasklet
+                edge.dst, nodes.Tasklet
+        ):  # TODO remove? and self.mode == 'simulator':  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn],
                           dtypes.pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
@@ -194,8 +195,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
             "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags),
             "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(
-                verilator_lint_warnings),
-            "-DDACE_RTL_MODE=\"{}\"".format(mode)
+                verilator_lint_warnings), "-DDACE_RTL_MODE=\"{}\"".format(mode)
         ]
         return options
 
@@ -236,8 +236,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
             # generate padded string and add to list
             inputs.append(", input{padding} s_axis_{name}_tvalid".format(
                 padding=" " * 17, name=inp))
-            inputs.append(", input{padding}{idx_str} s_axis_{name}_tdata".format(
-                padding=" " * (17 - len(idx_str)), idx_str=idx_str, name=inp))
+            inputs.append(
+                ", input{padding}{idx_str} s_axis_{name}_tdata".format(
+                    padding=" " * (17 - len(idx_str)),
+                    idx_str=idx_str,
+                    name=inp))
             inputs.append(", output reg{padding} s_axis_{name}_tready".format(
                 padding=" " * 12, name=inp))
             inputs.append(", input{padding}[3:0] s_axis_{name}_tkeep".format(
@@ -268,19 +271,29 @@ class RTLCodeGen(target.TargetCodeGenerator):
             # generate padded string and add to list
             outputs.append(", output reg{padding} m_axis_{name}_tvalid".format(
                 padding=" " * 12, name=inp))
-            outputs.append(", output reg{padding}{idx_str} m_axis_{name}_tdata".format(
-                padding=" " * (12 - len(idx_str)), idx_str=idx_str, name=inp))
+            outputs.append(
+                ", output reg{padding}{idx_str} m_axis_{name}_tdata".format(
+                    padding=" " * (12 - len(idx_str)),
+                    idx_str=idx_str,
+                    name=inp))
             outputs.append(", input {padding} m_axis_{name}_tready".format(
                 padding=" " * 16, name=inp))
-            outputs.append(", output reg{padding}[3:0] m_axis_{name}_tkeep".format(
-                padding=7*" ", name=inp))
+            outputs.append(
+                ", output reg{padding}[3:0] m_axis_{name}_tkeep".format(
+                    padding=7 * " ", name=inp))
             outputs.append(", output reg{padding} m_axis_{name}_tlast".format(
                 padding=" " * 12, name=inp))
         return inputs, outputs
 
     def generate_cpp_zero_inits(self, tasklet):
-        valids = [f'model->s_axis_{name}_tvalid = 0;' for name in tasklet.in_connectors]
-        readys = [f'model->m_axis_{name}_tready = 0;' for name in tasklet.out_connectors]
+        valids = [
+            f'model->s_axis_{name}_tvalid = 0;'
+            for name in tasklet.in_connectors
+        ]
+        readys = [
+            f'model->m_axis_{name}_tready = 0;'
+            for name in tasklet.out_connectors
+        ]
         return valids, readys
 
     def generate_cpp_inputs_outputs(self, tasklet):
@@ -312,21 +325,21 @@ class RTLCodeGen(target.TargetCodeGenerator):
  }}\
  """.format(veclen=tasklet.in_connectors[var_name].veclen, name=var_name)
             if isinstance(tasklet.in_connectors[var_name], dtypes.vector) else
-            "model->s_axis_{name}_tdata = {name}[in_ptr_{name}++];".format(name=var_name)
-            for var_name in tasklet.in_connectors
+            "model->s_axis_{name}_tdata = {name}[in_ptr_{name}++];".format(
+                name=var_name) for var_name in tasklet.in_connectors
         ])
 
         output_read_string = "\n".join([
-            "{name}[out_ptr_{name}++] = (int)model->m_axis_{name}_tdata;".format(
-                name=var_name) if isinstance(tasklet.out_connectors[var_name],
-                                             dtypes.pointer) else """\
+            "{name}[out_ptr_{name}++] = (int)model->m_axis_{name}_tdata;".
+            format(name=var_name) if isinstance(
+                tasklet.out_connectors[var_name], dtypes.pointer) else """\
 for(int i = 0; i < {veclen}; i++){{
   {name}[i] = (int)model->m_axis_{name}_tdata[i];
 }}\
 """.format(veclen=tasklet.out_connectors[var_name].veclen, name=var_name)
             if isinstance(tasklet.out_connectors[var_name], dtypes.vector) else
-            "{name}[out_ptr_{name}++] = (int)model->m_axis_{name}_tdata;".format(name=var_name)
-            for var_name in tasklet.out_connectors
+            "{name}[out_ptr_{name}++] = (int)model->m_axis_{name}_tdata;".
+            format(name=var_name) for var_name in tasklet.out_connectors
         ])
         # return generated strings
         return input_read_string, output_read_string
@@ -346,10 +359,13 @@ for(int i = 0; i < {veclen}; i++){{
 
     def generate_cpp_num_elements(self, tasklet):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        ins = [f'int num_elements_{name} = 1;' for name in tasklet.in_connectors]
-        outs = [f'int num_elements_{name} = 1;' for name in tasklet.out_connectors]
+        ins = [
+            f'int num_elements_{name} = 1;' for name in tasklet.in_connectors
+        ]
+        outs = [
+            f'int num_elements_{name} = 1;' for name in tasklet.out_connectors
+        ]
         return ins + outs
-
 
     def generate_cpp_internal_state(self, tasklet):
         internal_state_str = " ".join([
@@ -381,7 +397,11 @@ for(int i = 0; i < {veclen}; i++){{
             {inputs}
             model->s_axis_{name}_tvalid = 1;
         }}'''
-        return [template.format(name=name, debug_feed_element=debug_feed_element, inputs=inputs) for name in tasklet.in_connectors]
+        return [
+            template.format(name=name,
+                            debug_feed_element=debug_feed_element,
+                            inputs=inputs) for name in tasklet.in_connectors
+        ]
 
     def generate_ptrs(self, tasklet):
         ins = [f'int in_ptr_{name} = 0;' for name in tasklet.in_connectors]
@@ -396,7 +416,11 @@ for(int i = 0; i < {veclen}; i++){{
             {outputs}
             model->m_axis_{name}_tready = 1;
         }}'''
-        return [template.format(name=name, debug_export_element=debug_export_element, outputs=outputs) for name in tasklet.out_connectors]
+        return [
+            template.format(name=name,
+                            debug_export_element=debug_export_element,
+                            outputs=outputs) for name in tasklet.out_connectors
+        ]
 
     def generate_write_output_hs(self, tasklet):
         template = '''
@@ -406,8 +430,14 @@ for(int i = 0; i < {veclen}; i++){{
         return [template.format(name=name) for name in tasklet.out_connectors]
 
     def generate_hs_flags(self, tasklet):
-        ins = [f'bool read_input_hs_{name} = false;' for name in tasklet.in_connectors]
-        outs = [f'bool write_output_hs_{name} = false;' for name in tasklet.out_connectors]
+        ins = [
+            f'bool read_input_hs_{name} = false;'
+            for name in tasklet.in_connectors
+        ]
+        outs = [
+            f'bool write_output_hs_{name} = false;'
+            for name in tasklet.out_connectors
+        ]
         return ins + outs
 
     def generate_input_hs_toggle(self, tasklet):
@@ -419,7 +449,10 @@ for(int i = 0; i < {veclen}; i++){{
             {debug_read_input_hs}
             read_input_hs_{name} = false;
         }}'''
-        return [template.format(name=name, debug_read_input_hs=debug_read_input_hs) for name in tasklet.in_connectors]
+        return [
+            template.format(name=name, debug_read_input_hs=debug_read_input_hs)
+            for name in tasklet.in_connectors
+        ]
 
     def generate_output_hs_toggle(self, tasklet):
         debug_write_output_hs = "std::cout << \"remove write_output_hs flag\" << std::endl;" if self.verilator_debug else ""
@@ -430,14 +463,21 @@ for(int i = 0; i < {veclen}; i++){{
             {debug_write_output_hs}
             write_output_hs_{name} = false;
         }}'''
-        return [template.format(name=name, debug_write_output_hs=debug_write_output_hs) for name in tasklet.out_connectors]
+        return [
+            template.format(name=name,
+                            debug_write_output_hs=debug_write_output_hs)
+            for name in tasklet.out_connectors
+        ]
 
     def generate_running_condition(self, tasklet):
         # TODO should be changed with free-running kernels. Currently only
         # one element is supported. Additionally, this should not be used as
         # condition, as the amount of input and output elements might not be
         # equal to each other.
-        return [f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors]
+        return [
+            f'out_ptr_{name} < num_elements_{name}'
+            for name in tasklet.out_connectors
+        ]
 
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                         state_id: int, node: nodes.Node,
@@ -449,8 +489,7 @@ for(int i = 0; i < {veclen}; i++){{
         tasklet = node
 
         # construct variables paths
-        unique_name: str = "{}_{}_{}_{}".format(tasklet.name,
-                                                sdfg.sdfg_id,
+        unique_name: str = "{}_{}_{}_{}".format(tasklet.name, sdfg.sdfg_id,
                                                 sdfg.node_id(state),
                                                 state.node_id(tasklet))
 
@@ -476,70 +515,69 @@ for(int i = 0; i < {veclen}; i++){{
                 environments=None))
 
         if self.mode == 'xilinx':
-            buses = { name : ('s_axis', tasklet.in_connectors[name].veclen) for name in tasklet.in_connectors }
-            buses.update({ name : ('m_axis', tasklet.out_connectors[name].veclen) for name in tasklet.out_connectors })
+            buses = {
+                name: ('s_axis', tasklet.in_connectors[name].veclen)
+                for name in tasklet.in_connectors
+            }
+            buses.update({
+                name: ('m_axis', tasklet.out_connectors[name].veclen)
+                for name in tasklet.out_connectors
+            })
             # TODO handle scalars
             # TODO handle ip cores
             rtllib_config = {
-                    "name" : unique_name,
-                    "buses" : buses,
-                    "params" : {
-                        "scalars" : {
-                        },
-                        "memory" : {
-                        }
-                    },
-                    "ip_cores" : {
-                    }
-                }
+                "name": unique_name,
+                "buses": buses,
+                "params": {
+                    "scalars": {},
+                    "memory": {}
+                },
+                "ip_cores": {}
+            }
 
             self.code_objects.append(
-                codeobject.CodeObject(
-                    name=f"{unique_name}_control",
-                    code=rtllib_control(rtllib_config),
-                    language="v",
-                    target=RTLCodeGen,
-                    title="rtl",
-                    target_type="{}".format(unique_name),
-                    additional_compiler_kwargs="",
-                    linkable=True,
-                    environments=None))
+                codeobject.CodeObject(name=f"{unique_name}_control",
+                                      code=rtllib_control(rtllib_config),
+                                      language="v",
+                                      target=RTLCodeGen,
+                                      title="rtl",
+                                      target_type="{}".format(unique_name),
+                                      additional_compiler_kwargs="",
+                                      linkable=True,
+                                      environments=None))
 
             self.code_objects.append(
-                codeobject.CodeObject(
-                    name=f"{unique_name}_top",
-                    code=rtllib_top(rtllib_config),
-                    language="v",
-                    target=RTLCodeGen,
-                    title="rtl",
-                    target_type="{}".format(unique_name),
-                    additional_compiler_kwargs="",
-                    linkable=True,
-                    environments=None))
+                codeobject.CodeObject(name=f"{unique_name}_top",
+                                      code=rtllib_top(rtllib_config),
+                                      language="v",
+                                      target=RTLCodeGen,
+                                      title="rtl",
+                                      target_type="{}".format(unique_name),
+                                      additional_compiler_kwargs="",
+                                      linkable=True,
+                                      environments=None))
 
             self.code_objects.append(
-                codeobject.CodeObject(
-                    name=f"{unique_name}_package",
-                    code=rtllib_package(rtllib_config),
-                    language="tcl",
-                    target=RTLCodeGen,
-                    title="rtl",
-                    target_type="scripts",
-                    additional_compiler_kwargs="",
-                    linkable=True,
-                    environments=None))
+                codeobject.CodeObject(name=f"{unique_name}_package",
+                                      code=rtllib_package(rtllib_config),
+                                      language="tcl",
+                                      target=RTLCodeGen,
+                                      title="rtl",
+                                      target_type="scripts",
+                                      additional_compiler_kwargs="",
+                                      linkable=True,
+                                      environments=None))
 
             self.code_objects.append(
-                codeobject.CodeObject(
-                    name=f"{unique_name}_synth",
-                    code=rtllib_synth(rtllib_config),
-                    language="tcl",
-                    target=RTLCodeGen,
-                    title="rtl",
-                    target_type="scripts",
-                    additional_compiler_kwargs="",
-                    linkable=True,
-                    environments=None))
+                codeobject.CodeObject(name=f"{unique_name}_synth",
+                                      code=rtllib_synth(rtllib_config),
+                                      language="tcl",
+                                      target=RTLCodeGen,
+                                      title="rtl",
+                                      target_type="scripts",
+                                      additional_compiler_kwargs="",
+                                      linkable=True,
+                                      environments=None))
 
         else:
             # generate verilator simulation cpp code components
@@ -599,7 +637,7 @@ VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u read
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
 """.format(internal_state_str=internal_state_str,
-           internal_state_var=internal_state_var)
+            internal_state_var=internal_state_var)
                 if self.verilator_debug else "",
                 debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
                 if self.verilator_debug else ""),
@@ -715,6 +753,7 @@ module {name}
     RTL_FOOTER = """\
 endmodule
 """
+
 
 def check_issymbolic(iterator: iter, sdfg):
     for item in iterator:
