@@ -127,5 +127,7 @@ class BufferTiling(transformation.Transformation):
             for r, ts in zip(map2_entry.range.ranges, self.tile_sizes)]
 
         if any(ts == 1 for ts in self.tile_sizes):
-            TrivialMapElimination.apply_to(sdfg, _map_entry=map1_entry)
-            TrivialMapElimination.apply_to(sdfg, _map_entry=map2_entry)
+            if any(r[0] == r[1] for r in map1_entry.map.range):
+                TrivialMapElimination.apply_to(sdfg, _map_entry=map1_entry)
+            if any(r[0] == r[1] for r in map2_entry.map.range):
+                TrivialMapElimination.apply_to(sdfg, _map_entry=map2_entry)
