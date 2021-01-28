@@ -68,7 +68,7 @@ def conv3x3_5x5_transposed(w3: dace.float32[3, 3], w5: dace.float32[5, 5], A: da
     conv5x5(w5, buf, B)
 
 
-class OnTheFlyMapFusionTest(unittest.TestCase):
+class BufferTilingTest(unittest.TestCase):
     def semantic_eq(self, tile_sizes, program):
         w3 = np.random.rand(3, 3).astype(np.float32)
         w5 = np.random.rand(5, 5).astype(np.float32)
