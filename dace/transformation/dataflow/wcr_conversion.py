@@ -30,11 +30,6 @@ class AugAssignToWCR(transformation.Transformation):
         return [
             sdutil.node_path_graph(AugAssignToWCR.input, AugAssignToWCR.tasklet,
                                    AugAssignToWCR.output),
-            # sdutil.node_path_graph(AugAssignToWCR.input,
-            #                        AugAssignToWCR.map_entry,
-            #                        AugAssignToWCR.tasklet,
-            #                        AugAssignToWCR.map_exit,
-            #                        AugAssignToWCR.output),
         ]
 
     @staticmethod

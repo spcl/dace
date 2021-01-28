@@ -722,7 +722,6 @@ class RefineNestedAccess(transformation.Transformation):
                     nstate.ranges = {}
                     from dace.sdfg.propagation import _annotate_loop_ranges
                     _annotate_loop_ranges(nsdfg.sdfg, [])
-                    #propagation.propagate_states(nsdfg.sdfg)
 
                     memlet = propagation.propagate_subset(
                         [cand], nsdfg.sdfg.arrays[cname],

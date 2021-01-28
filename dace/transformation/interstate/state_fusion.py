@@ -132,6 +132,7 @@ class StateFusion(transformation.Transformation):
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        # Workaround for supporting old and new conventions
         if isinstance(candidate[StateFusion.first_state], SDFGState):
             first_state: SDFGState = candidate[StateFusion.first_state]
             second_state: SDFGState = candidate[StateFusion.second_state]

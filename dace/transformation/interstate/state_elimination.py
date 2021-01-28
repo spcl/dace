@@ -211,7 +211,6 @@ class HoistState(transformation.Transformation):
             for k in nsdfg.in_connectors
         })
 
-        #
         nisedge = nsdfg.sdfg.edges()[0]
         # Safe replacement of edge contents
         for k, v in mapping.items():
