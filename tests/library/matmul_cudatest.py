@@ -51,7 +51,7 @@ def make_sdfg(implementation,
     y = state.add_read("y" + suffix)
     result = state.add_write("result" + suffix)
 
-    node = blas.nodes.matmul.MatMul("matmul", dtype)
+    node = blas.nodes.matmul.MatMul("matmul")
 
     state.add_memlet_path(x,
                           node,
