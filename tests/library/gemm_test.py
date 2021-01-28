@@ -28,7 +28,6 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
     wY = state.add_write("Y")
 
     tasklet = Gemm('_Gemm_',
-                   dtype,
                    transA=transA,
                    transB=transB,
                    alpha=alpha,

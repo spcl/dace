@@ -37,7 +37,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     y = state.add_read("y" + suffix)
     result = state.add_write("result" + suffix)
 
-    dot_node = blas.nodes.dot.Dot("dot", dtype)
+    dot_node = blas.nodes.dot.Dot("dot")
     dot_node.implementation = implementation
 
     state.add_memlet_path(x,

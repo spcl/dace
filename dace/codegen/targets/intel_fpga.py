@@ -803,9 +803,8 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']'
 
-                expr = self.make_ptr_vector_cast(sdfg,
-                                                 in_memlet.data + offset_expr,
-                                                 in_memlet,
+                expr = self.make_ptr_vector_cast(in_memlet.data + offset_expr,
+                                                 desc.dtype,
                                                  node.in_connectors[vconn],
                                                  False, defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
@@ -860,7 +859,7 @@ __kernel void \\
                     else:
                         typedef = "{}*".format(vec_type)
                     expr = self.make_ptr_vector_cast(
-                        sdfg, out_memlet.data + offset_expr, out_memlet,
+                        out_memlet.data + offset_expr, desc.dtype,
                         node.out_connectors[uconn], False, defined_type)
                     memlet_references.append((typedef, uconn, expr))
                     # Register defined variable
@@ -1297,13 +1296,24 @@ __kernel void \\
         return self.make_write(defined_type, dtype, memlet.data, memlet.data,
                                offset, inname, memlet.wcr, False, 1)
 
-    def make_ptr_vector_cast(self, sdfg, expr, memlet, conntype, is_scalar,
+    def make_ptr_vector_cast(self, dst_expr, dst_dtype, src_dtype, is_scalar,
                              defined_type):
-        vtype = self.make_vector_type(conntype, False)
-        if conntype != sdfg.arrays[memlet.data].dtype:
+        """
+        Cast a destination pointer so the source expression can be written to
+        it.
+        :param dst_expr: Expression of the target pointer.
+        :param dst_dtype: Type of the target pointer.
+        :param src_dtype: Type of the variable that needs to be written.
+        :param is_scalar: Whether the variable to be written is a scalar.
+        :param defined_type: The code generated variable type of the
+                             destination.
+        """
+        vtype = self.make_vector_type(src_dtype, False)
+        expr = dst_expr
+        if dst_dtype != src_dtype:
             if is_scalar:
-                expr = f"*({vtype} *)(&{expr})"
-            elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
+                expr = f"*({vtype} *)(&{dst_expr})"
+            elif src_dtype.base_type != dst_dtype:
                 expr = f"({vtype})(&{expr})"
             elif defined_type == DefinedType.Pointer:
                 expr = "&" + expr
@@ -1364,10 +1374,10 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # If we don't have a memlet for this target, it could be the case
             # that on the right hand side we have a constant (a Name or a subscript)
             # If this is the case, we try to infer the type, otherwise we fallback to generic visit
-            if (isinstance(node.value, ast.Name)
-                    and node.value.id in self.constants) or (
-                        isinstance(node.value, ast.Subscript)
-                        and node.value.value.id in self.constants):
+            if ((isinstance(node.value, ast.Name)
+                 and node.value.id in self.constants)
+                    or (isinstance(node.value, ast.Subscript)
+                        and node.value.value.id in self.constants)):
                 dtype = infer_expr_type(astunparse.unparse(node.value),
                                         self.dtypes)
                 value = cppunparse.cppunparse(self.visit(node.value),
@@ -1410,7 +1420,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             self.width_converters.add((True, ocltype, veclen))
             unpack_str = "unpack_{}{}".format(ocltype, veclen)
 
-        if veclen_lhs > veclen_rhs:
+        if veclen_lhs > veclen_rhs and isinstance(dtype_rhs, dace.pointer):
             veclen = veclen_lhs
             ocltype = fpga.vector_element_type_of(dtype).ocltype
             self.width_converters.add((False, ocltype, veclen))

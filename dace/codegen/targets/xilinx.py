@@ -100,9 +100,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
                                         xcl_emulation_mode)
                          if xcl_emulation_mode is not None else
                          unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else
-                         unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
+                         is not None else unset_str.format("XILINX_SDX"))
 
         host_code = CodeIOStream()
         host_code.write("""\
@@ -119,7 +118,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         host_code.write("""
 DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
-    
+
     __state->fpga_context = new dace::fpga::Context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
@@ -384,9 +383,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     dtype.base_type.ctype, packing_factor, read_expr,
                     write_expr)
             else:
-                # we can write into a vectorized container.
-                # (The dtype passed as argument refers to the src not to the destination)
-                veclen = dtype.veclen * packing_factor
+                # TODO: Temporary hack because we don't have the output
+                #       vector length.
+                veclen = max(dtype.veclen, packing_factor)
                 return "dace::Write<{}, {}>({}, {});".format(
                     dtype.base_type.ctype, veclen, write_expr, read_expr)
 
@@ -580,7 +579,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(with_types=True, name=pname))
 
         # create a unique module name to prevent name clashes
-        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+        module_function_name = f"module_{name}_{sdfg.sdfg_id}"
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -797,3 +796,14 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
     def unparse_tasklet(self, *args, **kwargs):
         # Pass this object for callbacks into the Xilinx codegen
         cpp.unparse_tasklet(*args, codegen=self, **kwargs)
+
+    def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype):
+        """
+        Write source to destination, where the source is a scalar, and the
+        destination is a pointer.
+        :return: String of C++ performing the write.
+        """
+        return self.make_write(DefinedType.Pointer, dst_dtype, None,
+                               "&" + dst_expr, None, src_expr, None,
+                               dst_dtype.veclen < src_dtype.veclen,
+                               src_dtype.veclen)
