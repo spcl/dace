@@ -176,4 +176,5 @@ class PruneSymbols(pm.Transformation):
             del nsdfg.symbol_mapping[candidate]
 
             # If not used in SDFG, remove from symbols as well
-            helpers.remove_symbol_if_unused(nsdfg.sdfg, candidate)
+            if helpers.is_symbol_unused(nsdfg.sdfg, candidate):
+                nsdfg.sdfg.remove_symbol(candidate)
