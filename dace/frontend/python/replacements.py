@@ -644,6 +644,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     if cast:
         tasklet_code = tasklet_code.replace('__in1', "{}(__in1)".format(cast))
 
+    # NOTE: Quick fix
+    if opcode == '~':
+        opcode = 'not'
+
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
         "_%s_" % opname,
