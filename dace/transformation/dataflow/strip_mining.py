@@ -137,9 +137,10 @@ class StripMining(transformation.Transformation):
     new_dim_prefix = Property(dtype=str,
                               default="tile",
                               desc="Prefix for new dimension name")
-    tile_size = SymbolicProperty(default=64,
-                                 desc="Tile size of strip-mined dimension, "
-                                 "or number of tiles if tiling_type=number_of_tiles")
+    tile_size = SymbolicProperty(
+        default=64,
+        desc="Tile size of strip-mined dimension, "
+        "or number of tiles if tiling_type=number_of_tiles")
     tile_stride = SymbolicProperty(default=0,
                                    desc="Stride between two tiles of the "
                                    "strip-mined dimension. If zero, it is set "
@@ -381,20 +382,20 @@ class StripMining(transformation.Transformation):
 
         new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
                                      target_dim)
-        new_dim_range = (td_from, number_of_tiles, 1)
+        new_dim_range = (td_from, number_of_tiles - 1, 1)
         new_map = nodes.Map(map_entry.map.label, [new_dim],
                             subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
         td_from_new = dimsym * tile_size
         if divides_evenly:
-            td_to_new = (dimsym + 1) * tile_size
+            td_to_new = (dimsym + 1) * tile_size - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min((dimsym + 1) * tile_size, td_to),
-                (dimsym + 1) * tile_size)
+                sympy.Min((dimsym + 1) * tile_size - 1, td_to),
+                (dimsym + 1) * tile_size - 1)
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
