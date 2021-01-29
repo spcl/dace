@@ -216,8 +216,8 @@ def match_patterns(sdfg: SDFG,
                    strict: bool = False,
                    metadata: Optional[PatternMetadataType] = None,
                    states: Optional[List[SDFGState]] = None):
-    """ Returns a list of single-state Transformations of a certain class that
-        match the input SDFG.
+    """ Returns a generator of Transformations that match the input SDFG. 
+        Ordered by SDFG ID.
         :param sdfg: The SDFG to match in.
         :param patterns: Transformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.

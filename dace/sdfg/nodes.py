@@ -447,6 +447,12 @@ class NestedSDFG(CodeNode):
                           desc="Measure execution statistics with given method",
                           default=dtypes.InstrumentationType.No_Instrumentation)
 
+    no_inline = Property(
+        dtype=bool,
+        desc="If True, this nested SDFG will not be inlined in strict mode "
+        "(in the InlineSDFG transformation)",
+        default=False)
+
     def __init__(self,
                  label,
                  sdfg,

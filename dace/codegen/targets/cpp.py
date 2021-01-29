@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
