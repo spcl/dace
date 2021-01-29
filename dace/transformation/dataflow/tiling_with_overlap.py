@@ -20,9 +20,12 @@ class MapTilingWithOverlap(MapTiling):
     """
 
     # Properties
-    overlap = ShapeProperty(dtype=tuple,
-                            default=((1,1), (1,1), (1,1)),
-                            desc="Overlap per dimension")
+    lower_overlap = ShapeProperty(dtype=tuple,
+                                  default=None,
+                                  desc="Lower overlap per dimension")
+    upper_overlap = ShapeProperty(dtype=tuple,
+                                  default=None,
+                                  desc="Upper overlap per dimension")
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
@@ -35,9 +38,10 @@ class MapTilingWithOverlap(MapTiling):
         tile_map_exit = graph.exit_node(tile_map_entry)
 
         # Introduce overlap        
-        for overlap, param in zip(self.overlap, tile_map_entry.params):
-            lower_replace_dict = {pystr_to_symbolic(param): param + '-' + str(overlap[0])}
-            upper_replace_dict = {pystr_to_symbolic(param): param + '+' + str(overlap[1])}
+        for lower_overlap, upper_overlap, param in zip(self.lower_overlap, self.upper_overlap, tile_map_entry.params):
+            pystr = pystr_to_symbolic(param)
+            lower_replace_dict = {pystr: pystr - lower_overlap}
+            upper_replace_dict = {pystr: pystr + upper_overlap}
 
             # Extend the range of the inner map
             map_entry.range.ranges = [
@@ -51,5 +55,5 @@ class MapTilingWithOverlap(MapTiling):
                     for r in edge.data.subset.ranges]
 
         # Reduce the range of the tile_map
-        tile_map_entry.range.ranges = [(r[0]+o[0],r[1]-o[1],r[2]) 
-            for r,o in zip(tile_map_entry.range.ranges, self.overlap)]
+        tile_map_entry.range.ranges = [(r[0]+lo, r[1]-uo, r[2]) 
+            for r,lo,uo in zip(tile_map_entry.range.ranges, self.lower_overlap, self.upper_overlap)]

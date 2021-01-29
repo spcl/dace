@@ -27,7 +27,7 @@ class MapTilingWithOverlapTest(unittest.TestCase):
 
         count = sdfg.apply_transformations(
             MapTilingWithOverlap,
-            options={'tile_sizes': tile_sizes, 'overlap':((1,1),(2,2))})
+            options={'tile_sizes': tile_sizes, 'lower_overlap':(1,2), 'upper_overlap':(1,2)})
         self.assertGreater(count, 0)
         sdfg(inp=A, out=B2, I=A.shape[0], J=A.shape[1])
 

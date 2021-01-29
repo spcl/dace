@@ -97,12 +97,12 @@ class BufferTiling(transformation.Transformation):
         # Situation:
         # -> map1_entry -> ... -> map1_exit -> buffers -> map2_entry -> ...
 
-        map_extents = [(b[0]-a[0], a[1]-b[1])
-                        for a,b in zip(map1_entry.range.ranges, map2_entry.range.ranges)]
+        lower_extents = tuple(b[0]-a[0] for a,b in zip(map1_entry.range.ranges, map2_entry.range.ranges))
+        upper_extents = tuple(a[1]-b[1] for a,b in zip(map1_entry.range.ranges, map2_entry.range.ranges))
 
         # Tile the first map with overlap
         MapTilingWithOverlap.apply_to(sdfg, _map_entry=map1_entry,
-                                      options={'tile_sizes': self.tile_sizes, 'overlap': map_extents})
+            options={'tile_sizes': self.tile_sizes, 'lower_overlap': lower_extents, 'upper_overlap': upper_extents})
         tile_map1_exit = graph.out_edges(map1_exit)[0].dst
         tile_map1_entry = graph.entry_node(tile_map1_exit)
         tile_map1_entry.label = 'BufferTiling'
@@ -118,9 +118,10 @@ class BufferTiling(transformation.Transformation):
                             array = some_buffer,
                             second_map_entry = tile_map2_entry)
 
+        # Optimize the simple cases
         map1_entry.range.ranges = [
-            (r[0], r[0], r[2]) if ext[0] == 0 and ext[1] == 0 and ts == 1 else r
-            for r, ext, ts in zip(map1_entry.range.ranges, map_extents, self.tile_sizes)]
+            (r[0], r[0], r[2]) if l_ext == 0 and u_ext == 0 and ts == 1 else r
+            for r, l_ext, u_ext, ts in zip(map1_entry.range.ranges, lower_extents, upper_extents, self.tile_sizes)]
 
         map2_entry.range.ranges = [
             (r[0], r[0], r[2]) if ts == 1 else r
