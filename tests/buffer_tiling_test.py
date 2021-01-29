@@ -77,6 +77,7 @@ class BufferTilingTest(unittest.TestCase):
         B2 = np.zeros((16, 16), dtype=np.float32)
 
         sdfg = program.to_sdfg()
+        sdfg.apply_strict_transformations()
         sdfg(w3=w3, w5=w5, A=A, B=B1, I=A.shape[0], J=A.shape[1])
 
         count = sdfg.apply_transformations(BufferTiling, options={'tile_sizes': tile_sizes})
