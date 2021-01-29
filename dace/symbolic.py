@@ -145,6 +145,16 @@ class SymExpr(object):
         else:
             self._approx_expr = pystr_to_symbolic(approx_expr)
 
+    def __new__(cls, *args, **kwargs):
+        if len(args) == 1:
+            return args[0]
+        if len(args) == 2:
+            main_expr, approx_expr = args
+            # If values are equivalent, create a normal symbolic expression
+            if approx_expr is None or main_expr == approx_expr:
+                return main_expr
+        return super(SymExpr, cls).__new__(cls)
+
     @property
     def expr(self):
         return self._main_expr
@@ -628,6 +638,20 @@ class SympyBooleanConverter(ast.NodeTransformer):
     Replaces boolean operations with the appropriate SymPy functions to avoid
     non-symbolic evaluation.
     """
+    _ast_to_sympy_comparators = {
+        ast.Eq: 'Eq',
+        ast.Gt: 'Gt',
+        ast.GtE: 'Ge',
+        ast.Lt: 'Lt',
+        ast.LtE: 'Le',
+        ast.NotEq: 'Ne',
+        # Python-specific
+        ast.In: 'In',
+        ast.Is: 'Is',
+        ast.IsNot: 'IsNot',
+        ast.NotIn: 'NotIn',
+    }
+
     def visit_UnaryOp(self, node):
         if isinstance(node.op, ast.Not):
             func_node = ast.copy_location(
@@ -652,7 +676,9 @@ class SympyBooleanConverter(ast.NodeTransformer):
         op = node.ops[0]
         arguments = [node.left, node.comparators[0]]
         func_node = ast.copy_location(
-            ast.Name(id=type(op).__name__, ctx=ast.Load()), node)
+            ast.Name(
+                id=SympyBooleanConverter._ast_to_sympy_comparators[type(op)],
+                ctx=ast.Load()), node)
         new_node = ast.Call(func=func_node,
                             args=[self.visit(arg) for arg in arguments],
                             keywords=[])

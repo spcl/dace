@@ -105,7 +105,7 @@ class DetectLoop(transformation.Transformation):
         # The backedge must assignment the iteration variable
         itvar &= backedge.data.assignments.keys()
         if len(itvar) != 1:
-            # Either no consistent iteration variable sound, or too many
+            # Either no consistent iteration variable found, or too many
             # consistent iteration variables found
             return False
 
