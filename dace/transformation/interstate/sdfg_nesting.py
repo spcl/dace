@@ -595,6 +595,10 @@ class InlineTransients(transformation.Transformation):
 
 
 class ASTRefiner(ast.NodeTransformer):
+    """ 
+    Python AST transformer used in ``RefineNestedAccess`` to reduce (refine) the
+    subscript ranges based on the specification given in the transformation.
+    """
     def __init__(self,
                  to_refine: str,
                  refine_subset: subsets.Subset,
@@ -622,9 +626,26 @@ class ASTRefiner(ast.NodeTransformer):
 @make_properties
 class RefineNestedAccess(transformation.Transformation):
     """ 
-    Modifies memlets of a nested SDFG such that the outer subsets are smallest
-    and the inner subsets are offsetted to zero. This helps with subsequent
-    transformations on the outer SDFGs.
+    Reduces memlet shape when a memlet is connected to a nested SDFG, but not
+    using all of the contents. Makes the outer memlet smaller in shape and 
+    ensures that the offsets in the nested SDFG start with zero.
+    This helps with subsequent transformations on the outer SDFGs.
+
+    For example, in the following program::
+
+        @dace.program
+        def func_a(y):
+            return y[1:5] + 1
+        
+        @dace.program
+        def main(x: dace.float32[N]):
+            return func_a(x)
+
+    The memlet pointing to ``func_a`` will contain all of ``x`` (``x[0:N]``), 
+    and it is offset to ``y[1:5]`` in the function, with ``y``'s size being
+    ``N``. After the transformation, the memlet connected to the nested SDFG of
+    ``func_a`` would contain ``x[1:5]`` directly and the internal ``y`` array
+    would have a size of 4, accessed as ``y[0:4]``.
     """
 
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)

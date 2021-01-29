@@ -472,13 +472,12 @@ def split_interstate_edges(sdfg: SDFG) -> None:
             sdfg.remove_edge(e)
 
 
-def remove_symbol_if_unused(sdfg: SDFG, sym: str) -> bool:
+def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     """
-    Checks for uses of symbol in an SDFG, and if there are none removes said
-    symbol.
+    Checks for uses of symbol in an SDFG, and if there are none returns False.
     :param sdfg: The SDFG to search.
-    :param sym: The symbol to remove.
-    :return: True if the symbol was removed, False otherwise.
+    :param sym: The symbol to test.
+    :return: True if the symbol can be removed, False otherwise.
     """
     for desc in sdfg.arrays.values():
         if sym in map(str, desc.free_symbols):
@@ -490,8 +489,7 @@ def remove_symbol_if_unused(sdfg: SDFG, sym: str) -> bool:
         if sym in e.data.free_symbols:
             return False
 
-    # Not found, remove symbol
-    sdfg.remove_symbol(sym)
+    # Not found, symbol can be removed
     return True
     
     

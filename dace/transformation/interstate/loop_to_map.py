@@ -311,4 +311,5 @@ class LoopToMap(DetectLoop):
         if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
         for sym in symbols_to_remove:
-            helpers.remove_symbol_if_unused(sdfg, sym)
+            if helpers.is_symbol_unused(sdfg, sym):
+                sdfg.remove_symbol(sym)

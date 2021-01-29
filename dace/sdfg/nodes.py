@@ -450,7 +450,7 @@ class NestedSDFG(CodeNode):
     no_inline = Property(
         dtype=bool,
         desc="If True, this nested SDFG not be inlined in strict mode "
-        "(in the InlineSDFG transformation",
+        "(in the InlineSDFG transformation)",
         default=False)
 
     def __init__(self,
