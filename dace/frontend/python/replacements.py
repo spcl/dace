@@ -1821,7 +1821,7 @@ ufuncs = dict(
                   code="__out = __in1 - __in2",
                   reduce="lambda a, b: a - b",
                   initial=np.subtract.identity),
-    multiply=dict(name="_numpy_multipy_",
+    multiply=dict(name="_numpy_multiply_",
                   operator="Mul",
                   inputs=["__in1", "__in2"],
                   outputs=["__out"],

@@ -345,7 +345,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop', 'name'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         for n in nodes:
             nci = copy.copy(context_info)
