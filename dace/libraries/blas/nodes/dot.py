@@ -585,7 +585,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=False,
+    n = dace.properties.SymbolicProperty(allow_none=True,
                                          default=dace.symbolic.symbol("n"))
 
     def __init__(self, name, n=None, *args, **kwargs):

@@ -1,15 +1,15 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace.symbolic import symstr
-from dace.properties import Property
+from dace import properties, symbolic
 import dace.library
 import dace.sdfg.nodes
 from dace.sdfg import SDFG, SDFGState
 from dace import memlet as mm, data as dt
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
-from .. import environments
+from dace.libraries.blas import environments
 import numpy as np
 
 
@@ -23,16 +23,17 @@ class ExpandGemvPure(ExpandTransformation):
         node.validate(parent_sdfg, parent_state)
         sdfg = dace.SDFG(node.label + "_sdfg")
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
-                                                       shape_x, _),
-         _) = _get_matmul_operands(node,
-                                   parent_state,
-                                   parent_sdfg,
-                                   name_lhs="_A",
-                                   name_rhs="_x",
-                                   name_out="_y")
+                                                       shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y,
+          strides_y)) = _get_matmul_operands(node,
+                                             parent_state,
+                                             parent_sdfg,
+                                             name_lhs="_A",
+                                             name_rhs="_x",
+                                             name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype_x = outer_array_x.dtype.type
-        dtype_y = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_x).type]
+        dtype_y = outer_array_y.dtype.type
 
         if outer_array_a.dtype.veclen > 1 or outer_array_x.dtype.veclen > 1:
             raise NotImplementedError("Vectorization for pure GEMV NYI.")
@@ -48,7 +49,6 @@ class ExpandGemvPure(ExpandTransformation):
                     trans_shape_a[1], shape_x[0]))
 
         N, M = trans_shape_a[0], trans_shape_a[1]
-        shape_y = (N, )
 
         if outer_array_a.storage != outer_array_x.storage:
             raise ValueError("Input matrices must have same storage")
@@ -59,8 +59,16 @@ class ExpandGemvPure(ExpandTransformation):
                                     dtype_a,
                                     strides=strides_a,
                                     storage=storage)
-        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, storage=storage)
-        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, storage=storage)
+        _, array_x = sdfg.add_array("_x",
+                                    shape_x,
+                                    dtype_x,
+                                    strides=strides_x,
+                                    storage=storage)
+        _, array_y = sdfg.add_array("_y",
+                                    shape_y,
+                                    dtype_y,
+                                    strides=strides_y,
+                                    storage=storage)
 
         mul_program = "__out = {} * __A * __x".format(node.alpha)
 
@@ -79,9 +87,10 @@ class ExpandGemvPure(ExpandTransformation):
 
         # Initialization map
         init_state.add_mapped_tasklet(
-            "gemv_init",
-            {"_o%d" % i: "0:%s" % symstr(d)
-             for i, d in enumerate(shape_y)}, {},
+            "gemv_init", {
+                "_o%d" % i: "0:%s" % symbolic.symstr(d)
+                for i, d in enumerate(shape_y)
+            }, {},
             "out = 0", {
                 "out":
                 dace.Memlet("{}[{}]".format(
@@ -698,23 +707,93 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         return sdfg
 
 
+@dace.library.expansion
+class ExpandGemvCuBLAS(ExpandTransformation):
+
+    environments = [environments.cublas.cuBLAS]
+
+    @staticmethod
+    def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+        node.validate(sdfg, state)
+
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
+                                                       shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y,
+          strides_y)) = _get_matmul_operands(node,
+                                             state,
+                                             sdfg,
+                                             name_lhs="_A",
+                                             name_rhs="_x",
+                                             name_out="_y")
+        dtype_a = outer_array_a.dtype.type
+        dtype = outer_array_x.dtype.base_type
+        veclen = outer_array_x.dtype.veclen
+        m = m or node.m
+        n = n or node.n
+        if m is None:
+            m = shape_y[0]
+        if n is None:
+            n = shape_x[0]
+        trans = 'CUBLAS_OP_N' if node.transA else 'CUBLAS_OP_T'
+        if not node.transA:
+            m, n = n, m
+            lda = strides_a[0]
+            if strides_a[1] != 1:
+                raise NotImplementedError('Matrix must be contiguous in rows')
+        else:
+            lda = strides_a[1]
+            if strides_a[0] != 1:
+                raise NotImplementedError('Matrix must be contiguous in rows')
+        if veclen != 1:
+            raise NotImplementedError
+
+        func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+        func += 'gemv'
+
+        # TODO: (alpha,beta) != (1,0)
+        if node.alpha != 1.0 or node.beta != 0.0:
+            raise NotImplementedError
+        alpha = (
+            '__state->cublas_handle.Constants(__dace_cuda_device).%sPone()' %
+            runtimetype)
+        beta = (
+            '__state->cublas_handle.Constants(__dace_cuda_device).%sZero()' %
+            runtimetype)
+
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) + f"""
+cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
+             _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});""")
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
         "pure": ExpandGemvPure,
+        "cuBLAS": ExpandGemvCuBLAS,
         "FPGA_Accumulate": ExpandGemvFpgaAccumulate,
         "FPGA_TilesByColumn": ExpandGemvFpgaTilesByColumn,
     }
     default_implementation = None
 
     # Object fields
-    alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
-    beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
+    alpha = properties.SymbolicProperty(allow_none=False, default=1)
+    beta = properties.SymbolicProperty(allow_none=False, default=0)
 
-    transA = Property(dtype=bool,
-                      desc="Whether to transpose A before multiplying")
+    transA = properties.Property(
+        dtype=bool, desc="Whether to transpose A before multiplying")
+
+    n = properties.SymbolicProperty(allow_none=True, default=None)
+    m = properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
         super().__init__(
