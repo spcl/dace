@@ -773,12 +773,79 @@ cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
         return tasklet
 
 
+@dace.library.expansion
+class ExpandGemvOpenBLAS(ExpandTransformation):
+
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+        node.validate(sdfg, state)
+
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
+                                                       shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y,
+          strides_y)) = _get_matmul_operands(node,
+                                             state,
+                                             sdfg,
+                                             name_lhs="_A",
+                                             name_rhs="_x",
+                                             name_out="_y")
+        dtype_a = outer_array_a.dtype.type
+        dtype = outer_array_x.dtype.base_type
+        veclen = outer_array_x.dtype.veclen
+        m = m or node.m
+        n = n or node.n
+        if m is None:
+            m = shape_y[0]
+        if n is None:
+            n = shape_x[0]
+        layout = 'CblasColMajor'
+        trans = 'CblasNoTrans' if node.transA else 'CblasTrans'
+        if not node.transA:
+            m, n = n, m
+            lda = strides_a[0]
+            if strides_a[1] != 1:
+                raise NotImplementedError('Matrix must be contiguous in rows')
+        else:
+            lda = strides_a[1]
+            if strides_a[0] != 1:
+                raise NotImplementedError('Matrix must be contiguous in rows')
+        if veclen != 1:
+            raise NotImplementedError
+
+        func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+        func = func.lower() + 'gemv'
+
+        code = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {node.alpha}, _A, {lda},
+                                _x, {strides_x[0]}, {node.beta}, _y, {strides_y[0]});"""
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
+
+
+@dace.library.expansion
+class ExpandGemvMKL(ExpandTransformation):
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandGemvOpenBLAS.expansion(*args, **kwargs)
+
+
 @dace.library.node
 class Gemv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
         "pure": ExpandGemvPure,
+        "OpenBLAS": ExpandGemvOpenBLAS,
+        "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
         "FPGA_Accumulate": ExpandGemvFpgaAccumulate,
         "FPGA_TilesByColumn": ExpandGemvFpgaTilesByColumn,
