@@ -28,13 +28,14 @@ def test_gemv_strided(implementation):
         sdfg.apply_transformations_repeated(RedundantSecondArray)
 
     blas.default_implementation = implementation
-
     try:
         daceres = sdfg(A=A, x=x, M=20, N=30)
     except (CompilationError, CompilerConfigurationError):
         print('Failed to compile, skipping')
+        blas.default_implementation = None
         return
 
+    blas.default_implementation = None
     assert np.allclose(daceres, reference)
 
 
