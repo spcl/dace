@@ -11,6 +11,7 @@ from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
 import numpy as np
+import warnings
 
 
 @dace.library.expansion
@@ -19,7 +20,7 @@ class ExpandGemvPure(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg):
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
         sdfg = dace.SDFG(node.label + "_sdfg")
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
@@ -742,15 +743,27 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         elif strides_a[1] == 1:
             lda = strides_a[0]
         else:
-            raise NotImplementedError('Matrix must be contiguous in at least '
-                                      'one dimension')
+            warnings.warn('Matrix must be contiguous in at least '
+                          'one dimension. Falling back to pure expansion.')
+            return ExpandGemvPure.expansion(node,
+                                            state,
+                                            sdfg,
+                                            m=m,
+                                            n=n,
+                                            **kwargs)
 
         trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
         if not node.transA:
             m, n = n, m
-                
+
         if veclen != 1:
-            raise NotImplementedError
+            warnings.warn('Vector GEMV not supported, falling back to pure')
+            return ExpandGemvPure.expansion(node,
+                                            state,
+                                            sdfg,
+                                            m=m,
+                                            n=n,
+                                            **kwargs)
 
         func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
         func += 'gemv'
@@ -813,16 +826,28 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         elif strides_a[1] == 1:
             lda = strides_a[0]
         else:
-            raise NotImplementedError('Matrix must be contiguous in at least '
-                                      'one dimension')
+            warnings.warn('Matrix must be contiguous in at least '
+                          'one dimension. Falling back to pure expansion.')
+            return ExpandGemvPure.expansion(node,
+                                            state,
+                                            sdfg,
+                                            m=m,
+                                            n=n,
+                                            **kwargs)
 
         layout = 'CblasColMajor'
         trans = 'CblasNoTrans' if transA else 'CblasTrans'
         if not node.transA:
             m, n = n, m
-                
+
         if veclen != 1:
-            raise NotImplementedError
+            warnings.warn('Vector GEMV not supported, falling back to pure.')
+            return ExpandGemvPure.expansion(node,
+                                            state,
+                                            sdfg,
+                                            m=m,
+                                            n=n,
+                                            **kwargs)
 
         func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
         func = func.lower() + 'gemv'
