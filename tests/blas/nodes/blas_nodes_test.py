@@ -11,7 +11,7 @@ N = dace.symbol('N')
 
 
 @pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ),
+                         [('pure', ), ('MKL', ), ('OpenBLAS', ),
                           pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemv_strided(implementation):
     @dace.program
@@ -38,8 +38,8 @@ def test_gemv_strided(implementation):
     assert np.allclose(daceres, reference)
 
 
-
 if __name__ == '__main__':
     test_gemv_strided('pure')
     test_gemv_strided('MKL')
+    test_gemv_strided('OpenBLAS')
     test_gemv_strided('cuBLAS')
