@@ -133,7 +133,7 @@ class ExpandDotCuBLAS(ExpandTransformation):
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
-                                          node.out_connectors,
+                                          {'_result': dtypes.pointer(dtype)},
                                           code,
                                           language=dace.dtypes.Language.CPP)
 
