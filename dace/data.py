@@ -193,8 +193,7 @@ class Scalar(Data):
         return True
 
     def as_arg(self, with_types=True, for_call=False, name=None):
-        if self.storage in (dtypes.StorageType.GPU_Global,
-                            dtypes.StorageType.FPGA_Global):
+        if self.storage is dtypes.StorageType.GPU_Global:
             return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name

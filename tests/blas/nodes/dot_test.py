@@ -37,6 +37,7 @@ def pure_graph(implementation, dtype, veclen):
 
     dot_node = blas.Dot("dot")
     dot_node.implementation = implementation
+    dot_node.n = n
 
     state.add_memlet_path(x,
                           dot_node,
