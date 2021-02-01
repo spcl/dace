@@ -208,6 +208,10 @@ class RedundantSecondArray(pm.Transformation):
         if not out_desc.transient:
             return False
 
+        # Dimensionality must be the same in strict mode
+        if strict and len(in_desc.shape) != len(out_desc.shape):
+            return False
+
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:

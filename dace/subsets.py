@@ -116,7 +116,9 @@ def _expr(val):
 def _approx(val):
     if isinstance(val, symbolic.SymExpr):
         return val.approx
-    return val
+    elif isinstance(val, sp.Basic):
+        return val
+    return symbolic.pystr_to_symbolic(val)
 
 
 def _tuple_to_symexpr(val):
