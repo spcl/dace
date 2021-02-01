@@ -33,6 +33,65 @@ def test_gemv_strided(implementation):
     except (CompilationError, CompilerConfigurationError):
         print('Failed to compile, skipping')
         blas.default_implementation = None
+        pytest.skip("Failed compilation")
+        return
+
+    blas.default_implementation = None
+    assert np.allclose(daceres, reference)
+
+
+def test_dot_subset():
+    @dace.program
+    def dot(x: dace.float64[N, N], y: dace.float64[N, N]):
+        return x[1, 1:N - 1] @ y[1:N - 1, 1]
+
+    x = np.random.rand(30, 30)
+    y = np.random.rand(30, 30)
+    reference = x[1, 1:29] @ y[1:29, 1]
+    sdfg = dot.to_sdfg()
+
+    # Enforce one-dimensional memlets from two-dimensional arrays
+    sdfg.apply_transformations_repeated(RedundantSecondArray)
+    blas.default_implementation = 'pure'
+    try:
+        daceres = sdfg(x=x, y=y, N=30)
+    except (CompilationError, CompilerConfigurationError):
+        print('Failed to compile, skipping')
+        blas.default_implementation = None
+        pytest.skip("Failed compilation")
+        return
+
+    blas.default_implementation = None
+    assert np.allclose(daceres, reference)
+
+
+@pytest.mark.parametrize(('implementation', ),
+                         [('pure', ), ('MKL', ), ('OpenBLAS', ),
+                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+def test_dot_strided(implementation):
+    @dace.program
+    def dot(x: dace.float64[N, N], y: dace.float64[N, N]):
+        return x[1, :] @ y[:, 1]
+
+    x = np.random.rand(30, 30)
+    y = np.random.rand(30, 30)
+    reference = x[1, :] @ y[:, 1]
+    sdfg = dot.to_sdfg()
+    sdfg.name = f'{sdfg.name}_{implementation}'
+
+    # Enforce one-dimensional memlets from two-dimensional arrays
+    sdfg.apply_transformations_repeated(RedundantSecondArray)
+
+    if implementation == 'cuBLAS':
+        sdfg.apply_gpu_transformations()
+
+    blas.default_implementation = implementation
+    try:
+        daceres = sdfg(x=x, y=y, N=30)
+    except (CompilationError, CompilerConfigurationError):
+        print('Failed to compile, skipping')
+        blas.default_implementation = None
+        pytest.skip("Failed compilation")
         return
 
     blas.default_implementation = None
@@ -40,7 +99,9 @@ def test_gemv_strided(implementation):
 
 
 if __name__ == '__main__':
-    test_gemv_strided('pure')
-    test_gemv_strided('MKL')
-    test_gemv_strided('OpenBLAS')
-    test_gemv_strided('cuBLAS')
+    implementations = ['pure', 'MKL', 'cuBLAS']
+    for implementation in implementations:
+        test_gemv_strided(implementation)
+    test_dot_subset()
+    for implementation in implementations:
+        test_dot_strided(implementation)
