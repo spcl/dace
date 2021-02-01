@@ -52,14 +52,10 @@ class ExpandDotPure(ExpandTransformation):
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
         # Initialization map
-        init_write = init_state.add_write("_result")
-        init_tasklet = init_state.add_tasklet("dot_init", {}, {"_out"},
-                                              "_out = 0",
-                                              location=node.location)
-        init_state.add_memlet_path(init_tasklet,
-                                   init_write,
-                                   src_conn="_out",
-                                   memlet=dace.Memlet("_result[0]"))
+        init_state.add_mapped_tasklet("dot_init", {"__unused": "0:1"}, {},
+                                      "_out = 0",
+                                      {"_out": dace.Memlet("_result[0]")},
+                                      external_edges=True)
 
         # Multiplication map
         state.add_mapped_tasklet(
@@ -131,9 +127,8 @@ class ExpandDotCuBLAS(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = (
-            environments.cublas.cuBLAS.handle_setup_code(node) +
-            f"""cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y, 
+        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
+                f"""cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y, 
                              {stride_y}, _result);""")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
