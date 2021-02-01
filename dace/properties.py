@@ -1138,9 +1138,8 @@ class SymbolicProperty(Property):
     def __set__(self, obj, val):
         if (val is not None and not isinstance(val, sp.Expr)
                 and not isinstance(val, Integral) and not isinstance(val, str)):
-            raise TypeError(
-                "Property {} must be a literal or symbolic expression".format(
-                    self.attr_name))
+            raise TypeError(f"Property {self.attr_name} must be a literal "
+                            f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 

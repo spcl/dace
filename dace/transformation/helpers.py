@@ -102,14 +102,14 @@ def nest_state_subgraph(sdfg: SDFG,
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
     input_arrays = set()
-    output_arrays = set()
+    output_arrays = {}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode)
                 and node.data not in subgraph_transients):
             if node.has_reads(state):
                 input_arrays.add(node.data)
             if node.has_writes(state):
-                output_arrays.add(node.data)
+                output_arrays[node.data] = state.in_edges(node)[0].data.wcr
 
     # Create the nested SDFG
     nsdfg = SDFG(name or 'nested_' + state.label)
@@ -120,7 +120,7 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in (input_arrays | output_arrays):
+    for name in (input_arrays | output_arrays.keys()):
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
@@ -223,9 +223,10 @@ def nest_state_subgraph(sdfg: SDFG,
                     global_subsets[original_edge.data.data][1], True)
 
     # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg, None,
-                                        set(input_names) | input_arrays,
-                                        set(output_names) | output_arrays)
+    nested_sdfg = state.add_nested_sdfg(
+        nsdfg, None,
+        set(input_names) | input_arrays,
+        set(output_names) | output_arrays.keys())
 
     # Reconnect memlets to nested SDFG
     reconnected_in = set()
@@ -251,6 +252,7 @@ def nest_state_subgraph(sdfg: SDFG,
         else:
             data = copy.deepcopy(edge.data)
             data.subset = global_subsets[edge.data.data][1]
+        data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out.add(name)
 
@@ -263,12 +265,12 @@ def nest_state_subgraph(sdfg: SDFG,
             state.add_nedge(entry, node, Memlet())
         state.add_edge(node, None, nested_sdfg, name,
                        Memlet.from_array(name, sdfg.arrays[name]))
-    for name in output_arrays:
+    for name, wcr in output_arrays.items():
         node = state.add_write(name)
         if exit is not None:
             state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None,
-                       Memlet.from_array(name, sdfg.arrays[name]))
+                       Memlet(data=name, wcr=wcr))
 
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())
@@ -305,9 +307,9 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     # Mark boundary access nodes to keep after fission
     nodes_to_remove = set(subgraph.nodes())
     nodes_to_remove -= set(n for n in subgraph.source_nodes()
-                           if state.in_degree(n) > 0)
+                           if state.out_degree(n) > 1)
     nodes_to_remove -= set(n for n in subgraph.sink_nodes()
-                           if state.out_degree(n) > 0)
+                           if state.in_degree(n) > 1)
     state.remove_nodes_from(nodes_to_remove)
 
     for n in subgraph.nodes():
@@ -470,6 +472,27 @@ def split_interstate_edges(sdfg: SDFG) -> None:
             sdfg.remove_edge(e)
 
 
+def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
+    """
+    Checks for uses of symbol in an SDFG, and if there are none returns False.
+    :param sdfg: The SDFG to search.
+    :param sym: The symbol to test.
+    :return: True if the symbol can be removed, False otherwise.
+    """
+    for desc in sdfg.arrays.values():
+        if sym in map(str, desc.free_symbols):
+            return False
+    for state in sdfg.nodes():
+        if sym in state.free_symbols:
+            return False
+    for e in sdfg.edges():
+        if sym in e.data.free_symbols:
+            return False
+
+    # Not found, symbol can be removed
+    return True
+    
+    
 def are_subsets_contiguous(subset_a: subsets.Subset,
                             subset_b: subsets.Subset,
                             dim: int = None) -> bool:

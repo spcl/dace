@@ -283,7 +283,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
         # Check for duplicate connector names (unless it's a nested SDFG)
         if (len(node.in_connectors.keys() & node.out_connectors.keys()) > 0
-                and not isinstance(node, nd.NestedSDFG)):
+                and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups),
                                        sdfg, state_id, nid)
