@@ -734,16 +734,21 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             m = shape_y[0]
         if n is None:
             n = shape_x[0]
-        trans = 'CUBLAS_OP_N' if node.transA else 'CUBLAS_OP_T'
+
+        transA = node.transA
+        if strides_a[0] == 1:
+            transA = not transA
+            lda = strides_a[1]
+        elif strides_a[1] == 1:
+            lda = strides_a[0]
+        else:
+            raise NotImplementedError('Matrix must be contiguous in at least '
+                                      'one dimension')
+
+        trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
         if not node.transA:
             m, n = n, m
-            lda = strides_a[0]
-            if strides_a[1] != 1:
-                raise NotImplementedError('Matrix must be contiguous in rows')
-        else:
-            lda = strides_a[1]
-            if strides_a[0] != 1:
-                raise NotImplementedError('Matrix must be contiguous in rows')
+                
         if veclen != 1:
             raise NotImplementedError
 
