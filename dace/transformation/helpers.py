@@ -269,8 +269,8 @@ def nest_state_subgraph(sdfg: SDFG,
         node = state.add_write(name)
         if exit is not None:
             state.add_nedge(node, exit, Memlet())
-        state.add_edge(nested_sdfg, name, node, None,
-                       Memlet(data=name, wcr=wcr))
+        state.add_edge(nested_sdfg, name, node, None, Memlet(data=name,
+                                                             wcr=wcr))
 
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())
@@ -491,11 +491,11 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
 
     # Not found, symbol can be removed
     return True
-    
-    
+
+
 def are_subsets_contiguous(subset_a: subsets.Subset,
-                            subset_b: subsets.Subset,
-                            dim: int = None) -> bool:
+                           subset_b: subsets.Subset,
+                           dim: int = None) -> bool:
 
     if dim is not None:
         # A version that only checks for contiguity in certain
@@ -503,7 +503,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset,
         if (not isinstance(subset_a, subsets.Range)
                 or not isinstance(subset_b, subsets.Range)):
             raise NotImplementedError('Contiguous subset check only '
-                                        'implemented for ranges')
+                                      'implemented for ranges')
 
         # Other dimensions must be equal
         for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
@@ -525,7 +525,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset,
     bbunion = subsets.bounding_box_union(subset_a, subset_b)
     try:
         if bbunion.num_elements() == (subset_a.num_elements() +
-                                        subset_b.num_elements()):
+                                      subset_b.num_elements()):
             return True
     except TypeError:
         pass
@@ -543,8 +543,7 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset],
     """
     # Currently O(n^3) worst case. TODO: improve
     subset_set = set(
-        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices
-                                                    ) else s
+        subsets.Range.from_indices(s) if isinstance(s, subsets.Indices) else s
         for s in subset_list)
     while True:
         for sa, sb in itertools.product(subset_set, subset_set):
@@ -564,3 +563,18 @@ def find_contiguous_subsets(subset_list: List[subsets.Subset],
         else:  # No modification performed
             break
     return subset_set
+
+
+def constant_symbols(sdfg: SDFG) -> Set[str]:
+    """ 
+    Returns a set of symbols that will never change values throughout the course
+    of the given SDFG. Specifically, these are the input symbols (i.e., not
+    defined in a particular scope) that are never set by interstate edges.
+    :param sdfg: The input SDFG.
+    :return: A set of symbol names that remain constant throughout the SDFG.
+    """
+    interstate_symbols = {
+        k
+        for e in sdfg.edges() for k in e.data.assignments.keys()
+    }
+    return set(sdfg.symbols) - interstate_symbols
