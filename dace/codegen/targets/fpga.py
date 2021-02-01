@@ -1128,6 +1128,17 @@ class FPGACodeGen(TargetCodeGenerator):
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
                 bound = pipeline.loop_bound_str()
+
+                if len(in_out_data) > 0:
+                    if is_there_a_wcr == False:
+                        # add pragma to ignore all loop carried dependencies
+                        self.generate_no_dependence_pre(
+                            result, sdfg, state_id, node)
+                    else:
+                        # add specific pragmas
+                        for candidate in in_out_data:
+                            self.generate_no_dependence_pre(
+                                result, sdfg, state_id, node, candidate)
                 result.write(
                     "for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
                         it=flat_it, bound=node.pipeline.loop_bound_str()))
