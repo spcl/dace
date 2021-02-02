@@ -249,7 +249,7 @@ def _elementwise(pv: 'ProgramVisitor',
         out = state.add_write(out_array)
         # tasklet = state.add_tasklet("_elementwise_", {arg}, {'__out'}, code)
         tasklet = state.add_tasklet("_elementwise_", {'__inp'}, {'__out'}, code)
-        state.add_edge(inp, None, tasklet, arg,
+        state.add_edge(inp, None, tasklet, '__inp',
                        Memlet.from_array(in_array, inparr))
         state.add_edge(tasklet, '__out', out, None,
                        Memlet.from_array(out_array, outarr))
@@ -1584,6 +1584,11 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Array', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -1606,6 +1611,11 @@ def _makebinop(op, opcode):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
     
     @oprepo.replaces_operator('View', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('View', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
