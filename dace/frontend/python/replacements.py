@@ -247,7 +247,8 @@ def _elementwise(pv: 'ProgramVisitor',
     if num_elements == 1:
         inp = state.add_read(in_array)
         out = state.add_write(out_array)
-        tasklet = state.add_tasklet("_elementwise_", {arg}, {'__out'}, code)
+        # tasklet = state.add_tasklet("_elementwise_", {arg}, {'__out'}, code)
+        tasklet = state.add_tasklet("_elementwise_", {'__inp'}, {'__out'}, code)
         state.add_edge(inp, None, tasklet, arg,
                        Memlet.from_array(in_array, inparr))
         state.add_edge(tasklet, '__out', out, None,
@@ -260,7 +261,8 @@ def _elementwise(pv: 'ProgramVisitor',
                 for i, n in enumerate(inparr.shape)
             },
             inputs={
-                arg:
+                # arg:
+                '__inp':
                 Memlet.simple(
                     in_array,
                     ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
