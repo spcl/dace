@@ -106,6 +106,14 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            library_prefix:
+                type: str
+                default: ""
+                default_Linux: "lib"
+                default_Darwin: "lib"
+                title: Library prefix
+                description: Filename prefix for shared libraries.
+
             library_extension:
                 type: str
                 default: so
