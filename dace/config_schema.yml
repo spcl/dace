@@ -30,6 +30,21 @@ required:
                     Automatically specialize every SDFG to the symbol values
                     at call-time. Requires all symbols to be set.
 
+            autooptimize:
+                type: bool
+                default: false
+                title: Run auto-optimization heuristics
+                description: >
+                    Automatically runs the set of optimizing transformation
+                    heuristics on any program called via the Python frontend.
+
+            autotile_size:
+                type: int
+                default: 128
+                title: Default tile size in auto-optimization
+                description: >
+                    Sets the default tile size for the optimization heuristics.
+
             transform_on_call:
                 type: bool
                 default: false
