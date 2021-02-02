@@ -123,6 +123,14 @@ class InstrumentationType(aenum.AutoNumberEnum):
     PAPI_Counters = ()
     GPU_Events = ()
 
+@extensible_enum
+class TilingType(aenum.AutoNumberEnum):
+    """ Available tiling types in a `StripMining` transformation. """
+
+    Normal = ()
+    CeilRange = ()
+    NumberOfTiles = ()
+
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
