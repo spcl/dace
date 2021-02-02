@@ -2,10 +2,12 @@
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
 from dace import data, memlet, dtypes, registry, sdfg as sd
-from dace.sdfg import nodes
+from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
+from collections import defaultdict
+from typing import Dict
 
 
 @registry.autoregister
@@ -103,9 +105,9 @@ class GPUTransformSDFG(transformation.Transformation):
         # Find all input and output data descriptors
         input_nodes = []
         output_nodes = []
-        global_code_nodes = [[] for _ in sdfg.nodes()]
+        global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
 
-        for i, state in enumerate(sdfg.nodes()):
+        for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode)
@@ -126,10 +128,6 @@ class GPUTransformSDFG(transformation.Transformation):
                     if (state.in_degree(node) > 0
                             and node.data not in output_nodes):
                         output_nodes.append((node.data, node.desc(sdfg)))
-                elif isinstance(node, nodes.CodeNode) and sdict[node] is None:
-                    if not isinstance(node,
-                                      (nodes.LibraryNode, nodes.NestedSDFG)):
-                        global_code_nodes[i].append(node)
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
@@ -138,6 +136,14 @@ class GPUTransformSDFG(transformation.Transformation):
                             and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append(
                             (e.data.data, sdfg.arrays[e.data.data]))
+
+        # Collect free tasklets
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.Tasklet):
+                if (state.entry_node(node) is None
+                        and not scope.is_devicelevel_gpu(
+                            state.parent, state, node)):
+                    global_code_nodes[state].append(node)
 
         start_state = sdfg.start_state
         end_states = sdfg.sink_nodes()
@@ -269,7 +275,7 @@ class GPUTransformSDFG(transformation.Transformation):
         #######################################################
         # Step 5: Wrap free tasklets and nested SDFGs with a GPU map
 
-        for state, gcodes in zip(sdfg.nodes(), global_code_nodes):
+        for state, gcodes in global_code_nodes.items():
             for gcode in gcodes:
                 if gcode.label in self.exclude_tasklets.split(','):
                     continue
@@ -310,7 +316,7 @@ class GPUTransformSDFG(transformation.Transformation):
         #######################################################
         # Step 6: Change all top-level maps and library nodes to GPU schedule
 
-        for i, state in enumerate(sdfg.nodes()):
+        for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
                 if sdict[node] is None:
