@@ -241,7 +241,7 @@ def _elementwise(pv: 'ProgramVisitor',
     except AttributeError:
         raise SyntaxError("Could not parse func {}".format(func))
 
-    code = "__out = {}".format(body)
+    code = "__out = {}".format(body).replace(arg, '__inp')
 
     num_elements = reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:
