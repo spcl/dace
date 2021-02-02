@@ -1,14 +1,18 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
+import ast
+from collections import defaultdict
 from copy import deepcopy as dc
+from dace.frontend.python.ndloop import ndrange
 import itertools
 import networkx as nx
-from typing import Dict, List, Set, Optional
+from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple
 import warnings
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes
-from dace.sdfg import nodes
+from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace.frontend.python import astutils
+from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
@@ -46,7 +50,6 @@ class InlineSDFG(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        # Matches anything
         return [sdutil.node_path_graph(InlineSDFG._nested_sdfg)]
 
     @staticmethod
@@ -101,6 +104,8 @@ class InlineSDFG(transformation.Transformation):
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
         nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
+        if nested_sdfg.no_inline:
+            return False
         if len(nested_sdfg.sdfg.nodes()) != 1:
             return False
 
@@ -453,6 +458,390 @@ class InlineSDFG(transformation.Transformation):
                     traverse(child)
 
         return result
+
+
+@registry.autoregister_params(singlestate=True)
+@make_properties
+class InlineTransients(transformation.Transformation):
+    """ 
+    Inlines all transient arrays that are not used anywhere else into a 
+    nested SDFG.
+    """
+
+    nsdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def annotates_memlets():
+        return True
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(InlineTransients.nsdfg)]
+
+    @staticmethod
+    def _candidates(sdfg: SDFG, graph: SDFGState,
+                    nsdfg: nodes.NestedSDFG) -> Dict[str, str]:
+        candidates = {}
+        for e in graph.all_edges(nsdfg):
+            if e.data.is_empty():
+                continue
+            conn = (e.src_conn if e.src is nsdfg else e.dst_conn)
+            desc = sdfg.arrays[e.data.data]
+            # Needs to be transient
+            if not desc.transient:
+                continue
+            # Needs to be allocated in "Scope" lifetime
+            if desc.lifetime is not dtypes.AllocationLifetime.Scope:
+                continue
+            # If same transient is connected with multiple connectors, bail
+            # for now
+            if e.data.data in candidates and candidates[e.data.data] != conn:
+                del candidates[e.data.data]
+                continue
+            # (for now) needs to use entire data descriptor (skipped due to
+            # above check for multiple connectors)
+            # if desc.shape != e.data.subset.size():
+            #     continue
+            candidates[e.data.data] = conn
+
+        if not candidates:
+            return candidates
+
+        # Check for uses in other states
+        for state in sdfg.nodes():
+            if state is graph:
+                continue
+            for node in state.data_nodes():
+                if node.data in candidates:
+                    del candidates[node.data]
+
+        if not candidates:
+            return candidates
+
+        # Check for uses in state
+        access_nodes = set()
+        for e in graph.in_edges(nsdfg):
+            src = graph.memlet_path(e)[0].src
+            if isinstance(src, nodes.AccessNode) and graph.in_degree(src) == 0:
+                access_nodes.add(src)
+        for e in graph.out_edges(nsdfg):
+            dst = graph.memlet_path(e)[-1].dst
+            if isinstance(dst, nodes.AccessNode) and graph.out_degree(dst) == 0:
+                access_nodes.add(dst)
+        for node in graph.data_nodes():
+            if node.data in candidates and node not in access_nodes:
+                del candidates[node.data]
+
+        return candidates
+
+    @staticmethod
+    def can_be_applied(graph: SDFGState,
+                       candidate: Dict[transformation.PatternNode, int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False):
+        nsdfg = graph.node(candidate[InlineTransients.nsdfg])
+
+        # Not every schedule is supported
+        if strict:
+            if nsdfg.schedule not in (dtypes.ScheduleType.Default,
+                                      dtypes.ScheduleType.Sequential,
+                                      dtypes.ScheduleType.CPU_Multicore,
+                                      dtypes.ScheduleType.GPU_Device):
+                return False
+
+        candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
+        return len(candidates) > 0
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        return graph.label
+
+    def apply(self, sdfg):
+        state: SDFGState = sdfg.nodes()[self.state_id]
+        nsdfg_node: nodes.NestedSDFG = self.nsdfg(sdfg)
+        nsdfg: SDFG = nsdfg_node.sdfg
+        toremove = InlineTransients._candidates(sdfg, state, nsdfg_node)
+
+        for dname, cname in toremove.items():
+            # Make nested SDFG data descriptors transient
+            nsdfg.arrays[cname].transient = True
+
+            # Remove connectors from node
+            nsdfg_node.remove_in_connector(cname)
+            nsdfg_node.remove_out_connector(cname)
+
+            # Remove data descriptor from outer SDFG
+            del sdfg.arrays[dname]
+
+        # Remove edges from outer SDFG
+        for e in state.in_edges(nsdfg_node):
+            if e.data.data not in toremove:
+                continue
+            tree = state.memlet_tree(e)
+            for te in tree:
+                state.remove_edge_and_connectors(te)
+            # Remove newly isolated node
+            state.remove_node(tree.root().edge.src)
+
+        for e in state.out_edges(nsdfg_node):
+            if e.data.data not in toremove:
+                continue
+            tree = state.memlet_tree(e)
+            for te in tree:
+                state.remove_edge_and_connectors(te)
+            # Remove newly isolated node
+            state.remove_node(tree.root().edge.dst)
+
+
+class ASTRefiner(ast.NodeTransformer):
+    """ 
+    Python AST transformer used in ``RefineNestedAccess`` to reduce (refine) the
+    subscript ranges based on the specification given in the transformation.
+    """
+    def __init__(self,
+                 to_refine: str,
+                 refine_subset: subsets.Subset,
+                 sdfg: SDFG,
+                 indices: Set[int] = None) -> None:
+        self.to_refine = to_refine
+        self.subset = refine_subset
+        self.sdfg = sdfg
+        self.indices = indices
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
+        if astutils.rname(node.value) == self.to_refine:
+            rng = subsets.Range(
+                astutils.subscript_to_slice(node,
+                                            self.sdfg.arrays,
+                                            without_array=True))
+            rng.offset(self.subset, True, self.indices)
+            return ast.copy_location(
+                astutils.slice_to_subscript(self.to_refine, rng), node)
+
+        return self.generic_visit(node)
+
+
+@registry.autoregister_params(singlestate=True)
+@make_properties
+class RefineNestedAccess(transformation.Transformation):
+    """ 
+    Reduces memlet shape when a memlet is connected to a nested SDFG, but not
+    using all of the contents. Makes the outer memlet smaller in shape and 
+    ensures that the offsets in the nested SDFG start with zero.
+    This helps with subsequent transformations on the outer SDFGs.
+
+    For example, in the following program::
+
+        @dace.program
+        def func_a(y):
+            return y[1:5] + 1
+        
+        @dace.program
+        def main(x: dace.float32[N]):
+            return func_a(x)
+
+    The memlet pointing to ``func_a`` will contain all of ``x`` (``x[0:N]``), 
+    and it is offset to ``y[1:5]`` in the function, with ``y``'s size being
+    ``N``. After the transformation, the memlet connected to the nested SDFG of
+    ``func_a`` would contain ``x[1:5]`` directly and the internal ``y`` array
+    would have a size of 4, accessed as ``y[0:4]``.
+    """
+
+    nsdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def annotates_memlets():
+        return True
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(RefineNestedAccess.nsdfg)]
+
+    @staticmethod
+    def _candidates(
+        state: SDFGState, nsdfg: nodes.NestedSDFG
+    ) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet,
+                                                                   Set[int]]]]:
+        in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
+        out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
+        ignore = set()
+        for nstate in nsdfg.sdfg.nodes():
+            for dnode in nstate.data_nodes():
+                if nsdfg.sdfg.arrays[dnode.data].transient:
+                    continue
+
+                # For now we only detect one element
+                for e in nstate.in_edges(dnode):
+                    # If more than one unique element detected, remove from
+                    # candidates
+                    if e.data.data in out_candidates:
+                        memlet, ns, indices = out_candidates[e.data.data]
+                        # Try to find dimensions in which there is a mismatch
+                        # and remove them from list
+                        for i, (s1, s2) in enumerate(
+                                zip(e.data.subset, memlet.subset)):
+                            if s1 != s2 and i in indices:
+                                indices.remove(i)
+                        if len(indices) == 0:
+                            ignore.add(e.data.data)
+                        out_candidates[e.data.data] = (memlet, ns, indices)
+                        continue
+                    out_candidates[e.data.data] = (e.data, nstate,
+                                                   set(range(len(
+                                                       e.data.subset))))
+                for e in nstate.out_edges(dnode):
+                    # If more than one unique element detected, remove from
+                    # candidates
+                    if e.data.data in in_candidates:
+                        memlet, ns, indices = in_candidates[e.data.data]
+                        # Try to find dimensions in which there is a mismatch
+                        # and remove them from list
+                        for i, (s1, s2) in enumerate(
+                                zip(e.data.subset, memlet.subset)):
+                            if s1 != s2 and i in indices:
+                                indices.remove(i)
+                        if len(indices) == 0:
+                            ignore.add(e.data.data)
+                        in_candidates[e.data.data] = (memlet, ns, indices)
+                        continue
+                    in_candidates[e.data.data] = (e.data, nstate,
+                                                  set(range(len(
+                                                      e.data.subset))))
+
+        # TODO: Check in_candidates in interstate edges as well
+
+        # Check in/out candidates
+        for cand in in_candidates.keys() & out_candidates.keys():
+            s1, nstate1, ind1 = in_candidates[cand]
+            s2, nstate2, ind2 = out_candidates[cand]
+            indices = ind1 & ind2
+            if any(s1.subset[ind] != s2.subset[ind] for ind in indices):
+                ignore.add(cand)
+            in_candidates[cand] = (s1, nstate1, indices)
+            out_candidates[cand] = (s2, nstate2, indices)
+
+        # Ensure minimum elements of candidates do not begin with zero
+        def _check_cand(candidates, outer_edges):
+            for cname, (cand, nstate, indices) in candidates.items():
+                if all(me == 0 for i, me in enumerate(cand.subset.min_element())
+                       if i in indices):
+                    ignore.add(cname)
+                    continue
+
+                # Ensure outer memlets begin with 0
+                outer_edge = next(iter(outer_edges(nsdfg, cname)))
+                if any(me != 0 for i, me in enumerate(
+                        outer_edge.data.subset.min_element()) if i in indices):
+                    ignore.add(cname)
+                    continue
+
+                # Check w.r.t. loops
+                if len(nstate.ranges) > 0:
+                    # Re-annotate loop ranges, in case someone changed them
+                    # TODO: Move out of here!
+                    nstate.ranges = {}
+                    from dace.sdfg.propagation import _annotate_loop_ranges
+                    _annotate_loop_ranges(nsdfg.sdfg, [])
+
+                    memlet = propagation.propagate_subset(
+                        [cand], nsdfg.sdfg.arrays[cname],
+                        sorted(nstate.ranges.keys()),
+                        subsets.Range([
+                            v.ndrange()[0]
+                            for _, v in sorted(nstate.ranges.items())
+                        ]))
+                    if all(me == 0
+                           for i, me in enumerate(memlet.subset.min_element())
+                           if i in indices):
+                        ignore.add(cname)
+                        continue
+
+                    # Modify memlet to propagated one
+                    candidates[cname] = (memlet, nstate, indices)
+                else:
+                    memlet = cand
+
+                # If there are any symbols here that are not defined
+                # in "defined_symbols"
+                missing_symbols = (memlet.free_symbols -
+                                   set(nsdfg.symbol_mapping.keys()))
+                if missing_symbols:
+                    ignore.add(cname)
+                    continue
+
+        _check_cand(in_candidates, state.in_edges_by_connector)
+        _check_cand(out_candidates, state.out_edges_by_connector)
+
+        # Return result, filtering out the states
+        return ({
+            k: (dc(v), ind)
+            for k, (v, _, ind) in in_candidates.items() if k not in ignore
+        }, {
+            k: (dc(v), ind)
+            for k, (v, _, ind) in out_candidates.items() if k not in ignore
+        })
+
+    @staticmethod
+    def can_be_applied(graph: SDFGState,
+                       candidate: Dict[transformation.PatternNode, int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       strict: bool = False):
+        nsdfg = graph.node(candidate[RefineNestedAccess.nsdfg])
+        ic, oc = RefineNestedAccess._candidates(graph, nsdfg)
+        return (len(ic) + len(oc)) > 0
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        return graph.label
+
+    def apply(self, sdfg):
+        state: SDFGState = sdfg.nodes()[self.state_id]
+        nsdfg_node: nodes.NestedSDFG = self.nsdfg(sdfg)
+        nsdfg: SDFG = nsdfg_node.sdfg
+        torefine_in, torefine_out = RefineNestedAccess._candidates(
+            state, nsdfg_node)
+
+        refined = set()
+
+        def _offset_refine(
+            torefine: Dict[str, Tuple[Memlet, Set[int]]],
+            outer_edges: Callable[[nodes.NestedSDFG, str],
+                                  Iterable[MultiConnectorEdge[Memlet]]]):
+            # Offset memlets inside negatively by "refine", modify outer
+            # memlets to be "refine"
+            for aname, (refine, indices) in torefine.items():
+                outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
+                new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
+                outer_edge.data.subset = subsets.Range([
+                    ns if i in indices else os for i, (os, ns) in enumerate(
+                        zip(outer_edge.data.subset, new_memlet.subset))
+                ])
+                if aname in refined:
+                    continue
+                # Refine internal memlets
+                for nstate in nsdfg.nodes():
+                    for e in nstate.edges():
+                        if e.data.data == aname:
+                            e.data.subset.offset(refine.subset, True, indices)
+                # Refine accesses in interstate edges
+                refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
+                for isedge in nsdfg.edges():
+                    for k, v in isedge.data.assignments.items():
+                        vast = ast.parse(v)
+                        refiner.visit(vast)
+                        isedge.data.assignments[k] = astutils.unparse(vast)
+                    if isedge.data.condition.language is dtypes.Language.Python:
+                        for i, stmt in enumerate(isedge.data.condition.code):
+                            isedge.data.condition.code[i] = refiner.visit(stmt)
+                    else:
+                        raise NotImplementedError
+                refined.add(aname)
+
+        # Proceed symmetrically on incoming and outgoing edges
+        _offset_refine(torefine_in, state.in_edges_by_connector)
+        _offset_refine(torefine_out, state.out_edges_by_connector)
 
 
 @registry.autoregister

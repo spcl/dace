@@ -351,17 +351,21 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                                callsite_stream,
                                                skip_entry_node=False)
         else:
-            callsite_stream.write("#pragma omp parallel sections\n{")
+            if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+                callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
-                callsite_stream.write("#pragma omp section\n{")
+                if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+                    callsite_stream.write("#pragma omp section\n{")
                 self._dispatcher.dispatch_subgraph(sdfg,
                                                    c,
                                                    sid,
                                                    global_stream,
                                                    callsite_stream,
                                                    skip_entry_node=False)
-                callsite_stream.write("} // End omp section")
-            callsite_stream.write("} // End omp sections")
+                if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+                    callsite_stream.write("} // End omp section")
+            if config.Config.get_bool('compiler', 'cpu', 'openmp_sections'):
+                callsite_stream.write("} // End omp sections")
 
         #####################
         # Write state footer

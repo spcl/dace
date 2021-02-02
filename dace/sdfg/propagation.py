@@ -675,38 +675,6 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             unannotated_cycle_states.extend(cycle)
 
 
-def _acyclic_dominance_frontier(sdfg):
-    '''
-    Find the dominance frontier for an SDFG while ignoring any back edges.
-
-    This is a modified version of the dominance frontiers algorithm as
-    implemented by networkx.
-
-    :param sdfg: The SDFG for which to compute the acyclic dominance frontier.
-    :returns: A dictionary keyed by states, containing the dominance frontier
-              for each SDFG state.
-    '''
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-
-    dom_frontiers = {state: set() for state in sdfg.nodes()}
-    for u in idom:
-        if len(sdfg.nx.pred[u]) >= 2:
-            for v in sdfg.nx.pred[u]:
-                if v in idom:
-                    df_candidates = set()
-                    while v != idom[u]:
-                        if v == u:
-                            df_candidates = None
-                            break
-                        df_candidates.add(v)
-                        v = idom[v]
-                    if df_candidates is not None:
-                        for candidate in df_candidates:
-                            dom_frontiers[candidate].add(u)
-
-    return dom_frontiers
-
-
 def propagate_states(sdfg) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
@@ -759,6 +727,7 @@ def propagate_states(sdfg) -> None:
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
     from dace.transformation.helpers import split_interstate_edges
+    from dace.sdfg.analysis import cfg
 
     # Clean up the state machine by separating combined condition and assignment
     # edges.
@@ -774,7 +743,7 @@ def propagate_states(sdfg) -> None:
                 temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
             sdfg.add_edge(s, temp_exit_state, InterstateEdge())
 
-    dom_frontier = _acyclic_dominance_frontier(sdfg)
+    dom_frontier = cfg.acyclic_dominance_frontier(sdfg)
 
     # Find any valid for loop constructs and annotate the loop ranges. Any other
     # cycle should be marked as unannotated.
@@ -982,6 +951,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
         border_memlets['out'][connector] = None
 
     sdfg = nsdfg_node.sdfg
+    outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
 
     # For each state, go through all access nodes corresponding to any in- or
     # out-connectors to and from this SDFG. Given those access nodes, collect
@@ -1017,6 +987,13 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                         memlet = Memlet(data=inside_memlet.data, volume=0)
                         memlet._is_data_src = True
                         border_memlets[direction][node.label] = memlet
+
+                    if inside_memlet.wcr is not None:
+                        if (memlet.wcr is not None
+                                and memlet.wcr != inside_memlet.wcr):
+                            warnings.warn('Memlet appears with more than one'
+                                          ' type of write-conflict resolution.')
+                        memlet.wcr = inside_memlet.wcr
 
                     if memlet.dynamic and memlet.volume == 0:
                         # Dynamic unbounded - this won't change.
@@ -1087,12 +1064,12 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
                 if border_memlet.src_subset is not None and any(
-                        s not in parent_sdfg.symbols
+                        s not in outer_symbols
                         for s in border_memlet.src_subset.free_symbols):
                     border_memlet.src_subset = subsets.Range.from_array(
                         sdfg.arrays[border_memlet.data])
                 if border_memlet.dst_subset is not None and any(
-                        s not in parent_sdfg.symbols
+                        s not in outer_symbols
                         for s in border_memlet.dst_subset.free_symbols):
                     border_memlet.dst_subset = subsets.Range.from_array(
                         sdfg.arrays[border_memlet.data])
@@ -1106,12 +1083,19 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 continue
             try:
                 iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-                if symbolic.issymbolic(iedge.data.volume):
-                    if any(
-                            str(s) not in parent_sdfg.symbols
-                            for s in iedge.data.volume.free_symbols):
-                        iedge.data.volume = 0
-                        iedge.data.dynamic = True
+                # If no appropriate memlet found, use array dimension
+                for i, (rng, s) in enumerate(
+                        zip(internal_memlet.subset,
+                            parent_sdfg.arrays[iedge.data.data].shape)):
+                    if rng[1] + 1 == s:
+                        iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1,
+                                                1)
+                    if symbolic.issymbolic(iedge.data.volume):
+                        if any(
+                                str(s) not in outer_symbols
+                                for s in iedge.data.volume.free_symbols):
+                            iedge.data.volume = 0
+                            iedge.data.dynamic = True
             except (ValueError, NotImplementedError):
                 # In any case of memlets that cannot be unsqueezed (i.e.,
                 # reshapes), use dynamic unbounded memlets.
@@ -1124,12 +1108,19 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 continue
             try:
                 oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-                if symbolic.issymbolic(oedge.data.volume):
-                    if any(
-                            str(s) not in parent_sdfg.symbols
-                            for s in oedge.data.volume.free_symbols):
-                        oedge.data.volume = 0
-                        oedge.data.dynamic = True
+                # If no appropriate memlet found, use array dimension
+                for i, (rng, s) in enumerate(
+                        zip(internal_memlet.subset,
+                            parent_sdfg.arrays[oedge.data.data].shape)):
+                    if rng[1] + 1 == s:
+                        oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1,
+                                                1)
+                    if symbolic.issymbolic(oedge.data.volume):
+                        if any(
+                                str(s) not in outer_symbols
+                                for s in oedge.data.volume.free_symbols):
+                            oedge.data.volume = 0
+                            oedge.data.dynamic = True
             except (ValueError, NotImplementedError):
                 # In any case of memlets that cannot be unsqueezed (i.e.,
                 # reshapes), use dynamic unbounded memlets.
@@ -1236,6 +1227,8 @@ def _propagate_node(dfg_state, node):
             e for e in dfg_state.in_edges(node)
             if e.dst_conn and e.dst_conn.startswith('IN_')
         ]
+        geticonn = lambda e: e.src_conn[4:]
+        geteconn = lambda e: e.dst_conn[3:]
     else:
         internal_edges = [
             e for e in dfg_state.in_edges(node)
@@ -1245,15 +1238,20 @@ def _propagate_node(dfg_state, node):
             e for e in dfg_state.out_edges(node)
             if e.src_conn and e.src_conn.startswith('OUT_')
         ]
+        geticonn = lambda e: e.dst_conn[3:]
+        geteconn = lambda e: e.src_conn[4:]
 
     for edge in external_edges:
         if edge.data.is_empty():
             new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges
-                                 if e.data.data == edge.data.data)
-            new_memlet = propagate_memlet(dfg_state, internal_edge.data, node,
-                                          True)
+                                 if geticonn(e) == geteconn(edge))
+            new_memlet = propagate_memlet(dfg_state,
+                                          internal_edge.data,
+                                          node,
+                                          True,
+                                          connector=geteconn(edge))
         edge.data = new_memlet
 
 
@@ -1262,7 +1260,8 @@ def propagate_memlet(dfg_state,
                      memlet: Memlet,
                      scope_node: nodes.EntryNode,
                      union_inner_edges: bool,
-                     arr=None):
+                     arr=None,
+                     connector=None):
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
@@ -1278,10 +1277,20 @@ def propagate_memlet(dfg_state,
         use_dst = False
         entry_node = scope_node
         neighboring_edges = dfg_state.out_edges(scope_node)
+        if connector is not None:
+            neighboring_edges = [
+                e for e in neighboring_edges
+                if e.src_conn and e.src_conn[4:] == connector
+            ]
     elif isinstance(scope_node, nodes.ExitNode):
         use_dst = True
         entry_node = dfg_state.entry_node(scope_node)
         neighboring_edges = dfg_state.in_edges(scope_node)
+        if connector is not None:
+            neighboring_edges = [
+                e for e in neighboring_edges
+                if e.dst_conn and e.dst_conn[3:] == connector
+            ]
     else:
         raise TypeError('Trying to propagate through a non-scope node')
     if memlet.is_empty():

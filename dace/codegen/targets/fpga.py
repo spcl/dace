@@ -81,8 +81,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._host_codes = []
         self._kernel_codes = []
-        self._other_codes = {
-        }  # any other kind of generated file if any (name, code object)
+        # any other kind of generated file if any (name, code object)
+        self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
 
         # Register additional FPGA dispatchers
@@ -288,6 +288,9 @@ class FPGACodeGen(TargetCodeGenerator):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
+            # For each subgraph, keep a listing of array to current interface ID
+            data_to_interface: Dict[str, int] = {}
+
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
@@ -298,9 +301,13 @@ class FPGACodeGen(TargetCodeGenerator):
                         or isinstance(data, dace.data.Scalar)
                         or isinstance(data, dace.data.Stream)):
                     if data.storage == dace.dtypes.StorageType.FPGA_Global:
-                        # Get and update global memory interface ID
-                        interface_id = global_interfaces[dataname]
-                        global_interfaces[dataname] += 1
+                        if dataname in data_to_interface:
+                            interface_id = data_to_interface[dataname]
+                        else:
+                            # Get and update global memory interface ID
+                            interface_id = global_interfaces[dataname]
+                            global_interfaces[dataname] += 1
+                            data_to_interface[dataname] = interface_id
 
                         subgraph_parameters[subgraph].append(
                             (is_output, dataname, data, interface_id))
@@ -321,8 +328,8 @@ class FPGACodeGen(TargetCodeGenerator):
                             # passed to the allocator
                             top_level_local_data.append(dataname)
                     else:
-                        raise ValueError("Unsupported storage type: {}".format(
-                            data.storage))
+                        raise ValueError("Unsupported storage type for "
+                                         f"{dataname}: {data.storage}")
                 else:
                     raise TypeError("Unsupported data type: {}".format(
                         type(data).__name__))
@@ -1121,6 +1128,17 @@ class FPGACodeGen(TargetCodeGenerator):
                 pipeline = node.pipeline
                 flat_it = pipeline.iterator_str()
                 bound = pipeline.loop_bound_str()
+
+                if len(in_out_data) > 0:
+                    if is_there_a_wcr == False:
+                        # add pragma to ignore all loop carried dependencies
+                        self.generate_no_dependence_pre(
+                            result, sdfg, state_id, node)
+                    else:
+                        # add specific pragmas
+                        for candidate in in_out_data:
+                            self.generate_no_dependence_pre(
+                                result, sdfg, state_id, node, candidate)
                 result.write(
                     "for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
                         it=flat_it, bound=node.pipeline.loop_bound_str()))
@@ -1136,12 +1154,12 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Add pragmas
             if not fully_degenerate:
-                if is_innermost:
-                    self.generate_pipeline_loop_post(result, sdfg, state_id,
-                                                     node)
-                    self.generate_flatten_loop_post(result, sdfg, state_id,
-                                                    node)
                 if not node.map.unroll:
+                    if is_innermost:
+                        self.generate_pipeline_loop_post(
+                            result, sdfg, state_id, node)
+                        self.generate_flatten_loop_post(result, sdfg, state_id,
+                                                        node)
                     # add pragmas for data read/written inside this map
                     for candidate in in_out_data:
                         self.generate_no_dependence_post(
@@ -1386,3 +1404,8 @@ DACE_EXPORTED void {host_function_name}({kernel_args_opencl}) {{
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
+
+    def make_ptr_assignment(self, *args, **kwargs):
+        return self._cpu_codegen.make_ptr_assignment(*args,
+                                                     codegen=self,
+                                                     **kwargs)

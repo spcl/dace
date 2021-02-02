@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
@@ -202,7 +203,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def ptr(name: str, desc: data.Data) -> str:
-    """ 
+    """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
     :param desc: Data descriptor.
@@ -285,8 +286,9 @@ def emit_memlet_reference(dispatcher,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if desc.storage == dace.StorageType.FPGA_Global:
-        # This is a device buffer.
+    if (defined_type != DefinedType.ArrayInterface
+            and desc.storage == dace.StorageType.FPGA_Global):
+        # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
                 offset, str) and offset.isnumeric() and int(offset) != 0):
@@ -299,8 +301,8 @@ def emit_memlet_reference(dispatcher,
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet,
-                                    conntype, is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
+                                    is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
@@ -477,20 +479,21 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
+def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
+                         defined_type):
     """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
-    if conntype != sdfg.arrays[memlet.data].dtype:
+    if src_dtype != dst_dtype:
         if is_scalar:
-            expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
-        elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
-            expr = '(%s)(&%s)' % (conntype.ctype, expr)
+            dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
+        elif src_dtype.base_type != dst_dtype:
+            dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
         elif defined_type == DefinedType.Pointer:
-            expr = '&' + expr
+            dst_expr = '&' + dst_expr
     elif not is_scalar:
-        expr = '&' + expr
-    return expr
+        dst_expr = '&' + dst_expr
+    return dst_expr
 
 
 def cpp_ptr_expr(sdfg,

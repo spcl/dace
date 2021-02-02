@@ -138,35 +138,25 @@ class InterstateEdge(object):
 
         return result - set(self.assignments.keys())
 
-    def replace(self, name: str, new_name: str) -> None:
+    def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
         :param name: The source name.
         :param new_name: The replacement name.
+        :param replace_keys: If False, skips replacing assignment keys.
         """
-        _replace_dict(self.assignments, name, new_name)
+        # Avoid import loops
+        from dace.frontend.python import astutils
+
+        if replace_keys:
+            _replace_dict(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
-            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
-            if subscript_matches:
-                sym_v = symbolic.pystr_to_symbolic(v)
-                for subscript in subscript_matches:
-                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=name, s=subscript))
-                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=new_name, s=subscript))
-                    sym_v = sym_v.replace(sym_name, sym_new_name)
-                str_v = symbolic.symstr(sym_v)
-                for subscript in subscript_matches:
-                    str_v = str_v.replace("({})".format(subscript),
-                                          "[{}]".format(subscript))
-                self.assignments[k] = str_v
-            else:
-                sym_name = symbolic.pystr_to_symbolic(name)
-                sym_new_name = symbolic.pystr_to_symbolic(new_name)
-                self.assignments[k] = symbolic.symstr(
-                    symbolic.pystr_to_symbolic(v).replace(
-                        sym_name, sym_new_name))
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplace({name: new_name}).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
@@ -355,7 +345,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop', 'name'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         for n in nodes:
             nci = copy.copy(context_info)
@@ -763,10 +753,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             self._name = newname
         return newname
 
+    @name.setter
+    def name(self, newname: str):
+        self._name = newname
+
     @property
     def label(self):
         """ The name of this SDFG. """
-        #return self._name
         return self.name
 
     @property
@@ -817,17 +810,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._propagate = propagate
 
     @property
-    def parent(self):
+    def parent(self) -> SDFGState:
         """ Returns the parent SDFG state of this SDFG, if exists. """
         return self._parent
 
     @property
-    def parent_sdfg(self):
+    def parent_sdfg(self) -> 'SDFG':
         """ Returns the parent SDFG of this SDFG, if exists. """
         return self._parent_sdfg
 
     @property
-    def parent_nsdfg_node(self):
+    def parent_nsdfg_node(self) -> nd.NestedSDFG:
         """ Returns the parent NestedSDFG node of this SDFG, if exists. """
         return self._parent_nsdfg_node
 
@@ -1978,7 +1971,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             validate_all: bool = False,
             strict: bool = False,
             states: Optional[List[Any]] = None,
-            print_report: Optional[bool] = None) -> int:
+            print_report: Optional[bool] = None,
+            order_by_transformation: bool = True) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -1991,7 +1985,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
                                  the DaCe config option 'debugprint' should
-                                 apply)
+                                 apply).
+            :param order_by_transformation: Try to apply transformations ordered
+                                            by class rather than SDFG.
             :return: Number of transformations applied.
 
             Examples::
@@ -2020,36 +2016,56 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
-        # Cache transformations as metadata for faster application
-        opt.set_transformation_metadata(xforms)
+        params_by_xform = {x: o for x, o in zip(xforms, options)}
 
-        applied = True
-        while applied:
-            applied = False
-            # Find and apply one of the chosen transformations
-            for match in opt.get_pattern_matches(strict=strict,
-                                                 patterns=xforms,
-                                                 states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
+        # Helper function for applying and validating a transformation
+        def _apply_and_validate(match):
+            sdfg = self.sdfg_list[match.sdfg_id]
 
-                # Set transformation properties
-                opts = next(o for x, o in zip(xforms, options)
-                            if type(match) is x)
-                for prop_name, prop_val in opts.items():
-                    setattr(match, prop_name, prop_val)
+            # Set transformation properties
+            opts = params_by_xform[type(match)]
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
 
-                match.apply(sdfg)
-                applied_transformations[type(match).__name__] += 1
-                if validate_all:
-                    try:
-                        self.validate()
-                    except InvalidSDFGError as err:
-                        raise InvalidSDFGError(
-                            "Validation failed after applying {}.".format(
-                                match.print_match(sdfg)), sdfg,
-                            match.state_id) from err
-                applied = True
-                break
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                try:
+                    self.validate()
+                except InvalidSDFGError as err:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".
+                        format(match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+
+        if order_by_transformation:
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    applied = True
+                    while applied:
+                        applied = False
+                        for match in opt.get_pattern_matches(strict=strict,
+                                                             patterns=[xform],
+                                                             states=states):
+                            _apply_and_validate(match)
+                            applied = True
+                            applied_anything = True
+                            break
+        else:
+            # Cache transformations as metadata for faster application
+            opt.set_transformation_metadata(xforms)
+            applied = True
+            while applied:
+                applied = False
+                # Find and apply one of the chosen transformations
+                for match in opt.get_pattern_matches(strict=strict,
+                                                     patterns=xforms,
+                                                     states=states):
+                    _apply_and_validate(match)
+                    applied = True
+                    break
 
         if validate:
             try:

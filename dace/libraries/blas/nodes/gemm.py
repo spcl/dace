@@ -2,9 +2,12 @@
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 from dace.data import Array
+from dace import memlet as mm
 from dace.symbolic import symstr
 from dace.properties import Property
 import dace.library
+from dace import SDFG, SDFGState
+from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts
@@ -177,9 +180,6 @@ class ExpandGemmPure(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) +
-                             ".")
         return ExpandGemmPure.make_sdfg(node, state, sdfg)
 
 
@@ -191,7 +191,10 @@ class ExpandGemmMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        dtype = node.dtype
+        (_, adesc, ashape,
+         astrides), (_, bdesc, bshape,
+                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
         # TODO: Fix w.r.t. other alpha/beta values
         if dtype == dace.float32:
@@ -209,9 +212,6 @@ class ExpandGemmMKL(ExpandTransformation):
         else:
             raise ValueError("Unsupported type for BLAS dot product: " +
                              str(dtype))
-        (_, adesc, ashape,
-         astrides), (_, bdesc, bshape,
-                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
                                      alpha, beta, cdesc.dtype.ctype, func)
@@ -240,32 +240,10 @@ class ExpandGemmCuBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        dtype = node.dtype
-        func = '%sgemm' % to_blastype(dtype.type)
-        if dtype == dace.float16:
-            cdtype = '__half'
-            factort = 'Half'
-        elif dtype == dace.float32:
-            cdtype = 'float'
-            factort = 'Float'
-        elif dtype == dace.float64:
-            cdtype = 'double'
-            factort = 'Double'
-        elif dtype == dace.complex64:
-            cdtype = 'cuComplex'
-            factort = 'Complex64'
-        elif dtype == dace.complex128:
-            cdtype = 'cuDoubleComplex'
-            factort = 'Complex128'
-        else:
-            raise ValueError("Unsupported type: " + str(dtype))
 
         # TODO: Fix (use One/Zero, copy to custom_alpha/custom_beta if necessary)
         if node.alpha != 1.0 or node.beta != 0.0:
             raise NotImplementedError('Only alpha = 1 and beta = 0 supported')
-
-        alpha = "__state->cublas_handle.Constants(__dace_cuda_device).%sPone()" % factort
-        beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
 
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None
@@ -285,6 +263,31 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                     cdesc: Array = sdfg.arrays[cnode.data]
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
+
+        dtype = adesc.dtype.base_type
+        func = '%sgemm' % to_blastype(dtype.type)
+        if dtype == dace.float16:
+            cdtype = '__half'
+            factort = 'Half'
+        elif dtype == dace.float32:
+            cdtype = 'float'
+            factort = 'Float'
+        elif dtype == dace.float64:
+            cdtype = 'double'
+            factort = 'Double'
+        elif dtype == dace.complex64:
+            cdtype = 'cuComplex'
+            factort = 'Complex64'
+        elif dtype == dace.complex128:
+            cdtype = 'cuDoubleComplex'
+            factort = 'Complex128'
+        else:
+            raise ValueError("Unsupported type: " + str(dtype))
+
+        alpha = ("__state->cublas_handle.Constants(__dace_cuda_device)."
+                 f"{factort}Pone()")
+        beta = ("__state->cublas_handle.Constants(__dace_cuda_device)."
+                f"{factort}Zero()")
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
@@ -387,7 +390,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    dtype = dace.properties.TypeClassProperty(allow_none=True)
     transA = Property(dtype=bool,
                       desc="Whether to transpose A before multiplying")
     transB = Property(dtype=bool,
@@ -403,7 +405,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 
     def __init__(self,
                  name,
-                 dtype=None,
                  location=None,
                  transA=False,
                  transB=False,
@@ -413,7 +414,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                          location=location,
                          inputs={"_a", "_b"},
                          outputs={"_c"})
-        self.dtype = dtype
         self.transA = transA
         self.transB = transB
         self.alpha = alpha
@@ -459,3 +459,39 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError(
                 "Output to matrix-matrix product must agree in the m and n "
                 "dimensions")
+
+
+# Numpy replacement
+@oprepo.replaces('dace.libraries.blas.gemm')
+@oprepo.replaces('dace.libraries.blas.Gemm')
+def gemv_libnode(sdfg: SDFG,
+                 state: SDFGState,
+                 A,
+                 B,
+                 C,
+                 alpha,
+                 beta,
+                 trans_a=False,
+                 trans_b=False):
+    # Add nodes
+    A_in, B_in = (state.add_read(name) for name in (A, B))
+    C_out = state.add_write(C)
+
+    libnode = Gemm('gemm',
+                   transA=trans_a,
+                   transB=trans_b,
+                   alpha=alpha,
+                   beta=beta)
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(A_in, None, libnode, '_a', mm.Memlet(A))
+    state.add_edge(B_in, None, libnode, '_b', mm.Memlet(B))
+    state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
+
+    # TODO: Bring back C as input connector if beta is not 0
+    # if beta != 0:
+    #     C_in = state.add_read(C)
+    #     state.add_edge(C_in, None, libnode, '_c', mm.Memlet(C))
+
+    return []

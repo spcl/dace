@@ -93,7 +93,8 @@ class FPGATransformState(transformation.Transformation):
             candidate_map = map_entry.map
 
             # No more than 3 dimensions
-            if candidate_map.range.dims() > 3: return False
+            if candidate_map.range.dims() > 3:
+                return False
 
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI
