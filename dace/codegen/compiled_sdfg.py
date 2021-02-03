@@ -351,8 +351,13 @@ class CompiledSDFG(object):
                 if arr.storage is dtypes.StorageType.GPU_Global:
                     try:
                         import cupy
+
                         # Set allocator to GPU
-                        ndarray = cupy.ndarray
+                        def ndarray(*args, buffer=None, **kwargs):
+                            if buffer is not None:
+                                buffer = buffer.data
+                            return cupy.ndarray(*args, memptr=buffer, **kwargs)
+
                         zeros = cupy.zeros
                     except (ImportError, ModuleNotFoundError):
                         raise NotImplementedError('GPU return values are '
@@ -365,14 +370,14 @@ class CompiledSDFG(object):
                 # Create an array with the properties of the SDFG array
                 self._return_arrays.append(
                     ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
-                               arr.dtype.as_numpy_dtype(),
-                               buffer=zeros(
-                                   [symbolic.evaluate(arr.total_size, syms)],
-                                   arr.dtype.as_numpy_dtype()),
-                               strides=[
-                                   symbolic.evaluate(s, syms) * arr.dtype.bytes
-                                   for s in arr.strides
-                               ]))
+                            arr.dtype.as_numpy_dtype(),
+                            buffer=zeros(
+                                [symbolic.evaluate(arr.total_size, syms)],
+                                arr.dtype.as_numpy_dtype()),
+                            strides=[
+                                symbolic.evaluate(s, syms) * arr.dtype.bytes
+                                for s in arr.strides
+                            ]))
                 self._return_kwarrays[arrname] = self._return_arrays[-1]
 
         # Set up return_arrays field
