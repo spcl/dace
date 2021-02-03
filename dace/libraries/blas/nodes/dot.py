@@ -1,10 +1,11 @@
 # Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands
+from dace.libraries.blas import blas_helpers
 from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
@@ -19,67 +20,53 @@ class ExpandDotPure(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, **kwargs):
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
 
-        (outer_array_x, outer_array_y,
-         outer_array_res) = node.validate(parent_sdfg, parent_state)
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
 
-        shape_x = outer_array_x.shape
-        shape_y = outer_array_y.shape
-        shape_result = outer_array_res.shape
+        n = n or node.n or sz
 
-        dtype_x = outer_array_x.dtype.type
-        dtype_y = outer_array_y.dtype.type
-        dtype_result = outer_array_res.dtype.type
+        dtype_x = desc_x.dtype.type
+        dtype_y = desc_y.dtype.type
+        dtype_result = desc_res.dtype.type
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        if outer_array_x.dtype.veclen > 1 or outer_array_y.dtype.veclen > 1:
+        if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:
             raise NotImplementedError(
                 "Pure expansion not implemented for vector types.")
 
-        if shape_x != shape_y or tuple(shape_result) != (1, ):
-            raise SyntaxError("Invalid shapes to dot product.")
-
-        N = shape_x[0]
-
-        if outer_array_x.storage != outer_array_y.storage:
-            raise ValueError("Input matrices must have same storage")
-        storage = outer_array_x.storage
-
-        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, storage=storage)
-        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, storage=storage)
-        _, array_result = sdfg.add_array("_result", [1],
-                                         dtype_result,
-                                         storage=storage)
+        sdfg.add_array("_x", [n],
+                       dtype_x,
+                       strides=[stride_x],
+                       storage=desc_x.storage)
+        sdfg.add_array("_y", [n],
+                       dtype_y,
+                       strides=[stride_y],
+                       storage=desc_y.storage)
+        sdfg.add_array("_result", [1], dtype_result, storage=desc_res.storage)
 
         mul_program = "__out = __x * __y"
 
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        mul_out, mul_out_array = "_result", array_result
-        output_nodes = None
-
         # Initialization map
-        init_write = init_state.add_write("_result")
-        init_tasklet = init_state.add_tasklet("dot_init", {}, {"_out"},
-                                              "_out = 0",
-                                              location=node.location)
-        init_state.add_memlet_path(init_tasklet,
-                                   init_write,
-                                   src_conn="_out",
-                                   memlet=dace.Memlet("_result[0]"))
+        init_state.add_mapped_tasklet("dot_init", {"__unused": "0:1"}, {},
+                                      "_out = 0",
+                                      {"_out": dace.Memlet("_result[0]")},
+                                      external_edges=True)
 
         # Multiplication map
         state.add_mapped_tasklet(
-            "_DOT_", {"__i": "0:{}".format(N)}, {
+            "dot", {"__i": f"0:{n}"}, {
                 "__x": dace.Memlet("_x[__i]"),
                 "__y": dace.Memlet("_y[__i]")
             },
             mul_program,
-            {"__out": dace.Memlet(f"{mul_out}[0]", wcr="lambda x, y: x + y")},
+            {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
             external_edges=True,
-            output_nodes=output_nodes)
+            output_nodes=None)
 
         return sdfg
 
@@ -90,21 +77,19 @@ class ExpandDotOpenBLAS(ExpandTransformation):
     environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
-    def expansion(node, state, sdfg, n=None, **kwargs):
-        desc_x, _, _ = node.validate(sdfg, state)
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
-        if dtype == dace.float32:
-            func = "sdot"
-        elif dtype == dace.float64:
-            func = "ddot"
-        else:
-            raise ValueError("Unsupported type for BLAS dot product: " +
-                             str(dtype))
-        n = n or node.n
+
+        func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        func = func.lower() + 'dot'
+
+        n = n or node.n or sz
         if veclen != 1:
             n /= veclen
-        code = f"_result = cblas_{func}({n}, _x, 1, _y, 1);"
+        code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -129,31 +114,26 @@ class ExpandDotCuBLAS(ExpandTransformation):
     environments = [environments.cublas.cuBLAS]
 
     @staticmethod
-    def expansion(node, state, sdfg, n=None, **kwargs):
-
-        desc_x, _, _ = node.validate(sdfg, state)
-
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
-        n = n or node.n
+
+        func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        func = func + 'dot'
+
+        n = n or node.n or sz
         if veclen != 1:
             n /= veclen
 
-        if dtype == dace.float32:
-            func = "Sdot"
-        elif dtype == dace.float64:
-            func = "Ddot"
-        else:
-            raise ValueError("Unsupported type for cuBLAS dot product: " +
-                             str(dtype))
-
         code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                "cublas{func}(__dace_cublas_handle, {n}, ___x.ptr<1>(), 1, "
-                "___y.ptr<1>(), 1, ___result.ptr<1>());".format(func=func, n=n))
+                f"""cublas{func}(__dace_cublas_handle, {n}, _x, {stride_x}, _y, 
+                             {stride_y}, _result);""")
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
-                                          node.out_connectors,
+                                          {'_result': dtypes.pointer(dtype)},
                                           code,
                                           language=dace.dtypes.Language.CPP)
 
@@ -174,11 +154,7 @@ class ExpandDotFpgaPartialSums(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node,
-                  parent_state,
-                  parent_sdfg,
-                  n=None,
-                  partial_width=8):
+    def expansion(node, parent_state, parent_sdfg, n=None, partial_width=8):
         """
         :param node: The node to expand.
         :param parent_state: The state that the node is in.
@@ -189,7 +165,10 @@ class ExpandDotFpgaPartialSums(ExpandTransformation):
                               larger than the latency of addition on the given
                               data type.
         """
-        desc_x, desc_y, desc_res = node.validate(parent_sdfg, parent_state)
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
+
+        n = n or node.n or sz
 
         sdfg = dace.SDFG("dot")
 
@@ -198,7 +177,6 @@ class ExpandDotFpgaPartialSums(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.veclen
         vtype = dtypes.vector(dtype, veclen)
-        n = n or node.n
 
         desc_x = desc_x.clone()
         desc_x.transient = False
@@ -396,11 +374,7 @@ class ExpandDotFpgaAccumulate(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node,
-                  parent_state,
-                  parent_sdfg,
-                  n=None,
-                  **kwargs):
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         """
         :param node: The node to expand.
         :param parent_state: The state that the node is in.
@@ -409,9 +383,10 @@ class ExpandDotFpgaAccumulate(ExpandTransformation):
                   specified in the node is used.
         """
 
-        desc_x, desc_y, desc_res = node.validate(parent_sdfg, parent_state)
+        (desc_x, stride_x), (desc_y, stride_y), desc_res, sz = node.validate(
+            parent_sdfg, parent_state)
 
-        n = n or node.n
+        n = n or node.n or sz
 
         sdfg = dace.SDFG("dot")
 
@@ -585,8 +560,7 @@ class Dot(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=False,
-                                         default=dace.symbolic.symbol("n"))
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
         super().__init__(name,
@@ -594,7 +568,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
                          inputs={"_x", "_y"},
                          outputs={"_result"},
                          **kwargs)
-        self.n = n or dace.symbolic.symbol("n")
 
     def validate(self, sdfg, state):
         """
@@ -609,17 +582,20 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from dot product")
         out_memlet = out_edges[0].data
-        size = in_memlets[0].subset.size()
-        if len(size) != 1:
+
+        # Squeeze input memlets
+        squeezed1 = copy.deepcopy(in_memlets[0].subset)
+        squeezed2 = copy.deepcopy(in_memlets[1].subset)
+        sqdims1 = squeezed1.squeeze()
+        sqdims2 = squeezed2.squeeze()
+
+        if len(squeezed1.size()) != 1 or len(squeezed2.size()) != 1:
             raise ValueError(
                 "dot product only supported on 1-dimensional arrays")
-        if size != in_memlets[1].subset.size():
-            raise ValueError("Inputs to dot product must have equal size")
         if out_memlet.subset.num_elements() != 1:
             raise ValueError("Output of dot product must be a single element")
-        if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
-                or out_memlet.wcr is not None):
-            raise ValueError("WCR on dot product memlets not supported")
+
+        desc_x, desc_y, desc_res = None, None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_x":
                 desc_x = sdfg.arrays[e.data.data]
@@ -628,19 +604,28 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         for e in state.out_edges(self):
             if e.src_conn == "_result":
                 desc_res = sdfg.arrays[e.data.data]
+
         if desc_x.dtype != desc_y.dtype:
             raise TypeError("Data types of input operands must be equal: "
                             f"{desc_x.dtype}, {desc_y.dtype}")
         if desc_x.dtype.base_type != desc_res.dtype.base_type:
             raise TypeError("Data types of input and output must be equal: "
                             f"{desc_x.dtype}, {desc_res.dtype}")
-        return desc_x, desc_y, desc_res
+
+        # We are guaranteed that there is only one non-squeezed dimension
+        stride_x = desc_x.strides[sqdims1[0]]
+        stride_y = desc_y.strides[sqdims2[0]]
+        n = squeezed1.num_elements()
+        if squeezed1.num_elements() != squeezed2.num_elements():
+            raise ValueError('Size mismatch in inputs')
+
+        return (desc_x, stride_x), (desc_y, stride_y), desc_res, n
 
 
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.dot')
 @oprepo.replaces('dace.libraries.blas.Dot')
-def ger_libnode(sdfg: SDFG, state: SDFGState, x, y, result):
+def dot_libnode(sdfg: SDFG, state: SDFGState, x, y, result):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)

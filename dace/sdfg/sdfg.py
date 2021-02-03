@@ -345,7 +345,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop', 'name'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         for n in nodes:
             nci = copy.copy(context_info)
@@ -753,10 +753,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             self._name = newname
         return newname
 
+    @name.setter
+    def name(self, newname: str):
+        self._name = newname
+
     @property
     def label(self):
         """ The name of this SDFG. """
-        #return self._name
         return self.name
 
     @property
