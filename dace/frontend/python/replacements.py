@@ -3963,7 +3963,8 @@ def dot(pv: 'ProgramVisitor',
     acc_b = state.add_read(op_b)
     acc_out = state.add_write(op_out)
 
-    tasklet = Dot('_Dot_', restype, arr_a.shape[0])
+    # tasklet = Dot('_Dot_', n=arr_a.shape[0], dtype=restype)
+    tasklet = Dot('_Dot_', n=arr_a.shape[0])
     state.add_node(tasklet)
     state.add_edge(acc_a, None, tasklet, '_x',
                    dace.Memlet.from_array(op_a, arr_a))
