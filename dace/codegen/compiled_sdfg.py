@@ -344,24 +344,40 @@ class CompiledSDFG(object):
             if arrname.startswith('__return'):
                 if isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
-                if arr.storage in [
-                        dtypes.StorageType.GPU_Global,
-                        dtypes.StorageType.FPGA_Global
-                ]:
-                    raise NotImplementedError('Non-host return values are '
+
+                ndarray = np.ndarray
+                zeros = np.zeros
+
+                if arr.storage is dtypes.StorageType.GPU_Global:
+                    try:
+                        import cupy
+
+                        # Set allocator to GPU
+                        def ndarray(*args, buffer=None, **kwargs):
+                            if buffer is not None:
+                                buffer = buffer.data
+                            return cupy.ndarray(*args, memptr=buffer, **kwargs)
+
+                        zeros = cupy.zeros
+                    except (ImportError, ModuleNotFoundError):
+                        raise NotImplementedError('GPU return values are '
+                                                  'unsupported if cupy is not '
+                                                  'installed')
+                if arr.storage is dtypes.StorageType.FPGA_Global:
+                    raise NotImplementedError('FPGA return values are '
                                               'unsupported')
 
                 # Create an array with the properties of the SDFG array
                 self._return_arrays.append(
-                    np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
-                               arr.dtype.as_numpy_dtype(),
-                               buffer=np.zeros(
-                                   [symbolic.evaluate(arr.total_size, syms)],
-                                   arr.dtype.as_numpy_dtype()),
-                               strides=[
-                                   symbolic.evaluate(s, syms) * arr.dtype.bytes
-                                   for s in arr.strides
-                               ]))
+                    ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
+                            arr.dtype.as_numpy_dtype(),
+                            buffer=zeros(
+                                [symbolic.evaluate(arr.total_size, syms)],
+                                arr.dtype.as_numpy_dtype()),
+                            strides=[
+                                symbolic.evaluate(s, syms) * arr.dtype.bytes
+                                for s in arr.strides
+                            ]))
                 self._return_kwarrays[arrname] = self._return_arrays[-1]
 
         # Set up return_arrays field
