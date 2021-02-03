@@ -31,7 +31,7 @@ class LocalStorage(xf.Transformation, ABC):
     prefix = Property(dtype=str,
                       default="trans_",
                       allow_none=True,
-                      desc='Prefix for new')
+                      desc='Prefix for new data node')
 
     create_array = Property(dtype=bool,
                             default=True,
