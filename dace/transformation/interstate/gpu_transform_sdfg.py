@@ -42,6 +42,11 @@ class GPUTransformSDFG(transformation.Transformation):
                                     dtype=bool,
                                     default=True)
 
+    skip_scalar_tasklets = Property(desc="If True, does not transform tasklets "
+                                    "that manipulate (Default-stored) scalars",
+                                    dtype=bool,
+                                    default=True)
+
     strict_transform = Property(
         desc='Reapply strict transformations after modifying graph',
         dtype=bool,
@@ -136,14 +141,6 @@ class GPUTransformSDFG(transformation.Transformation):
                             and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append(
                             (e.data.data, sdfg.arrays[e.data.data]))
-
-        # Collect free tasklets
-        for node, state in sdfg.all_nodes_recursive():
-            if isinstance(node, nodes.Tasklet):
-                if (state.entry_node(node) is None
-                        and not scope.is_devicelevel_gpu(
-                            state.parent, state, node)):
-                    global_code_nodes[state].append(node)
 
         start_state = sdfg.start_state
         end_states = sdfg.sink_nodes()
@@ -272,8 +269,35 @@ class GPUTransformSDFG(transformation.Transformation):
                         if self.register_trans:
                             nodedesc.storage = dtypes.StorageType.Register
 
+        
         #######################################################
-        # Step 5: Wrap free tasklets and nested SDFGs with a GPU map
+        # Step 5: Change all top-level maps and library nodes to GPU schedule
+
+        for state in sdfg.nodes():
+            sdict = state.scope_dict()
+            for node in state.nodes():
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Default
+                    elif isinstance(node, nodes.EntryNode):
+                        node.schedule = dtypes.ScheduleType.GPU_Device
+                else:
+                    if isinstance(
+                            node,
+                        (nodes.EntryNode,
+                         nodes.LibraryNode)) and self.sequential_innermaps:
+                        node.schedule = dtypes.ScheduleType.Sequential
+    
+        #######################################################
+        # Step 6: Wrap free tasklets and nested SDFGs with a GPU map
+        
+        # Collect free tasklets
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.Tasklet):
+                if (state.entry_node(node) is None
+                        and not scope.is_devicelevel_gpu(
+                            state.parent, state, node)):
+                    global_code_nodes[state].append(node)
 
         for state, gcodes in global_code_nodes.items():
             for gcode in gcodes:
@@ -313,24 +337,6 @@ class GPUTransformSDFG(transformation.Transformation):
                 # Map without inputs
                 if len(in_edges) == 0:
                     state.add_nedge(me, gcode, memlet.Memlet())
-        #######################################################
-        # Step 6: Change all top-level maps and library nodes to GPU schedule
-
-        for state in sdfg.nodes():
-            sdict = state.scope_dict()
-            for node in state.nodes():
-                if sdict[node] is None:
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                    elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                else:
-                    if isinstance(
-                            node,
-                        (nodes.EntryNode,
-                         nodes.LibraryNode)) and self.sequential_innermaps:
-                        node.schedule = dtypes.ScheduleType.Sequential
-
         #######################################################
         # Step 7: Introduce copy-out if data used in outgoing interstate edges
 
