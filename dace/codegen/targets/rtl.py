@@ -29,7 +29,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.dispatcher: dispatcher.TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
         self.dispatcher.register_node_dispatcher(
-            self, lambda sdfg, node: isinstance(node, nodes.Tasklet) and node.
+            self, lambda sdfg, state, node: isinstance(node, nodes.Tasklet) and node.
             language == dtypes.Language.SystemVerilog)
         # register all storage types that connect from/to an RTL tasklet
         for src_storage, dst_storage in itertools.product(
