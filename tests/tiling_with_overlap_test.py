@@ -31,7 +31,7 @@ class MapTilingWithOverlapTest(unittest.TestCase):
         self.assertGreater(count, 0)
         sdfg(inp=A, out=B2, I=A.shape[0], J=A.shape[1])
 
-        self.assertLess(np.linalg.norm(B1 - B2), 1e-8)
+        self.assertTrue(np.allclose(B1, B2))
 
     def test_semantic_eq(self):
         self.semantic_eq([3,3])

@@ -84,7 +84,7 @@ class BufferTilingTest(unittest.TestCase):
         self.assertGreater(count, 0)
         sdfg(w3=w3, w5=w5, A=A, B=B2, I=A.shape[0], J=A.shape[1])
 
-        self.assertLess(np.linalg.norm(B1 - B2), 1e-8)
+        self.assertTrue(np.allclose(B1, B2))
 
     def test_semantic_eq(self):
         self.semantic_eq([3,3], conv3x3_5x5)
