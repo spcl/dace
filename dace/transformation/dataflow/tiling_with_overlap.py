@@ -28,9 +28,9 @@ class MapTilingWithOverlap(MapTiling):
                                   desc="Upper overlap per dimension")
 
     def apply(self, sdfg):
-        if self.lower_overlap is None:
+        if len(self.lower_overlap) == 0:
             return
-        if self.upper_overlap is None:
+        if len(self.upper_overlap) == 0:
             return
         
         graph = sdfg.nodes()[self.state_id]
