@@ -849,7 +849,8 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
     elif issubclass(nptype, np.bool_):
         return np.bool_(True)
     elif issubclass(nptype, Integral):
-        return nptype(np.iinfo(nptype).max)
+        # return nptype(np.iinfo(nptype).max)
+        return 0
     else:
         return nptype(np.finfo(nptype).resolution)
 
