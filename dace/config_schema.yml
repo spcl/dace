@@ -300,6 +300,7 @@ required:
                         description: >
                             Default thread-block size for GPU kernels when
                             explicit GPU block maps are not defined.
+                            Can be set to 'max' to maximize occupancy.
                         default: '32,1,1'
 
                     dynamic_map_block_size:
@@ -307,7 +308,7 @@ required:
                         title: Thread-Block size for GPU_ThreadBlock_Dynamic
                         description: >
                             Thread-Block size for maps using GPU_ThreadBlock_Dynamic
-                            scheduler.
+                            scheduler. Can be set to 'max' to maximize occupancy.
                         default: '128,1,1'
 
                     dynamic_map_fine_grained:
