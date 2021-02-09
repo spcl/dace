@@ -5,6 +5,7 @@ from typing import List
 
 from dace import dtypes
 from dace import data
+from dace.sdfg import SDFG
 from dace.codegen.targets import framecode, target
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
@@ -15,36 +16,48 @@ from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
 
-def generate_headers(sdfg) -> str:
+
+def generate_headers(sdfg: SDFG) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
-    params = (sdfg.name, sdfg.signature(with_types=True, for_call=False))
-    proto += 'extern "C" int __dace_init_%s(%s);\n' % params
-    proto += 'extern "C" int __dace_exit_%s(%s);\n' % params
-    proto += 'extern "C" void __program_%s(%s);\n' % params
+    init_params = (sdfg.name, sdfg.name,
+                   sdfg.signature(with_types=True,
+                                  for_call=False,
+                                  with_arrays=False))
+    call_params = sdfg.signature(with_types=True, for_call=False)
+    if len(call_params) > 0:
+        call_params = ', ' + call_params
+    params = (sdfg.name, sdfg.name, call_params)
+    exit_params = (sdfg.name, sdfg.name)
+    proto += 'typedef void * %sHandle_t;\n' % sdfg.name
+    proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
+    proto += 'extern "C" void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+    proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
     return proto
 
 
-def generate_dummy(sdfg) -> str:
+def generate_dummy(sdfg: SDFG) -> str:
     """ Generates a C program calling this SDFG. Since we do not
         know the purpose/semantics of the program, we allocate
         the right types and and guess values for scalars.
     """
-    includes = "#include <stdlib.h>\n"
-    includes += "#include \"" + sdfg.name + ".h\"\n\n"
-    header = "int main(int argc, char** argv) {\n"
-    allocations = ""
-    deallocations = ""
-    sdfg_call = ""
-    footer = "  return 0;\n}\n"
-
     al = sdfg.arglist()
+    init_params = sdfg.signature(with_types=False,
+                                 for_call=True,
+                                 with_arrays=False)
+    params = sdfg.signature(with_types=False, for_call=True)
+    if len(params) > 0:
+        params = ', ' + params
+
+    allocations = ''
+    deallocations = ''
 
     # first find all scalars and set them to 42
     for argname, arg in al.items():
         if isinstance(arg, data.Scalar):
-            allocations += "  " + str(arg.as_arg(name=argname,
-                                                 with_types=True)) + " = 42;\n"
+            allocations += ("    " +
+                            str(arg.as_arg(name=argname, with_types=True)) +
+                            " = 42;\n")
 
     # allocate the array args using calloc
     for argname, arg in al.items():
@@ -52,25 +65,28 @@ def generate_dummy(sdfg) -> str:
             dims_mul = cpp.sym2cpp(
                 functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
-            allocations += "  " + str(arg.as_arg(name=argname, with_types=True)) + \
-                           " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof("+ basetype +")" + ");\n"
-            deallocations += "  free(" + argname + ");\n"
+            allocations += ("    " +
+                            str(arg.as_arg(name=argname, with_types=True)) +
+                            " = (" + basetype + "*) calloc(" + dims_mul +
+                            ", sizeof(" + basetype + ")" + ");\n")
+            deallocations += "    free(" + argname + ");\n"
 
-    sdfg_call = '''
-  __dace_init_{name}({params});
-  __program_{name}({params});
-  __dace_exit_{name}({params});\n\n'''.format(name=sdfg.name,
-                                              params=sdfg.signature(
-                                                  with_types=False,
-                                                  for_call=True))
+    return f'''#include <cstdlib>
+#include "../include/{sdfg.name}.h"
 
-    res = includes
-    res += header
-    res += allocations
-    res += sdfg_call
-    res += deallocations
-    res += footer
-    return res
+int main(int argc, char **argv) {{
+    {sdfg.name}Handle_t handle;
+{allocations}
+
+    handle = __dace_init_{sdfg.name}({init_params});
+    __program_{sdfg.name}(handle{params});
+    __dace_exit_{sdfg.name}(handle);
+
+{deallocations}
+
+    return 0;
+}}
+'''
 
 
 def generate_code(sdfg) -> List[CodeObject]:
@@ -134,6 +150,9 @@ def generate_code(sdfg) -> List[CodeObject]:
         elif hasattr(node, 'map'):
             frame._dispatcher.instrumentation[node.map.instrument] = \
                 provider_mapping[node.map.instrument]
+    if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
+        frame._dispatcher.instrumentation[sdfg.instrument] = \
+            provider_mapping[sdfg.instrument]
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()

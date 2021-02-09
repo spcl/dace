@@ -2,6 +2,9 @@
 import inspect
 import sys
 import types
+from typing import Set, List
+import networkx as nx
+
 import dace.properties
 from dace.sdfg.nodes import LibraryNode
 from dace.transformation.transformation import (Transformation,
@@ -168,8 +171,10 @@ def environment(env):
             "cmake_link_flags",
             "cmake_files",
             "headers",
+            "state_fields",
             "init_code",
             "finalize_code",
+            "dependencies"
     ]:
         if not hasattr(env, field):
             raise ValueError(
@@ -181,6 +186,40 @@ def environment(env):
     env._dace_file_path = caller_file
     _DACE_REGISTERED_ENVIRONMENTS[env.__name__] = env
     return env
+
+
+def get_environments_and_dependencies(names: Set[str]) -> List:
+    """ Get the environment objects from names. Also resolve the dependencies.
+
+        :names: set of environment names.
+        :return: a list of environment objects, ordered such that environments with dependencies appear after their
+                 dependencies.
+    """
+
+    # get all environments: add dependencies until no new dependencies are found
+    environments = {get_environment(name) for name in names}
+    while True:
+        added = {
+            dep
+            for env in environments for dep in env.dependencies
+            if dep not in environments
+        }
+        if len(added) == 0:
+            break
+        environments = environments.union(added)
+
+    # construct dependency graph
+    dep_graph = nx.DiGraph()
+    dep_graph.add_nodes_from(environments)
+
+    for env in environments:
+        for dep in env.dependencies:
+            dep_graph.add_edge(dep, env)
+
+    try:
+        return list(nx.topological_sort(dep_graph))
+    except nx.NetworkXUnfeasible:
+        raise ValueError("Detected cycle in dependency graph.")
 
 
 # Mapping from string to DaCe environment

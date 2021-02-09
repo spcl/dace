@@ -6,16 +6,26 @@ from __future__ import print_function
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser
-from typing import Callable
+from typing import Any, Callable, TypeVar, overload
 
 #############################################
 
-# Type hint specifically for the @dace.program decorator
-paramdec_program: Callable[..., Callable[..., parser.DaceProgram]] = paramdec
+# Type hints specifically written for the @dace.program decorator
+F = TypeVar('F', bound=Callable[..., Any])
 
 
-@paramdec_program
-def program(f, *args, **kwargs) -> parser.DaceProgram:
+@overload
+def program(f: F) -> parser.DaceProgram:
+    ...
+
+
+@overload
+def program(*args, **kwargs) -> parser.DaceProgram:
+    ...
+
+
+@paramdec
+def program(f: F, *args, **kwargs) -> parser.DaceProgram:
     """ DaCe program, entry point to a data-centric program. """
 
     # Parses a python @dace.program function and returns an object that can

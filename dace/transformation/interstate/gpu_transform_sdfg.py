@@ -4,7 +4,7 @@
 from dace import data, memlet, dtypes, registry, sdfg as sd
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
+from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
 
 
@@ -227,6 +227,8 @@ class GPUTransformSDFG(transformation.Transformation):
         #######################################################
         # Step 4: Modify transient data storage
 
+        const_syms = xfh.constant_symbols(sdfg)
+
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -254,8 +256,10 @@ class GPUTransformSDFG(transformation.Transformation):
                         nodedesc.storage = dtypes.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
+                        dsyms = set(map(str, nodedesc.free_symbols))
                         if (self.toplevel_trans
-                                and not isinstance(nodedesc, data.Stream)):
+                                and not isinstance(nodedesc, data.Stream)
+                                and len(dsyms - const_syms) == 0):
                             nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
                     elif nodedesc.storage not in gpu_storage:
                         # Make internal transients registers
@@ -315,7 +319,10 @@ class GPUTransformSDFG(transformation.Transformation):
                     elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
                 else:
-                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)) and self.sequential_innermaps:
+                    if isinstance(
+                            node,
+                        (nodes.EntryNode,
+                         nodes.LibraryNode)) and self.sequential_innermaps:
                         node.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################

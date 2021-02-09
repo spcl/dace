@@ -145,6 +145,16 @@ class SymExpr(object):
         else:
             self._approx_expr = pystr_to_symbolic(approx_expr)
 
+    def __new__(cls, *args, **kwargs):
+        if len(args) == 1:
+            return args[0]
+        if len(args) == 2:
+            main_expr, approx_expr = args
+            # If values are equivalent, create a normal symbolic expression
+            if approx_expr is None or main_expr == approx_expr:
+                return main_expr
+        return super(SymExpr, cls).__new__(cls)
+
     @property
     def expr(self):
         return self._main_expr
@@ -159,6 +169,9 @@ class SymExpr(object):
 
     def match(self, *args, **kwargs):
         return self._main_expr.match(*args, **kwargs)
+
+    def __hash__(self):
+        return hash((self.expr, self.approx))
 
     def __str__(self):
         if self.expr != self.approx:
@@ -422,7 +435,11 @@ def sympy_to_dace(exprs, symbol_map=None):
 
 def is_sympy_userfunction(expr):
     """ Returns True if the expression is a SymPy function. """
-    return issubclass(type(type(expr)), sympy.function.UndefinedFunction)
+    try:
+        return issubclass(type(type(expr)),
+                          sympy.core.function.UndefinedFunction)
+    except AttributeError:
+        return issubclass(type(type(expr)), sympy.function.UndefinedFunction)
 
 
 def swalk(expr, enter_functions=False):
@@ -457,6 +474,8 @@ def contains_sympy_functions(expr):
 
 
 def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
+    if not isinstance(expr, (sympy.Basic, str)):
+        return set()
     if isinstance(expr, str):
         if dtypes.validate_name(expr):
             return {expr}
@@ -571,7 +590,7 @@ def sympy_divide_fix(expr):
     processed = 1
     while processed > 0:
         processed = 0
-        for candidate in nexpr.find(sympy.mul.Mul):
+        for candidate in nexpr.find(sympy.Mul):
             for i, arg in enumerate(candidate.args):
                 if isinstance(arg, sympy.Number) and abs(arg) >= 1:
                     continue
@@ -583,7 +602,7 @@ def sympy_divide_fix(expr):
             nexpr = nexpr.subs(
                 candidate,
                 int_floor(
-                    sympy.mul.Mul(*(candidate.args[:ri] +
+                    sympy.Mul(*(candidate.args[:ri] +
                                     candidate.args[ri + 1:])),
                     int(1 / candidate.args[ri])))
             processed += 1
@@ -619,6 +638,20 @@ class SympyBooleanConverter(ast.NodeTransformer):
     Replaces boolean operations with the appropriate SymPy functions to avoid
     non-symbolic evaluation.
     """
+    _ast_to_sympy_comparators = {
+        ast.Eq: 'Eq',
+        ast.Gt: 'Gt',
+        ast.GtE: 'Ge',
+        ast.Lt: 'Lt',
+        ast.LtE: 'Le',
+        ast.NotEq: 'Ne',
+        # Python-specific
+        ast.In: 'In',
+        ast.Is: 'Is',
+        ast.IsNot: 'IsNot',
+        ast.NotIn: 'NotIn',
+    }
+
     def visit_UnaryOp(self, node):
         if isinstance(node.op, ast.Not):
             func_node = ast.copy_location(
@@ -643,7 +676,9 @@ class SympyBooleanConverter(ast.NodeTransformer):
         op = node.ops[0]
         arguments = [node.left, node.comparators[0]]
         func_node = ast.copy_location(
-            ast.Name(id=type(op).__name__, ctx=ast.Load()), node)
+            ast.Name(
+                id=SympyBooleanConverter._ast_to_sympy_comparators[type(op)],
+                ctx=ast.Load()), node)
         new_node = ast.Call(func=func_node,
                             args=[self.visit(arg) for arg in arguments],
                             keywords=[])
@@ -664,7 +699,10 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'min': sympy.Min,
         'max': sympy.Max,
         'True': sympy.true,
-        'False': sympy.false
+        'False': sympy.false,
+        'GtE': sympy.Ge,
+        'LtE': sympy.Le,
+        'NotEq': sympy.Ne,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

@@ -12,7 +12,20 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.transformation import helpers as xfh
 import re
-from typing import Any, DefaultDict, Dict, List, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+
+
+class AttributedCallDetector(ast.NodeVisitor):
+    """ Detects attributed calls in Tasklets.
+    """
+    def __init__(self):
+        self.detected = False
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        if isinstance(node.func, ast.Attribute):
+            self.detected = True
+            return
+        return self.generic_visit(node)
 
 
 def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
@@ -42,6 +55,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
         if not desc.transient or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
+            continue
+        if desc.lifetime is dtypes.AllocationLifetime.Persistent:
             continue
         candidates.add(aname)
 
@@ -143,9 +158,9 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
                         # symbolic module.
-                        if (isinstance(cb.code[0].value, ast.Call)
-                                and isinstance(cb.code[0].value.func,
-                                               ast.Attribute)):
+                        detector = AttributedCallDetector()
+                        detector.visit(cb.code[0].value)
+                        if detector.detected:
                             candidates.remove(candidate)
                             continue
                     elif cb.language is dtypes.Language.CPP:
@@ -478,6 +493,12 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         for ise in dst.sdfg.edges():
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
+                            for aname, aval in ise.data.assignments.items():
+                                vast = ast.parse(aval)
+                                vast = astutils.RemoveSubscripts({tmp_symname
+                                                                  }).visit(vast)
+                                ise.data.assignments[aname] = astutils.unparse(
+                                    vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
@@ -504,7 +525,8 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
             [n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
 
-def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
+def promote_scalars_to_symbols(sdfg: sd.SDFG,
+                               ignore: Optional[Set[str]] = None) -> Set[str]:
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
@@ -513,6 +535,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     optimization.
 
     :param sdfg: The SDFG to run the pass on.
+    :param ignore: An optional set of strings of scalars to ignore.
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
@@ -529,8 +552,9 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
     # 5. Remove data descriptors and add symbols to SDFG
     # 6. Replace subscripts in all interstate conditions and assignments
     # 7. Make indirections with symbols a single memlet
-
     to_promote = find_promotable_scalars(sdfg)
+    if ignore:
+        to_promote -= ignore
     if len(to_promote) == 0:
         return to_promote
 
@@ -608,17 +632,18 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG) -> Set[str]:
         ise: InterstateEdge = edge.data
         for scalar in to_promote:
             # Condition
-            if ise.condition.language is dtypes.Language.Python:
-                promo = TaskletPromoter(scalar, scalar)
-                for stmt in ise.condition.code:
-                    promo.visit(stmt)
-            elif ise.condition.language is dtypes.Language.CPP:
-                ise.condition = re.sub(r'\b%s\[.*\]' % re.escape(scalar),
-                                       scalar, ise.condition.as_string)
+            if not edge.data.is_unconditional():
+                if ise.condition.language is dtypes.Language.Python:
+                    promo = TaskletPromoter(scalar, scalar)
+                    for stmt in ise.condition.code:
+                        promo.visit(stmt)
+                elif ise.condition.language is dtypes.Language.CPP:
+                    ise.condition = re.sub(r'\b%s\[.*?\]' % re.escape(scalar),
+                                           scalar, ise.condition.as_string)
             # Assignments
             for aname, assignment in ise.assignments.items():
                 ise.assignments[aname] = re.sub(
-                    r'\b%s\[.*\]' % re.escape(scalar), scalar,
+                    r'\b%s\[.*?\]' % re.escape(scalar), scalar,
                     assignment.strip())
 
     # Step 7: Indirection

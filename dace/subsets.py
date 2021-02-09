@@ -5,7 +5,7 @@ import re
 import sympy as sp
 from functools import reduce
 import sympy.core.sympify
-from typing import List, Set, Union
+from typing import List, Optional, Set, Union
 import warnings
 from dace.config import Config
 
@@ -25,17 +25,41 @@ class Subset(object):
             except AttributeError:  # No free_symbols in expr
                 return expr
 
-        try:
-            return all([(symbolic.simplify_ext(nng(rb)) <=
-                         symbolic.simplify_ext(nng(orb))) == True
-                        and (symbolic.simplify_ext(nng(re)) >=
-                             symbolic.simplify_ext(nng(ore))) == True
-                        for rb, re, orb, ore in zip(
-                            self.min_element(), self.max_element_approx(),
-                            other.min_element(), other.max_element_approx())])
-        except TypeError:
-            return False
 
+        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+        if not symbolic_positive:
+            try:
+                return all([(symbolic.simplify_ext(nng(rb)) <=
+                            symbolic.simplify_ext(nng(orb))) == True
+                            and (symbolic.simplify_ext(nng(re)) >=
+                                symbolic.simplify_ext(nng(ore))) == True
+                            for rb, re, orb, ore in zip(
+                                self.min_element_approx(), self.max_element_approx(),
+                                other.min_element_approx(), other.max_element_approx())])
+            except TypeError:
+                return False
+        
+        else:
+            try:
+                for rb, re, orb, ore in zip(
+                            self.min_element_approx(), self.max_element_approx(),
+                            other.min_element_approx(), other.max_element_approx()):
+
+                    # lower bound: first check whether symbolic positive condition applies 
+                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                            return False 
+                        
+                    # upper bound: first check whether symbolic positive condition applies
+                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                            return False 
+            except TypeError:
+                return False 
+                
+            return True
+               
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
@@ -92,7 +116,9 @@ def _expr(val):
 def _approx(val):
     if isinstance(val, symbolic.SymExpr):
         return val.approx
-    return val
+    elif isinstance(val, sp.Basic):
+        return val
+    return symbolic.pystr_to_symbolic(val)
 
 
 def _tuple_to_symexpr(val):
@@ -180,7 +206,7 @@ class Range(Subset):
         return Range(sum_ranges)
 
     def num_elements(self):
-        return reduce(sp.mul.Mul, self.size(), 1)
+        return reduce(sp.Mul, self.size(), 1)
 
     def size(self, for_codegen=False):
         """ Returns the number of elements in each dimension. """
@@ -870,6 +896,20 @@ class Indices(Subset):
         return None
 
 
+def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType,
+                         are: symbolic.SymbolicType,
+                         bre: symbolic.SymbolicType):
+    """ 
+    Special cases of subset unions. If case found, returns pair of 
+    (min,max), otherwise returns None.
+    """
+    if are + 1 == brb:
+        return (arb, bre)
+    elif bre + 1 == arb:
+        return (brb, are)
+    return None
+
+
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     """ Perform union by creating a bounding-box of two subsets. """
     if subset_a.dims() != subset_b.dims():
@@ -881,38 +921,45 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     # a different result respectively.
     symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
-    if not symbolic_positive:
-        result = [(min(arb,
-                       brb), max(are, bre), 1) for arb, brb, are, bre in zip(
-                           subset_a.min_element(), subset_b.min_element(),
-                           subset_a.max_element(), subset_b.max_element())]
+    result = []
+    for arb, brb, are, bre in zip(subset_a.min_element_approx(),
+                                  subset_b.min_element_approx(),
+                                  subset_a.max_element_approx(),
+                                  subset_b.max_element_approx()):
+        # Special case
+        spcase = _union_special_cases(arb, brb, are, bre)
+        if spcase is not None:
+            minrb, maxre = spcase
+            result.append((minrb, maxre, 1))
+            continue
 
-    else:
-        result = []
-        for arb, brb, are, bre in zip(subset_a.min_element(),
-                                      subset_b.min_element(),
-                                      subset_a.max_element(),
-                                      subset_b.max_element()):
-            try:
-                minrb = min(arb, brb)
-            except TypeError:
+        try:
+            minrb = min(arb, brb)
+        except TypeError:
+            if symbolic_positive:
                 if len(arb.free_symbols) == 0:
                     minrb = arb
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
                     raise
+            else:
+                raise
 
-            try:
-                maxre = max(are, bre)
-            except TypeError:
+        try:
+            maxre = max(are, bre)
+        except TypeError:
+            if symbolic_positive:
                 if len(are.free_symbols) == 0:
                     maxre = bre
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
                     raise
-            result.append((minrb, maxre, 1))
+            else:
+                raise
+
+        result.append((minrb, maxre, 1))
 
     return Range(result)
 
@@ -927,14 +974,15 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
                  inputs. If union failed, returns None.
     """
     try:
-        if type(subset_a) != type(subset_b):
-            return bounding_box_union(subset_a, subset_b)
-        elif subset_a is not None and subset_b is None:
+
+        if subset_a is not None and subset_b is None:
             return subset_a
         elif subset_b is not None and subset_a is None:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
+        elif type(subset_a) != type(subset_b):
+            return bounding_box_union(subset_a, subset_b)
         elif isinstance(subset_a, Indices):
             # Two indices. If they are adjacent, returns a range that contains both,
             # otherwise, returns a bounding box of the two

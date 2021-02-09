@@ -17,6 +17,7 @@ from dace.codegen.targets.cpp import cpp_array_expr, cpp_offset_expr
 
 # Frontend imports and helpers
 from dace.frontend.common.op_repository import replaces
+from dace.frontend.python.newast import ProgramVisitor
 
 # Transformations
 from dace.transformation.interstate import GPUTransformSDFG
@@ -77,7 +78,8 @@ class TensorCoreCodegen(TargetCodeGenerator):
     def allocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView,
                        state_id: int, node: nodes.AccessNode,
                        function_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream):
+                       declaration_stream: CodeIOStream,
+                       allocation_stream: CodeIOStream):
         name = node.data
         nodedesc = node.desc(sdfg)
 
@@ -88,11 +90,11 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
         # Write a fragment based on the storage type
         if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
-            callsite_stream.write(
+            declaration_stream.write(
                 'wmma::fragment<wmma::accumulator, '
                 '16, 16, 16, float> {};'.format(name), sdfg, state_id, node)
         else:
-            callsite_stream.write(
+            declaration_stream.write(
                 'wmma::fragment<wmma::matrix_{mat}, '
                 '16, 16, 16, half, wmma::{maj}_major> '
                 '{name};'.format(
@@ -218,8 +220,8 @@ using namespace nvcuda;
 
 
 @replaces('frag_fill')
-def frag_fill(sdfg: dace.SDFG, state: dace.SDFGState, frag: str,
-              fill: Any) -> List[str]:
+def frag_fill(pv: ProgramVisitor, sdfg: dace.SDFG, state: dace.SDFGState,
+              frag: str, fill: Any) -> List[str]:
     # Replacement functions receive the SDFG and the current state as the first
     # two arguments, followed by all the other arguments. Here we treat them as
     # two strings representing the array name to fill and what to fill it with.
@@ -244,8 +246,8 @@ def frag_fill(sdfg: dace.SDFG, state: dace.SDFGState, frag: str,
 
 
 @replaces('wmma')
-def wmma(sdfg: dace.SDFG, state: dace.SDFGState, a_frag: str, b_frag: str,
-         c_frag: str) -> List[str]:
+def wmma(pv: ProgramVisitor, sdfg: dace.SDFG, state: dace.SDFGState,
+         a_frag: str, b_frag: str, c_frag: str) -> List[str]:
     # Implemented similarly to `frag_fill`, but with inputs and outputs.
     anode = state.add_read(a_frag)
     bnode = state.add_read(b_frag)

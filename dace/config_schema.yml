@@ -106,6 +106,14 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            library_prefix:
+                type: str
+                default: ""
+                default_Linux: "lib"
+                default_Darwin: "lib"
+                title: Library prefix
+                description: Filename prefix for shared libraries.
+
             library_extension:
                 type: str
                 default: so
@@ -210,6 +218,15 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
+
+                    openmp_sections:
+                        type: bool
+                        default: true
+                        title: Use OpenMP sections
+                        description: >
+                            If set to true, multiple connected components will
+                            generate "#pragma omp parallel sections" code around
+                            them.
 
             #############################################
             # GPU (CUDA/HIP) compiler
@@ -365,6 +382,14 @@ required:
                         default: xilinx_u250_xdma_201830_2
                         title: Target platform for Xilinx
                         description: Platform name of Vitis/SDx/SDAccel target.
+
+                    frequency:
+                        type: str 
+                        default: '' 
+                        title: Target frequency for Xilinx kernels
+                        description: >
+                            Target frequency when compiling kernels for Xilinx.
+                            Will not necessarily be achieved in practice.
 
                     enable_debugging:
                         type: bool
@@ -632,6 +657,15 @@ required:
         title: Instrumentation
         description: Instrumentation preferences
         required:
+            report_each_invocation:
+                type: bool
+                title: Save report for each invocation
+                default: true
+                description: >
+                    Save an instrumentation report file for each invocation of
+                    the SDFG, rather than one report that spans from SDFG
+                    initialization to finalization.
+
             papi:
                 type: dict
                 title: PAPI

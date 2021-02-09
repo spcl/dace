@@ -111,7 +111,6 @@ def attn_fwd(q: dace.float32[batchSize, Qsize,
 def test_attention():
     print("=== Generating SDFG ===")
     sdfg = attn_fwd.to_sdfg()
-    sdfg.save('test.sdfg')
     print("=== Compiling ===")
     sdfg.compile()
 

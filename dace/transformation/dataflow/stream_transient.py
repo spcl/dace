@@ -232,7 +232,7 @@ class AccumulateTransient(transformation.Transformation):
             node_b=outer_map_exit)
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize'
+            warnings.warn('AccumulateTransient did not properly initialize '
                           'newly-created transient!')
             return
 

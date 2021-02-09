@@ -7,6 +7,7 @@ import errno
 import itertools
 import os
 import pickle, json
+from hashlib import sha256
 from pydoc import locate
 import random
 import re
@@ -137,35 +138,25 @@ class InterstateEdge(object):
 
         return result - set(self.assignments.keys())
 
-    def replace(self, name: str, new_name: str) -> None:
+    def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
         :param name: The source name.
         :param new_name: The replacement name.
+        :param replace_keys: If False, skips replacing assignment keys.
         """
-        _replace_dict(self.assignments, name, new_name)
+        # Avoid import loops
+        from dace.frontend.python import astutils
+
+        if replace_keys:
+            _replace_dict(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
-            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
-            if subscript_matches:
-                sym_v = symbolic.pystr_to_symbolic(v)
-                for subscript in subscript_matches:
-                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=name, s=subscript))
-                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=new_name, s=subscript))
-                    sym_v = sym_v.replace(sym_name, sym_new_name)
-                str_v = symbolic.symstr(sym_v)
-                for subscript in subscript_matches:
-                    str_v = str_v.replace("({})".format(subscript),
-                                          "[{}]".format(subscript))
-                self.assignments[k] = str_v
-            else:
-                sym_name = symbolic.pystr_to_symbolic(name)
-                sym_new_name = symbolic.pystr_to_symbolic(new_name)
-                self.assignments[k] = symbolic.symstr(
-                    symbolic.pystr_to_symbolic(v).replace(
-                        sym_name, sym_new_name))
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplace({name: new_name}).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
@@ -243,6 +234,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            dtypes.typeclass,
                            desc="Global symbols for this SDFG")
 
+    instrument = Property(choices=dtypes.InstrumentationType,
+                          desc="Measure execution statistics with given method",
+                          default=dtypes.InstrumentationType.No_Instrumentation)
+
     global_code = DictProperty(
         str,
         CodeBlock,
@@ -311,7 +306,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         return self.sdfg_list.index(self)
 
-    def to_json(self):
+    def to_json(self, hash=False):
         """ Serializes this object to JSON format.
             :return: A string representing the JSON-serialized SDFG.
         """
@@ -326,6 +321,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tmp['sdfg_list_id'] = int(self.sdfg_id)
 
         tmp['attributes']['name'] = self.name
+        if hash:
+            tmp['attributes']['hash'] = self.hash_sdfg()
 
         return tmp
 
@@ -348,7 +345,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop', 'name'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         for n in nodes:
             nci = copy.copy(context_info)
@@ -363,21 +360,36 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return ret
 
-    def hash_sdfg(self) -> int:
+    def hash_sdfg(self) -> str:
         '''
-        Returns an hash of the current SDFG, without considering IDs and attributes name
-        :return: the hash
+        Returns a hash of the current SDFG, without considering IDs and attribute names.
+        :return: The hash (in SHA-256 format).
         '''
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
-            # Recursively removes 'name' from json representation, if it is under
-            # an 'attribute' json item, and 'sdfg_list_id'
+            # Recursively remove attributes from the SDFG which are not used in
+            # uniquely representing the SDFG. This, among other things, includes
+            # the hash, name, transformation history, and meta attributes.
             if isinstance(json_obj, dict):
                 if 'sdfg_list_id' in json_obj:
                     del json_obj['sdfg_list_id']
-                if last_keyword == 'attributes' and 'name' in json_obj:
-                    del json_obj['name']
+
+                keys_to_delete = []
+                kv_to_recurse = []
                 for key, value in json_obj.items():
+                    if (isinstance(key, str)
+                            and (key.startswith('_meta_') or key in [
+                                'name', 'hash', 'orig_sdfg',
+                                'transformation_hist', 'instrument'
+                            ])):
+                        keys_to_delete.append(key)
+                    else:
+                        kv_to_recurse.append((key, value))
+
+                for key in keys_to_delete:
+                    del json_obj[key]
+
+                for key, value in kv_to_recurse:
                     keyword_remover(value, last_keyword=key)
             elif isinstance(json_obj, (list, tuple)):
                 for value in json_obj:
@@ -386,8 +398,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         jsondict = self.to_json()  # No more nonstandard objects
         keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
         string_representation = dace.serialize.dumps(jsondict)  # dict->str
-        hsh = hash(string_representation)  # str->int
-        return hsh
+        hsh = sha256(string_representation.encode('utf-8'))
+        return hsh.hexdigest()
 
     @property
     def arrays(self):
@@ -601,6 +613,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def is_instrumented(self) -> bool:
         """ Returns True if the SDFG has performance instrumentation enabled on
             it or any of its elements. """
+        if self.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return True
         try:
             next(n for n, _ in self.all_nodes_recursive()
                  if hasattr(n, 'instrument') and
@@ -739,10 +753,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             self._name = newname
         return newname
 
+    @name.setter
+    def name(self, newname: str):
+        self._name = newname
+
     @property
     def label(self):
         """ The name of this SDFG. """
-        #return self._name
         return self.name
 
     @property
@@ -793,17 +810,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._propagate = propagate
 
     @property
-    def parent(self):
+    def parent(self) -> SDFGState:
         """ Returns the parent SDFG state of this SDFG, if exists. """
         return self._parent
 
     @property
-    def parent_sdfg(self):
+    def parent_sdfg(self) -> 'SDFG':
         """ Returns the parent SDFG of this SDFG, if exists. """
         return self._parent_sdfg
 
     @property
-    def parent_nsdfg_node(self):
+    def parent_nsdfg_node(self) -> nd.NestedSDFG:
         """ Returns the parent NestedSDFG node of this SDFG, if exists. """
         return self._parent_nsdfg_node
 
@@ -945,7 +962,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             write_set |= ws.keys()
         return read_set, write_set
 
-    def arglist(self) -> Dict[str, dt.Data]:
+    def arglist(self, scalars_only=False) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
@@ -962,11 +979,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                  the arguments, sorted as defined here.
         """
         # Start with data descriptors
-        data_args = {
-            k: v
-            for k, v in self.arrays.items()
-            if not v.transient and not isinstance(v, dt.Scalar)
-        }
+        if scalars_only:
+            data_args = {}
+        else:
+            data_args = {
+                k: v
+                for k, v in self.arrays.items()
+                if not v.transient and not isinstance(v, dt.Scalar)
+            }
+
         scalar_args = {
             k: v
             for k, v in self.arrays.items() if not v.transient
@@ -987,20 +1008,28 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
-    def signature_arglist(self, with_types=True, for_call=False):
+    def signature_arglist(self,
+                          with_types=True,
+                          for_call=False,
+                          with_arrays=True) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
         return [
             v.as_arg(name=k, with_types=with_types, for_call=for_call)
-            for k, v in self.arglist().items()
+            for k, v in self.arglist(scalars_only=not with_arrays).items()
         ]
 
-    def signature(self, with_types=True, for_call=False):
+    def signature(self,
+                  with_types=True,
+                  for_call=False,
+                  with_arrays=True) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
             :param with_types: If True, includes argument types (can be used
                                for a function prototype). If False, only
@@ -1008,8 +1037,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                calls).
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
         """
-        return ", ".join(self.signature_arglist(with_types, for_call))
+        return ", ".join(
+            self.signature_arglist(with_types, for_call, with_arrays))
 
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
@@ -1142,7 +1174,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                json_output = self.to_json()
+                json_output = self.to_json(hash=True)
                 if exception:
                     json_output['error'] = exception.to_json()
                 fp.write(dace.serialize.dumps(json_output))
@@ -1153,7 +1185,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """View this sdfg in the system's HTML viewer
            :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
         """
-        from diode.sdfv import view
+        from dace.cli.sdfv import view
         view(self, filename=filename)
 
     @staticmethod
@@ -1288,6 +1320,48 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                         strides=strides,
                         offset=offset,
                         lifetime=lifetime,
+                        alignment=alignment,
+                        debuginfo=debuginfo,
+                        total_size=total_size,
+                        may_alias=may_alias)
+
+        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+
+    def add_view(self,
+                  name: str,
+                  shape,
+                  dtype,
+                  storage=dtypes.StorageType.Default,
+                  strides=None,
+                  offset=None,
+                  debuginfo=None,
+                  allow_conflicts=False,
+                  total_size=None,
+                  find_new_name=False,
+                  alignment=0,
+                  may_alias=False) -> Tuple[str, dt.View]:
+        """ Adds a view to the SDFG data descriptor store. """
+
+        # convert strings to int if possible
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+
+        if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+            dtype = dtypes.typeclass(dtype)
+
+        desc = dt.View(dtype,
+                        shape,
+                        storage=storage,
+                        allow_conflicts=allow_conflicts,
+                        transient=True,
+                        strides=strides,
+                        offset=offset,
+                        lifetime=dtypes.AllocationLifetime.Scope,
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
@@ -1598,12 +1672,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
 
-        if Config.get_bool("compiler", "use_cache"):
+        if Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
             binary_filename = compiler.get_binary_name(self.build_folder,
                                                        self.name)
             if os.path.isfile(binary_filename):
-                # print("A cached binary was found!")
                 return compiler.load_from_file(self, binary_filename)
 
         ############################
@@ -1635,6 +1708,26 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 output_file = os.path.join(output_file,
                                            os.path.basename(shared_library))
             shutil.copyfile(shared_library, output_file)
+
+        # Ensure that an SDFG link file is created along with the SDFG, linking
+        # it to the generating code and storing command line arguments that
+        # were provided.
+        if sys.argv is not None and len(sys.argv) > 0:
+            os.makedirs(sdfg.build_folder, exist_ok=True)
+            with open(os.path.join(sdfg.build_folder, 'program.sdfgl'),
+                      'w') as launchfiles_file:
+                launchfiles_file.write(
+                    'name,SDFG_intermediate,SDFG,source,' +
+                    ','.join(['argv_' + str(i)
+                              for i in range(len(sys.argv))]) + '\n')
+                launchfiles_file.write(
+                    sdfg.name + ',' +
+                    os.path.abspath(os.path.join(sdfg.build_folder,
+                                                 'program.sdfg')) + ',' +
+                    os.path.abspath(os.path.join('_dacegraphs',
+                                                 'program.sdfg')) + ',' +
+                    os.path.abspath(sys.argv[0]) + ',' +
+                    ','.join([str(el) for el in sys.argv]))
 
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)
@@ -1878,7 +1971,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             validate_all: bool = False,
             strict: bool = False,
             states: Optional[List[Any]] = None,
-            print_report: Optional[bool] = None) -> int:
+            print_report: Optional[bool] = None,
+            order_by_transformation: bool = True) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -1891,7 +1985,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
                                  the DaCe config option 'debugprint' should
-                                 apply)
+                                 apply).
+            :param order_by_transformation: Try to apply transformations ordered
+                                            by class rather than SDFG.
             :return: Number of transformations applied.
 
             Examples::
@@ -1920,36 +2016,56 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
-        # Cache transformations as metadata for faster application
-        opt.set_transformation_metadata(xforms)
+        params_by_xform = {x: o for x, o in zip(xforms, options)}
 
-        applied = True
-        while applied:
-            applied = False
-            # Find and apply one of the chosen transformations
-            for match in opt.get_pattern_matches(strict=strict,
-                                                 patterns=xforms,
-                                                 states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
+        # Helper function for applying and validating a transformation
+        def _apply_and_validate(match):
+            sdfg = self.sdfg_list[match.sdfg_id]
 
-                # Set transformation properties
-                opts = next(o for x, o in zip(xforms, options)
-                            if type(match) is x)
-                for prop_name, prop_val in opts.items():
-                    setattr(match, prop_name, prop_val)
+            # Set transformation properties
+            opts = params_by_xform[type(match)]
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
 
-                match.apply(sdfg)
-                applied_transformations[type(match).__name__] += 1
-                if validate_all:
-                    try:
-                        self.validate()
-                    except InvalidSDFGError as err:
-                        raise InvalidSDFGError(
-                            "Validation failed after applying {}.".format(
-                                match.print_match(sdfg)), sdfg,
-                            match.state_id) from err
-                applied = True
-                break
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                try:
+                    self.validate()
+                except InvalidSDFGError as err:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".
+                        format(match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+
+        if order_by_transformation:
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    applied = True
+                    while applied:
+                        applied = False
+                        for match in opt.get_pattern_matches(strict=strict,
+                                                             patterns=[xform],
+                                                             states=states):
+                            _apply_and_validate(match)
+                            applied = True
+                            applied_anything = True
+                            break
+        else:
+            # Cache transformations as metadata for faster application
+            opt.set_transformation_metadata(xforms)
+            applied = True
+            while applied:
+                applied = False
+                # Find and apply one of the chosen transformations
+                for match in opt.get_pattern_matches(strict=strict,
+                                                     patterns=xforms,
+                                                     states=states):
+                    _apply_and_validate(match)
+                    applied = True
+                    break
 
         if validate:
             try:
@@ -2010,8 +2126,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     node.sdfg.expand_library_nodes()  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
-                    print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(str(node),
-                                                                                                          impl_name))
+                    print(
+                        "Automatically expanded library node \"{}\" with implementation \"{}\"."
+                        .format(str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     if recursive:

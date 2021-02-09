@@ -6,7 +6,7 @@ from collections import OrderedDict
 import inspect
 import numbers
 import sympy
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from dace import dtypes, symbolic
 
@@ -182,6 +182,9 @@ def subscript_to_slice(node, arrays, without_array=False):
     else:
         return name, rng
 
+def slice_to_subscript(arrname, range):
+    """ Converts a name and subset to a Python AST Subscript object. """
+    return ast.parse(f'{arrname}[{range}]').body[0].value
 
 def astrange_to_symrange(astrange, arrays, arrname=None):
     """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math 
@@ -248,7 +251,7 @@ def negate_expr(node):
     # Negation support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
-     # Support for numerical constants
+    # Support for numerical constants
     if isinstance(node, numbers.Number):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
@@ -367,6 +370,17 @@ class ASTFindReplace(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class RemoveSubscripts(ast.NodeTransformer):
+    def __init__(self, keywords: Set[str]):
+        self.keywords = keywords
+
+    def visit_Subscript(self, node: ast.Subscript):
+        if rname(node) in self.keywords:
+            return ast.copy_location(node.value, node)
+        
+        return self.generic_visit(node)
+
+
 class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     """ 
     Simple Python AST visitor to find free symbols in a code, not including
@@ -393,7 +407,7 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
 
     def visit_Name(self, node):
         if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
-                and isinstance(node.id, str)):
+                and isinstance(node.id, str) and node.id not in ('inf', 'nan')):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)
