@@ -281,10 +281,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             candidates.append((True, n.data, n.desc(scope)))
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dace.data.Array)
-                                    and n.desc(scope).storage ==
-                                    dace.dtypes.StorageType.FPGA_Global and
-                                    n.data not in nested_global_transients_seen
-                                ):
+                                    and n.desc(scope).storage
+                                    == dace.dtypes.StorageType.FPGA_Global
+                                    and n.data
+                                    not in nested_global_transients_seen):
                                 nested_global_transients.append(n)
                             nested_global_transients_seen.add(n.data)
             subgraph_parameters[subgraph] = []
@@ -314,10 +314,10 @@ class FPGACodeGen(TargetCodeGenerator):
                         global_data_parameters.append(
                             (is_output, dataname, data, interface_id))
                         global_data_names.add(dataname)
-                    elif (data.storage in (
-                            dace.dtypes.StorageType.FPGA_Local,
-                            dace.dtypes.StorageType.FPGA_Registers,
-                            dace.dtypes.StorageType.FPGA_ShiftRegister)):
+                    elif (data.storage
+                          in (dace.dtypes.StorageType.FPGA_Local,
+                              dace.dtypes.StorageType.FPGA_Registers,
+                              dace.dtypes.StorageType.FPGA_ShiftRegister)):
                         if dataname in shared_data:
                             # Only transients shared across multiple components
                             # need to be allocated outside and passed as
@@ -482,10 +482,10 @@ class FPGACodeGen(TargetCodeGenerator):
                             dataname, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
                             .format(nodedesc.dtype.ctype))
-            elif (nodedesc.storage in (
-                    dace.dtypes.StorageType.FPGA_Local,
-                    dace.dtypes.StorageType.FPGA_Registers,
-                    dace.dtypes.StorageType.FPGA_ShiftRegister)):
+            elif (nodedesc.storage
+                  in (dace.dtypes.StorageType.FPGA_Local,
+                      dace.dtypes.StorageType.FPGA_Registers,
+                      dace.dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
                     raise cgx.CodegenError(
@@ -735,10 +735,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(
-                sdfg).storage == dace.dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage ==
-                                    dace.dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage
+                                    == dace.dtypes.StorageType.FPGA_Registers)
 
             num_loops = len([dim for dim in copy_shape if dim != 1])
             if num_loops > 0:
@@ -994,8 +994,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     result.write("long {} = {};\n".format(
                         node.map.params[i], node.map.range[i][0]))
                 for var, value in node.pipeline.additional_iterators.items():
-                    result.write("long {} = {};\n".format(
-                        var, value))
+                    result.write("long {} = {};\n".format(var, value))
 
             is_degenerate = []
             degenerate_values = []
@@ -1132,8 +1131,8 @@ class FPGACodeGen(TargetCodeGenerator):
                 if len(in_out_data) > 0:
                     if is_there_a_wcr == False:
                         # add pragma to ignore all loop carried dependencies
-                        self.generate_no_dependence_pre(
-                            result, sdfg, state_id, node)
+                        self.generate_no_dependence_pre(result, sdfg, state_id,
+                                                        node)
                     else:
                         # add specific pragmas
                         for candidate in in_out_data:
@@ -1200,14 +1199,18 @@ class FPGACodeGen(TargetCodeGenerator):
                 cond.append("!" + pipeline.drain_condition())
             if len(cond) > 0:
                 callsite_stream.write("if ({}) {{".format(" && ".join(cond)))
+            # ranges could have been defined in terms of floor/ceiling. Before printing the code
+            # they are converted from a symbolic expression to a C++ compilable expression
             for it, r in reversed(list(zip(pipeline.params, pipeline.range))):
                 callsite_stream.write(
                     "if ({it} >= {end}) {{\n{it} = {begin};\n".format(
-                        it=it, begin=r[0], end=r[1]))
+                        it=it,
+                        begin=dace.symbolic.symstr(r[0]),
+                        end=dace.symbolic.symstr(r[1])))
             for it, r in zip(pipeline.params, pipeline.range):
                 callsite_stream.write(
-                    "}} else {{\n{it} += {step};\n}}\n".format(it=it,
-                                                               step=r[2]))
+                    "}} else {{\n{it} += {step};\n}}\n".format(
+                        it=it, step=dace.symbolic.symstr(r[2])))
             if len(cond) > 0:
                 callsite_stream.write("}\n")
             callsite_stream.write("}\n}\n")
