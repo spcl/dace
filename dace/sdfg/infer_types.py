@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes
 from dace.codegen.tools import type_inference
 from dace.sdfg import SDFG, SDFGState, nodes

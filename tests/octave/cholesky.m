@@ -1,4 +1,4 @@
-% Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+% Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 M = [2 -1 0; -1 2 -1 ; 0 -1 2] 
 n = length( M );
 L = zeros( n, n );

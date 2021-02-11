@@ -1,5 +1,5 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
-""" Contains classes that implement the OnTheFlyMapFusion transformation. """
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+""" Contains classes that implement the BufferTiling transformation. """
 
 from dace import registry
 from dace.sdfg import nodes
@@ -9,6 +9,14 @@ from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFus
 
 @registry.autoregister_params(singlestate=True)
 class BufferTiling(transformation.Transformation):
+    """ Implements the buffer tiling transformation.
+
+        BufferTiling tiles a buffer that is in between two maps, where the preceding map
+        writes to the buffer and the succeeding map reads from it.
+        It introduces additional computations in exchange for reduced memory footprint.
+        Commonly used to make use of shared memory on GPUs.
+    """
+
     _map1_exit = nodes.MapExit(nodes.Map('', [], []))
     _array = nodes.AccessNode('')
     _map2_entry = nodes.MapEntry(nodes.Map('', [], []))

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ File containing DaCe-serializable versions of graphs, nodes, and edges. """
 
 from collections import deque, OrderedDict
