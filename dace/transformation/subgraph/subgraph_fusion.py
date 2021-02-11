@@ -46,6 +46,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
     transient_allocation = Property(
+        choices=dtypes.StorageType,
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
@@ -53,6 +54,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
                                   "keeps schedule.",
+                                  choices=dtypes.ScheduleType,
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Default,
                                   allow_none=True)
