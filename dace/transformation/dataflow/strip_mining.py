@@ -156,9 +156,8 @@ class StripMining(transformation.Transformation):
         desc="Continuous (false) or strided (true) elements in tile")
 
     tiling_type = Property(
-        dtype=str,
-        default='normal',
-        choices=['normal', 'ceilrange', 'number_of_tiles'],
+        default=dtypes.TilingType.Normal,
+        choices=dtypes.TilingType,
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
