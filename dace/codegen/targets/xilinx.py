@@ -505,8 +505,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
                     var_name))
 
-        for arg in stream_args:
-            var_name = re.findall(r"\w+", arg)[-1]
+        for _, var_name, _, _ in external_streams:
             kernel_stream.write(
                 "#pragma HLS INTERFACE axis port={}".format(var_name))
 
