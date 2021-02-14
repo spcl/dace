@@ -572,9 +572,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 rtl_module = True
                 break
         if rtl_module:
-            # TODO should these placeholders still be generated?
-            entry_stream.write(f'// HLSLIB_DATAFLOW_FUNCTION({name})')
-            module_stream.write(f'// void {name}() {{ }}\n\n')
+            entry_stream.write(f'// Placeholder for RTL module: HLSLIB_DATAFLOW_FUNCTION({name})')
+            module_stream.write(f'// Placeholder for RTL module: void {name}() {{ }}\n\n')
 
             # _1 in names are due to vitis
             for node in subgraph.source_nodes():
