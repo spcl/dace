@@ -10,16 +10,10 @@ from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
 from dace.codegen.targets.common import sym2cpp
 
-import sys
-import os
-base_dir = os.path.dirname(__file__)
-rtllib_dir = os.path.join(base_dir, '../../external/rtllib')
-sys.path.append(rtllib_dir)
-from templates.control import generate_from_config as rtllib_control
-from templates.package import generate_from_config as rtllib_package
-from templates.synth import generate_from_config as rtllib_synth
-from templates.top import generate_from_config as rtllib_top
-
+from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
+from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
+from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
+from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
 
 @registry.autoregister_params(name='rtl')
 class RTLCodeGen(target.TargetCodeGenerator):
