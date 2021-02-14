@@ -262,8 +262,8 @@ class FPGACodeGen(TargetCodeGenerator):
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = []
         nested_global_transients_seen = set()
-        external_streams = []  # type: List[Tuple(bool,str,Data,bool)]
         # [(Is an output, dataname string, data object, interface)]
+        external_streams: list[tuple[bool, str, dt, dict[str,int]]] = []
 
         for subgraph in subgraphs:
             data_to_node.update({
