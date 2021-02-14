@@ -410,6 +410,7 @@ class Tasklet(CodeNode):
         else:
             return self.label
 
+
 class RTLTasklet(Tasklet):
     ip_cores = {}
 
@@ -420,6 +421,8 @@ class RTLTasklet(Tasklet):
             'version': version,
             'params': params
         }
+
+
 # ------------------------------------------------------------------------------
 
 
@@ -548,7 +551,8 @@ class NestedSDFG(CodeNode):
         extra_symbols = self.symbol_mapping.keys() - symbols
         if len(extra_symbols) > 0:
             # TODO: Elevate to an error?
-            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
+            warnings.warn(
+                f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
         self.sdfg.validate()

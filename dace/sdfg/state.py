@@ -357,9 +357,9 @@ class StateGraphView(object):
         return result
 
     def scope_children(
-        self,
-        return_ids: bool = False,
-        validate: bool = True
+            self,
+            return_ids: bool = False,
+            validate: bool = True
     ) -> Dict[Optional[nd.EntryNode], List[nd.Node]]:
         """ Returns a dictionary that maps each SDFG entry node to its children,
             not including the children of children entry nodes. The key `None`
@@ -478,7 +478,7 @@ class StateGraphView(object):
         return defined_syms
 
     def _read_and_write_sets(
-        self
+            self
     ) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
         """
         Determines what data is read and written in this subgraph, returning
@@ -1077,14 +1077,14 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             location=location,
             debuginfo=debuginfo,
         ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
-                name,
-                inputs,
-                outputs,
-                code,
-                language,
-                location=location,
-                debuginfo=debuginfo,
-            )
+            name,
+            inputs,
+            outputs,
+            code,
+            language,
+            location=location,
+            debuginfo=debuginfo,
+        )
         self.add_node(tasklet)
         return tasklet
 
@@ -1171,12 +1171,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         return params, map_range
 
     def add_map(
-            self,
-            name,
-            ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
-            schedule=dtypes.ScheduleType.Default,
-            unroll=False,
-            debuginfo=None,
+        self,
+        name,
+        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+        schedule=dtypes.ScheduleType.Default,
+        unroll=False,
+        debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
             :param name:      Map label
@@ -1400,12 +1400,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
         return tasklet, map_entry, map_exit
 
     def add_reduce(
-            self,
-            wcr,
-            axes,
-            identity=None,
-            schedule=dtypes.ScheduleType.Default,
-            debuginfo=None,
+        self,
+        wcr,
+        axes,
+        identity=None,
+        schedule=dtypes.ScheduleType.Default,
+        debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
             :param wcr: A lambda function representing the reduction operation

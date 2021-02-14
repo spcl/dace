@@ -263,7 +263,7 @@ class FPGACodeGen(TargetCodeGenerator):
         nested_global_transients = []
         nested_global_transients_seen = set()
         # [(Is an output, dataname string, data object, interface)]
-        external_streams: list[tuple[bool, str, dt, dict[str,int]]] = []
+        external_streams: list[tuple[bool, str, dt, dict[str, int]]] = []
 
         for subgraph in subgraphs:
             data_to_node.update({

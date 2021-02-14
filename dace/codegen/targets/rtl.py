@@ -15,6 +15,7 @@ from dace.external.rtllib.templates.package import generate_from_config as rtlli
 from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
 from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
 
+
 @registry.autoregister_params(name='rtl')
 class RTLCodeGen(target.TargetCodeGenerator):
     """ RTL Code Generator (SystemVerilog) """
@@ -97,8 +98,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             Generate input/output memory copies from the array references to local variables (i.e. for the tasklet code).
         """
         if isinstance(edge.src, nodes.AccessNode) and isinstance(
-                edge.dst, nodes.Tasklet
-        ):  # handle AccessNode->Tasklet
+                edge.dst, nodes.Tasklet):  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn],
                           dtypes.pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
@@ -526,7 +526,8 @@ for(int i = 0; i < {veclen}; i++){{
                     "scalars": {},
                     "memory": {}
                 },
-                "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {}
+                "ip_cores": tasklet.ip_cores if isinstance(
+                    tasklet, nodes.RTLTasklet) else {}
             }
 
             self.code_objects.append(
