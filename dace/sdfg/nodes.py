@@ -410,7 +410,16 @@ class Tasklet(CodeNode):
         else:
             return self.label
 
+class RTLTasklet(Tasklet):
+    ip_cores = {}
 
+    def add_ip_core(self, module_name, name, vendor, version, params):
+        self.ip_cores[module_name] = {
+            'name': name,
+            'vendor': vendor,
+            'version': version,
+            'params': params
+        }
 # ------------------------------------------------------------------------------
 
 

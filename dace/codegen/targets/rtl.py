@@ -98,7 +98,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         """
         if isinstance(edge.src, nodes.AccessNode) and isinstance(
                 edge.dst, nodes.Tasklet
-        ):  # TODO remove? and self.mode == 'simulator':  # handle AccessNode->Tasklet
+        ):  # handle AccessNode->Tasklet
             if isinstance(dst_node.in_connectors[edge.dst_conn],
                           dtypes.pointer):  # pointer accessor
                 line: str = "{} {} = &{}[0];".format(
@@ -526,7 +526,7 @@ for(int i = 0; i < {veclen}; i++){{
                     "scalars": {},
                     "memory": {}
                 },
-                "ip_cores": {}
+                "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {}
             }
 
             self.code_objects.append(

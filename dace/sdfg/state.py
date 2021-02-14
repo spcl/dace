@@ -1076,7 +1076,15 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet],
             language,
             location=location,
             debuginfo=debuginfo,
-        )
+        ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
+                name,
+                inputs,
+                outputs,
+                code,
+                language,
+                location=location,
+                debuginfo=debuginfo,
+            )
         self.add_node(tasklet)
         return tasklet
 
