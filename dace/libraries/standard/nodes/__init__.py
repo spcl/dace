@@ -2,4 +2,4 @@
 from .code import CodeLibraryNode
 from .reduce import Reduce
 from .barrier import Barrier
-from .warp_all_reduce import WarpAllReduce
+from .parallel_all_reduce import ParallelAllReduce

@@ -249,6 +249,8 @@ class NestedMapFusion(transformation.Transformation):
 
         # create barrier state
         barrier_state = new_sdfg.add_state('barrier_state')
+        barrier_node = Barrier('barrier_node')
+        barrier_state.add_node(barrier_node)
 
         # detect sdfg1 exit states (states without outgoing edges)
         sdfg1_exit_states = [

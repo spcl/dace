@@ -6,6 +6,7 @@ from dace.transformation import transformation as pm
 from dace.sdfg.nodes import Tasklet
 from dace.sdfg.state import SDFGState
 from dace.sdfg import SDFG
+from dace import dtypes
 
 @dace.library.expansion
 class ExpandBarrierPure(pm.ExpandTransformation):
@@ -13,7 +14,8 @@ class ExpandBarrierPure(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Barrier', state: SDFGState, sdfg: SDFG):
-        return Tasklet('barrier')
+        raise Exception('ExpandBarrierPure not implemented')
+
 
 @dace.library.expansion
 class ExpandBarrierCUDADevice(pm.ExpandTransformation):
@@ -21,7 +23,7 @@ class ExpandBarrierCUDADevice(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Barrier', state: SDFGState, sdfg: SDFG):
-        return None
+        raise Exception('ExpandBarrierCUDADevice not implemented')
 
 
 @dace.library.expansion
@@ -30,7 +32,9 @@ class ExpandBarrierCUDABlock(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Barrier', state: SDFGState, sdfg: SDFG):
-        return None
+        tasklet = Tasklet('barrier_tasklet', code="__syncthreads();", language=dtypes.Language.CPP)
+        state.add_node(tasklet)
+        return tasklet
 
 
 @dace.library.node
@@ -41,4 +45,4 @@ class Barrier(dace.sdfg.nodes.LibraryNode):
         'CUDA (block)': ExpandBarrierCUDABlock,
     }
 
-    default_implementation = 'pure'
+    default_implementation = 'CUDA (block)'

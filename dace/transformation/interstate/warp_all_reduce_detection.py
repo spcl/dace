@@ -12,41 +12,44 @@ from dace.transformation import transformation
 import textwrap
 from dace.memlet import Memlet
 from typing import List, Tuple
+from dace.libraries.standard.nodes import ParallelAllReduce
 
 
-def add_all_reduce_tasklet(state: dace_state.SDFGState, wcr: str):
-    input_name = 'in'
-    output_name = 'out'
+def add_all_reduce_node(state: dace_state.SDFGState, wcr: str):
+    # input_name = 'in'
+    # output_name = 'out'
+    #
+    # reduction_type = operations.detect_reduction_type(wcr)
+    #
+    # if reduction_type == dtypes.ReductionType.Max:
+    #     reduction_op = 'if (new_val > out) { out = new_val; }'
+    # elif reduction_type == dtypes.ReductionType.Sum:
+    #     reduction_op = 'out += new_val;'
+    # else:
+    #     raise Exception("Unknown reduction type")
+    #
+    # code = textwrap.dedent("""
+    #         out = in[threadIdx.x];
+    #         # pragma unroll
+    #         for (int i = 1; i < 32; i = i * 2) {{
+    #             auto new_val = __shfl_xor_sync(0xffffffff, out, i);
+    #             {reduction_op}
+    #         }}
+    #     """.format(reduction_op=reduction_op))
+    #
+    # # TODO: remove and reimplement as library node, for now this stub is used for debugging
+    # code = "out = in;"
+    #
+    # warp_all_reduce_tasklet: nodes.Tasklet = state.add_tasklet(
+    #     name='warp_all_reduce',
+    #     inputs={input_name},
+    #     outputs={output_name},
+    #     code=code,
+    #     language=dtypes.Language.CPP)
 
-    reduction_type = operations.detect_reduction_type(wcr)
+    all_reduce_node = ParallelAllReduce(name='parallel_all_reduce', wcr=wcr)
 
-    if reduction_type == dtypes.ReductionType.Max:
-        reduction_op = 'if (new_val > out) { out = new_val; }'
-    elif reduction_type == dtypes.ReductionType.Sum:
-        reduction_op = 'out += new_val;'
-    else:
-        raise Exception("Unknown reduction type")
-
-    code = textwrap.dedent("""
-            out = in[threadIdx.x];
-            # pragma unroll
-            for (int i = 1; i < 32; i = i * 2) {{
-                auto new_val = __shfl_xor_sync(0xffffffff, out, i);
-                {reduction_op}
-            }}
-        """.format(reduction_op=reduction_op))
-
-    # TODO: remove and reimplement as library node, for now this stub is used for debugging
-    code = "out = in;"
-
-    warp_all_reduce_tasklet: nodes.Tasklet = state.add_tasklet(
-        name='warp_all_reduce',
-        inputs={input_name},
-        outputs={output_name},
-        code=code,
-        language=dtypes.Language.CPP)
-
-    return warp_all_reduce_tasklet
+    return all_reduce_node
 
 
 def parse_accumulate_state(state: dace_state.SDFGState) -> Tuple[
@@ -161,11 +164,11 @@ class WarpAllReduceDetection(transformation.Transformation):
         # create and fill all reduce state
         all_reduce_state: dace_state.SDFGState = sdfg.add_state('all_reduce_state')
         all_reduce_in = all_reduce_state.add_access(in_access.data)
-        all_reduce_tasklet = add_all_reduce_tasklet(all_reduce_state, out_edge.data.wcr)
+        all_reduce_node = add_all_reduce_node(all_reduce_state, out_edge.data.wcr)
         all_reduce_out = all_reduce_state.add_access(all_reduce_name)
 
-        all_reduce_state.add_edge(all_reduce_in, None, all_reduce_tasklet, 'in', in_edge.data)
-        all_reduce_state.add_edge(all_reduce_tasklet, 'out', all_reduce_out, None, Memlet(data=all_reduce_name))
+        all_reduce_state.add_edge(all_reduce_in, None, all_reduce_node, None, in_edge.data)
+        all_reduce_state.add_edge(all_reduce_node, None, all_reduce_out, None, Memlet(data=all_reduce_name))
 
         # create state to add initial value of accumulate variable
         all_reduce_init_state: dace_state.SDFGState = sdfg.add_state('all_reduce_init_state')
@@ -183,7 +186,7 @@ class WarpAllReduceDetection(transformation.Transformation):
         in_reduced_access = all_reduce_write_state.add_access(all_reduce_name)
         out_reduced_access = all_reduce_write_state.add_access(out_access.data)
         # TODO only a single thread in a map should write it
-        all_reduce_write_tasklet = all_reduce_write_state.add_tasklet(
+        all_reduce_write_tasklet =  all_reduce_write_state.add_tasklet(
             name='tasklet',
             inputs={'in'},
             outputs={'out'},
