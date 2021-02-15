@@ -204,17 +204,44 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 for i, key in enumerate(constants)
             ]))
 
+    def generate_padded_axis(self, is_input, name, total_size, veclen):
+        """
+        Generates a padded list of strings for pretty printing streaming
+        AXI port definitions. E.g. for a streaming input port named "a", the
+        output would be:
+
+        , input             s_axis_a_tvalid
+        , input      [31:0] s_axis_a_tdata
+        , output reg        s_axis_a_tready
+        , input       [3:0] s_axis_a_tkeep
+        , input             s_axis_a_tlast
+        """
+        vec_str = '' if veclen <= 1 else f'[{veclen-1}:0]'
+        bits_str = f'[{(total_size // veclen) * 8 - 1}:0]'
+        bytes_str = f'[{total_size - 1}:0]'
+        dir_str = 'input     ' if is_input else 'output reg'
+        ndir_str = 'output reg' if is_input else 'input     '
+        prefix = f's_axis_{name}' if is_input else f'm_axis_{name}'
+        padding = ' ' * (len(bits_str) + len(vec_str))
+        bytes_padding = ' ' * ((len(bits_str) - len(bytes_str)) + len(vec_str))
+        return [
+            f', {dir_str} {padding} {prefix}_tvalid',
+            f', {dir_str} {vec_str}{bits_str} {prefix}_tdata',
+            f', {ndir_str} {padding} {prefix}_tready',
+            f', {dir_str} {bytes_padding}{bytes_str} {prefix}_tkeep',
+            f', {dir_str} {padding} {prefix}_tlast',
+        ]
+
     def generate_rtl_inputs_outputs(self, sdfg, tasklet):
         # construct input / output module header
         inputs = list()
         for inp in tasklet.in_connectors:
-            # add vector index
-            idx_str = ""
             # catch symbolic (compile time variables)
             check_issymbolic([
                 tasklet.in_connectors[inp].veclen,
                 tasklet.in_connectors[inp].bytes
             ], sdfg)
+
             # extract parameters
             vec_len = int(
                 symbolic.evaluate(tasklet.in_connectors[inp].veclen,
@@ -222,61 +249,28 @@ class RTLCodeGen(target.TargetCodeGenerator):
             total_size = int(
                 symbolic.evaluate(tasklet.in_connectors[inp].bytes,
                                   sdfg.constants))
-            # generate vector representation
-            if vec_len > 1:
-                idx_str = "[{}:0]".format(vec_len - 1)
-            # add element index
-            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
-            # generate padded string and add to list
-            inputs.append(", input{padding} s_axis_{name}_tvalid".format(
-                padding=" " * 17, name=inp))
-            inputs.append(
-                ", input{padding}{idx_str} s_axis_{name}_tdata".format(
-                    padding=" " * (17 - len(idx_str)),
-                    idx_str=idx_str,
-                    name=inp))
-            inputs.append(", output reg{padding} s_axis_{name}_tready".format(
-                padding=" " * 12, name=inp))
-            inputs.append(", input{padding}[3:0] s_axis_{name}_tkeep".format(
-                padding=" " * 12, name=inp))
-            inputs.append(", input{padding} s_axis_{name}_tlast".format(
-                padding=" " * 17, name=inp))
+
+            # generate padded strings and add to list
+            inputs += self.generate_padded_axis(True, inp, total_size, vec_len)
+
         outputs = list()
-        for inp in tasklet.out_connectors:
-            # add vector index
-            idx_str = ""
+        for outp in tasklet.out_connectors:
             # catch symbolic (compile time variables)
             check_issymbolic([
-                tasklet.out_connectors[inp].veclen,
-                tasklet.out_connectors[inp].bytes
+                tasklet.out_connectors[outp].veclen,
+                tasklet.out_connectors[outp].bytes
             ], sdfg)
+
             # extract parameters
             vec_len = int(
-                symbolic.evaluate(tasklet.out_connectors[inp].veclen,
+                symbolic.evaluate(tasklet.out_connectors[outp].veclen,
                                   sdfg.constants))
             total_size = int(
-                symbolic.evaluate(tasklet.out_connectors[inp].bytes,
+                symbolic.evaluate(tasklet.out_connectors[outp].bytes,
                                   sdfg.constants))
-            # generate vector representation
-            if vec_len > 1:
-                idx_str = "[{}:0]".format(vec_len - 1)
-            # add element index
-            idx_str += "[{}:0]".format(int(total_size / vec_len) * 8 - 1)
-            # generate padded string and add to list
-            outputs.append(", output reg{padding} m_axis_{name}_tvalid".format(
-                padding=" " * 12, name=inp))
-            outputs.append(
-                ", output reg{padding}{idx_str} m_axis_{name}_tdata".format(
-                    padding=" " * (12 - len(idx_str)),
-                    idx_str=idx_str,
-                    name=inp))
-            outputs.append(", input {padding} m_axis_{name}_tready".format(
-                padding=" " * 16, name=inp))
-            outputs.append(
-                ", output reg{padding}[3:0] m_axis_{name}_tkeep".format(
-                    padding=7 * " ", name=inp))
-            outputs.append(", output reg{padding} m_axis_{name}_tlast".format(
-                padding=" " * 12, name=inp))
+
+            # generate padded strings and add to list
+            outputs += self.generate_padded_axis(False, outp, total_size, vec_len)
         return inputs, outputs
 
     def generate_cpp_zero_inits(self, tasklet):
@@ -734,10 +728,10 @@ model = NULL;
     RTL_HEADER = """\
 module {name}
 {parameters}
-( input                  ap_aclk   // convention: ap_aclk clocks the design
-, input                  ap_areset // convention: ap_areset resets the design
-, input                  ap_start  // convention: ap_start indicates a start from host
-, output                 ap_done   // convention: ap_done tells the host that the kernel has finished
+( input  ap_aclk   // convention: ap_aclk clocks the design
+, input  ap_areset // convention: ap_areset resets the design
+, input  ap_start  // convention: ap_start indicates a start from host
+, output ap_done   // convention: ap_done tells the host that the kernel has finished
 
 {inputs}
 
