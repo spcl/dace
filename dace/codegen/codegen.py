@@ -110,6 +110,9 @@ def generate_code(sdfg) -> List[CodeObject]:
         os.remove('test2.sdfg')
 
         # Run with the deserialized version
+        # NOTE: This means that all subsequent modifications to `sdfg`
+        # are not reflected outside of this function (e.g., library
+        # node expansion).
         sdfg = sdfg2
 
     # Before generating the code, run type inference on the SDFG connectors
