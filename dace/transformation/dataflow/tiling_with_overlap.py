@@ -16,7 +16,7 @@ class MapTilingWithOverlap(MapTiling):
         Orthogonal tiling is a type of nested map fission that creates tiles
         in every dimension of the matched Map. The overlap can vary in each
         dimension and direction. It is added to each tile and the starting
-        and end points of the outer map are ajusted to account for the overlap.
+        and end points of the outer map are adjusted to account for the overlap.
     """
 
     # Properties

@@ -71,7 +71,7 @@ class BufferTiling(transformation.Transformation):
             if not provided.covers(consumed):
                 return False
 
-            # Check that buffers occure only once in this state.
+            # Check that buffers occur only once in this state.
             num_occurrences = len([
                     n for n in graph.nodes()
                     if isinstance(n, nodes.AccessNode) and n.data == buf
