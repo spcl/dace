@@ -867,9 +867,8 @@ def propagate_states(sdfg) -> None:
                     loop_executions = loop_executions.doit()
 
                     loop_state = state.condition_edge.dst
-                    end_state = (out_edges[0].dst
-                                 if out_edges[1].dst == loop_state else
-                                 out_edges[1].dst)
+                    end_state = (out_edges[0].dst if out_edges[1].dst
+                                 == loop_state else out_edges[1].dst)
 
                     traversal_q.append((end_state, state.executions,
                                         proposed_dynamic, itvar_stack))
@@ -1436,8 +1435,9 @@ def propagate_subset(memlets: List[Memlet],
     # Propagate volume:
     # Number of accesses in the propagated memlet is the sum of the internal
     # number of accesses times the size of the map range set (unbounded dynamic)
-    new_memlet.volume = (sum(m.volume for m in memlets) *
-                         functools.reduce(lambda a, b: a * b, rng.size(), 1))
+    new_memlet.volume = (
+        sum(m.volume for m in memlets) *
+        functools.reduce(lambda a, b: a * b, rng.size(), 1)).simplify()
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
     elif symbolic.issymbolic(new_memlet.volume) and any(
