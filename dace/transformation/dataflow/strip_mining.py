@@ -156,9 +156,8 @@ class StripMining(transformation.Transformation):
         desc="Continuous (false) or strided (true) elements in tile")
 
     tiling_type = Property(
-        dtype=str,
-        default='normal',
-        choices=['normal', 'ceilrange', 'number_of_tiles'],
+        default=dtypes.TilingType.Normal,
+        choices=dtypes.TilingType,
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
@@ -474,7 +473,7 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements().simplify()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -520,7 +519,7 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements().simplify()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':
