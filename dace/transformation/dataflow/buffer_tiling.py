@@ -58,10 +58,6 @@ class BufferTiling(transformation.Transformation):
             if graph.out_edges(buf)[0].dst != map2_entry:
                 return False
 
-            # Check that buffers locally provided volume 1.
-            if graph.out_edges(buf)[0].data.volume != 1:
-                return False
-
             # Check that the data consumed is provided.
             provided = graph.in_edges(buf)[0].data.subset
             consumed = graph.out_edges(buf)[0].data.subset
@@ -94,8 +90,8 @@ class BufferTiling(transformation.Transformation):
         # Situation:
         # -> map1_entry -> ... -> map1_exit -> buffers -> map2_entry -> ...
 
-        lower_extents = tuple(b-a for a,b in zip(map1_entry.range.min_element, map2_entry.range.min_element))
-        upper_extents = tuple(a-b for a,b in zip(map1_entry.range.max_element, map2_entry.range.max_element))
+        lower_extents = tuple(b-a for a,b in zip(map1_entry.range.min_element(), map2_entry.range.min_element()))
+        upper_extents = tuple(a-b for a,b in zip(map1_entry.range.max_element(), map2_entry.range.max_element()))
 
         # Tile the first map with overlap
         MapTilingWithOverlap.apply_to(sdfg, _map_entry=map1_entry,
