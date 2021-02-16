@@ -37,22 +37,7 @@ class BufferTiling(transformation.Transformation):
         map1_exit = graph.nodes()[candidate[BufferTiling._map1_exit]]
         map2_entry = graph.nodes()[candidate[BufferTiling._map2_entry]]
 
-        # Check that locally provided buffer has volume 1.
-        for edge in graph.in_edges(map1_exit):
-            if edge.data.volume != 1:
-                return False
-
-        # Check that all locally provided buffers have the same subset.
-        subsets = set(edge.data.subset for edge in graph.in_edges(map1_exit))
-        if len(subsets) != 1:
-            return False
-
-        # Check existence of buffers
-        buffers = graph.all_nodes_between(map1_exit, map2_entry)
-        if buffers is None:
-            return False
-
-        for buf in buffers:
+        for buf in graph.all_nodes_between(map1_exit, map2_entry):
             # Check that buffers are AccessNodes.
             if not isinstance(buf, nodes.AccessNode):
                 return False
@@ -71,6 +56,10 @@ class BufferTiling(transformation.Transformation):
             if graph.in_edges(buf)[0].src != map1_exit:
                 return False
             if graph.out_edges(buf)[0].dst != map2_entry:
+                return False
+
+            # Check that buffers locally provided volume 1.
+            if graph.out_edges(buf)[0].data.volume != 1:
                 return False
 
             # Check that the data consumed is provided.
@@ -105,8 +94,8 @@ class BufferTiling(transformation.Transformation):
         # Situation:
         # -> map1_entry -> ... -> map1_exit -> buffers -> map2_entry -> ...
 
-        lower_extents = tuple(b[0]-a[0] for a,b in zip(map1_entry.range.ranges, map2_entry.range.ranges))
-        upper_extents = tuple(a[1]-b[1] for a,b in zip(map1_entry.range.ranges, map2_entry.range.ranges))
+        lower_extents = tuple(b-a for a,b in zip(map1_entry.range.min_element, map2_entry.range.min_element))
+        upper_extents = tuple(a-b for a,b in zip(map1_entry.range.max_element, map2_entry.range.max_element))
 
         # Tile the first map with overlap
         MapTilingWithOverlap.apply_to(sdfg, _map_entry=map1_entry,

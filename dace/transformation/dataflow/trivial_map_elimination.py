@@ -15,7 +15,7 @@ class TrivialMapElimination(transformation.Transformation):
 
         Trivial-Map Elimination removes all dimensions containing only one
         element from a map. If this applies to all ranges the map is removed.
-        Example: Map[i=0:I,j=7] -> Map[j=7]
+        Example: Map[i=0:I,j=7] -> Map[i=0:I]
         Example: Map[i=0  ,j=7] -> nothing
     """
 

@@ -38,7 +38,7 @@ class MapTilingWithOverlap(MapTiling):
 
         # Tile the map
         self.tile_trivial = True
-        MapTiling.apply(self, sdfg)
+        super().apply(self, sdfg)
         tile_map_entry = graph.in_edges(map_entry)[0].src
         tile_map_exit = graph.exit_node(tile_map_entry)
 
