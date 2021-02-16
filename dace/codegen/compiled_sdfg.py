@@ -341,7 +341,12 @@ class CompiledSDFG(object):
         self._return_arrays = []
         self._return_kwarrays = {}
         for arrname, arr in sorted(self.sdfg.arrays.items()):
-            if arrname.startswith('__return'):
+            if arrname.startswith('__return') and not arr.transient:
+                if arrname in kwargs:
+                    self._return_arrays.append(kwargs[arrname])
+                    self._return_kwarrays[arrname] = kwargs[arrname]
+                    continue
+                
                 if isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
                 if arr.storage in [
