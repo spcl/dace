@@ -53,18 +53,6 @@ class InlineSDFG(transformation.Transformation):
         return [sdutil.node_path_graph(InlineSDFG._nested_sdfg)]
 
     @staticmethod
-    def _find_edge(state: SDFGState, node: nodes.Node,
-                   connector: str) -> Optional[MultiConnectorEdge]:
-        for edge in state.in_edges(node):
-            if edge.dst_conn == connector:
-                return edge
-        for edge in state.out_edges(node):
-            if edge.src_conn == connector:
-                return edge
-        raise NameError('Edge with connector %s not found on node %s' %
-                        (connector, node))
-
-    @staticmethod
     def _check_strides(inner_strides: List[symbolic.SymbolicType],
                        outer_strides: List[symbolic.SymbolicType],
                        memlet: Memlet, nested_sdfg: nodes.NestedSDFG) -> bool:
@@ -139,20 +127,6 @@ class InlineSDFG(transformation.Transformation):
                                     if isinstance(e.dst, nodes.AccessNode))):
                         return False
 
-        # If some reshaping that cannot be inlined / unsqueezed is happening,
-        # do not match transformation in strict mode.
-        if strict:
-            for aname, array in nested_sdfg.sdfg.arrays.items():
-                if array.transient:
-                    continue
-                edge = InlineSDFG._find_edge(graph, nested_sdfg, aname)
-                if len(array.shape) > len(edge.data.subset):
-                    return False
-                if not InlineSDFG._check_strides(
-                        array.strides, sdfg.arrays[edge.data.data].strides,
-                        edge.data, nested_sdfg):
-                    return False
-
         return True
 
     @staticmethod
@@ -213,14 +187,15 @@ class InlineSDFG(transformation.Transformation):
 
         return result
 
-    def apply(self, sdfg):
+    def apply(self, sdfg: SDFG):
         state: SDFGState = sdfg.nodes()[self.state_id]
         nsdfg_node = state.nodes()[self.subgraph[InlineSDFG._nested_sdfg]]
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
         if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+            infer_types.set_default_schedule_and_storage_types(
+                nsdfg, nsdfg_node.schedule)
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry)
@@ -259,6 +234,27 @@ class InlineSDFG(transformation.Transformation):
         for e in state.out_edges(nsdfg_node):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
+
+        # Access nodes that need to be reshaped
+        reshapes: Set(str) = set()
+        for aname, array in nsdfg.arrays.items():
+            if array.transient:
+                continue
+            edge = None
+            if aname in inputs:
+                edge = inputs[aname]
+                if len(array.shape) > len(edge.data.subset):
+                    reshapes.add(aname)
+                    continue
+            if aname in outputs:
+                edge = outputs[aname]
+                if len(array.shape) > len(edge.data.subset):
+                    reshapes.add(aname)
+                    continue
+            if edge is not None and not InlineSDFG._check_strides(
+                    array.strides, sdfg.arrays[edge.data.data].strides,
+                    edge.data, nsdfg_node):
+                reshapes.add(aname)
 
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
@@ -303,12 +299,14 @@ class InlineSDFG(transformation.Transformation):
         sink_accesses = set()
         for node in nstate.source_nodes():
             if (isinstance(node, nodes.AccessNode)
-                    and node.data not in transients):
+                    and node.data not in transients
+                    and node.data not in reshapes):
                 new_incoming_edges[node] = inputs[node.data]
                 source_accesses.add(node)
         for node in nstate.sink_nodes():
             if (isinstance(node, nodes.AccessNode)
-                    and node.data not in transients):
+                    and node.data not in transients
+                    and node.data not in reshapes):
                 new_outgoing_edges[node] = outputs[node.data]
                 sink_accesses.add(node)
 
@@ -335,6 +333,24 @@ class InlineSDFG(transformation.Transformation):
             k: v.data.data
             for k, v in itertools.chain(inputs.items(), outputs.items())
         })
+
+        # Add views whenever reshapes are necessary
+        for dname in reshapes:
+            desc = nsdfg.arrays[dname]
+            newname, _ = sdfg.add_view(dname,
+                                       desc.shape,
+                                       desc.dtype,
+                                       storage=desc.storage,
+                                       strides=desc.strides,
+                                       offset=desc.offset,
+                                       debuginfo=desc.debuginfo,
+                                       allow_conflicts=desc.allow_conflicts,
+                                       total_size=desc.total_size,
+                                       alignment=desc.alignment,
+                                       may_alias=desc.may_alias,
+                                       find_new_name=True)
+            repldict[dname] = newname
+
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
                 node.data = repldict[node.data]
@@ -352,6 +368,12 @@ class InlineSDFG(transformation.Transformation):
                                                    state, True)
         modified_edges |= self._modify_memlet_path(new_outgoing_edges, nstate,
                                                    state, False)
+
+        # Reshape: add connections to viewed data
+        self._modify_reshape_data(reshapes, repldict, inputs, nstate, state,
+                                  True)
+        self._modify_reshape_data(reshapes, repldict, outputs, nstate, state,
+                                  False)
 
         # Modify all other internal edges pertaining to input/output nodes
         for node in subgraph.nodes():
@@ -458,6 +480,22 @@ class InlineSDFG(transformation.Transformation):
                     traverse(child)
 
         return result
+
+    def _modify_reshape_data(self, reshapes: Set[str], repldict: Dict[str, str],
+                             new_edges: Dict[str, MultiConnectorEdge],
+                             nstate: SDFGState, state: SDFGState, inputs: bool):
+        anodes = nstate.source_nodes() if inputs else nstate.sink_nodes()
+        reshp = {repldict[r]: r for r in reshapes}
+        for node in anodes:
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            if node.data not in reshp:
+                continue
+            edge = new_edges[reshp[node.data]]
+            if inputs:
+                state.add_edge(edge.src, edge.src_conn, node, None, edge.data)
+            else:
+                state.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
 
 
 @registry.autoregister_params(singlestate=True)
