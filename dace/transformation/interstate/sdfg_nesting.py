@@ -337,7 +337,12 @@ class InlineSDFG(transformation.Transformation):
         # Add views whenever reshapes are necessary
         for dname in reshapes:
             desc = nsdfg.arrays[dname]
-            newname, _ = sdfg.add_view(dname,
+            # To avoid potential confusion, rename protected __return keyword
+            if dname.startswith('__return'):
+                newname = f'{nsdfg.name}_ret{dname[8:]}'
+            else:
+                newname = dname
+            newname, _ = sdfg.add_view(newname,
                                        desc.shape,
                                        desc.dtype,
                                        storage=desc.storage,
