@@ -53,6 +53,7 @@ def test_gpu(input_array, output_array, expand_first):
     else:
         infer_types.infer_connector_types(sdfg)
         sdfg.expand_library_nodes()
+        infer_types.infer_connector_types(sdfg)
 
     input_arr = np.array([1]).astype(np.float32) if input_array else 1
     output_arr = np.array([0]).astype(np.float32)
