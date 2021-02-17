@@ -311,19 +311,6 @@ class InlineSDFG(transformation.Transformation):
                 sink_accesses.add(node)
 
         #######################################################
-        # Add nested SDFG into top-level SDFG
-
-        # Add nested nodes into original state
-        subgraph = SubgraphView(nstate, [
-            n for n in nstate.nodes()
-            if n not in (source_accesses | sink_accesses)
-        ])
-        state.add_nodes_from(subgraph.nodes())
-        for edge in subgraph.edges():
-            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn,
-                           edge.data)
-
-        #######################################################
         # Replace data on inlined SDFG nodes/edges
 
         # Replace data names with their top-level counterparts
@@ -362,6 +349,37 @@ class InlineSDFG(transformation.Transformation):
         for edge in nstate.edges():
             if edge.data.data in repldict:
                 edge.data.data = repldict[edge.data.data]
+
+        # Add extra access nodes for out/in view nodes
+        for node in nstate.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data in reshapes:
+                if nstate.in_degree(node) > 0 and nstate.out_degree(node) > 0:
+                    # Such a node has to be in the output set
+                    edge = outputs[node.data]
+
+                    # Redirect outgoing edges through access node
+                    out_edges = list(nstate.out_edges(node))
+                    anode = nstate.add_access(edge.data.data)
+                    vnode = nstate.add_access(node.data)
+                    nstate.add_nedge(node, anode, edge.data)
+                    nstate.add_nedge(anode, vnode, edge.data)
+                    for e in out_edges:
+                        nstate.remove_edge(e)
+                        nstate.add_edge(vnode, e.src_conn, e.dst, e.dst_conn,
+                                        e.data)
+
+        #######################################################
+        # Add nested SDFG into top-level SDFG
+
+        # Add nested nodes into original state
+        subgraph = SubgraphView(nstate, [
+            n for n in nstate.nodes()
+            if n not in (source_accesses | sink_accesses)
+        ])
+        state.add_nodes_from(subgraph.nodes())
+        for edge in subgraph.edges():
+            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn,
+                           edge.data)
 
         #######################################################
         # Reconnect inlined SDFG
