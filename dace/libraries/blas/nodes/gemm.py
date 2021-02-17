@@ -14,10 +14,11 @@ from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
+from numbers import Number
 
 
 def _is_complex(dtype):
-    if hasattr(dtype, "is_complex"):
+    if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
         return dtype.is_complex()
     else:
         return dtype in [np.complex64, np.complex128]
@@ -391,11 +392,11 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         dtype=bool, desc="Whether to transpose A before multiplying")
     transB = properties.Property(
         dtype=bool, desc="Whether to transpose B before multiplying")
-    alpha = properties.SymbolicProperty(
+    alpha = properties.Property(
         allow_none=False,
         default=1,
         desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.SymbolicProperty(
+    beta = properties.Property(
         allow_none=False,
         default=0,
         desc="A scalar which will be multiplied with C before adding C")
