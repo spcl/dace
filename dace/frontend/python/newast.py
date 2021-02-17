@@ -3424,7 +3424,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add return values as additional outputs
             rets = []
             for arrname, arr in sdfg.arrays.items():
-                if arrname.startswith('__return'):
+                if arrname.startswith('__return') and not arr.transient:
                     # Add a transient to the current SDFG
                     new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
                     newarr = copy.deepcopy(arr)

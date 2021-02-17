@@ -14,7 +14,7 @@ class MyNode(CodeLibraryNode):
                             default=5,
                             desc="Value to add in custom code")
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__(input_names=['inp'], output_names=['out'])
 
     def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str,
@@ -52,7 +52,7 @@ class MyNode2(CodeLibraryNode):
                             default=2,
                             desc="Value to mul in custom code")
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__(input_names=['inp'], output_names=['out'])
 
     def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str,

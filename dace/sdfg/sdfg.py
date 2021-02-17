@@ -1688,9 +1688,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        # Recursively expand library nodes that haven't been expanded yet
-        sdfg.expand_library_nodes()
-
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
 
