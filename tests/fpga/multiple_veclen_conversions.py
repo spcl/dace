@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # The purpose of this test is to verify that gearboxing functions are created only
 # once, even if reused multiple times (so they are not defined multiple times)

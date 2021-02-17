@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Computes C = AB + C
 # This sample build on matrix_multiplication_systolic by adding
 # vectorization. The systolic arrays used data type depends on the used vectorization width
