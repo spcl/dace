@@ -23,6 +23,7 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
+                scalar = (e.data.subset and e.data.subset.num_elements() == 1)
                 if node.in_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
@@ -31,7 +32,7 @@ def infer_connector_types(sdfg: SDFG):
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
-                        scalar = isinstance(sdfg.arrays[e.data.data],
+                        scalar |= isinstance(sdfg.arrays[e.data.data],
                                              data.Scalar)
                         dtype = sdfg.arrays[e.data.data].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
@@ -50,6 +51,9 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.src_conn
                 if cname is None:
                     continue
+                scalar = (e.data.subset and e.data.subset.num_elements() == 1
+                          and (not e.data.dynamic or
+                               (e.data.dynamic and e.data.wcr is not None)))
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
@@ -58,7 +62,7 @@ def infer_connector_types(sdfg: SDFG):
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
-                        scalar = isinstance(sdfg.arrays[e.data.data],
+                        scalar |= isinstance(sdfg.arrays[e.data.data],
                                              data.Scalar)
                         dtype = sdfg.arrays[e.data.data].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
