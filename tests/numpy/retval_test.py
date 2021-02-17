@@ -43,7 +43,7 @@ def test_return_override():
     result = np.random.rand(20)
     result2 = oneret(A, __return=result)
     assert np.allclose(result, A * 2)
-    assert not np.allclose(result2, A * 2)
+    assert np.allclose(result2, A * 2)
 
 
 if __name__ == '__main__':
