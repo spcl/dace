@@ -4,12 +4,14 @@ import numpy as np
 import addlib
 import dace
 import dace.library
+from dace.sdfg import infer_types
 
 
 @pytest.mark.gpu
 @pytest.mark.parametrize('input_array', [True, False])
 @pytest.mark.parametrize('output_array', [True, False])
-def test_gpu(input_array, output_array):
+@pytest.mark.parametrize('expand_first', [True, False])
+def test_gpu(input_array, output_array, expand_first):
 
     sdfg = dace.SDFG("test_gpu_scalars")
     state = sdfg.add_state()
@@ -44,12 +46,15 @@ def test_gpu(input_array, output_array):
                        sdfg.make_array_memlet("transient_output_arr"))
 
     sdfg.apply_gpu_transformations()
-    sdfg.expand_library_nodes()
+
+    if expand_first:
+        sdfg.expand_library_nodes()
+        infer_types.infer_connector_types(sdfg)
+    else:
+        infer_types.infer_connector_types(sdfg)
+        sdfg.expand_library_nodes()
+
     input_arr = np.array([1]).astype(np.float32) if input_array else 1
     output_arr = np.array([0]).astype(np.float32)
     sdfg(input_arr=input_arr, output_arr=output_arr)
     assert output_arr[0] == 2
-
-
-if __name__ == '__main__':
-    test_gpu(True, True)
