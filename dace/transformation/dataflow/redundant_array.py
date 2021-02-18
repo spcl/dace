@@ -138,7 +138,7 @@ class RedundantArray(pm.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantArray._in_array]]
+        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
 
         return "Remove " + str(in_array)
 
