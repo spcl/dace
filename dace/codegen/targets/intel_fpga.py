@@ -125,7 +125,8 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 #include "dace/intel_fpga/host.h"
 #include <iostream>\n\n""")
 
-        self._frame.generate_fileheader(self._global_sdfg, host_code)
+        self._frame.generate_fileheader(self._global_sdfg, host_code,
+                                        'intelfpga_host')
 
         params_comma = self._global_sdfg.signature(with_arrays=False)
         if params_comma:
