@@ -1888,6 +1888,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # This is imported here to avoid an import loop
         from dace.transformation.transformation import (Transformation,
                                                         strict_transformations)
+        from dace.sdfg import utils as sdutil
+
+        sdutil.fuse_states(self)
 
         self.apply_transformations_repeated(strict_transformations(),
                                             validate=validate,
