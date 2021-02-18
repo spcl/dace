@@ -176,7 +176,8 @@ class RedundantArray(pm.Transformation):
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
-        del sdfg.arrays[in_array]
+        if in_array.data in sdfg.arrays:
+            del sdfg.arrays[in_array.data]
 
 
 
