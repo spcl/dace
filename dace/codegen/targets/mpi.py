@@ -28,7 +28,7 @@ class MPICodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
         sdfg = self._global_sdfg
-        self._frame.generate_fileheader(sdfg, fileheader)
+        self._frame.generate_fileheader(sdfg, fileheader, 'mpi')
 
         params_comma = sdfg.signature(with_arrays=False)
         if params_comma:
