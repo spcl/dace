@@ -704,7 +704,7 @@ class Indices(Subset):
         elif isinstance(indices, symbolic.SymExpr):
             self.indices = indices
         else:
-            self.indices = symbolic.pystr_to_symbolic(indices)
+            self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
         self.tile_sizes = [1]
 
     def to_json(self):

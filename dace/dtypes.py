@@ -993,11 +993,6 @@ def ismodule(var):
     return inspect.ismodule(var)
 
 
-def ismodule(var):
-    """ Returns True if a given object is a module. """
-    return inspect.ismodule(var)
-
-
 def ismoduleallowed(var):
     """ Helper function to determine the source module of an object, and
         whether it is allowed in DaCe programs. """
