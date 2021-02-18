@@ -112,6 +112,8 @@ class RedundantArray(pm.Transformation):
             return False
         if type(in_desc) != type(out_desc):
             return False
+        if isinstance(in_desc, data.View):  # Two views connected to each other
+            return False
 
         # Find occurrences in this and other states
         occurrences = []
