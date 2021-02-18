@@ -234,7 +234,7 @@ def emit_memlet_reference(dispatcher,
     datadef = memlet.data
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer)
+    is_scalar = not isinstance(conntype, dtypes.pointer) and desc.storage is not dtypes.StorageType.GPU_Global
     ref = ''
     pointer_name = ptr(pointer_name, desc)
 

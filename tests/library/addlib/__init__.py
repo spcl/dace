@@ -30,8 +30,6 @@ class ExpandAdd(ExpandTransformation):
 
         me, mx = state.add_map("useless_map", {"i": "0"})
 
-        #tasklet = state.add_tasklet("add", {"inp": dace.float32},
-        #                            {"outp": dace.float32}, "outp = inp + 1")
         tasklet = state.add_tasklet("add", {"inp"}, {"outp"}, "outp = inp + 1")
 
         state.add_edge(inp, None, me, None, sdfg.make_array_memlet("_a"))
