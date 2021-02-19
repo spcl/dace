@@ -513,12 +513,8 @@ class ExpandTransformation(Transformation):
 
         # Fix nested schedules
         if isinstance(expansion, nd.NestedSDFG):
-            parent_schedule = next(
-                parent
-                for parent, child in dtypes.SCOPEDEFAULT_SCHEDULE.items()
-                if child == node.schedule)
-            infer_types.set_default_schedule_and_storage_types(
-                expansion.sdfg, parent_schedule)
+            infer_types._set_default_schedule_types(expansion.sdfg,
+                                                    expansion.schedule, True)
 
         expansion.environments = copy.copy(
             set(map(lambda a: a.__name__,
