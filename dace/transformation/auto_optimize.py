@@ -10,17 +10,67 @@ import warnings
 # Transformations
 from dace.transformation.dataflow import MapCollapse
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.subgraph.composite import CompositeFusion
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 
+# Enumerator 
+from dace.transformation.estimator.enumeration import GreedyEnumerator
+
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 
-def greedy_fuse(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
-    # TODO: If two maps share connected nodes (horizontal/vertical), fuse
-    # TODO: run multiexpansion first
-    pass
+def greedy_fuse(graph_or_subgraph: GraphViewType, 
+                validate_all: bool,
+                apply_multi_expansion: bool = False,
+                apply_stencil_tiling: bool = False,
+                recursive: bool = False) -> None:
+
+    if isinstance(graph_or_subgraph, SDFG):
+        # If we have an SDFG, recurse into graphs 
+        for graph in sdfg.nodes():
+            greedy_fuse(graph, validate_all)
+    else:
+        # we are in graph or subgraph
+        sdfg, graph, subgraph = None, None, None 
+        if isinstance(graph_or_subgraph, SDFGState):
+            sdfg = graph_or_subgraph.parent
+            graph = graph_or_subgraph
+            subgraph = None 
+        else:
+            sdfg = graph_or_subgraph.graph.parent
+            graph = graph_or_subgraph.graph
+            subgraph = graph_or_subgraph
+        
+        # greedily enumerate fusible components 
+        # and apply transformation
+        applied_transformations = 0
+        enumerator = GreedyEnumerator(sdfg, graph, subgraph)
+        for map_entries in enumerator:
+            if len(map_entries) > 1:
+                cf = CompositeFusion(subgraph)
+                cf.allow_expansion = apply_multi_expansion,
+                cf.allow_tiling = apply_stencil_tiling,
+                cf.apply(sdfg)
+                applied_transformations += 1
+                if recursive:
+                    # advanced: for each scope subgraph, 
+                    # see whether any parts inside could be fused together
+                    global_entry = cf._global_map_entry
+                    greedy_fuse(graph.scope_subgraph(global_entry))
+        
+        if applied_transformations > 0:
+            print(f"Applied {applied_transformations} CompositeFusion")
+           
+
+        # TODO [OK]: If two maps share connected nodes (horizontal/vertical), fuse -> fuse directly after enumerator pass
+        # TODO [OK]: run multiexpansion first -> this is actually an option you can trigger 
+
+
+        if validate_all:
+            graph.validate()
+
 
 
 def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool) -> None:
