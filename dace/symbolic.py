@@ -1,5 +1,6 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from functools import lru_cache
 import sympy
 import pickle
 import re
@@ -695,7 +696,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
-
+@lru_cache(2048)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops

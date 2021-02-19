@@ -1,10 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 from dace.data import Array
-from dace import memlet as mm
+from dace import memlet as mm, properties
 from dace.symbolic import symstr
-from dace.properties import Property
 import dace.library
 from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
@@ -15,10 +14,11 @@ from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
                                               _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
+from numbers import Number
 
 
 def _is_complex(dtype):
-    if hasattr(dtype, "is_complex"):
+    if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
         return dtype.is_complex()
     else:
         return dtype in [np.complex64, np.complex128]
@@ -74,25 +74,23 @@ class ExpandGemmPure(ExpandTransformation):
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
         shape_c = (M, N)
 
-        if outer_array_a.storage != outer_array_b.storage:
-            raise ValueError("Input matrices must have same storage")
         storage = outer_array_a.storage
 
         _, array_a = sdfg.add_array("_a",
                                     shape_a,
                                     dtype_a,
                                     strides=strides_a,
-                                    storage=storage)
+                                    storage=outer_array_a.storage)
         _, array_b = sdfg.add_array("_b",
                                     shape_b,
                                     dtype_b,
                                     strides=strides_b,
-                                    storage=storage)
+                                    storage=outer_array_b.storage)
         _, array_c = sdfg.add_array("_c",
                                     shape_c,
                                     dtype_c,
                                     strides=cdata[-1],
-                                    storage=storage)
+                                    storage=cdata[1].storage)
 
         if node.alpha == 1.0:
             mul_program = "__out = __a * __b"
@@ -198,11 +196,11 @@ class ExpandGemmMKL(ExpandTransformation):
         func = to_blastype(dtype.type).lower() + 'gemm'
         # TODO: Fix w.r.t. other alpha/beta values
         if dtype == dace.float32:
-            alpha = "1.0f"
-            beta = "0.0f"
+            alpha = f'(float)({node.alpha})'
+            beta = f'(float)({node.beta})'
         elif dtype == dace.float64:
-            alpha = "1.0"
-            beta = "0.0"
+            alpha = f'(double)({node.alpha})'
+            beta = f'(double)({node.beta})'
         elif dtype == dace.complex64:
             alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
             beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
@@ -390,17 +388,17 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    transA = Property(dtype=bool,
-                      desc="Whether to transpose A before multiplying")
-    transB = Property(dtype=bool,
-                      desc="Whether to transpose B before multiplying")
-    alpha = Property(
-        dtype=tuple(dace.dtypes._CONSTANT_TYPES),
+    transA = properties.Property(
+        dtype=bool, desc="Whether to transpose A before multiplying")
+    transB = properties.Property(
+        dtype=bool, desc="Whether to transpose B before multiplying")
+    alpha = properties.Property(
+        allow_none=False,
         default=1,
         desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = Property(
-        dtype=tuple(dace.dtypes._CONSTANT_TYPES),
-        default=1,
+    beta = properties.Property(
+        allow_none=False,
+        default=0,
         desc="A scalar which will be multiplied with C before adding C")
 
     def __init__(self,

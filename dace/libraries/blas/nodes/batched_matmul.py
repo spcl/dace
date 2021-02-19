@@ -1,5 +1,6 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
+from dace import dtypes
 from typing import Any, Dict, Optional
 from dace.data import Array
 from dace.symbolic import symstr
@@ -237,11 +238,17 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
 
         # If buffers are not on the GPU, copy them
-        # TODO: This creates variable shadowing
         if any(desc.storage not in
                [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
                for desc in [adesc, bdesc, cdesc]):
             nsdfg = dace.SDFG('nested_batched_matmul')
+            tasklet = dace.sdfg.nodes.Tasklet(node.name, {
+                '__a': dtypes.pointer(adesc.dtype),
+                '__b': dtypes.pointer(bdesc.dtype)
+            }, {'__c': dtypes.pointer(cdesc.dtype)},
+                                              code,
+                                              language=dace.dtypes.Language.CPP)
+
             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
                 dcopy = dc(desc)
                 dcopy.transient = False
@@ -260,11 +267,11 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
-            nstate.add_edge(ga, None, tasklet, '_a',
+            nstate.add_edge(ga, None, tasklet, '__a',
                             dace.Memlet.from_array('_a_gpu', adesc))
-            nstate.add_edge(gb, None, tasklet, '_b',
+            nstate.add_edge(gb, None, tasklet, '__b',
                             dace.Memlet.from_array('_b_gpu', bdesc))
-            nstate.add_edge(tasklet, '_c', gc, None,
+            nstate.add_edge(tasklet, '__c', gc, None,
                             dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 

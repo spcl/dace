@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import registry, symbolic, dtypes
 from dace.codegen.prettycode import CodeIOStream
@@ -28,7 +28,7 @@ class MPICodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
         sdfg = self._global_sdfg
-        self._frame.generate_fileheader(sdfg, fileheader)
+        self._frame.generate_fileheader(sdfg, fileheader, 'mpi')
 
         params_comma = sdfg.signature(with_arrays=False)
         if params_comma:

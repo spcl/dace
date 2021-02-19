@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -986,11 +986,6 @@ _ALLOWED_MODULES = {
 
 # Lists allowed modules and maps them to OpenCL
 _OPENCL_ALLOWED_MODULES = {"builtins": "", "dace": "", "math": ""}
-
-
-def ismodule(var):
-    """ Returns True if a given object is a module. """
-    return inspect.ismodule(var)
 
 
 def ismodule(var):

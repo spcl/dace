@@ -1,8 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
 import copy
+import os
 import networkx as nx
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
@@ -837,8 +838,9 @@ def local_transients(sdfg, dfg, entry_node):
     return sorted(list(transients - defined_transients))
 
 
-def trace_nested_access(node: nd.AccessNode, state: SDFGState,
-                        sdfg: SDFG) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
+def trace_nested_access(
+        node: nd.AccessNode, state: SDFGState,
+        sdfg: SDFG) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
     """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
@@ -910,6 +912,7 @@ def trace_nested_access(node: nd.AccessNode, state: SDFGState,
         curr_sdfg = curr_state.parent  # Recurse
     return list(reversed(trace))
 
+
 def fuse_states(sdfg: SDFG) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
@@ -917,7 +920,7 @@ def fuse_states(sdfg: SDFG) -> int:
     :param sdfg: The SDFG to transform.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion # Avoid import loop
+    from dace.transformation.interstate import StateFusion  # Avoid import loop
     counter = 0
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
@@ -944,3 +947,22 @@ def fuse_states(sdfg: SDFG) -> int:
     if config.Config.get_bool('debugprint'):
         print(f'Applied {counter} State Fusions')
     return counter
+
+
+def load_precompiled_sdfg(folder: str):
+    """ 
+    Loads a pre-compiled SDFG from an output folder (e.g. ".dacecache/program").
+    Folder must contain a file called "program.sdfg" and a subfolder called
+    "build" with the shared object.
+
+    :param folder: Path to SDFG output folder.
+    :return: A callable CompiledSDFG object.
+    """
+    from dace.codegen import compiled_sdfg as csdfg
+    sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
+    suffix = config.Config.get('compiler', 'library_extension')
+    return csdfg.CompiledSDFG(
+        sdfg,
+        csdfg.ReloadableDLL(
+            os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'),
+            sdfg.name))

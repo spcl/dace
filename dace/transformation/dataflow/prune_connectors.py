@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from os import stat
 from typing import Any, AnyStr, Dict, Set, Tuple, Union
 import re

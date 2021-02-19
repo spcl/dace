@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Types and wrappers used in DaCe's Python frontend. """
 from __future__ import print_function
 import numpy

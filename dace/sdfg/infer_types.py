@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import data, dtypes
 from dace.codegen.tools import type_inference
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -157,14 +157,14 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                            reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
-            # TODO: and parent_schedule is not None?
             if node.schedule is dtypes.ScheduleType.Default:
-                node.schedule = parent_schedule
+                node.schedule = parent_schedule or child_schedule
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
             if node.schedule is dtypes.ScheduleType.Default:
-                # TODO: and parent_schedule is not None?
-                node.schedule = child_schedule if isinstance(node, nodes.EntryNode) else parent_schedule
+                node.schedule = (
+                    child_schedule if isinstance(node, nodes.EntryNode)
+                    or parent_schedule is None else parent_schedule)
 
 
 def _set_default_schedule_types(sdfg: SDFG,

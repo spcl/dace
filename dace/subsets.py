@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
 from dace import data, symbolic, dtypes
 import re
@@ -704,7 +704,7 @@ class Indices(Subset):
         elif isinstance(indices, symbolic.SymExpr):
             self.indices = indices
         else:
-            self.indices = symbolic.pystr_to_symbolic(indices)
+            self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
         self.tile_sizes = [1]
 
     def to_json(self):

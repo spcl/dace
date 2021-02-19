@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 # Author: Roman Haag
 import tensorflow as tf
 from dace.frontend import tensorflow as dacetf
