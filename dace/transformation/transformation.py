@@ -12,10 +12,10 @@ There are three general types of transformations:
 """
 
 import copy
-from dace import serialize
+from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation
+from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
 from typing import Any, Dict, List, Optional, Set, Type, Union
@@ -122,8 +122,11 @@ class Transformation(object):
         """
         return str(list(candidate.values()))
 
-    def __init__(self, sdfg_id: int, state_id: int,
-                 subgraph: Dict['PatternNode', int], expr_index: int,
+    def __init__(self,
+                 sdfg_id: int,
+                 state_id: int,
+                 subgraph: Dict['PatternNode', int],
+                 expr_index: int,
                  override=False) -> None:
         """ Initializes an instance of Transformation match.
             :param sdfg_id: A unique ID of the SDFG.
@@ -178,7 +181,9 @@ class Transformation(object):
     def subgraph(self):
         return self._subgraph_user
 
-    def apply_pattern(self, sdfg: SDFG, append: bool = True) -> Union[Any, None]:
+    def apply_pattern(self,
+                      sdfg: SDFG,
+                      append: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
@@ -497,14 +502,24 @@ class ExpandTransformation(Transformation):
                 nsdfg.update_sdfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
 
-                # update schedule to match library node schedule
+                # Update schedule to match library node schedule
                 nsdfg.schedule = node.schedule
+
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
-
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
+
+        # Fix nested schedules
+        if isinstance(expansion, nd.NestedSDFG):
+            parent_schedule = next(
+                parent
+                for parent, child in dtypes.SCOPEDEFAULT_SCHEDULE.items()
+                if child == node.schedule)
+            infer_types.set_default_schedule_and_storage_types(
+                expansion.sdfg, parent_schedule)
+
         expansion.environments = copy.copy(
             set(map(lambda a: a.__name__,
                     type(self).environments)))
