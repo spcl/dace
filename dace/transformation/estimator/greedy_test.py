@@ -14,12 +14,10 @@ import sys
 
 from dace.transformation.subgraph import SubgraphFusion
 
-N, M, O, P, Q = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q']]
+N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
 N.set(5)
 M.set(6)
 O.set(7)
-P.set(8)
-Q.set(9)
 
 
 A = np.random.rand(N.get()).astype(np.float64)
@@ -110,6 +108,7 @@ def case_2(sdfg):
 
 
 greedy_sdfg = greedy.to_sdfg()
+greedy_sdfg.save('greedy64.sdfg')
 # Test Case 1: Whole graph 
 case_1(greedy_sdfg)
 case_2(greedy_sdfg)

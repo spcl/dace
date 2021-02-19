@@ -34,14 +34,14 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
     allow_tiling = Property(desc="Allow StencilTiling before",
                             dtype = bool,
-                            default = True)
+                            default = False)
 
     gpu_fusion_mode = Property(desc="Fusion local register memory architecture "
                                     "or shared memory architecture. If set to "
                                     "None, all is left at default.",
                                default = None,
                                dtype = str,
-                               choices = ['register', 'shared'],
+                               choices = ['register', 'shared','auto'],
                                allow_none = True)
 
     transient_allocation = Property(
@@ -92,7 +92,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 if StencilTiling.can_be_applied(sdfg, subgraph):
                     return True
                 
-
         return False
 
     def apply(self, sdfg):

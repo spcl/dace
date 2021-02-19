@@ -70,6 +70,9 @@ def get_program(program_name):
     elif program_name == 'transformer':
         sdfg = SDFG.from_file(
             os.path.join(PATH, 'transformer' + data_suffix + '.sdfg'))
+    elif program_name == 'greedy':
+        sdfg = SDFG.from_file(
+            os.path.join(PATH, 'greedy64.sdfg'))
     else:
         raise NotImplementedError("Program not found")
 
@@ -239,7 +242,18 @@ def get_args(program_name):
             'N': N
         })
 
+    elif program_name == 'greedy':
+        N = 50
+        M = 60
+        O = 70
+        A = np.random.rand(N).astype(np.float64)
+        B = np.random.rand(M).astype(np.float64)
+        C = np.random.rand(O).astype(np.float64)
+        return ({'A': A, 'B': B, 'C': C}, {}, {'N': N, 'M': M, 'O': O})
+
+
     elif program_name == 'transformer':
         raise NotImplementedError("TODO")
+
     else:
         raise NotImplementedError("Program not found")

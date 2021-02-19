@@ -2,6 +2,7 @@
 """ Automatic optimization routines for SDFGs. """
 
 from dace.sdfg.state import SDFGState
+from dace.sdfg.graph import SubgraphView
 from dace import config, dtypes
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Union
@@ -11,6 +12,7 @@ import warnings
 from dace.transformation.dataflow import MapCollapse
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
+from dace.transformation.subgraph import helpers
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -27,9 +29,11 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 apply_stencil_tiling: bool = False,
                 recursive: bool = False) -> None:
 
+    print("Current type", type(graph_or_subgraph))
+    print("apply_me", apply_multi_expansion)
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs 
-        for graph in sdfg.nodes():
+        for graph in graph_or_subgraph.nodes():
             greedy_fuse(graph, validate_all)
     else:
         # we are in graph or subgraph
@@ -37,7 +41,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
             graph = graph_or_subgraph
-            subgraph = None 
+            subgraph = SubgraphView(graph, graph.nodes()) 
         else:
             sdfg = graph_or_subgraph.graph.parent
             graph = graph_or_subgraph.graph
@@ -49,9 +53,10 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         enumerator = GreedyEnumerator(sdfg, graph, subgraph)
         for map_entries in enumerator:
             if len(map_entries) > 1:
-                cf = CompositeFusion(subgraph)
-                cf.allow_expansion = apply_multi_expansion,
-                cf.allow_tiling = apply_stencil_tiling,
+                current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
+                cf = CompositeFusion(current_subgraph)
+                cf.allow_expansion = apply_multi_expansion
+                cf.allow_tiling = apply_stencil_tiling
                 cf.apply(sdfg)
                 applied_transformations += 1
                 if recursive:
@@ -61,7 +66,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                     greedy_fuse(graph.scope_subgraph(global_entry))
         
         if applied_transformations > 0:
-            print(f"Applied {applied_transformations} CompositeFusion")
+            print(f"Applied {applied_transformations} SubgraphFusion")
            
 
         # TODO [OK]: If two maps share connected nodes (horizontal/vertical), fuse -> fuse directly after enumerator pass
