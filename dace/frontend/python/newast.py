@@ -3222,7 +3222,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.symbols
                     }[arg] if isinstance(arg, str) else arg
                                    for aname, arg in args),
-                                 strict=self.strict))
+                                 strict=self.strict, save=False))
 
             else:
                 raise DaceSyntaxError(
