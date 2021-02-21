@@ -86,12 +86,12 @@ state.add_memlet_path(tasklet,
 # validate sdfg
 sdfg.validate()
 
-from dace.transformation.dataflow import StreamingMemory
-from dace.transformation.interstate import FPGATransformState
+#from dace.transformation.dataflow import StreamingMemory
+#from dace.transformation.interstate import FPGATransformState
 from dace.transformation.dataflow import TrivialMapElimination
-sdfg.apply_transformations(FPGATransformState)
-sdfg.apply_transformations_repeated(StreamingMemory,
-                                    dict(storage=dace.StorageType.FPGA_Local))
+#sdfg.apply_transformations(FPGATransformState)
+#sdfg.apply_transformations_repeated(StreamingMemory,
+#                                    dict(storage=dace.StorageType.FPGA_Local))
 sdfg.apply_transformations_repeated(TrivialMapElimination)
 
 ######################################################################

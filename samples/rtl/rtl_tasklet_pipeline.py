@@ -34,15 +34,15 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
                             code='''
     /*
         Convention:
-           |----------------------------------------------------|
-        -->| clk_i (clock input)                                |
-        -->| rst_i (reset input, rst on high)                   |
-           |                                                    |
-        -->| {inputs}                             reg {outputs} |-->
-           |                                                    |
-        <--| ready_o (ready for data)       (data avail) valid_o|-->
-        -->| valid_i (new data avail)    (data consumed) ready_i |<--
-           |----------------------------------------------------|
+           |---------------------------------------------------------------------|
+        -->| ap_aclk (clock input)                                               |
+        -->| ap_areset (reset input, rst on high)                                |
+           |                                                                     |
+        -->| {inputs}                                              reg {outputs} |-->
+           |                                                                     |
+        <--| s_axis_a_tready (ready for data)       (data avail) m_axis_b_tvalid |-->
+        -->| s_axis_a_tvalid (new data avail)    (data consumed) m_axis_b_tready |<--
+           |---------------------------------------------------------------------|
     */
 
     /****
@@ -51,9 +51,9 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     typedef enum [1:0] {READY, BUSY, DONE} state_e;
     state_e state, state_next;
 
-    always@(posedge clk_i)
+    always@(posedge ap_aclk)
     begin
-        if(rst_i)
+        if(ap_areset)
             state <= READY;
         else
             state <= state_next;
@@ -63,9 +63,9 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     begin
         state_next = state;
         case(state)
-            READY: if(valid_i) state_next = BUSY;
-            BUSY: if(b >= 99) state_next = DONE;
-            DONE: if(ready_i) state_next = READY;
+            READY: if(s_axis_a_tvalid) state_next = BUSY;
+            BUSY: if(m_axis_b_tdata >= 99) state_next = DONE;
+            DONE: if(m_axis_b_tready) state_next = READY;
             default: state_next = state;
         endcase
     end
@@ -77,12 +77,12 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     always_comb
     begin
         // init default value
-        ready_o = 0;
-        valid_o = 0;
+        s_axis_a_tready = 0;
+        m_axis_b_tvalid = 0;
         // set actual value
         case(state)
-            READY:  ready_o = 1;
-            DONE:   valid_o = 1;
+            READY:  s_axis_a_tready = 1;
+            DONE:   m_axis_b_tvalid = 1;
             default:;
         endcase
     end
@@ -90,20 +90,20 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     /****
     * Data Path
     ****/
-    always@(posedge clk_i)
+    always@(posedge ap_aclk)
     begin
         case(state)
-            READY: if(valid_i) b <= a;
-            BUSY: b <= b + 1;
-            DONE: b <= b;
-            default: b <= b;
+            READY: if(s_axis_a_tvalid) m_axis_b_tdata <= s_axis_a_tdata;
+            BUSY: m_axis_b_tdata <= m_axis_b_tdata + 1;
+            DONE: m_axis_b_tdata <= m_axis_b_tdata;
+            default: m_axis_b_tdata <= m_axis_b_tdata;
         endcase
     end
 
     /*****
     * DEBUG
     *****/
-    always@(posedge clk_i)
+    always@(posedge ap_aclk)
     begin
         if(SYSTEMVERILOG_DEBUG)
         begin

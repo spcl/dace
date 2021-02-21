@@ -28,37 +28,37 @@ def test_tasklet_scalar():
                                 code='''
         /*
             Convention:
-               |----------------------------------------------------|
-            -->| clk_i (clock input)                                |
-            -->| rst_i (reset input, rst on high)                   |
-               |                                                    |
-            -->| {inputs}                             reg {outputs} |-->
-               |                                                    |
-            <--| ready_o (ready for data)       (data avail) valid_o|-->
-            -->| valid_i (new data avail)    (data consumed) ready_i|<--
-               |----------------------------------------------------|
+               |---------------------------------------------------------------------|
+            -->| ap_aclk (clock input)                                               |
+            -->| ap_areset (reset input, rst on high)                                |
+               |                                                                     |
+            -->| {inputs}                                              reg {outputs} |-->
+               |                                                                     |
+            <--| s_axis_a_tready (ready for data)       (data avail) m_axis_b_tvalid |-->
+            -->| s_axis_a_tvalid (new data avail)    (data consumed) m_axis_b_tready |<--
+               |---------------------------------------------------------------------|
         */
 
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
         
-        always@(posedge clk_i) begin
-            if (rst_i) begin // case: reset
-                b <= 0;
-                ready_o <= 1'b1;
+        always@(posedge ap_aclk) begin
+            if (ap_areset) begin // case: reset
+                m_axis_b_tdata <= 0;
+                s_axis_a_tready <= 1'b1;
                 state <= READY;
-            end else if (valid_i && state == READY) begin // case: load a 
-                b <= a;
-                ready_o <= 1'b0;
+            end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+                m_axis_b_tdata <= s_axis_a_tdata;
+                s_axis_a_tready <= 1'b0;
                 state <= BUSY;
-            end else if (b < 100) // case: increment counter b
-                b <= b + 1;
+            end else if (m_axis_b_tdata < 100) // case: increment counter b
+                m_axis_b_tdata <= m_axis_b_tdata + 1;
             else
-                b <= b;
+                m_axis_b_tdata <= m_axis_b_tdata;
                 state <= DONE;
         end    
         
-        assign valid_o = (b >= 100) ? 1'b1:1'b0; 
+        assign m_axis_b_tvalid = (m_axis_b_tdata >= 100) ? 1'b1:1'b0; 
         ''',
                                 language=dace.Language.SystemVerilog)
 
@@ -112,37 +112,37 @@ def test_tasklet_parameter():
                                 code='''
         /*
             Convention:
-               |----------------------------------------------------|
-            -->| clk_i (clock input)                                |
-            -->| rst_i (reset input, rst on high)                   |
-               |                                                    |
-            -->| {inputs}                             reg {outputs} |-->
-               |                                                    |
-            <--| ready_o (ready for data)       (data avail) valid_o|-->
-            -->| valid_i (new data avail)    (data consumed) ready_i|<--
-               |----------------------------------------------------|
+               |---------------------------------------------------------------------|
+            -->| ap_aclk (clock input)                                               |
+            -->| ap_areset (reset input, rst on high)                                |
+               |                                                                     |
+            -->| {inputs}                                              reg {outputs} |-->
+               |                                                                     |
+            <--| s_axis_a_tready (ready for data)       (data avail) m_axis_b_tvalid |-->
+            -->| s_axis_a_tvalid (new data avail)    (data consumed) m_axis_b_tready |<--
+               |---------------------------------------------------------------------|
         */
 
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
     
-        always@(posedge clk_i) begin
-            if (rst_i) begin // case: reset
-                b <= 0;
-                ready_o <= 1'b1;
+        always@(posedge ap_aclk) begin
+            if (ap_areset) begin // case: reset
+                m_axis_b_tdata <= 0;
+                s_axis_a_tready <= 1'b1;
                 state <= READY;
-            end else if (valid_i && state == READY) begin // case: load a 
-                b <= a;
-                ready_o <= 1'b0;
+            end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+                m_axis_b_tdata <= s_axis_a_tdata;
+                s_axis_a_tready <= 1'b0;
                 state <= BUSY;
-            end else if (b < MAX_VAL) // case: increment counter b
-                b <= b + 1;
+            end else if (m_axis_b_tdata < MAX_VAL) // case: increment counter b
+                m_axis_b_tdata <= m_axis_b_tdata + 1;
             else
-                b <= b;
+                m_axis_b_tdata <= m_axis_b_tdata;
                 state <= DONE;
         end    
     
-        assign valid_o = (b >= MAX_VAL) ? 1'b1:1'b0;
+        assign m_axis_b_tvalid  = (m_axis_b_tdata >= MAX_VAL) ? 1'b1:1'b0;
         ''',
                                 language=dace.Language.SystemVerilog)
 
@@ -199,38 +199,38 @@ def test_tasklet_vector():
                                 code='''
         /*
             Convention:
-               |----------------------------------------------------|
-            -->| clk_i (clock input)                                |
-            -->| rst_i (reset input, rst on high)                   |
-               |                                                    |
-            -->| {inputs}                             reg {outputs} |-->
-               |                                                    |
-            <--| ready_o (ready for data)       (data avail) valid_o|-->
-            -->| valid_i (new data avail)    (data consumed) ready_i|<--
-               |----------------------------------------------------|
+               |---------------------------------------------------------------------|
+            -->| ap_aclk (clock input)                                               |
+            -->| ap_areset (reset input, rst on high)                                |
+               |                                                                     |
+            -->| {inputs}                                              reg {outputs} |-->
+               |                                                                     |
+            <--| s_axis_a_tready (ready for data)       (data avail) m_axis_b_tvalid |-->
+            -->| s_axis_a_tvalid (new data avail)    (data consumed) m_axis_b_tready |<--
+               |---------------------------------------------------------------------|
         */
 
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
     
-        always@(posedge clk_i) begin
-            if (rst_i) begin // case: reset
-                b <= 0;
-                ready_o <= 1'b1;
+        always@(posedge ap_aclk) begin
+            if (ap_areset) begin // case: reset
+                m_axis_b_tdata <= 0;
+                s_axis_a_tready <= 1'b1;
                 state <= READY;
-            end else if (valid_i && state == READY) begin // case: load a 
-                b <= a[0];
-                ready_o <= 1'b0;
+            end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+                m_axis_b_tdata <= s_axis_a_tdata[0];
+                s_axis_a_tready <= 1'b0;
                 state <= BUSY;
-            end else if (b < a[0] + a[1] && state == BUSY) begin // case: increment counter b
-                b <= b + 1;
+            end else if (m_axis_b_tdata < s_axis_a_tdata[0] + s_axis_a_tdata[1] && state == BUSY) begin // case: increment counter b
+                m_axis_b_tdata <= m_axis_b_tdata + 1;
             end else if (state == BUSY) begin
-                b <= b;
+                m_axis_b_tdata <= m_axis_b_tdata;
                 state <= DONE;
             end
         end    
     
-        assign valid_o = (b >= a[0] + a[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
+        assign m_axis_b_tvalid  = (m_axis_b_tdata >= s_axis_a_tdata[0] + s_axis_a_tdata[1] && (state == BUSY || state == DONE)) ? 1'b1:1'b0; 
         ''',
                                 language=dace.Language.SystemVerilog)
 
@@ -284,23 +284,23 @@ def test_multi_tasklet():
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
     
-        always@(posedge clk_i) begin
-            if (rst_i) begin // case: reset
-                b <= 0;
-                ready_o <= 1'b1;
+        always@(posedge ap_aclk) begin
+            if (ap_areset) begin // case: reset
+                m_axis_b_tdata <= 0;
+                s_axis_a_tready <= 1'b1;
                 state <= READY;
-            end else if (valid_i && state == READY) begin // case: load a 
-                b <= a;
-                ready_o <= 1'b0;
+            end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+                m_axis_b_tdata <= s_axis_a_tdata;
+                s_axis_a_tready <= 1'b0;
                 state <= BUSY;
-            end else if (b < 80) // case: increment counter b
-                b <= b + 1;
+            end else if (m_axis_b_tdata < 80) // case: increment counter b
+                m_axis_b_tdata <= m_axis_b_tdata + 1;
             else
-                b <= b;
+                m_axis_b_tdata <= m_axis_b_tdata;
                 state <= DONE;
         end    
     
-        assign valid_o = (b >= 80) ? 1'b1:1'b0; 
+        assign m_axis_b_tvalid = (m_axis_b_tdata >= 80) ? 1'b1:1'b0; 
         ''',
                                  language=dace.Language.SystemVerilog)
 
@@ -311,23 +311,23 @@ def test_multi_tasklet():
         typedef enum [1:0] {READY, BUSY, DONE} state_e;
         state_e state;
     
-        always@(posedge clk_i) begin
-            if (rst_i) begin // case: reset
-                c <= 0;
-                ready_o <= 1'b1;
+        always@(posedge ap_aclk) begin
+            if (ap_areset) begin // case: reset
+                m_axis_c_tdata <= 0;
+                s_axis_b_tready <= 1'b1;
                 state <= READY;
-            end else if (valid_i && state == READY) begin // case: load a 
-                c <= b;
-                ready_o <= 1'b0;
+            end else if (s_axis_b_tvalid && state == READY) begin // case: load a 
+                m_axis_c_tdata <= s_axis_b_tdata;
+                s_axis_b_tready <= 1'b0;
                 state <= BUSY;
-            end else if (c < 100) // case: increment counter b
-                c <= c + 1;
+            end else if (m_axis_c_tdata < 100) // case: increment counter b
+                m_axis_c_tdata <= m_axis_c_tdata + 1;
             else
-                c <= c;
+                m_axis_c_tdata <= m_axis_c_tdata;
                 state <= DONE;
         end    
     
-        assign valid_o = (c >= 100) ? 1'b1:1'b0;  
+        assign m_axis_c_tvalid = (m_axis_c_tdata >= 100) ? 1'b1:1'b0;  
         ''',
                                  language=dace.Language.SystemVerilog)
 
