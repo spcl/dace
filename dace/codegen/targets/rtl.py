@@ -390,7 +390,7 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
-            debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;"
+            debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
             if self.verilator_debug else "",
@@ -410,7 +410,7 @@ std::cout << std::flush;
             debug_output_hs=
             "std::cout << \"remove write_output_hs flag\" << std::endl;"
             if self.verilator_debug else "",
-            debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;"
+            debug_sim_end="std::cout << \"SIM {name} END\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else ""),
                               sdfg=sdfg,
                               state_id=state_id,
