@@ -112,7 +112,8 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
     }
 
     try:
-        match_found = xform.can_be_applied(graph,
+        match = xform(sdfg.sdfg_id, state_id, subgraph, expr_idx)
+        match_found = match.can_be_applied(graph,
                                            subgraph,
                                            expr_idx,
                                            sdfg,
@@ -125,7 +126,7 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState],
         return None
 
     if match_found:
-        return xform(sdfg.sdfg_id, state_id, subgraph, expr_idx)
+        return match
 
     return None
 
