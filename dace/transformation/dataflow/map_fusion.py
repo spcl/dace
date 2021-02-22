@@ -111,7 +111,7 @@ class MapFusion(transformation.Transformation):
 
                 # If array is used anywhere else in this state.
                 num_occurrences = len([
-                    n for n in graph.nodes()
+                    n for s in sdfg.nodes() for n in s.nodes()
                     if isinstance(n, nodes.AccessNode) and n.data == dst.data
                 ])
                 if num_occurrences > 1:
