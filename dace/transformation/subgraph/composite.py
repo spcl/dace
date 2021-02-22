@@ -30,7 +30,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
     allow_expansion = Property(desc="Allow MultiExpansion before",
                                dtype = bool,
-                               default = False)
+                               default = True)
 
     allow_tiling = Property(desc="Allow StencilTiling before",
                             dtype = bool,
@@ -73,9 +73,10 @@ class CompositeFusion(transformation.SubgraphTransformation):
             subgraph_copy = SubgraphView(graph_copy,
                 [graph_copy.nodes()[i] for i in graph_indices])
             
-            #sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
-            expansion = MultiExpansion(subgraph_copy)
-            expansion.apply(sdfg_copy)
+            if MultiExpansion.can_be_applied(sdfg_copy, subgraph_copy):
+                #sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
+                expansion = MultiExpansion(subgraph_copy)
+                expansion.apply(sdfg_copy)
 
             if SubgraphFusion.can_be_applied(sdfg_copy, subgraph_copy):
                 return True 
@@ -103,6 +104,9 @@ class CompositeFusion(transformation.SubgraphTransformation):
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
         first_entry = next(iter(map_entries))
 
+        # TODO: EDIT THIS 
+        ###################################
+        ####################################
         # check gpu related issues:
         is_gpu = False
         if first_entry.schedule in [dtypes.ScheduleType.GPU_Device]:
@@ -133,12 +137,20 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 warnings.warn("Ambiguous innermap scheduling "
                               "in a GPU State for Fusion")
 
+        ###################################
+        #####################################
+
+
+        print("me CBA", MultiExpansion.can_be_applied(sdfg, subgraph))
+        print(self.allow_expansion)
+        print(self.allow_expansion == True)
         if self.allow_expansion == True and MultiExpansion.can_be_applied(sdfg, subgraph):
             # expand first 
+            print("########## applying")
             me = MultiExpansion(subgraph, self.sdfg_id, self.state_id)
             me.debug = self.debug
             me.apply(sdfg)
-
+        print("sgf CBA", SubgraphFusion.can_be_applied(sdfg, self.subgraph_view(sdfg)))
         if SubgraphFusion.can_be_applied(sdfg, self.subgraph_view(sdfg)):
             sf = SubgraphFusion(subgraph, self.sdfg_id, self.state_id)
             # set SubgraphFusion properties

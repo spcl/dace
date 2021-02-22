@@ -54,8 +54,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)
-                cf.allow_expansion = apply_multi_expansion
-                cf.allow_tiling = apply_stencil_tiling
+                #cf.allow_expansion = apply_multi_expansion
+                #cf.allow_tiling = apply_stencil_tiling
                 cf.apply(sdfg)
                 applied_transformations += 1
                 if recursive:

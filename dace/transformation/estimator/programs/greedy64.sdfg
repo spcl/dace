@@ -353,12 +353,12 @@
     "orig_sdfg": null,
     "transformation_hist": [],
     "name": "greedy",
-    "hash": "1a0de4c1bde1faaf9599dfdab0a5d75bfa5f1a476fcec35325e9cafc3e5b53af"
+    "hash": "9b3ad0d78c29dee678c20dd0a08e8491aebb885b8418c6377d9f4683525f4e87"
   },
   "nodes": [
     {
       "type": "SDFGState",
-      "label": "BinOp_36",
+      "label": "BinOp_34",
       "id": 0,
       "collapsed": false,
       "scope_dict": {
@@ -453,8 +453,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -482,8 +482,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -526,8 +526,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -548,8 +548,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -586,8 +586,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -615,8 +615,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -659,8 +659,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 36,
-              "end_line": 36,
+              "start_line": 34,
+              "end_line": 34,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -697,8 +697,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -726,8 +726,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -770,8 +770,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -792,8 +792,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 11,
               "end_column": 11,
               "filename": "greedy_test.py"
@@ -830,8 +830,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -859,8 +859,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -903,8 +903,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 37,
-              "end_line": 37,
+              "start_line": 35,
+              "end_line": 35,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -919,9 +919,9 @@
         },
         {
           "type": "MapEntry",
-          "label": "greedy_40[i=0:N, j=0:M]",
+          "label": "greedy_38[i=0:N, j=0:M]",
           "attributes": {
-            "label": "greedy_40",
+            "label": "greedy_38",
             "params": [
               "i",
               "j"
@@ -932,19 +932,13 @@
                 {
                   "start": "0",
                   "end": "N - 1",
-                  "step": {
-                    "main": "1",
-                    "approx": "1"
-                  },
+                  "step": "1",
                   "tile": "1"
                 },
                 {
                   "start": "0",
                   "end": "M - 1",
-                  "step": {
-                    "main": "1",
-                    "approx": "1"
-                  },
+                  "step": "1",
                   "tile": "1"
                 }
               ]
@@ -954,8 +948,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 40,
-              "end_line": 40,
+              "start_line": 38,
+              "end_line": 38,
               "start_column": 4,
               "end_column": 4,
               "filename": "greedy_test.py"
@@ -977,7 +971,7 @@
         },
         {
           "type": "MapExit",
-          "label": "greedy_40[i=0:N, j=0:M]",
+          "label": "greedy_38[i=0:N, j=0:M]",
           "attributes": {
             "in_connectors": {
               "IN___tmp4": null
@@ -998,8 +992,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 40,
-              "end_line": 40,
+              "start_line": 38,
+              "end_line": 38,
               "start_column": 4,
               "end_column": 4,
               "filename": "greedy_test.py"
@@ -1036,8 +1030,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 12,
               "end_column": 12,
               "filename": "greedy_test.py"
@@ -1065,8 +1059,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 12,
               "end_column": 12,
               "filename": "greedy_test.py"
@@ -1109,8 +1103,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 12,
               "end_column": 12,
               "filename": "greedy_test.py"
@@ -1131,8 +1125,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 12,
               "end_column": 12,
               "filename": "greedy_test.py"
@@ -1169,8 +1163,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 16,
               "end_column": 16,
               "filename": "greedy_test.py"
@@ -1198,8 +1192,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 16,
               "end_column": 16,
               "filename": "greedy_test.py"
@@ -1242,8 +1236,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 48,
-              "end_line": 48,
+              "start_line": 46,
+              "end_line": 46,
               "start_column": 16,
               "end_column": 16,
               "filename": "greedy_test.py"
@@ -1280,8 +1274,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 47,
+              "end_line": 47,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -1309,8 +1303,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 47,
+              "end_line": 47,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -1353,8 +1347,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 47,
+              "end_line": 47,
               "start_column": 15,
               "end_column": 15,
               "filename": "greedy_test.py"
@@ -1391,8 +1385,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 47,
+              "end_line": 47,
               "start_column": 19,
               "end_column": 19,
               "filename": "greedy_test.py"
@@ -1422,8 +1416,8 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 47,
+              "end_line": 47,
               "start_column": 19,
               "end_column": 19,
               "filename": "greedy_test.py"
@@ -1467,8 +1461,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 47,
+              "end_line": 47,
               "start_column": 19,
               "end_column": 19,
               "filename": "greedy_test.py"
@@ -1483,9 +1477,9 @@
         },
         {
           "type": "MapEntry",
-          "label": "greedy_52[i=0:N, j=0:M, k=0:O]",
+          "label": "greedy_50[i=0:N, j=0:M, k=0:O]",
           "attributes": {
-            "label": "greedy_52",
+            "label": "greedy_50",
             "params": [
               "i",
               "j",
@@ -1497,28 +1491,19 @@
                 {
                   "start": "0",
                   "end": "N - 1",
-                  "step": {
-                    "main": "1",
-                    "approx": "1"
-                  },
+                  "step": "1",
                   "tile": "1"
                 },
                 {
                   "start": "0",
                   "end": "M - 1",
-                  "step": {
-                    "main": "1",
-                    "approx": "1"
-                  },
+                  "step": "1",
                   "tile": "1"
                 },
                 {
                   "start": "0",
                   "end": "O - 1",
-                  "step": {
-                    "main": "1",
-                    "approx": "1"
-                  },
+                  "step": "1",
                   "tile": "1"
                 }
               ]
@@ -1528,8 +1513,8 @@
             "collapse": 1,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 52,
-              "end_line": 52,
+              "start_line": 50,
+              "end_line": 50,
               "start_column": 4,
               "end_column": 4,
               "filename": "greedy_test.py"
@@ -1551,7 +1536,7 @@
         },
         {
           "type": "MapExit",
-          "label": "greedy_52[i=0:N, j=0:M, k=0:O]",
+          "label": "greedy_50[i=0:N, j=0:M, k=0:O]",
           "attributes": {
             "in_connectors": {
               "IN___tmp9": null
@@ -1572,8 +1557,8 @@
             "setzero": false,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 52,
-              "end_line": 52,
+              "start_line": 50,
+              "end_line": 50,
               "start_column": 4,
               "end_column": 4,
               "filename": "greedy_test.py"
@@ -1588,7 +1573,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "greedy_41",
+          "label": "greedy_39",
           "attributes": {
             "code": {
               "string_data": "out = ((inp1 * 2) + (inp2 * 2))",
@@ -1596,14 +1581,14 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 41,
-              "end_line": 46,
+              "start_line": 39,
+              "end_line": 44,
               "start_column": 8,
               "end_column": 12,
               "filename": "greedy_test.py"
             },
             "instrument": "No_Instrumentation",
-            "label": "greedy_41",
+            "label": "greedy_39",
             "location": {},
             "environments": [],
             "in_connectors": {
@@ -1620,7 +1605,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "greedy_53",
+          "label": "greedy_51",
           "attributes": {
             "code": {
               "string_data": "out = (inp1 + inp2)",
@@ -1628,14 +1613,14 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 53,
-              "end_line": 58,
+              "start_line": 51,
+              "end_line": 56,
               "start_column": 8,
               "end_column": 12,
               "filename": "greedy_test.py"
             },
             "instrument": "No_Instrumentation",
-            "label": "greedy_53",
+            "label": "greedy_51",
             "location": {},
             "environments": [],
             "in_connectors": {
@@ -3304,7 +3289,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "M**2*N**2*O**2",
+                "volume": "M*N*O",
                 "dynamic": false,
                 "subset": {
                   "type": "Range",
@@ -3359,7 +3344,7 @@
                     }
                   ]
                 },
-                "num_accesses": "M**2*N**2*O**2"
+                "num_accesses": "M*N*O"
               }
             }
           },
@@ -3800,26 +3785,26 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "M*N*O",
+                "volume": "1",
                 "dynamic": false,
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "0",
-                      "end": "N - 1",
+                      "start": "i",
+                      "end": "i",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "0",
-                      "end": "M - 1",
+                      "start": "j",
+                      "end": "j",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "0",
-                      "end": "O - 1",
+                      "start": "k",
+                      "end": "k",
                       "step": "1",
                       "tile": "1"
                     }
@@ -3836,26 +3821,26 @@
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "0",
-                      "end": "N - 1",
+                      "start": "i",
+                      "end": "i",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "0",
-                      "end": "M - 1",
+                      "start": "j",
+                      "end": "j",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "0",
-                      "end": "O - 1",
+                      "start": "k",
+                      "end": "k",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
-                "num_accesses": "M*N*O"
+                "num_accesses": "1"
               }
             }
           },

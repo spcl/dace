@@ -29,6 +29,7 @@ class BruteForceEnumerator(Enumerator):
                          condition_function=condition_function,
                          scoring_function=scoring_function)
 
+    
     def brute_force(self):
         for i in range(1, len(self._map_entries) + 1):
             for sg in itertools.combinations(self._map_entries, i):

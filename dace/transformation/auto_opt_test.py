@@ -14,8 +14,9 @@ from dace.sdfg.graph import SubgraphView
 import sys
 
 from dace.transformation.subgraph import SubgraphFusion
-
 from dace.transformation.auto_optimize import greedy_fuse, auto_optimize
+
+from copy import deepcopy as dcpy
 
 def get_sdfg(name):
     return factory.get_program(name)
@@ -25,29 +26,42 @@ def get_args(name):
 
 def run_scenario(name, 
                  gpu = False,
-                 run = False, 
+                 run = True, 
                  view = False,
                  validate_all = True):
     
     sdfg = get_sdfg(name)
     args = get_args(name) 
 
+    arg1 = dcpy(args)
+    arg2 = dcpy(args)
+
     if gpu:
         sdfg.apply_gpu_transformations()
     
     if run:
-        result1 = sdfg(args)
+        result1 = sdfg(**{**arg1[0], **arg1[1], **arg1[2]})
 
     greedy_fuse(sdfg, validate_all = True)
 
     if run:
-        result2 = sdfg(args)
+        result2 = sdfg(**{**arg2[0], **arg2[1], **arg2[2]})
     
     if view:
         sdfg.view() 
-    
+
+    if run:
+        if result1 is not None:
+            print("__return:\t", np.linalg.norm(result1))
+            print("__return:\t", np.linalg.norm(result2))
+        for aname, array in args[1].items():
+            print(f"{aname}:\t", np.linalg.norm(arg1[1][aname]))
+            print(f"{aname}:\t", np.linalg.norm(arg2[1][aname]))
 
 
-#run_scenario("greedy")  # [OK]
-#run_scenario("vadv") # [OK]
+
+#run_scenario("greedy", view = True)  # [OK]
+run_scenario("vadv") # [OK]
+#run_scenario("hdiff_mini") 
+#run_scenario("hdiff")
 

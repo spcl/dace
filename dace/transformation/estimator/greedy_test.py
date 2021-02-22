@@ -51,7 +51,7 @@ def greedy(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O]):
         with dace.tasklet:
             inp1 << tmp[i,j]
             inp2 << ccc[k]
-            out >> result
+            out >> result[i,j,k]
 
             out = inp1 + inp2
     
