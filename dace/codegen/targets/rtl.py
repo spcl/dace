@@ -402,7 +402,7 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
-            running_condition="autorun_active && out_ptr < num_elements" if is_autorun else "out_ptr < num_elements",
+            running_condition="autorun_active && out_ptr < num_elements" if self.is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
