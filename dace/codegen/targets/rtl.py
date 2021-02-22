@@ -381,6 +381,16 @@ for(int i = 0; i < {veclen}; i++){{
             cpp_code=RTLCodeGen.CPP_MODEL_HEADER_TEMPLATE.format(
                 name=unique_name))
 
+        # add init and exit code for auto-run kernels
+        is_autorun = True
+        if is_autorun:
+            function_stream.write(contents="bool autorun_active = true;\n",
+                                  sdfg=sdfg,
+                                  state_id=state_id,
+                                  node_id=node)
+            sdfg.append_init_code("// start simulation of all free running kernels\n autorun_active = true;\n")
+            sdfg.append_exit_code("// stop simulation of all free running kernels\nautorun_active = false;\n")
+
         # add main cpp code to stream
         callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
             name=unique_name,
@@ -390,6 +400,7 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
+            running_condition="autorun_active && out_ptr < num_elements" if is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
@@ -461,7 +472,7 @@ bool read_input_hs = false, write_output_hs = false;
 int in_ptr = 0, out_ptr = 0;
 {num_elements}
 
-while (out_ptr < num_elements) {{
+while ({running_condition}) {{
 
     // increment time
     main_time++;
