@@ -1,5 +1,6 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+from functools import lru_cache
 import sympy
 import pickle
 import re
@@ -516,6 +517,11 @@ def sympy_intdiv_fix(expr):
     b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
+    e = sympy.Wild('e',
+                   properties=[
+                       lambda k: isinstance(k, sympy.Basic) and not isinstance(
+                           k, sympy.Atom)
+                   ])
     int_ceil = sympy.Function('int_ceil')
     int_floor = sympy.Function('int_floor')
 
@@ -552,6 +558,12 @@ def sympy_intdiv_fix(expr):
                 nexpr = nexpr.subs(ceil, m[a] * int_ceil(m[c], m[d]))
                 processed += 1
                 continue
+            # Ceiling with composite expression at the numerator
+            m = ceil.match(sympy.ceiling(e / b))
+            if m is not None:
+                nexpr = nexpr.subs(ceil, int_ceil(m[e], m[b]))
+                processed += 1
+                continue
         for floor in nexpr.find(sympy.floor):
             # Simple floor
             m = floor.match(sympy.floor(a / b))
@@ -573,7 +585,12 @@ def sympy_intdiv_fix(expr):
                                                                     m[d])))
                 processed += 1
                 continue
-
+            # floor with composite expression
+            m = floor.match(sympy.floor(e / b))
+            if m is not None:
+                nexpr = nexpr.subs(floor, int_floor(m[e], m[b]))
+                processed += 1
+                continue
     return nexpr
 
 
@@ -602,8 +619,7 @@ def sympy_divide_fix(expr):
             nexpr = nexpr.subs(
                 candidate,
                 int_floor(
-                    sympy.Mul(*(candidate.args[:ri] +
-                                    candidate.args[ri + 1:])),
+                    sympy.Mul(*(candidate.args[:ri] + candidate.args[ri + 1:])),
                     int(1 / candidate.args[ri])))
             processed += 1
 
@@ -685,6 +701,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+@lru_cache(2048)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
@@ -724,6 +741,11 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         expr = expr.replace(']', ')')
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify),
                              symbol_map)
+
+
+@lru_cache(maxsize=2048)
+def simplify(expr: SymbolicType) -> SymbolicType:
+    return sympy.simplify(expr)
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):

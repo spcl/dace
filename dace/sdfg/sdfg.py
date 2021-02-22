@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -329,7 +329,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         tmp['attributes']['name'] = self.name
         if hash:
-            tmp['attributes']['hash'] = self.hash_sdfg()
+            tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
         return tmp
 
@@ -367,9 +367,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return ret
 
-    def hash_sdfg(self) -> str:
+    def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
         '''
         Returns a hash of the current SDFG, without considering IDs and attribute names.
+        :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         '''
         def keyword_remover(json_obj: Any, last_keyword=""):
@@ -402,9 +403,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 for value in json_obj:
                     keyword_remover(value)
 
-        jsondict = self.to_json()  # No more nonstandard objects
+        # Clean SDFG of nonstandard objects
+        jsondict = (json.loads(json.dumps(jsondict))
+                    if jsondict is not None else self.to_json())
+
         keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
-        string_representation = dace.serialize.dumps(jsondict)  # dict->str
+
+        string_representation = json.dumps(jsondict)  # dict->str
         hsh = sha256(string_representation.encode('utf-8'))
         return hsh.hexdigest()
 
@@ -1157,7 +1162,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
              filename: str,
              use_pickle=False,
              with_metadata=False,
-             exception=None):
+             hash=None,
+             exception=None) -> Optional[str]:
         """ Save this SDFG to a file.
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
@@ -1165,8 +1171,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param with_metadata: Save property metadata (e.g. name,
                                   description). False or True override current
                                   option, whereas None keeps default.
+            :param hash: By default, saves the hash if SDFG is JSON-serialized.
+                         Otherwise, if True, saves the hash along with the SDFG.
             :param exception: If not None, stores error information along with
                               SDFG.
+            :return: The hash of the SDFG, or None if failed/not requested.
         """
         try:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -1176,17 +1185,24 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
+            if hash is True:
+                return self.hash_sdfg()
         else:
+            hash = True if hash is None else hash
             if with_metadata is not None:
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                json_output = self.to_json(hash=True)
+                json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
                 fp.write(dace.serialize.dumps(json_output))
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
+            if hash and 'hash' in json_output['attributes']:
+                return json_output['attributes']['hash']
+
+        return None
 
     def view(self, filename=None):
         """View this sdfg in the system's HTML viewer
@@ -1335,18 +1351,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
     def add_view(self,
-                  name: str,
-                  shape,
-                  dtype,
-                  storage=dtypes.StorageType.Default,
-                  strides=None,
-                  offset=None,
-                  debuginfo=None,
-                  allow_conflicts=False,
-                  total_size=None,
-                  find_new_name=False,
-                  alignment=0,
-                  may_alias=False) -> Tuple[str, dt.View]:
+                 name: str,
+                 shape,
+                 dtype,
+                 storage=dtypes.StorageType.Default,
+                 strides=None,
+                 offset=None,
+                 debuginfo=None,
+                 allow_conflicts=False,
+                 total_size=None,
+                 find_new_name=False,
+                 alignment=0,
+                 may_alias=False) -> Tuple[str, dt.View]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1362,17 +1378,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             dtype = dtypes.typeclass(dtype)
 
         desc = dt.View(dtype,
-                        shape,
-                        storage=storage,
-                        allow_conflicts=allow_conflicts,
-                        transient=True,
-                        strides=strides,
-                        offset=offset,
-                        lifetime=dtypes.AllocationLifetime.Scope,
-                        alignment=alignment,
-                        debuginfo=debuginfo,
-                        total_size=total_size,
-                        may_alias=may_alias)
+                       shape,
+                       storage=storage,
+                       allow_conflicts=allow_conflicts,
+                       transient=True,
+                       strides=strides,
+                       offset=offset,
+                       lifetime=dtypes.AllocationLifetime.Scope,
+                       alignment=alignment,
+                       debuginfo=debuginfo,
+                       total_size=total_size,
+                       may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1695,9 +1711,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        # Recursively expand library nodes that haven't been expanded yet
-        sdfg.expand_library_nodes()
-
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
 
@@ -1728,12 +1741,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     ','.join(['argv_' + str(i)
                               for i in range(len(sys.argv))]) + '\n')
                 launchfiles_file.write(
-                    sdfg.name + ',' +
-                    os.path.abspath(os.path.join(sdfg.build_folder,
-                                                 'program.sdfg')) + ',' +
-                    os.path.abspath(os.path.join('_dacegraphs',
-                                                 'program.sdfg')) + ',' +
-                    os.path.abspath(sys.argv[0]) + ',' +
+                    sdfg.name + ',' + os.path.abspath(
+                        os.path.join(sdfg.build_folder, 'program.sdfg')) + ',' +
+                    os.path.abspath(os.path.join('_dacegraphs', 'program.sdfg'))
+                    + ',' + os.path.abspath(sys.argv[0]) + ',' +
                     ','.join([str(el) for el in sys.argv]))
 
         # Get the function handle
@@ -2041,8 +2052,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     self.validate()
                 except InvalidSDFGError as err:
                     raise InvalidSDFGError(
-                        "Validation failed after applying {}.".
-                        format(match.print_match(sdfg)), sdfg,
+                        "Validation failed after applying {}.".format(
+                            match.print_match(sdfg)), sdfg,
                         match.state_id) from err
 
         if order_by_transformation:
