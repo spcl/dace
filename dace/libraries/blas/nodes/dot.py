@@ -89,7 +89,7 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         if veclen != 1:
             n /= veclen
-        code = f"_result = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
+        code = f"_result[0] = cblas_{func}({n}, _x, {stride_x}, _y, {stride_y});"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
