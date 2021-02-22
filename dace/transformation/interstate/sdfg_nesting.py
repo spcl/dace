@@ -79,12 +79,20 @@ class InlineSDFG(transformation.Transformation):
 
         # Replace all inner symbols based on symbol mapping
         repldict = {
-            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)
+            symbolic.pystr_to_symbolic(k):
+            symbolic.pystr_to_symbolic('_' + str(v))
             for k, v in nested_sdfg.symbol_mapping.items()
         }
+        # need two dicts to avoid clashes
+        repldict_inv = {
+            symbolic.pystr_to_symbolic('_' + str(v)):
+            symbolic.pystr_to_symbolic(v)
+            for v in nested_sdfg.symbol_mapping.values()
+        }
+
         istrides = [
-            istr.subs(repldict) if symbolic.issymbolic(istr) else istr
-            for istr in inner_strides
+            istr.subs(repldict).subs(repldict_inv)
+            if symbolic.issymbolic(istr) else istr for istr in inner_strides
         ]
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
