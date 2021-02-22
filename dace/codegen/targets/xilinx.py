@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import itertools
 import os
@@ -109,7 +109,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 #include "dace/dace.h"
 #include <iostream>\n\n""")
 
-        self._frame.generate_fileheader(self._global_sdfg, host_code)
+        self._frame.generate_fileheader(self._global_sdfg, host_code,
+                                        'xilinx_host')
 
         params_comma = self._global_sdfg.signature(with_arrays=False)
         if params_comma:
@@ -399,9 +400,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     dtype.base_type.ctype, packing_factor, read_expr,
                     write_expr)
             else:
-                # we can write into a vectorized container.
-                # (The dtype passed as argument refers to the src not to the destination)
-                veclen = dtype.veclen * packing_factor
+                # TODO: Temporary hack because we don't have the output
+                #       vector length.
+                veclen = max(dtype.veclen, packing_factor)
                 return "dace::Write<{}, {}>({}, {});".format(
                     dtype.base_type.ctype, veclen, write_expr, read_expr)
 
@@ -439,7 +440,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             """#include <dace/xilinx/device.h>
 #include <dace/math.h>
 #include <dace/complex.h>""", sdfg)
-        self._frame.generate_fileheader(sdfg, module_stream)
+        self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
         module_stream.write("\n", sdfg)
 
         symbol_params = [
@@ -656,7 +657,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         p.as_arg(with_types=True, name=pname))
 
         # create a unique module name to prevent name clashes
-        module_function_name = "module_" + name + "_" + str(sdfg.sdfg_id)
+        module_function_name = f"module_{name}_{sdfg.sdfg_id}"
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -880,3 +881,14 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
     def unparse_tasklet(self, *args, **kwargs):
         # Pass this object for callbacks into the Xilinx codegen
         cpp.unparse_tasklet(*args, codegen=self, **kwargs)
+
+    def make_ptr_assignment(self, src_expr, src_dtype, dst_expr, dst_dtype):
+        """
+        Write source to destination, where the source is a scalar, and the
+        destination is a pointer.
+        :return: String of C++ performing the write.
+        """
+        return self.make_write(DefinedType.Pointer, dst_dtype, None,
+                               "&" + dst_expr, None, src_expr, None,
+                               dst_dtype.veclen < src_dtype.veclen,
+                               src_dtype.veclen)

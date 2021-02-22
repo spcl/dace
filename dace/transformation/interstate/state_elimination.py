@@ -1,11 +1,12 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ State elimination transformations """
 
 import copy
 import networkx as nx
+from typing import Dict
 
 from dace import dtypes, registry, sdfg, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import nodes, SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.config import Config
@@ -154,3 +155,85 @@ class StateAssignElimination(transformation.Transformation):
                 # remove symbol
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
+
+
+@registry.autoregister_params(singlestate=True)
+class HoistState(transformation.Transformation):
+    """ Move a state out of a nested SDFG """
+    nsdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(HoistState.nsdfg)]
+
+    @staticmethod
+    def can_be_applied(graph: SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg,
+                       strict=False):
+        nsdfg = graph.node(candidate[HoistState.nsdfg])
+
+        # Must be a free nested SDFG at the beginning of a state
+        if graph.entry_node(nsdfg) is not None:
+            return False
+        if any(graph.in_degree(e.src) > 0 for e in graph.in_edges(nsdfg)):
+            return False
+
+        # Must have two states with an empty source state
+        if nsdfg.sdfg.number_of_nodes() != 2:
+            return False
+        if nsdfg.sdfg.start_state.number_of_nodes() != 0:
+            return False
+
+        # Relevant input edges must contain all of the array (avoid offsetting)
+        nisedge = nsdfg.sdfg.edges()[0]
+        syms = nisedge.data.free_symbols
+        for e in graph.in_edges(nsdfg):
+            if e.dst_conn in syms:
+                if any(me != 0 for me in e.data.subset.min_element()):
+                    return False
+
+        return True
+
+    def apply(self, sdfg: SDFG):
+        nsdfg: nodes.NestedSDFG = self.nsdfg(sdfg)
+        state = sdfg.node(self.state_id)
+
+        new_state = sdfg.add_state_before(state)
+        isedge = sdfg.edges_between(new_state, state)[0]
+
+        # Find relevant symbol mapping
+        mapping: Dict[str, str] = {}
+        mapping.update({k: str(v) for k, v in nsdfg.symbol_mapping.items()})
+        mapping.update({
+            k: next(iter(state.in_edges_by_connector(nsdfg, k))).data.data
+            for k in nsdfg.in_connectors
+        })
+
+        nisedge = nsdfg.sdfg.edges()[0]
+        # Safe replacement of edge contents
+        for k, v in mapping.items():
+            nisedge.data.replace(k, '__dacesym_' + k, replace_keys=False)
+        for k, v in mapping.items():
+            nisedge.data.replace('__dacesym_' + k, v, replace_keys=False)
+
+        for akey, aval in nisedge.data.assignments.items():
+            # Map assignment to outer edge
+            if akey not in sdfg.symbols and akey not in sdfg.arrays:
+                newname = akey
+            else:
+                newname = nsdfg.label + '_' + akey
+
+            isedge.data.assignments[newname] = aval
+            
+            # Add symbol to outer SDFG
+            sdfg.add_symbol(newname, nsdfg.sdfg.symbols[akey])
+
+            # Add symbol mapping to nested SDFG
+            nsdfg.symbol_mapping[akey] = newname
+
+        isedge.data.condition = nisedge.data.condition
+
+        # Clean nested SDFG
+        nsdfg.sdfg.remove_node(nisedge.src)

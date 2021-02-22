@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on an FPGA. """
 
 import dace
@@ -93,7 +93,8 @@ class FPGATransformState(transformation.Transformation):
             candidate_map = map_entry.map
 
             # No more than 3 dimensions
-            if candidate_map.range.dims() > 3: return False
+            if candidate_map.range.dims() > 3:
+                return False
 
             # Map schedules that are disallowed to transform to FPGAs
             if (candidate_map.schedule == dtypes.ScheduleType.MPI

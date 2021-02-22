@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -61,12 +61,11 @@ run_all() {
     run_sample fpga/remove_degenerate_loop remove_degenerate_loop_test 0
     run_sample fpga/pipeline_scope pipeline_test 1
     run_sample fpga/veclen_copy_conversion veclen_copy_conversion 1
-    run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 0 24
+    run_sample ../samples/fpga/axpy_transformed axpy_fpga_24 1 24
     run_sample ../samples/fpga/spmv_fpga_stream spmv_fpga_stream 0 64 64 640
     run_sample ../samples/fpga/matrix_multiplication_systolic mm_fpga_systolic_4_64x64x64 1 64 64 64 4 -specialize
     run_sample ../samples/fpga/filter_fpga_vectorized filter_fpga_vectorized_4 1 8192 4 0.25
     # run_sample jacobi_fpga_systolic jacobi_fpga_systolic_4_Hx128xT 1 128 128 8 4
-    # TODO: this doesn't pipeline. Should it? Why doesn't it?
     run_sample ../samples/fpga/gemv_transposed_fpga gemv_transposed_1024xM 0 1024 1024
     if [ "$1" -ne "0" ]; then
       run_sample ../samples/fpga/histogram_fpga histogram_fpga 0 128 128
@@ -83,15 +82,18 @@ run_all() {
     run_sample fpga/streaming_memory streamingcomp_1 1
 
     ## BLAS
-    run_sample blas/nodes/axpy_test axpy_test_x_0 1 --target xilinx
+    run_sample blas/nodes/axpy_test axpy_test_fpga_1_w4_1 1 --target fpga 
+    run_sample blas/nodes/dot_test dot_FPGA_PartialSums_float_w16_1 1 --target xilinx
+    run_sample blas/nodes/gemv_test gemv_FPGA_TilesByColumn_float_True_w4_1 1 --target tiles_by_column --transpose --vectorize 4
+    run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 1 --target accumulate --vectorize 4 
+    run_sample blas/nodes/ger_test ger_test_1 1 --target fpga 
 
     # Multiple gearboxing
     run_sample fpga/multiple_veclen_conversions multiple_veclen_conversions 0
-
 }
 
 # Check if xocc is vailable
-which v++ 
+which v++
 if [ $? -ne 0 ]; then
   which xocc
   if [ $? -ne 0 ]; then

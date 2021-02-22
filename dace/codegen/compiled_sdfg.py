@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to load, use, and invoke compiled SDFG libraries. """
 import ctypes
 import os
@@ -263,6 +263,12 @@ class CompiledSDFG(object):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
+                elif (isinstance(arg, int) and atype.dtype.type == np.int32
+                      and abs(arg) <= (1 << 31) - 1):
+                    pass
+                elif (isinstance(arg, int) and atype.dtype.type == np.uint32
+                      and arg >= 0 and arg <= (1 << 32) - 1):
+                    pass
                 else:
                     print(
                         'WARNING: Casting scalar argument "%s" from %s to %s' %
@@ -271,7 +277,9 @@ class CompiledSDFG(object):
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector)
-                        and atype.dtype.vtype.as_numpy_dtype() != arg.dtype):
+                        and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+                    pass
+                else:
                     print(
                         'WARNING: Passing %s array argument "%s" to a %s array'
                         % (arg.dtype, a, atype.dtype.type.__name__))
@@ -341,7 +349,12 @@ class CompiledSDFG(object):
         self._return_arrays = []
         self._return_kwarrays = {}
         for arrname, arr in sorted(self.sdfg.arrays.items()):
-            if arrname.startswith('__return'):
+            if arrname.startswith('__return') and not arr.transient:
+                if arrname in kwargs:
+                    self._return_arrays.append(kwargs[arrname])
+                    self._return_kwarrays[arrname] = kwargs[arrname]
+                    continue
+
                 if isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
                 if arr.storage in [

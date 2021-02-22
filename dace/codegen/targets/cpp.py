@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
@@ -6,6 +6,7 @@ NOTE: The C++ code generator is currently located in cpu.py.
 import ast
 import copy
 import functools
+import warnings
 
 import sympy as sp
 from six import StringIO
@@ -202,7 +203,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
 
 def ptr(name: str, desc: data.Data) -> str:
-    """ 
+    """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
     :param desc: Data descriptor.
@@ -285,8 +286,9 @@ def emit_memlet_reference(dispatcher,
     else:
         raise TypeError('Unsupported memlet type "%s"' % defined_type.name)
 
-    if desc.storage == dace.StorageType.FPGA_Global:
-        # This is a device buffer.
+    if (defined_type != DefinedType.ArrayInterface
+            and desc.storage == dace.StorageType.FPGA_Global):
+        # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
         if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
                 offset, str) and offset.isnumeric() and int(offset) != 0):
@@ -299,8 +301,8 @@ def emit_memlet_reference(dispatcher,
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(sdfg, datadef + offset_expr, memlet,
-                                    conntype, is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
+                                    is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name,
@@ -433,17 +435,12 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    subset = copy.deepcopy(subset_in)
-
-    # Offset according to parameters
+    # Offset according to parameters, then offset according to array
     if offset is not None:
-        if isinstance(offset, subsets.Subset):
-            subset.offset(offset, False)
-        else:
-            subset.offset(subsets.Indices(offset), False)
-
-    # Then, offset according to array
-    subset.offset(subsets.Indices(d.offset), False)
+        subset = subset_in.offset_new(offset, False)
+        subset.offset(d.offset, False)
+    else:
+        subset = subset_in.offset_new(d.offset, False)
 
     # Obtain start range from offsetted subset
     indices = indices or ([0] * len(d.strides))
@@ -477,20 +474,21 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(sdfg, expr, memlet, conntype, is_scalar, defined_type):
+def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
+                         defined_type):
     """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
-    if conntype != sdfg.arrays[memlet.data].dtype:
+    if src_dtype != dst_dtype:
         if is_scalar:
-            expr = '*(%s *)(&%s)' % (conntype.ctype, expr)
-        elif conntype.base_type != sdfg.arrays[memlet.data].dtype:
-            expr = '(%s)(&%s)' % (conntype.ctype, expr)
+            dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
+        elif src_dtype.base_type != dst_dtype:
+            dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
         elif defined_type == DefinedType.Pointer:
-            expr = '&' + expr
+            dst_expr = '&' + dst_expr
     elif not is_scalar:
-        expr = '&' + expr
-    return expr
+        dst_expr = '&' + dst_expr
+    return dst_expr
 
 
 def cpp_ptr_expr(sdfg,
@@ -738,6 +736,18 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
 
             memlets[vconn] = (memlet, False, None, conntype)
 
+    # To prevent variables-redefinition, build dictionary with all the previously defined symbols
+    defined_symbols = state_dfg.symbols_defined_at(node)
+
+    defined_symbols.update({
+        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+        for k, v in sdfg.constants.items()
+    })
+
+    for connector, (memlet, _, _, conntype) in memlets.items():
+        if connector is not None:
+            defined_symbols.update({connector: conntype})
+
     callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
                           node)
     for stmt in body:
@@ -753,7 +763,11 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            cppunparse.CPPUnparser(rk, ldepth + 1, locals, result)
+            cppunparse.CPPUnparser(rk,
+                                   ldepth + 1,
+                                   locals,
+                                   result,
+                                   defined_symbols=defined_symbols)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 

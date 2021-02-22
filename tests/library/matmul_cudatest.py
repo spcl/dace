@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
 from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
@@ -51,7 +51,7 @@ def make_sdfg(implementation,
     y = state.add_read("y" + suffix)
     result = state.add_write("result" + suffix)
 
-    node = blas.nodes.matmul.MatMul("matmul", dtype)
+    node = blas.nodes.matmul.MatMul("matmul")
 
     state.add_memlet_path(x,
                           node,

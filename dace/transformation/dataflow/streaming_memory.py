@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import defaultdict
 import copy
@@ -36,8 +36,9 @@ def _collect_map_ranges(
 
 
 def _canonicalize_memlet(
-    memlet: mm.Memlet, mapranges: List[Tuple[str, subsets.Range]]
-) -> Tuple[symbolic.SymbolicType]:
+        memlet: mm.Memlet,
+        mapranges: List[Tuple[str,
+                              subsets.Range]]) -> Tuple[symbolic.SymbolicType]:
     """ 
     Turn a memlet subset expression (of a single element) into an expression 
     that does not depend on the map symbol names.
@@ -70,6 +71,33 @@ def _do_memlets_correspond(
         if s1b != s2b:
             return False
     return True
+
+
+def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str,
+                         desc: data.Stream):
+    """ Helper function that changes an array in a nested SDFG to a stream. """
+    nsdfg: SDFG = node.sdfg
+    newdesc = copy.deepcopy(desc)
+    newdesc.transient = False
+    nsdfg.arrays[to_replace] = newdesc
+
+    # Replace memlets in path with stream access
+    for state in nsdfg.nodes():
+        for dnode in state.data_nodes():
+            if dnode.data != to_replace:
+                continue
+            for edge in state.all_edges(dnode):
+                mpath = state.memlet_path(edge)
+                for e in mpath:
+                    e.data = mm.Memlet(data=to_replace,
+                                       subset='0',
+                                       other_subset=e.data.other_subset)
+                    if isinstance(e.src, nodes.NestedSDFG):
+                        e.data.dynamic = True
+                        _streamify_recursive(e.src, e.src_conn, newdesc)
+                    if isinstance(e.dst, nodes.NestedSDFG):
+                        e.data.dynamic = True
+                        _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
 
 @registry.autoregister_params(singlestate=True)
@@ -120,10 +148,23 @@ class StreamingMemory(xf.Transformation):
         # If already a stream, skip
         if isinstance(sdfg.arrays[access.data], data.Stream):
             return False
-
-        # Only free nodes are allowed
-        if graph.entry_node(access) is not None:
+        # If does not exist on off-chip memory, skip
+        if sdfg.arrays[access.data].storage not in [
+                dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
+                dtypes.StorageType.GPU_Global, dtypes.StorageType.FPGA_Global
+        ]:
             return False
+
+        # Only free nodes are allowed (search up the SDFG tree)
+        curstate = graph
+        node = access
+        while curstate is not None:
+            if curstate.entry_node(node) is not None:
+                return False
+            if curstate.parent.parent_nsdfg_node is None:
+                break
+            node = curstate.parent.parent_nsdfg_node
+            curstate = curstate.parent.parent
 
         # Only one memlet path is allowed per outgoing/incoming edge
         edges = (graph.out_edges(access)
@@ -136,7 +177,9 @@ class StreamingMemory(xf.Transformation):
             # The innermost end of the path must have a clearly defined memory
             # access pattern
             innermost_edge = mpath[-1] if expr_index == 0 else mpath[0]
-            if innermost_edge.data.subset.num_elements() != 1:
+            if (innermost_edge.data.subset.num_elements() != 1
+                    or innermost_edge.data.dynamic
+                    or innermost_edge.data.volume != 1):
                 return False
 
             # Check if any of the maps has a dynamic range
@@ -221,19 +264,27 @@ class StreamingMemory(xf.Transformation):
         streams = {}
         mpaths = {}
         for edge in edges:
-            name, _ = sdfg.add_stream(dnode.data,
-                                      desc.dtype,
-                                      buffer_size=self.buffer_size,
-                                      storage=self.storage,
-                                      transient=True,
-                                      find_new_name=True)
+            name, newdesc = sdfg.add_stream(dnode.data,
+                                            desc.dtype,
+                                            buffer_size=self.buffer_size,
+                                            storage=self.storage,
+                                            transient=True,
+                                            find_new_name=True)
             streams[edge] = name
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
 
             # Replace memlets in path with stream access
             for e in mpath:
-                e.data = mm.Memlet(data=name, subset='0')
+                e.data = mm.Memlet(data=name,
+                                   subset='0',
+                                   other_subset=e.data.other_subset)
+                if isinstance(e.src, nodes.NestedSDFG):
+                    e.data.dynamic = True
+                    _streamify_recursive(e.src, e.src_conn, newdesc)
+                if isinstance(e.dst, nodes.NestedSDFG):
+                    e.data.dynamic = True
+                    _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
@@ -254,6 +305,7 @@ class StreamingMemory(xf.Transformation):
             innermost_edge, outermost_edge = component[0]
             mpath = mpaths[outermost_edge]
             mapname = streams[outermost_edge]
+            innermost_edge.data.other_subset = None
 
             # Get edge data and streams
             if self.expr_index == 0:
@@ -371,9 +423,16 @@ class StreamingComposition(xf.Transformation):
         if isinstance(sdfg.arrays[access.data], data.Stream):
             return False
 
-        # Only free nodes are allowed
-        if graph.entry_node(access) is not None:
-            return False
+        # Only free nodes are allowed (search up the SDFG tree)
+        curstate = graph
+        node = access
+        while curstate is not None:
+            if curstate.entry_node(node) is not None:
+                return False
+            if curstate.parent.parent_nsdfg_node is None:
+                break
+            node = curstate.parent.parent_nsdfg_node
+            curstate = curstate.parent.parent
 
         # Array must not be used anywhere else in the state
         if any(n is not access and n.data == access.data
@@ -440,12 +499,12 @@ class StreamingComposition(xf.Transformation):
 
         # Create new stream of shape 1
         desc = sdfg.arrays[access.data]
-        name, _ = sdfg.add_stream(access.data,
-                                  desc.dtype,
-                                  buffer_size=self.buffer_size,
-                                  storage=self.storage,
-                                  transient=True,
-                                  find_new_name=True)
+        name, newdesc = sdfg.add_stream(access.data,
+                                        desc.dtype,
+                                        buffer_size=self.buffer_size,
+                                        storage=self.storage,
+                                        transient=True,
+                                        find_new_name=True)
 
         # Remove transient array if possible
         for ostate in sdfg.nodes():
@@ -459,8 +518,20 @@ class StreamingComposition(xf.Transformation):
         # Replace memlets in path with stream access
         for e in first_mpath:
             e.data = mm.Memlet(data=name, subset='0')
+            if isinstance(e.src, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.src, e.src_conn, newdesc)
+            if isinstance(e.dst, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.dst, e.dst_conn, newdesc)
         for e in second_mpath:
             e.data = mm.Memlet(data=name, subset='0')
+            if isinstance(e.src, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.src, e.src_conn, newdesc)
+            if isinstance(e.dst, nodes.NestedSDFG):
+                e.data.dynamic = True
+                _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
         # Replace array access node with two stream access nodes
         wnode = state.add_write(name)

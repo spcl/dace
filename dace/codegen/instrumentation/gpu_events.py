@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import config, dtypes, registry
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.instrumentation.provider import InstrumentationProvider

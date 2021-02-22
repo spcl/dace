@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Type inference: traverses code and returns types for all undefined symbols according to C semantics
     infer() has a lenient implementation: if something it not inferred (for example an unsupported construct) it will not
@@ -56,6 +56,8 @@ def infer_expr_type(code, symbols=None):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, sympy.Basic) or isinstance(code, SymExpr):
         parsed_ast = ast.parse(symstr(code))
+    else:
+        raise TypeError(f"Cannot convert type {type(code)} to a Python AST.")
 
     # The parsed AST must only contain one expression
     if hasattr(parsed_ast, "body") and isinstance(parsed_ast.body[0], ast.Expr):
@@ -222,8 +224,7 @@ def _If(t, symbols, inferred_symbols):
     _dispatch(t.test, symbols, inferred_symbols)
     _dispatch(t.body, symbols, inferred_symbols)
 
-    while (t.orelse and len(t.orelse) == 1
-           and isinstance(t.orelse[0], ast.If)):
+    while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
         t = t.orelse[0]
         _dispatch(t.test, symbols, inferred_symbols)
         _dispatch(t.body, symbols, inferred_symbols)
@@ -265,15 +266,18 @@ def _Name(t, symbols, inferred_symbols):
         # check if this name is a python type, it is in defined_symbols or in local symbols.
         # If yes, take the type
         inferred_type = None
-        if t.id.strip("()") in cppunparse._py2c_typeconversion:
-            inferred_type = cppunparse._py2c_typeconversion[t.id.strip("()")]
-        elif t.id in symbols:
+
+        # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
+        t_id = t.id[1:] if t.id.startswith('*') else t.id
+        if t_id.strip("()") in cppunparse._py2c_typeconversion:
+            inferred_type = cppunparse._py2c_typeconversion[t_id.strip("()")]
+        elif t_id in symbols:
             # defined symbols could have dtypes, in case convert it to typeclass
-            inferred_type = symbols[t.id]
+            inferred_type = symbols[t_id]
             if isinstance(inferred_type, np.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
-        elif t.id in inferred_symbols:
-            inferred_type = inferred_symbols[t.id]
+        elif t_id in inferred_symbols:
+            inferred_type = inferred_symbols[t_id]
         return inferred_type
 
 
@@ -297,9 +301,8 @@ def _Constant(t, symbols, inferred_symbols):
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
-    return dtypes.result_type_of(
-        dtypes.typeclass(type(t.n)),
-        dtypes.typeclass(np.min_scalar_type(t.n).name))
+    return dtypes.result_type_of(dtypes.typeclass(type(t.n)),
+                                 dtypes.typeclass(np.min_scalar_type(t.n).name))
 
 
 def _IfExp(t, symbols, inferred_symbols):
@@ -331,14 +334,13 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n
-                and t.right.n >= 0):
+        if (isinstance(t.right, (ast.Num, ast.Constant))
+                and int(t.right.n) == t.right.n and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left,
-                                         dtypes.typeclass(np.uint32))
+            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
         else:
             type_left = _dispatch(t.left, symbols, inferred_symbols)
             type_right = _dispatch(t.right, symbols, inferred_symbols)

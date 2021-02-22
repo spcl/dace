@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains classes that represent data-centric transformations.
 
@@ -12,10 +12,10 @@ There are three general types of transformations:
 """
 
 import copy
-from dace import serialize
+from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation
+from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.registry import make_registry
 from typing import Any, Dict, List, Optional, Set, Type, Union
@@ -122,8 +122,12 @@ class Transformation(object):
         """
         return str(list(candidate.values()))
 
-    def __init__(self, sdfg_id: int, state_id: int,
-                 subgraph: Dict['PatternNode', int], expr_index: int) -> None:
+    def __init__(self,
+                 sdfg_id: int,
+                 state_id: int,
+                 subgraph: Dict['PatternNode', int],
+                 expr_index: int,
+                 override=False) -> None:
         """ Initializes an instance of Transformation match.
             :param sdfg_id: A unique ID of the SDFG.
             :param state_id: The node ID of the SDFG state, if applicable. If
@@ -143,15 +147,18 @@ class Transformation(object):
 
         self.sdfg_id = sdfg_id
         self.state_id = state_id
-        for value in subgraph.values():
-            if not isinstance(value, int):
-                raise TypeError('All values of '
-                                'subgraph'
-                                ' dictionary must be '
-                                'instances of int.')
-        # Serializable subgraph with node IDs as keys
         expr = self.expressions()[expr_index]
-        self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
+        if not override:
+            for value in subgraph.values():
+                if not isinstance(value, int):
+                    raise TypeError('All values of '
+                                    'subgraph'
+                                    ' dictionary must be '
+                                    'instances of int.')
+            self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
+        else:
+            self._subgraph = {-1: -1}
+        # Serializable subgraph with node IDs as keys
         self._subgraph_user = copy.copy(subgraph)
         self.expr_index = expr_index
 
@@ -174,7 +181,9 @@ class Transformation(object):
     def subgraph(self):
         return self._subgraph_user
 
-    def apply_pattern(self, sdfg: SDFG, append: bool = True) -> Union[Any, None]:
+    def apply_pattern(self,
+                      sdfg: SDFG,
+                      append: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
@@ -493,14 +502,20 @@ class ExpandTransformation(Transformation):
                 nsdfg.update_sdfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
 
-                # update schedule to match library node schedule
+                # Update schedule to match library node schedule
                 nsdfg.schedule = node.schedule
+
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
                 if expansion.schedule is ScheduleType.Default:
                     expansion.schedule = node.schedule
-
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
+
+        # Fix nested schedules
+        if isinstance(expansion, nd.NestedSDFG):
+            infer_types._set_default_schedule_types(expansion.sdfg,
+                                                    expansion.schedule, True)
+
         expansion.environments = copy.copy(
             set(map(lambda a: a.__name__,
                     type(self).environments)))

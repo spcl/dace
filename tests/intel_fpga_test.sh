@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # Executes a bunch of small test for the Intel FPGA backend
 # These are not intended to be performance test: they just check that everything compiles
@@ -117,7 +117,11 @@ run_all() {
     run_sample fpga/unique_nested_sdfg_fpga two_vecAdd "\n"
 
     ## BLAS
-    run_sample blas/nodes/axpy_test blas_axpy_test "\n" --target intel_fpga
+    run_sample blas/nodes/axpy_test axpy_test_fpga_4_w4_1 "\n" --target fpga
+    run_sample blas/nodes/dot_test dot_FPGA_Accumulate_float_w16_1 "\n" --target intel_fpga
+    run_sample blas/nodes/gemv_test gemv_fpga_test "\n" --target tiles_by_column --transpose --vectorize 4
+    run_sample blas/nodes/gemv_test gemv_FPGA_Accumulate_float_False_w4_1 "\n" --target accumulate --vectorize 4 
+    run_sample blas/nodes/ger_test ger_test_w8_x16_y32 "\n" --target fpga 
 
     # Nested SDFGs generated as FPGA kernels
     run_sample fpga/nested_sdfg_as_kernel nested_sdfg_kernels "\n"

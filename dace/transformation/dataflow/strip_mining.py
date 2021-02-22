@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes and functions that implement the strip-mining
     transformation."""
 
@@ -137,9 +137,10 @@ class StripMining(transformation.Transformation):
     new_dim_prefix = Property(dtype=str,
                               default="tile",
                               desc="Prefix for new dimension name")
-    tile_size = SymbolicProperty(default=64,
-                                 desc="Tile size of strip-mined dimension, "
-                                 "or number of tiles if tiling_type=number_of_tiles")
+    tile_size = SymbolicProperty(
+        default=64,
+        desc="Tile size of strip-mined dimension, "
+        "or number of tiles if tiling_type=number_of_tiles")
     tile_stride = SymbolicProperty(default=0,
                                    desc="Stride between two tiles of the "
                                    "strip-mined dimension. If zero, it is set "
@@ -155,9 +156,8 @@ class StripMining(transformation.Transformation):
         desc="Continuous (false) or strided (true) elements in tile")
 
     tiling_type = Property(
-        dtype=str,
-        default='normal',
-        choices=['normal', 'ceilrange', 'number_of_tiles'],
+        default=dtypes.TilingType.Normal,
+        choices=dtypes.TilingType,
         allow_none=True,
         desc="normal: the outerloop increments with tile_size, "
         "ceilrange: uses ceiling(N/tile_size) in outer range, "
@@ -227,7 +227,10 @@ class StripMining(transformation.Transformation):
             return target_dim
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
-        while candidate in map(str, stree[entry].defined_vars):
+        defined_vars = set(
+            str(s) for s in (state.symbols_defined_at(entry).keys()
+                             | sdfg.symbols.keys()))
+        while candidate in defined_vars:
             candidate = '%s%d_%s' % (prefix, index, target_dim)
             index += 1
         return candidate
@@ -381,20 +384,20 @@ class StripMining(transformation.Transformation):
 
         new_dim = self._find_new_dim(sdfg, state, map_entry, new_dim_prefix,
                                      target_dim)
-        new_dim_range = (td_from, number_of_tiles, 1)
+        new_dim_range = (td_from, number_of_tiles - 1, 1)
         new_map = nodes.Map(map_entry.map.label, [new_dim],
                             subsets.Range([new_dim_range]))
 
         dimsym = dace.symbolic.pystr_to_symbolic(new_dim)
         td_from_new = dimsym * tile_size
         if divides_evenly:
-            td_to_new = (dimsym + 1) * tile_size
+            td_to_new = (dimsym + 1) * tile_size - 1
         else:
             if isinstance(td_to, dace.symbolic.SymExpr):
                 td_to = td_to.expr
             td_to_new = dace.symbolic.SymExpr(
-                sympy.Min((dimsym + 1) * tile_size, td_to),
-                (dimsym + 1) * tile_size)
+                sympy.Min((dimsym + 1) * tile_size - 1, td_to),
+                (dimsym + 1) * tile_size - 1)
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
@@ -473,7 +476,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -519,7 +523,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':

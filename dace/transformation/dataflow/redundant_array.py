@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement a redundant array removal transformation.
 """
 
@@ -13,8 +13,8 @@ from dace.sdfg import graph
 from dace.transformation import transformation as pm
 from dace.config import Config
 
-
 # Helper methods #############################################################
+
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
                       arrays: typing.Dict[str, data.Data],
@@ -70,6 +70,7 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
 
     return src_subset, dst_subset
 
+
 ##############################################################################
 
 
@@ -79,21 +80,20 @@ class RedundantArray(pm.Transformation):
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
 
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(RedundantArray._in_array,
-                                   RedundantArray._out_array)
+            sdutil.node_path_graph(RedundantArray.in_array,
+                                   RedundantArray.out_array)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        in_array = graph.nodes()[candidate[RedundantArray._in_array]]
-        out_array = graph.nodes()[candidate[RedundantArray._out_array]]
+        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
+        out_array = graph.nodes()[candidate[RedundantArray.out_array]]
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -112,6 +112,8 @@ class RedundantArray(pm.Transformation):
             return False
         if type(in_desc) != type(out_desc):
             return False
+        if isinstance(in_desc, data.View):  # Two views connected to each other
+            return False
 
         # Find occurrences in this and other states
         occurrences = []
@@ -127,11 +129,6 @@ class RedundantArray(pm.Transformation):
         if len(occurrences) > 1:
             return False
 
-        # Only apply if arrays are of same shape (no need to modify subset)
-        if len(in_desc.shape) != len(out_desc.shape) or any(
-                i != o for i, o in zip(in_desc.shape, out_desc.shape)):
-            return False
-
         if strict:
             # In strict mode, make sure the memlet covers the removed array
             edge = graph.edges_between(in_array, out_array)[0]
@@ -143,7 +140,7 @@ class RedundantArray(pm.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantArray._in_array]]
+        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
 
         return "Remove " + str(in_array)
 
@@ -152,8 +149,21 @@ class RedundantArray(pm.Transformation):
             return graph.nodes()[self.subgraph[nname]]
 
         graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantArray._in_array)
-        out_array = gnode(RedundantArray._out_array)
+        in_array = self.in_array(sdfg)
+        out_array = self.out_array(sdfg)
+        in_desc = sdfg.arrays[in_array.data]
+        out_desc = sdfg.arrays[out_array.data]
+
+        # If arrays are not of the same shape, modify first array to reshape
+        # instead of removing it
+        if len(in_desc.shape) != len(out_desc.shape) or any(
+                i != o for i, o in zip(in_desc.shape, out_desc.shape)):
+            sdfg.arrays[in_array.data] = data.View(
+                in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
+                out_desc.storage, out_desc.location, in_desc.strides,
+                in_desc.offset, out_desc.may_alias, out_desc.lifetime,
+                in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
+            return
 
         for e in graph.in_edges(in_array):
             # Modify all incoming edges to point to out_array
@@ -168,10 +178,9 @@ class RedundantArray(pm.Transformation):
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
-        # TODO: Should the array be removed from the SDFG?
-        # del sdfg.arrays[in_array]
-        if Config.get_bool("debugprint"):
-            RedundantArray._arrays_removed += 1
+        if in_array.data in sdfg.arrays:
+            del sdfg.arrays[in_array.data]
+
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
@@ -206,6 +215,10 @@ class RedundantSecondArray(pm.Transformation):
 
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
+            return False
+
+        # Dimensionality must be the same in strict mode
+        if strict and len(in_desc.shape) != len(out_desc.shape):
             return False
 
         # Make sure that both arrays are using the same storage location
@@ -255,7 +268,8 @@ class RedundantSecondArray(pm.Transformation):
             for e3 in path:
                 if e3 is not e2:
                     try:
-                        _validate_subsets(e3, sdfg.arrays,
+                        _validate_subsets(e3,
+                                          sdfg.arrays,
                                           src_name=out_array.data)
                     except NotImplementedError:
                         return False

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -138,35 +138,25 @@ class InterstateEdge(object):
 
         return result - set(self.assignments.keys())
 
-    def replace(self, name: str, new_name: str) -> None:
+    def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
         :param name: The source name.
         :param new_name: The replacement name.
+        :param replace_keys: If False, skips replacing assignment keys.
         """
-        _replace_dict(self.assignments, name, new_name)
+        # Avoid import loops
+        from dace.frontend.python import astutils
+
+        if replace_keys:
+            _replace_dict(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
-            subscript_matches = re.findall(r'{}\[(.*)\]'.format(name), v)
-            if subscript_matches:
-                sym_v = symbolic.pystr_to_symbolic(v)
-                for subscript in subscript_matches:
-                    sym_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=name, s=subscript))
-                    sym_new_name = symbolic.pystr_to_symbolic('{n}[{s}]'.format(
-                        n=new_name, s=subscript))
-                    sym_v = sym_v.replace(sym_name, sym_new_name)
-                str_v = symbolic.symstr(sym_v)
-                for subscript in subscript_matches:
-                    str_v = str_v.replace("({})".format(subscript),
-                                          "[{}]".format(subscript))
-                self.assignments[k] = str_v
-            else:
-                sym_name = symbolic.pystr_to_symbolic(name)
-                sym_new_name = symbolic.pystr_to_symbolic(new_name)
-                self.assignments[k] = symbolic.symstr(
-                    symbolic.pystr_to_symbolic(v).replace(
-                        sym_name, sym_new_name))
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplace({name: new_name}).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
         condition = self.condition
         self.condition.as_string = condition.as_string.replace(name, new_name)
 
@@ -332,7 +322,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         tmp['attributes']['name'] = self.name
         if hash:
-            tmp['attributes']['hash'] = self.hash_sdfg()
+            tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
         return tmp
 
@@ -355,7 +345,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(
-            ret, json_obj, ignore_properties={'constants_prop', 'name'})
+            ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         for n in nodes:
             nci = copy.copy(context_info)
@@ -370,9 +360,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return ret
 
-    def hash_sdfg(self) -> str:
+    def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
         '''
         Returns a hash of the current SDFG, without considering IDs and attribute names.
+        :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         '''
         def keyword_remover(json_obj: Any, last_keyword=""):
@@ -405,9 +396,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 for value in json_obj:
                     keyword_remover(value)
 
-        jsondict = self.to_json()  # No more nonstandard objects
+        # Clean SDFG of nonstandard objects
+        jsondict = (json.loads(json.dumps(jsondict))
+                    if jsondict is not None else self.to_json())
+
         keyword_remover(jsondict)  # Make non-unique in SDFG hierarchy
-        string_representation = dace.serialize.dumps(jsondict)  # dict->str
+
+        string_representation = json.dumps(jsondict)  # dict->str
         hsh = sha256(string_representation.encode('utf-8'))
         return hsh.hexdigest()
 
@@ -763,10 +758,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             self._name = newname
         return newname
 
+    @name.setter
+    def name(self, newname: str):
+        self._name = newname
+
     @property
     def label(self):
         """ The name of this SDFG. """
-        #return self._name
         return self.name
 
     @property
@@ -817,17 +815,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._propagate = propagate
 
     @property
-    def parent(self):
+    def parent(self) -> SDFGState:
         """ Returns the parent SDFG state of this SDFG, if exists. """
         return self._parent
 
     @property
-    def parent_sdfg(self):
+    def parent_sdfg(self) -> 'SDFG':
         """ Returns the parent SDFG of this SDFG, if exists. """
         return self._parent_sdfg
 
     @property
-    def parent_nsdfg_node(self):
+    def parent_nsdfg_node(self) -> nd.NestedSDFG:
         """ Returns the parent NestedSDFG node of this SDFG, if exists. """
         return self._parent_nsdfg_node
 
@@ -1157,7 +1155,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
              filename: str,
              use_pickle=False,
              with_metadata=False,
-             exception=None):
+             hash=None,
+             exception=None) -> Optional[str]:
         """ Save this SDFG to a file.
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
@@ -1165,8 +1164,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param with_metadata: Save property metadata (e.g. name,
                                   description). False or True override current
                                   option, whereas None keeps default.
+            :param hash: By default, saves the hash if SDFG is JSON-serialized.
+                         Otherwise, if True, saves the hash along with the SDFG.
             :param exception: If not None, stores error information along with
                               SDFG.
+            :return: The hash of the SDFG, or None if failed/not requested.
         """
         try:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -1176,17 +1178,24 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if use_pickle:
             with open(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
+            if hash is True:
+                return self.hash_sdfg()
         else:
+            hash = True if hash is None else hash
             if with_metadata is not None:
                 old_meta = dace.serialize.JSON_STORE_METADATA
                 dace.serialize.JSON_STORE_METADATA = with_metadata
             with open(filename, "w") as fp:
-                json_output = self.to_json(hash=True)
+                json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
                 fp.write(dace.serialize.dumps(json_output))
             if with_metadata is not None:
                 dace.serialize.JSON_STORE_METADATA = old_meta
+            if hash and 'hash' in json_output['attributes']:
+                return json_output['attributes']['hash']
+
+        return None
 
     def view(self, filename=None):
         """View this sdfg in the system's HTML viewer
@@ -1335,18 +1344,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
     def add_view(self,
-                  name: str,
-                  shape,
-                  dtype,
-                  storage=dtypes.StorageType.Default,
-                  strides=None,
-                  offset=None,
-                  debuginfo=None,
-                  allow_conflicts=False,
-                  total_size=None,
-                  find_new_name=False,
-                  alignment=0,
-                  may_alias=False) -> Tuple[str, dt.View]:
+                 name: str,
+                 shape,
+                 dtype,
+                 storage=dtypes.StorageType.Default,
+                 strides=None,
+                 offset=None,
+                 debuginfo=None,
+                 allow_conflicts=False,
+                 total_size=None,
+                 find_new_name=False,
+                 alignment=0,
+                 may_alias=False) -> Tuple[str, dt.View]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1362,17 +1371,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             dtype = dtypes.typeclass(dtype)
 
         desc = dt.View(dtype,
-                        shape,
-                        storage=storage,
-                        allow_conflicts=allow_conflicts,
-                        transient=True,
-                        strides=strides,
-                        offset=offset,
-                        lifetime=dtypes.AllocationLifetime.Scope,
-                        alignment=alignment,
-                        debuginfo=debuginfo,
-                        total_size=total_size,
-                        may_alias=may_alias)
+                       shape,
+                       storage=storage,
+                       allow_conflicts=allow_conflicts,
+                       transient=True,
+                       strides=strides,
+                       offset=offset,
+                       lifetime=dtypes.AllocationLifetime.Scope,
+                       alignment=alignment,
+                       debuginfo=debuginfo,
+                       total_size=total_size,
+                       may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1695,9 +1704,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        # Recursively expand library nodes that haven't been expanded yet
-        sdfg.expand_library_nodes()
-
         # Generate code for the program by traversing the SDFG state by state
         program_objects = codegen.generate_code(sdfg)
 
@@ -1728,12 +1734,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     ','.join(['argv_' + str(i)
                               for i in range(len(sys.argv))]) + '\n')
                 launchfiles_file.write(
-                    sdfg.name + ',' +
-                    os.path.abspath(os.path.join(sdfg.build_folder,
-                                                 'program.sdfg')) + ',' +
-                    os.path.abspath(os.path.join('_dacegraphs',
-                                                 'program.sdfg')) + ',' +
-                    os.path.abspath(sys.argv[0]) + ',' +
+                    sdfg.name + ',' + os.path.abspath(
+                        os.path.join(sdfg.build_folder, 'program.sdfg')) + ',' +
+                    os.path.abspath(os.path.join('_dacegraphs', 'program.sdfg'))
+                    + ',' + os.path.abspath(sys.argv[0]) + ',' +
                     ','.join([str(el) for el in sys.argv]))
 
         # Get the function handle
@@ -1978,7 +1982,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             validate_all: bool = False,
             strict: bool = False,
             states: Optional[List[Any]] = None,
-            print_report: Optional[bool] = None) -> int:
+            print_report: Optional[bool] = None,
+            order_by_transformation: bool = True) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -1991,7 +1996,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            apply transformations on.
             :param print_report: Whether to show debug prints or not (None if
                                  the DaCe config option 'debugprint' should
-                                 apply)
+                                 apply).
+            :param order_by_transformation: Try to apply transformations ordered
+                                            by class rather than SDFG.
             :return: Number of transformations applied.
 
             Examples::
@@ -2020,36 +2027,56 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         opt = optimizer.SDFGOptimizer(self, inplace=True)
 
-        # Cache transformations as metadata for faster application
-        opt.set_transformation_metadata(xforms)
+        params_by_xform = {x: o for x, o in zip(xforms, options)}
 
-        applied = True
-        while applied:
-            applied = False
-            # Find and apply one of the chosen transformations
-            for match in opt.get_pattern_matches(strict=strict,
-                                                 patterns=xforms,
-                                                 states=states):
-                sdfg = self.sdfg_list[match.sdfg_id]
+        # Helper function for applying and validating a transformation
+        def _apply_and_validate(match):
+            sdfg = self.sdfg_list[match.sdfg_id]
 
-                # Set transformation properties
-                opts = next(o for x, o in zip(xforms, options)
-                            if type(match) is x)
-                for prop_name, prop_val in opts.items():
-                    setattr(match, prop_name, prop_val)
+            # Set transformation properties
+            opts = params_by_xform[type(match)]
+            for prop_name, prop_val in opts.items():
+                setattr(match, prop_name, prop_val)
 
-                match.apply(sdfg)
-                applied_transformations[type(match).__name__] += 1
-                if validate_all:
-                    try:
-                        self.validate()
-                    except InvalidSDFGError as err:
-                        raise InvalidSDFGError(
-                            "Validation failed after applying {}.".format(
-                                match.print_match(sdfg)), sdfg,
-                            match.state_id) from err
-                applied = True
-                break
+            match.apply(sdfg)
+            applied_transformations[type(match).__name__] += 1
+            if validate_all:
+                try:
+                    self.validate()
+                except InvalidSDFGError as err:
+                    raise InvalidSDFGError(
+                        "Validation failed after applying {}.".format(
+                            match.print_match(sdfg)), sdfg,
+                        match.state_id) from err
+
+        if order_by_transformation:
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    applied = True
+                    while applied:
+                        applied = False
+                        for match in opt.get_pattern_matches(strict=strict,
+                                                             patterns=[xform],
+                                                             states=states):
+                            _apply_and_validate(match)
+                            applied = True
+                            applied_anything = True
+                            break
+        else:
+            # Cache transformations as metadata for faster application
+            opt.set_transformation_metadata(xforms)
+            applied = True
+            while applied:
+                applied = False
+                # Find and apply one of the chosen transformations
+                for match in opt.get_pattern_matches(strict=strict,
+                                                     patterns=xforms,
+                                                     states=states):
+                    _apply_and_validate(match)
+                    applied = True
+                    break
 
         if validate:
             try:

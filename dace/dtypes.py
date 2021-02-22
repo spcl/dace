@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -40,6 +40,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
+    Unrolled = ()  #: Unrolled code
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -122,9 +123,18 @@ class InstrumentationType(aenum.AutoNumberEnum):
     PAPI_Counters = ()
     GPU_Events = ()
 
+@extensible_enum
+class TilingType(aenum.AutoNumberEnum):
+    """ Available tiling types in a `StripMining` transformation. """
+
+    Normal = ()
+    CeilRange = ()
+    NumberOfTiles = ()
+
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
+    StorageType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
@@ -139,10 +149,12 @@ SCOPEDEFAULT_STORAGE = {
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
 SCOPEDEFAULT_SCHEDULE = {
+    ScheduleType.Default: ScheduleType.Default,
     None: ScheduleType.CPU_Multicore,
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
+    ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
@@ -983,11 +995,6 @@ def ismodule(var):
     return inspect.ismodule(var)
 
 
-def ismodule(var):
-    """ Returns True if a given object is a module. """
-    return inspect.ismodule(var)
-
-
 def ismoduleallowed(var):
     """ Helper function to determine the source module of an object, and
         whether it is allowed in DaCe programs. """
@@ -1015,14 +1022,14 @@ def isallowed(var, allow_recursive=False):
 
         :param allow_recursive: whether to allow dicts or lists containing constants.
     """
-    from dace.symbolic import symbol
+    from dace.symbolic import issymbolic
 
     if allow_recursive:
         if isinstance(var, (list, tuple)):
             return all(isallowed(v, allow_recursive=False) for v in var)
 
-    return isconstant(var) or ismodule(var) or isinstance(
-        var, symbol) or isinstance(var, typeclass)
+    return isconstant(var) or ismodule(var) or issymbolic(
+        var) or isinstance(var, typeclass)
 
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for

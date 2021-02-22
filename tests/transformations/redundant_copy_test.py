@@ -1,9 +1,9 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 
 import dace
 from dace.libraries.blas import Transpose
-
+from dace.transformation.dataflow import RedundantSecondArray
 
 def test_out():
     sdfg = dace.SDFG("test_redundant_copy_out")
@@ -72,6 +72,7 @@ def test_out_success():
 
     sdfg.validate()
     sdfg.apply_strict_transformations()
+    sdfg.apply_transformations_repeated(RedundantSecondArray)
     assert len(state.nodes()) == 7
     assert B not in state.nodes()
     sdfg.validate()
