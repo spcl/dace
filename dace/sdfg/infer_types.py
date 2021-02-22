@@ -24,8 +24,12 @@ def infer_connector_types(sdfg: SDFG):
                 if cname is None:
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1)
-                allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                       not dtypes.StorageType.GPU_Global)
+                if e.data.data is not None:
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
+                                           not dtypes.StorageType.GPU_Global)
+                else:
+                    allocated_as_scalar = True
+
                 if node.in_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
@@ -59,8 +63,12 @@ def infer_connector_types(sdfg: SDFG):
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1
                           and (not e.data.dynamic or
                                (e.data.dynamic and e.data.wcr is not None)))
-                allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                       not dtypes.StorageType.GPU_Global)
+                if e.data.data is not None:
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
+                                           not dtypes.StorageType.GPU_Global)
+                else:
+                    allocated_as_scalar = True
+                    
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
