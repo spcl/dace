@@ -1381,11 +1381,11 @@ class CPUCodeGen(TargetCodeGenerator):
     def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
                           edge, function_stream, callsite_stream):
         cdtype = src_node.out_connectors[edge.src_conn]
-        defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data)
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
+            defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data)
             base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
             callsite_stream.write(
                 f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id,
