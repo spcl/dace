@@ -29,8 +29,6 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 apply_stencil_tiling: bool = False,
                 recursive: bool = False) -> None:
 
-    print("Current type", type(graph_or_subgraph))
-    print("apply_me", apply_multi_expansion)
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs 
         for graph in graph_or_subgraph.nodes():
@@ -52,6 +50,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         applied_transformations = 0
         enumerator = GreedyEnumerator(sdfg, graph, subgraph)
         for map_entries in enumerator:
+            print(f"Processing map subgraph {map_entries}")
             if len(map_entries) > 1:
                 current_subgraph = helpers.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = CompositeFusion(current_subgraph)

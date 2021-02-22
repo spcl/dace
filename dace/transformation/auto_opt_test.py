@@ -48,9 +48,6 @@ def run_scenario(name,
     
 
 
-
-run_scenario("greedy")
-
-
-    
+#run_scenario("greedy")  # [OK]
+#run_scenario("vadv") # [OK]
 
