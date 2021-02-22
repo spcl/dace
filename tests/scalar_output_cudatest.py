@@ -60,14 +60,17 @@ def test_scalar_output_ptr_access():
                     storage=dace.dtypes.StorageType.GPU_Global)
     sdfg.add_array("__return", [1], dace.float64)
 
-    tasklet = state.add_tasklet("write", {},
-                                {"outp": dace.pointer(dace.float64)},
-                                """
-                                double a = 5;
-                                cudaMemcpyAsync(outp, &a, 1 * sizeof(double), cudaMemcpyHostToDevice,
-                                                __state->gpu_context->streams[0]);
-                                """,
-                                language=dace.dtypes.Language.CPP)
+    tasklet = state.add_tasklet(
+        "write",
+        {},
+        {"outp": dace.pointer(dace.float64)},
+        """
+        double a = 5;
+        cudaMemcpyAsync(outp, &a, 1 * sizeof(double), cudaMemcpyHostToDevice,
+                        __state->gpu_context->streams[0]);
+        """,
+        language=dace.dtypes.Language.CPP,
+    )
     access_scal = state.add_access("scal")
 
     write_unsqueezed = state.add_write("__return")

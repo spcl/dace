@@ -34,10 +34,10 @@ def test_gpu(input_array, output_array, expand_first):
     state.add_node(addnode)
     outp = state.add_access("output_arr")
 
-    state.add_edge(inp, None, addnode, "_a", dace.Memlet("input_arr[0]"))
+    state.add_edge(inp, None, addnode, "_a", dace.Memlet("input_arr"))
 
     if output_array:
-        state.add_edge(addnode, "_b", outp, None, dace.Memlet("output_arr[0]"))
+        state.add_edge(addnode, "_b", outp, None, dace.Memlet("output_arr"))
     else:
         transient_outp = state.add_access("transient_output_arr")
         state.add_edge(addnode, "_b", transient_outp, None,
@@ -59,3 +59,10 @@ def test_gpu(input_array, output_array, expand_first):
     output_arr = np.array([0]).astype(np.float32)
     sdfg(input_arr=input_arr, output_arr=output_arr)
     assert output_arr[0] == 2
+
+
+if __name__ == '__main__':
+    test_gpu(True, True, False)
+    test_gpu(True, True, True)
+    test_gpu(False, False, False)
+    test_gpu(False, False, True)
