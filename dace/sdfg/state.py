@@ -284,10 +284,6 @@ class StateGraphView(object):
                 exit_node = next(v for v in scopenodes
                                  if isinstance(v, nd.ExitNode))
             scope = ScopeTree(node, exit_node)
-            scope.defined_vars = set(
-                symbolic.pystr_to_symbolic(s)
-                for s in (self.symbols_defined_at(node).keys()
-                          | sdfg_symbols))
             result[node] = scope
 
         # Scope parents and children

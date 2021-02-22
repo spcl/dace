@@ -255,7 +255,7 @@ class AccessNode(Node):
         node._setzero = self._setzero
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
-        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node._debuginfo = dcpy(self._debuginfo, memo=memo)
         return node
 
     @property

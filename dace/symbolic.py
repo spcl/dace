@@ -517,7 +517,11 @@ def sympy_intdiv_fix(expr):
     b = sympy.Wild('b', properties=[lambda k: k.is_Symbol or k.is_Integer])
     c = sympy.Wild('c')
     d = sympy.Wild('d')
-    e = sympy.Wild('e', properties=[lambda k: isinstance(k, sympy.Basic) and not isinstance(k, sympy.Atom)])
+    e = sympy.Wild('e',
+                   properties=[
+                       lambda k: isinstance(k, sympy.Basic) and not isinstance(
+                           k, sympy.Atom)
+                   ])
     int_ceil = sympy.Function('int_ceil')
     int_floor = sympy.Function('int_floor')
 
@@ -696,6 +700,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+
 @lru_cache(2048)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -736,6 +741,11 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         expr = expr.replace(']', ')')
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify),
                              symbol_map)
+
+
+@lru_cache(maxsize=2048)
+def simplify(expr: SymbolicType) -> SymbolicType:
+    return sympy.simplify(expr)
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):

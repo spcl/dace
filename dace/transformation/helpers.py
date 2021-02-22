@@ -173,7 +173,11 @@ def nest_state_subgraph(sdfg: SDFG,
     ###################
 
     # Add scope symbols to the nested SDFG
-    for v in scope.defined_vars:
+    defined_vars = set(
+        symbolic.pystr_to_symbolic(s)
+        for s in (state.symbols_defined_at(top_scopenode).keys()
+                  | sdfg.symbols))
+    for v in defined_vars:
         if v in sdfg.symbols:
             sym = sdfg.symbols[v]
             nsdfg.add_symbol(v, sym.dtype)

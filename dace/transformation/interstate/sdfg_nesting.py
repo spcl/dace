@@ -212,6 +212,11 @@ class InlineSDFG(transformation.Transformation):
         for loc, code in nsdfg.exit_code.items():
             sdfg.append_exit_code(code.code, loc)
 
+        # Environments
+        for node in nstate.nodes():
+            if isinstance(node, nodes.CodeNode):
+                node.environments |= nsdfg_node.environments
+
         # Constants
         for cstname, cstval in nsdfg.constants.items():
             if cstname in sdfg.constants:

@@ -40,7 +40,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP
-    Unrolled = ()
+    Unrolled = ()  #: Unrolled code
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
@@ -134,6 +134,7 @@ class TilingType(aenum.AutoNumberEnum):
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
+    StorageType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
@@ -148,6 +149,7 @@ SCOPEDEFAULT_STORAGE = {
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
 SCOPEDEFAULT_SCHEDULE = {
+    ScheduleType.Default: ScheduleType.Default,
     None: ScheduleType.CPU_Multicore,
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
