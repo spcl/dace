@@ -92,14 +92,17 @@ def parse_from_file(filename, *compilation_args):
 
 
 def parse_from_function(function, *compilation_args, strict=None, save=True):
-    """ Try to parse a DaceProgram object and return the `dace.SDFG` object
-        that corresponds to it.
-        :param function: DaceProgram object (obtained from the `@dace.program`
-                         decorator).
-        :param compilation_args: Various compilation arguments e.g. dtypes.
-        :param strict: Whether to apply strict transformations or not (None
-                       uses configuration-defined value). 
-        :return: The generated SDFG object.
+    """ 
+    Try to parse a DaceProgram object and return the `dace.SDFG` object
+    that corresponds to it.
+    :param function: DaceProgram object (obtained from the ``@dace.program``
+                     decorator).
+    :param compilation_args: Various compilation arguments e.g. dtypes.
+    :param strict: Whether to apply strict transformations or not (None
+                   uses configuration-defined value). 
+    :param save: If True, saves the generated SDFG to 
+                 ``_dacegraphs/program.sdfg`` after parsing.
+    :return: The generated SDFG object.
     """
     # Avoid import loop
     from dace.sdfg.analysis import scalar_to_symbol as scal2sym
