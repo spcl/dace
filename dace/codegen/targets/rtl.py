@@ -46,6 +46,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
+        self.is_autorun: bool = True
+        self.is_first_autorun: bool = True
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
                       state_id: int, node: nodes.Node,
@@ -382,8 +384,8 @@ for(int i = 0; i < {veclen}; i++){{
                 name=unique_name))
 
         # add init and exit code for auto-run kernels
-        is_autorun = True
-        if is_autorun:
+        if self.is_autorun and self.is_first_autorun:
+            self.is_first_autorun = False
             function_stream.write(contents="bool autorun_active = true;\n",
                                   sdfg=sdfg,
                                   state_id=state_id,
