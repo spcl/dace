@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformations to convert subgraphs to write-conflict resolutions. """
 import re
 from dace import registry, nodes, dtypes

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import collections
 from typing import Any, Dict, List, Tuple
@@ -15,12 +15,11 @@ ScopeDictType = Dict[NodeType, List[NodeType]]
 
 
 class ScopeTree(object):
-    """ A class defining a scope, its parent and children scopes, variables, and
+    """ A class defining a scope, its parent and children scopes, and
         scope entry/exit nodes. """
     def __init__(self, entrynode: EntryNodeType, exitnode: ExitNodeType):
         self.parent: 'ScopeTree' = None
         self.children: List['ScopeTree'] = []
-        self.defined_vars: List[str] = []
         self.entry: EntryNodeType = entrynode
         self.exit: ExitNodeType = exitnode
 

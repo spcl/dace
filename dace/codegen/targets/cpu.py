@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.sdfg.state import SDFGState
 import functools
 import itertools
@@ -178,9 +178,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
-        self.allocate_array(sdfg, dfg, state_id, viewed_dnode,
-                            global_stream, declaration_stream,
-                            allocation_stream)
+        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(

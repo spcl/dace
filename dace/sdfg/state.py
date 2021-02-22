@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import collections
@@ -284,10 +284,6 @@ class StateGraphView(object):
                 exit_node = next(v for v in scopenodes
                                  if isinstance(v, nd.ExitNode))
             scope = ScopeTree(node, exit_node)
-            scope.defined_vars = set(
-                symbolic.pystr_to_symbolic(s)
-                for s in (self.symbols_defined_at(node).keys()
-                          | sdfg_symbols))
             result[node] = scope
 
         # Scope parents and children

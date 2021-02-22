@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -255,7 +255,7 @@ class AccessNode(Node):
         node._setzero = self._setzero
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
-        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node._debuginfo = dcpy(self._debuginfo, memo=memo)
         return node
 
     @property

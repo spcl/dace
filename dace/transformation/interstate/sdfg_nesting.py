@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
 import ast
@@ -211,6 +211,11 @@ class InlineSDFG(transformation.Transformation):
             sdfg.append_init_code(code.code, loc)
         for loc, code in nsdfg.exit_code.items():
             sdfg.append_exit_code(code.code, loc)
+
+        # Environments
+        for node in nstate.nodes():
+            if isinstance(node, nodes.CodeNode):
+                node.environments |= nsdfg_node.environments
 
         # Constants
         for cstname, cstval in nsdfg.constants.items():
