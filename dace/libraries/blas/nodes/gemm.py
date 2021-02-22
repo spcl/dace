@@ -98,59 +98,40 @@ class ExpandGemmPure(ExpandTransformation):
             mul_program = "__out = {} * __a * __b".format(
                 _cast_to_dtype_str(node.alpha, dtype_a))
 
-        init_state = sdfg.add_state(node.label + "_initstate")
-        state = sdfg.add_state_after(init_state, node.label + "_state")
-
-        if node.beta == 0:
-            mul_out, mul_out_array = "_c", array_c
-            output_nodes = None
+        if node.beta == 1:
+            state = sdfg.add_state(node.label + "_state")
         else:
-            sdfg.add_array("_cin",
-                           shape_c,
-                           dtype_c,
-                           strides=cdata[-1],
-                           storage=cdata[1].storage)
-            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-                shape_c, dtype_c, storage=storage)
+            init_state = sdfg.add_state(node.label + "_initstate")
+            state = sdfg.add_state_after(init_state, node.label + "_state")
 
-            access_tmp = state.add_read(tmp)
-            output_nodes = {mul_out: access_tmp}
+        sdfg.add_array("_cin",
+                       shape_c,
+                       dtype_c,
+                       strides=cdata[-1],
+                       storage=cdata[1].storage)
 
-        # Initialization map
-        init_state.add_mapped_tasklet(
-            'gemm_init',
-            {'_o%d' % i: '0:%s' % symstr(d)
-             for i, d in enumerate(shape_c)}, {},
-            'out = 0', {
-                'out':
-                dace.Memlet.simple(
-                    mul_out, ','.join(['_o%d' % i
-                                       for i in range(len(shape_c))]))
-            },
-            external_edges=True)
+        mul_out, mul_out_array = "_c", array_c
+        output_nodes = None
 
-        # Multiplication map
-        state.add_mapped_tasklet(
-            "_GEMM_",
-            {"__i%d" % i: "0:%s" % s
-             for i, s in enumerate([M, N, K])}, {
-                 "__a":
-                 dace.Memlet.simple(
-                     "_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-                 "__b":
-                 dace.Memlet.simple(
-                     "_b", "__i1, __i2" if node.transB else "__i2, __i1")
-             },
-            mul_program, {
-                "__out":
-                dace.Memlet.simple(
-                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
-            },
-            external_edges=True,
-            output_nodes=output_nodes)
-
-        if node.beta != 0:
-            add_program = "__y = ({} * __c) + __tmp".format(
+        # Initialization / beta map
+        if node.beta == 0:
+            init_state.add_mapped_tasklet(
+                'gemm_init',
+                {'_o%d' % i: '0:%s' % symstr(d)
+                 for i, d in enumerate(shape_c)}, {},
+                'out = 0', {
+                    'out':
+                    dace.Memlet.simple(
+                        mul_out, ','.join(
+                            ['_o%d' % i for i in range(len(shape_c))]))
+                },
+                external_edges=True)
+        elif node.beta == 1:
+            # Do nothing for initialization, only update the values
+            pass
+        else:
+            # Beta map
+            add_program = "__y = ({} * __c)".format(
                 _cast_to_dtype_str(node.beta, dtype_a))
 
             # manually broadcasting C to [M, N]
@@ -166,17 +147,34 @@ class ExpandGemmPure(ExpandTransformation):
                 raise ValueError(
                     "Could not broadcast input _c to ({}, {})".format(M, N))
 
-            # addition map
-            state.add_mapped_tasklet(
-                "_Add_",
+            init_state.add_mapped_tasklet(
+                "gemm_init",
                 {"__i%d" % i: "0:%s" % s
                  for i, s in enumerate([M, N])}, {
                      "__c": dace.Memlet.simple("_cin", memlet_idx),
-                     "__tmp": dace.Memlet.simple(mul_out, "__i0, __i1"),
                  },
                 add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
-                external_edges=True,
-                input_nodes={mul_out: access_tmp})
+                external_edges=True)
+
+        # Multiplication map
+        state.add_mapped_tasklet(
+            "gemm", {"__i%d" % i: "0:%s" % s
+                     for i, s in enumerate([M, N, K])},
+            {
+                "__a":
+                dace.Memlet.simple(
+                    "_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+                "__b":
+                dace.Memlet.simple(
+                    "_b", "__i1, __i2" if node.transB else "__i2, __i1")
+            },
+            mul_program, {
+                "__out":
+                dace.Memlet.simple(
+                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
+            },
+            external_edges=True,
+            output_nodes=output_nodes)
 
         return sdfg
 
