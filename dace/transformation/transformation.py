@@ -358,7 +358,7 @@ class Transformation(TransformationBase):
         else:
             graph = sdfg.nodes()[self.state_id]
         string = type(self).__name__ + ' in '
-        string += type(self).match_to_str(graph, self.subgraph)
+        string += self.match_to_str(graph, self.subgraph)
         return string
 
     def to_json(self, parent=None) -> Dict[str, Any]:
