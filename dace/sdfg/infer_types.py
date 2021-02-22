@@ -138,9 +138,16 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
 def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                    parent_schedule: dtypes.ScheduleType,
                                    reverse_scope_dict: Dict[nodes.Node,
-                                                            List[nodes.Node]]):
+                                                            List[nodes.Node]],
+                                   use_parent_schedule: bool = False):
     for node in reverse_scope_dict[parent_node]:
-        child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+        if use_parent_schedule:
+            child_schedule = parent_schedule
+            if parent_schedule in (dtypes.ScheduleType.Default,
+                                   dtypes.ScheduleType.GPU_Default):
+                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+        else:
+            child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
         # Set default schedule type
         if isinstance(node, nodes.MapEntry):
             if node.map.schedule is dtypes.ScheduleType.Default:
@@ -168,13 +175,14 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
 
 
 def _set_default_schedule_types(sdfg: SDFG,
-                                toplevel_schedule: dtypes.ScheduleType):
+                                toplevel_schedule: dtypes.ScheduleType,
+                                use_parent_schedule: bool = False):
     for state in sdfg.nodes():
         reverse_scope_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
         _set_default_schedule_in_scope(None, toplevel_schedule,
-                                       reverse_scope_dict)
+                                       reverse_scope_dict, use_parent_schedule)
 
 
 def _set_default_storage_types(sdfg: SDFG,

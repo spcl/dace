@@ -182,7 +182,7 @@ def environment(env):
                 field + "\".")
     env._dace_library_environment = True
     # Retrieve which file this was called from
-    caller_file = inspect.stack()[1].filename
+    caller_file = inspect.getmodule(env).__file__
     env._dace_file_path = caller_file
     _DACE_REGISTERED_ENVIRONMENTS[env.__name__] = env
     return env
