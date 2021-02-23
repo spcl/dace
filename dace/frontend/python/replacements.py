@@ -3826,6 +3826,48 @@ def view(pv: 'ProgramVisitor',
     return newarr
 
 
+@oprepo.replaces_attribute('Array', 'flat')
+@oprepo.replaces_attribute('Scalar', 'flat')
+@oprepo.replaces_attribute('View', 'flat')
+def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    desc = sdfg.arrays[arr]
+    totalsize = data._prod(desc.shape)
+    c_contig_strides = tuple(
+        data._prod(desc.shape[i + 1:]) for i in range(len(desc.shape)))
+
+    if desc.total_size != totalsize or desc.strides != c_contig_strides:
+        # If data is not C-contiguous (numpy standard), create copy
+        warnings.warn(f'Generating copy for non-contiguous array "{arr}"')
+        newarr, _ = sdfg.add_array(arr, [totalsize],
+                                   desc.dtype,
+                                   storage=desc.storage,
+                                   strides=[1],
+                                   allow_conflicts=desc.allow_conflicts,
+                                   total_size=totalsize,
+                                   may_alias=desc.may_alias,
+                                   alignment=desc.alignment,
+                                   transient=True,
+                                   find_new_name=True)
+
+        r = state.add_read(arr)
+        w = state.add_write(newarr)
+        state.add_nedge(r, w, Memlet(data=arr))
+    else:
+        newarr, _ = sdfg.add_view(arr, [totalsize],
+                                  desc.dtype,
+                                  storage=desc.storage,
+                                  strides=[1],
+                                  allow_conflicts=desc.allow_conflicts,
+                                  total_size=totalsize,
+                                  may_alias=desc.may_alias,
+                                  alignment=desc.alignment,
+                                  find_new_name=True)
+        # Register view with DaCe program visitor
+        pv.views[newarr] = arr
+
+    return newarr
+
+
 # Datatype converter #########################################################
 
 
