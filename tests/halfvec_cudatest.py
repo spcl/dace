@@ -32,9 +32,9 @@ def _test_half(veclen):
 
     # Apply vectorization on each map and count applied
     applied = 0
-    for xform in Optimizer(sdfg).get_pattern_matches(patterns=[Vectorization]):
-        xform.vector_len = veclen
-        xform.postamble = False
+    for xform in Optimizer(sdfg).get_pattern_matches(
+            patterns=Vectorization,
+            options=dict(vector_len=veclen, postamble=False)):
         xform.apply(sdfg)
         applied += 1
     assert applied == 2

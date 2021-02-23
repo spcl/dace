@@ -129,7 +129,8 @@ class Transformation(TransformationBase):
                  state_id: int,
                  subgraph: Dict['PatternNode', int],
                  expr_index: int,
-                 override=False) -> None:
+                 override: bool = False,
+                 options: Optional[Dict[str, Any]] = None) -> None:
         """ Initializes an instance of Transformation match.
             :param sdfg_id: A unique ID of the SDFG.
             :param state_id: The node ID of the SDFG state, if applicable. If
@@ -140,6 +141,9 @@ class Transformation(TransformationBase):
                              `graph`.
             :param expr_index: The list index from `Transformation.expressions`
                                that was matched.
+            :param override: If True, accepts the subgraph dictionary as-is
+                             (mostly for internal use).
+            :param options: An optional dictionary of transformation properties
             :raise TypeError: When transformation is not subclass of
                               Transformation.
             :raise TypeError: When state_id is not instance of int.
@@ -178,6 +182,12 @@ class Transformation(TransformationBase):
 
             # Override static field with the new node in this instance only
             setattr(self, pname, new_pnode)
+
+        # Set properties
+        if options is not None:
+            for optname, optval in options.items():
+                setattr(self, optname, optval)
+
 
     @property
     def subgraph(self):
