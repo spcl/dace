@@ -2713,7 +2713,16 @@ def _broadcast(
         output_indices.append(get_idx(i))
 
         not_none_dims = [d for d in dims if d is not None]
-        # max_dim = max(not_none_dims)
+        # Per NumPy broadcasting rules, we need to find the largest dimension.
+        # However, `max_dim = max(not_none_dims)` does not work with symbols.
+        # Therefore, we sequentially check every not-none dimension.
+        # Symbols are assumed to be larger than constants.
+        # This will not work properly otherwise.
+        # If more than 1 (different) symbols are found, then this fails, because
+        # we cannot know which will have the greater size.
+        # NOTE: This is a compromise. NumPy broadcasting depends on knowing
+        # the exact array sizes. However, symbolic sizes are not known at this
+        # point.
         max_dim = 0
         for d in not_none_dims:
             if isinstance(max_dim, Number):
@@ -3957,8 +3966,6 @@ def dot(pv: 'ProgramVisitor',
         op_out = sdfg.temp_data_name()
         sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage)
 
-    # TODO: Is there an issue with using the DOT library node if the
-    # datatypes do not agree?
     arr_out = sdfg.arrays[op_out]
 
     from dace.libraries.blas.nodes.dot import Dot  # Avoid import loop

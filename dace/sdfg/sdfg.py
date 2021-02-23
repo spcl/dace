@@ -134,13 +134,6 @@ class InterstateEdge(object):
         result = set(
             map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            # TODO: Proposal to skip free symbol extraction for assignments
-            # with dace.*. Currently failing in code generation
-            # if isinstance(assign, str) and assign.find('dace.') >= 0:
-            #     warnings.warn('Assignment expression {} cannot be evaluated '
-            #                   'for free symbols. Validation may miss '
-            #                   'undefined symbols.'.format(assign))
-            #     return set()
             result |= symbolic.free_symbols_and_functions(assign)
 
         return result - set(self.assignments.keys())
