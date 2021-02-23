@@ -154,6 +154,15 @@ namespace dace {
             return result;
         }
 
+        inline bool is_empty() const {
+          // For RTL simulation support
+          return m_elements <= 0;
+        }
+
+        inline bool is_full() const {
+          // For RTL simulation support
+          return false;  // Only applicable to FPGA streams
+        }
     };
 
     // Stream implementation with a direct array connection
@@ -236,6 +245,16 @@ namespace dace {
 
             const unsigned int offset = m_elements.fetch_add(num_elements * VECTOR_LEN);
             std::copy(elements, elements + num_elements, (vec_t*)(m_array + offset));
+        }
+
+        inline bool is_empty() const {
+          // For RTL simulation support
+          return m_elements <= 0;
+        }
+
+        inline bool is_full() const {
+          // For RTL simulation support
+          return false;  // Only applicable to FPGA streams
         }
     };
 
@@ -330,6 +349,16 @@ namespace dace {
 
             std::copy(elements, elements + num_elements, (vec_t*)(m_array + m_elements));
             m_elements += num_elements * VECTOR_LEN;
+        }
+
+        inline bool is_empty() const {
+          // For RTL simulation support
+          return m_elements <= 0;
+        }
+
+        inline bool is_full() const {
+          // For RTL simulation support
+          return false;  // Only applicable to FPGA streams
         }
     };
 
