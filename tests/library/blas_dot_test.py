@@ -125,8 +125,8 @@ def _test_dot(implementation, dtype, sdfg):
 
 
 def test_dot():
-    # _test_dot("32-bit pure SDFG", np.float32, make_sdfg("pure", dace.float32))
-    # _test_dot("64-bit pure SDFG", np.float64, make_sdfg("pure", dace.float64))
+    _test_dot("32-bit pure SDFG", np.float32, make_sdfg("pure", dace.float32))
+    _test_dot("64-bit pure SDFG", np.float64, make_sdfg("pure", dace.float64))
     _test_dot("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
     _test_dot("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
     _test_dot("32-bit cuBLAS", np.float32,
