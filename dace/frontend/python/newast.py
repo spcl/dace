@@ -3893,9 +3893,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     new_name, _ = self.make_slice(new_name, new_rng)
                     return new_name
-                    # raise NotImplementedError(
-                    #     "Read accesses using nested for-loop symbols "
-                    #     "are not supported yet")
 
         # Obtain array
         node_parsed = self._gettype(node.value)

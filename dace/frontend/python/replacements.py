@@ -242,14 +242,12 @@ def _elementwise(pv: 'ProgramVisitor',
     except AttributeError:
         raise SyntaxError("Could not parse func {}".format(func))
 
-    # code = "__out = {}".format(body).replace(arg, '__inp')
     code = "__out = {}".format(body)
 
     num_elements = reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:
         inp = state.add_read(in_array)
         out = state.add_write(out_array)
-        # tasklet = state.add_tasklet("_elementwise_", {arg}, {'__out'}, code)
         tasklet = state.add_tasklet("_elementwise_", {'__inp'}, {'__out'}, code)
         state.add_edge(inp, None, tasklet, '__inp',
                        Memlet.from_array(in_array, inparr))
@@ -263,7 +261,6 @@ def _elementwise(pv: 'ProgramVisitor',
                 for i, n in enumerate(inparr.shape)
             },
             inputs={
-                # arg:
                 '__inp':
                 Memlet.simple(
                     in_array,
@@ -3911,7 +3908,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
 
 
 # Replacements that need ufuncs ###############################################
-# TODO: Fix by separating to difference modules and importing
+# TODO: Fix by separating to different modules and importing
 
 
 @oprepo.replaces('dace.dot')
@@ -3974,8 +3971,7 @@ def dot(pv: 'ProgramVisitor',
     acc_b = state.add_read(op_b)
     acc_out = state.add_write(op_out)
 
-    # tasklet = Dot('_Dot_', n=arr_a.shape[0], dtype=restype)
-    tasklet = Dot('_Dot_', n=arr_a.shape[0])
+    tasklet = Dot('_Dot_')
     state.add_node(tasklet)
     state.add_edge(acc_a, None, tasklet, '_x',
                    dace.Memlet.from_array(op_a, arr_a))
