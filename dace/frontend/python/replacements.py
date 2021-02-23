@@ -648,8 +648,9 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     if cast:
         tasklet_code = tasklet_code.replace('__in1', "{}(__in1)".format(cast))
 
-    # NOTE: Quick fix
-    if opcode == '~':
+    # NOTE: This is a fix for np.bool_, which is a true boolean.
+    # In this case, the invert operator must become a not operator.
+    if opcode == '~' and arr1.dtype == dace.bool_:
         opcode = 'not'
 
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
