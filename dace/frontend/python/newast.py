@@ -1188,7 +1188,27 @@ class ProgramVisitor(ExtNodeVisitor):
         # Assignments to return values become __return* arrays
         for vname, arrname in self.variables.items():
             if vname.startswith('__return'):
-                self.sdfg.replace(arrname, vname)
+                if isinstance(self.sdfg.arrays[arrname], data.View):
+                    # In case of a view, make a copy
+                    desc = self.sdfg.arrays[arrname]
+                    return_state = self._add_state()
+                    r = return_state.add_read(arrname)
+                    w = return_state.add_write(vname)
+                    if vname not in self.sdfg.arrays:
+                        self.sdfg.add_array(vname,
+                                            desc.shape,
+                                            desc.dtype,
+                                            storage=desc.storage,
+                                            transient=False,
+                                            strides=desc.strides,
+                                            offset=desc.offset,
+                                            debuginfo=desc.debuginfo,
+                                            total_size=desc.total_size,
+                                            allow_conflicts=desc.allow_conflicts)
+                    return_state.add_nedge(r, w, Memlet(vname))
+                else:
+                    # Other cases can be replaced with return value directly
+                    self.sdfg.replace(arrname, vname)
 
         # Return values become non-transient (accessible by the outside)
         for arrname, arr in self.sdfg.arrays.items():
@@ -3222,7 +3242,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.symbols
                     }[arg] if isinstance(arg, str) else arg
                                    for aname, arg in args),
-                                 strict=self.strict, save=False))
+                                 strict=self.strict,
+                                 save=False))
 
             else:
                 raise DaceSyntaxError(
