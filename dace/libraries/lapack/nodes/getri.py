@@ -11,9 +11,9 @@ from dace.frontend.common import op_repository as oprepo
 
 
 @dace.library.expansion
-class ExpandGetrfPure(ExpandTransformation):
+class ExpandGetriPure(ExpandTransformation):
     """
-    Naive backend-agnostic expansion of LAPACK GETRF.
+    Naive backend-agnostic expansion of LAPACK GETRI.
     """
 
     environments = []
@@ -23,7 +23,7 @@ class ExpandGetrfPure(ExpandTransformation):
         raise(NotImplementedError)
   
 @dace.library.expansion
-class ExpandGetrfOpenBLAS(ExpandTransformation):
+class ExpandGetriOpenBLAS(ExpandTransformation):
 
     environments = [environments.openblas.OpenBLAS]
 
@@ -49,7 +49,7 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 
 
         n = n or node.n
-        code = f"_res[0] = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, _xin, {stride_x}, _ipiv);"
+        code = f"_res[0] = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, _xin, {stride_x}, _ipiv);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -59,24 +59,24 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGetrfMKL(ExpandTransformation):
+class ExpandGetriMKL(ExpandTransformation):
 
     environments = [environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(*args, **kwargs):
-        return ExpandGetrfOpenBLAS.expansion(*args, **kwargs)
+        return ExpandGetriOpenBLAS.expansion(*args, **kwargs)
 
 
 @dace.library.node
-class Getrf(dace.sdfg.nodes.LibraryNode):
+class Getri(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "OpenBLAS": ExpandGetrfOpenBLAS,
-        "MKL": ExpandGetrfMKL,
+        "OpenBLAS": ExpandGetriOpenBLAS,
+        "MKL": ExpandGetriMKL,
     }
-    default_implementation = ExpandGetrfOpenBLAS
+    default_implementation = ExpandGetriOpenBLAS
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
@@ -95,11 +95,11 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         """
         in_edges = state.in_edges(self)
         if len(in_edges) != 1:
-            raise ValueError("Expected exactly one input to getrf")
+            raise ValueError("Expected exactly one input to getri")
         in_memlets = [in_edges[0].data]
         out_edges = state.out_edges(self)
         if len(out_edges) != 3:
-            raise ValueError("Expected exactly three outputs from getrf product")
+            raise ValueError("Expected exactly three outputs from getri product")
         out_memlet = out_edges[0].data
 
         # Squeeze input memlets
@@ -130,7 +130,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         if len(squeezed1.size()) != 2:
             print(str(squeezed1))
             raise ValueError(
-                "getrf only supported on 2-dimensional arrays")
+                "getri only supported on 2-dimensional arrays")
 
         return (desc_xin, stride_x, rows_x, cols_x), desc_ipiv, desc_res
 
