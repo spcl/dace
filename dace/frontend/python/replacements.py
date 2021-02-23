@@ -237,11 +237,13 @@ def _elementwise(pv: 'ProgramVisitor',
                 "Expected lambda with one arg, but {} has {}".format(
                     func, len(lambda_ast.args.arrgs)))
         arg = lambda_ast.args.args[0].arg
+        astutils.ASTFindReplace({arg: '__inp'}).visit(lambda_ast.body)
         body = astutils.unparse(lambda_ast.body)
     except AttributeError:
         raise SyntaxError("Could not parse func {}".format(func))
 
-    code = "__out = {}".format(body).replace(arg, '__inp')
+    # code = "__out = {}".format(body).replace(arg, '__inp')
+    code = "__out = {}".format(body)
 
     num_elements = reduce(lambda x, y: x * y, inparr.shape)
     if num_elements == 1:
