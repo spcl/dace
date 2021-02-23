@@ -21,11 +21,16 @@ from dace.registry import make_registry
 from typing import Any, Dict, List, Optional, Set, Type, Union
 
 
+class TransformationBase(object):
+    """ Base class for data-centric transformations. """
+    pass
+
+
 @make_registry
 @make_properties
-class Transformation(object):
-    """ Base class for transformations, as well as a static registry of
-        transformations, where new transformations can be added in a
+class Transformation(TransformationBase):
+    """ Base class for pattern-matching transformations, as well as a static 
+        registry of transformations, where new transformations can be added in a
         decentralized manner.
         An instance of a Transformation represents a match of the transformation
         on an SDFG, complete with a subgraph candidate and properties.
@@ -33,13 +38,13 @@ class Transformation(object):
         New transformations that extend this class must contain static
         `PatternNode` fields that represent the nodes in the pattern graph, and
         use them to implement at least three methods:
-          * `expressions`: A static method that returns a list of graph
+          * `expressions`: A method that returns a list of graph
                            patterns (SDFG or SDFGState objects) that match this
                            transformation.
-          * `can_be_applied`: A static method that, given a subgraph candidate,
+          * `can_be_applied`: A method that, given a subgraph candidate,
                               checks for additional conditions whether it can
                               be transformed.
-          * `apply`: A method (on an instance) that applies the transformation
+          * `apply`: A method that applies the transformation
                      on the given SDFG.
 
         For more information and optimization opportunities, see the respective
@@ -65,16 +70,14 @@ class Transformation(object):
     _subgraph = DictProperty(key_type=int, value_type=int, category="(Debug)")
     expr_index = Property(dtype=int, category="(Debug)")
 
-    @staticmethod
-    def annotates_memlets() -> bool:
+    def annotates_memlets(self) -> bool:
         """ Indicates whether the transformation annotates the edges it creates
             or modifies with the appropriate memlets. This determines
             whether to apply memlet propagation after the transformation.
         """
         return False
 
-    @staticmethod
-    def expressions() -> List[gr.SubgraphView]:
+    def expressions(self) -> List[gr.SubgraphView]:
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
@@ -82,8 +85,8 @@ class Transformation(object):
         """
         raise NotImplementedError
 
-    @staticmethod
-    def can_be_applied(graph: Union[SDFG, SDFGState],
+    def can_be_applied(self,
+                       graph: Union[SDFG, SDFGState],
                        candidate: Dict['PatternNode', int],
                        expr_index: int,
                        sdfg: SDFG,
@@ -113,8 +116,7 @@ class Transformation(object):
         """
         raise NotImplementedError
 
-    @staticmethod
-    def match_to_str(graph: Union[SDFG, SDFGState],
+    def match_to_str(self, graph: Union[SDFG, SDFGState],
                      candidate: Dict['PatternNode', int]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
@@ -127,7 +129,8 @@ class Transformation(object):
                  state_id: int,
                  subgraph: Dict['PatternNode', int],
                  expr_index: int,
-                 override=False) -> None:
+                 override: bool = False,
+                 options: Optional[Dict[str, Any]] = None) -> None:
         """ Initializes an instance of Transformation match.
             :param sdfg_id: A unique ID of the SDFG.
             :param state_id: The node ID of the SDFG state, if applicable. If
@@ -138,6 +141,9 @@ class Transformation(object):
                              `graph`.
             :param expr_index: The list index from `Transformation.expressions`
                                that was matched.
+            :param override: If True, accepts the subgraph dictionary as-is
+                             (mostly for internal use).
+            :param options: An optional dictionary of transformation properties
             :raise TypeError: When transformation is not subclass of
                               Transformation.
             :raise TypeError: When state_id is not instance of int.
@@ -176,6 +182,12 @@ class Transformation(object):
 
             # Override static field with the new node in this instance only
             setattr(self, pname, new_pnode)
+
+        # Set properties
+        if options is not None:
+            for optname, optval in options.items():
+                setattr(self, optname, optval)
+
 
     @property
     def subgraph(self):
@@ -333,7 +345,7 @@ class Transformation(object):
             setattr(instance, optname, optval)
 
         if verify:
-            if not cls.can_be_applied(
+            if not instance.can_be_applied(
                     graph, subgraph, expr_index, sdfg, strict=strict):
                 raise ValueError('Transformation cannot be applied on the '
                                  'given subgraph ("can_be_applied" failed)')
@@ -356,7 +368,7 @@ class Transformation(object):
         else:
             graph = sdfg.nodes()[self.state_id]
         string = type(self).__name__ + ' in '
-        string += type(self).match_to_str(graph, self.subgraph)
+        string += self.match_to_str(graph, self.subgraph)
         return string
 
     def to_json(self, parent=None) -> Dict[str, Any]:
@@ -527,7 +539,7 @@ class ExpandTransformation(Transformation):
 
 @make_registry
 @make_properties
-class SubgraphTransformation(object):
+class SubgraphTransformation(TransformationBase):
     """
     Base class for transformations that apply on arbitrary subgraphs, rather
     than matching a specific pattern.
@@ -585,8 +597,7 @@ class SubgraphTransformation(object):
         return gr.SubgraphView(graph,
                                [graph.node(idx) for idx in self.subgraph])
 
-    @staticmethod
-    def can_be_applied(sdfg: SDFG, subgraph: gr.SubgraphView) -> bool:
+    def can_be_applied(self, sdfg: SDFG, subgraph: gr.SubgraphView) -> bool:
         """
         Tries to match the transformation on a given subgraph, returning
         True if this transformation can be applied.
@@ -675,7 +686,7 @@ class SubgraphTransformation(object):
             setattr(instance, optname, optval)
 
         if verify:
-            if not cls.can_be_applied(sdfg, subgraph):
+            if not instance.can_be_applied(sdfg, subgraph):
                 raise ValueError('Transformation cannot be applied on the '
                                  'given subgraph ("can_be_applied" failed)')
 
