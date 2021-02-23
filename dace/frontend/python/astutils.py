@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
+from tokenize import Number
 import astunparse
 from collections import OrderedDict
 import inspect
@@ -222,10 +223,14 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 begin = symbolic.pystr_to_symbolic(0)
             else:
                 begin = symbolic.pystr_to_symbolic(unparse(begin))
+                if isinstance(begin, numbers.Number) and begin < 0:
+                    begin += arrdesc.shape[i]
             if end is None and arrname is None:
                 raise SyntaxError('Cannot define range without end')
             elif end is not None:
                 end = symbolic.pystr_to_symbolic(unparse(end)) - 1
+                if isinstance(end, numbers.Number) and end < 0:
+                    end += arrdesc.shape[i]
             else:
                 end = symbolic.pystr_to_symbolic(
                     symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
@@ -236,6 +241,8 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         else:
             # In the case where a single element is given
             begin = symbolic.pystr_to_symbolic(unparse(r))
+            if isinstance(begin, numbers.Number) and begin < 0:
+                begin += arrdesc.shape[i]
             end = begin
             skip = symbolic.pystr_to_symbolic(1)
 
