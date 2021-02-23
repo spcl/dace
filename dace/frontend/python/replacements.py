@@ -261,7 +261,6 @@ def _elementwise(pv: 'ProgramVisitor',
                 for i, n in enumerate(inparr.shape)
             },
             inputs={
-                # arg:
                 '__inp':
                 Memlet.simple(
                     in_array,
