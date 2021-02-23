@@ -38,8 +38,8 @@ class LocalStorage(xf.Transformation, ABC):
                             desc="if false, it does not create a new array.",
                             allow_none=True)
 
-    def __init__(self, sdfg_id, state_id, subgraph, expr_index):
-        super().__init__(sdfg_id, state_id, subgraph, expr_index)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._local_name = None
         self._data_node = None
 
