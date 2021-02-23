@@ -3753,6 +3753,13 @@ class ProgramVisitor(ExtNodeVisitor):
             arr = self.scope_arrays[result]
         else:
             return result
+
+        # Try to find sub-SDFG attribute
+        func = oprepo.Replacements.get_attribute(type(arr).__name__, node.attr)
+        if func is not None:
+            return func(self, self.sdfg, self.last_state, result)
+
+        # Otherwise, try to find compile-time attribute (such as shape)
         try:
             return getattr(arr, node.attr)
         except KeyError:
