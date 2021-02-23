@@ -175,6 +175,8 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
             parent = sdfg.parent_sdfg
             state = sdfg.parent
             node = sdfg.parent_nsdfg_node
+            if node.schedule in schedules:
+                return True
         else:
             parent = sdfg.parent
         sdfg = parent
@@ -190,7 +192,12 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    return is_in_scope(sdfg, state, node, dtypes.GPU_SCHEDULES)
+    return is_in_scope(
+        sdfg,
+        state,
+        node,
+        dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default],
+    )
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
