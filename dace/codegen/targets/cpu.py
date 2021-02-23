@@ -743,10 +743,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         redtype = operations.detect_reduction_type(memlet.wcr)
         atomic = "_atomic" if not nc else ""
+        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -1392,7 +1393,8 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data)
+            defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
             callsite_stream.write(
                 f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id,
                 src_node)
