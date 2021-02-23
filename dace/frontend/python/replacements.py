@@ -3901,7 +3901,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
 
 
 # Replacements that need ufuncs ###############################################
-# TODO: Fix by separating to difference modules and importing
+# TODO: Fix by separating to different modules and importing
 
 
 @oprepo.replaces('dace.dot')
