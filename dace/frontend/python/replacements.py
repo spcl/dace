@@ -66,8 +66,8 @@ def _define_local_ex(
 
 
 @oprepo.replaces('numpy.ndarray')
-def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape,
-                  dtype: dace.typeclass):
+def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                  shape: Shape, dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
     return _define_local_ex(pv, sdfg, state, shape, dtype)
 
@@ -450,7 +450,13 @@ def _transpose(pv: 'ProgramVisitor',
 
 @oprepo.replaces('numpy.sum')
 def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+    return _reduce(pv,
+                   sdfg,
+                   state,
+                   "lambda x, y: x + y",
+                   a,
+                   axis=axis,
+                   identity=0)
 
 
 @oprepo.replaces('numpy.mean')
@@ -483,7 +489,8 @@ def _mean(pv: 'ProgramVisitor',
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
 def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(pv, sdfg,
+    return _reduce(pv,
+                   sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
@@ -494,7 +501,8 @@ def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
 def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(pv, sdfg,
+    return _reduce(pv,
+                   sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
@@ -503,13 +511,35 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
+def _argmax(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis,
+            result_type=dace.int32):
+    return _argminmax(pv,
+                      sdfg,
+                      state,
+                      a,
+                      axis,
+                      func="max",
+                      result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
+def _argmin(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis,
+            result_type=dace.int32):
+    return _argminmax(pv,
+                      sdfg,
+                      state,
+                      a,
+                      axis,
+                      func="min",
+                      result_type=result_type)
 
 
 def _argminmax(pv: 'ProgramVisitor',
@@ -1721,7 +1751,8 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 @oprepo.replaces_operator('View', 'MatMult')
 @oprepo.replaces_operator('Array', 'MatMult', 'View')
 @oprepo.replaces_operator('View', 'MatMult', 'Array')
-def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+             op2: str):
 
     from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
 
@@ -3384,7 +3415,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-        _reduce(visitor, sdfg,
+        _reduce(visitor,
+                sdfg,
                 state,
                 ufunc_impl['reduce'],
                 inputs[0],
