@@ -54,7 +54,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                           getrf_node,
                           dst_conn="_xin",
                           memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n*n))
-    # TODO: remove -1 once this no longer triggers a write in the codegen.
     state.add_memlet_path(getrf_node,
                           res_getrf,
                           src_conn="_res",

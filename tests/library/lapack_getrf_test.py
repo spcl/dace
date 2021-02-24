@@ -73,7 +73,7 @@ def _test_getrf(implementation, dtype, sdfg):
     size = 4
     lapack_status = np.array([-1], dtype=np.int32)
     A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=dtype)
-    lu_ref, piv_ref = lu_factor(A)
+    lu_ref = lu_factor(A)
   
     # the x is input AND output, the "result" argument gives the lapack status!
     getrf_sdfg(x=A, result=lapack_status, pivots=np.ndarray([0,0,0,0], dtype=np.int32), n=size)
