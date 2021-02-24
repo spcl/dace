@@ -299,8 +299,7 @@ class CPUCodeGen(TargetCodeGenerator):
                               'detected and was allocated on heap instead of '
                               '%s' %
                               (name, cpp.sym2cpp(arrsize), nodedesc.storage))
-
-            if nodedesc.storage == dtypes.StorageType.Register and (
+            elif nodedesc.storage == dtypes.StorageType.Register and (
                     arrsize_bytes > Config.get("compiler",
                                                "max_stack_array_size")):
                 warnings.warn(
