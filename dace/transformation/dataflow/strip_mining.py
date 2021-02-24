@@ -538,7 +538,7 @@ class StripMining(transformation.Transformation):
                     exit_in_conn[in_conn] = None
                 if out_conn:
                     exit_out_conn[out_conn] = None
-                new_in_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
+                new_out_edges[(memlet.data, in_conn, out_conn)] = dcpy(memlet)
         new_map_exit.in_connectors = exit_in_conn
         map_exit.out_connectors = exit_out_conn
         for (_, in_conn, out_conn), memlet in new_out_edges.items():

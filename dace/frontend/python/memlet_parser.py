@@ -76,6 +76,10 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             rb = pyexpr_to_symbolic(das, dim[0] or 0)
             re = pyexpr_to_symbolic(das, dim[1] or array.shape[indices[i]]) - 1
             rs = pyexpr_to_symbolic(das, dim[2] or 1)
+            if (rb < 0) == True:
+                rb += array.shape[indices[i]]
+            if (re < 0) == True:
+                re += array.shape[indices[i]]
             ndslice[idx] = (rb, re, rs)
             offsets.append(idx)
             idx += 1
@@ -88,7 +92,10 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
                 idx += 1
         else:
-            ndslice[idx] = pyexpr_to_symbolic(das, dim)
+            r = pyexpr_to_symbolic(das, dim)
+            if (r < 0) == True:
+                r += array.shape[indices[i]]
+            ndslice[idx] = r
             idx += 1
 
     # Extend slices to unspecified dimensions

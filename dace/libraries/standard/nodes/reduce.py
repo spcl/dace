@@ -364,9 +364,10 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                 range(input_dims - len(node.axes), input_dims))
 
         if (not reduce_all_axes) and (not reduce_last_axes):
-            raise NotImplementedError(
-                'Multiple axis reductions not supported on GPUs. Please use '
-                'the pure expansion or make reduce axes the last in the array.')
+            warnings.warn(
+                'Multiple axis reductions not supported with this expansion. '
+                'Falling back to the pure expansion.')
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         # Verify that data is on the GPU
         if input_data.storage not in [
