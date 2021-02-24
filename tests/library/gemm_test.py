@@ -26,8 +26,17 @@ def test_gemm_no_c(implementation):
 
     A = np.random.rand(10, 15)
     B = np.random.rand(15, 3)
-    result = simple_gemm(A, B)
+
+    try:
+        result = simple_gemm(A, B)
+    except (CompilerConfigurationError, CompilationError):
+        warnings.warn(
+            "Configuration/compilation failed, library missing or "
+            "misconfigured, skipping test for {}.".format(implementation))
+
     assert np.allclose(result, A @ B)
+
+    Gemm.default_implementation = None
 
 
 def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
