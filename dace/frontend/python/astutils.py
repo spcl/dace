@@ -222,10 +222,14 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 begin = symbolic.pystr_to_symbolic(0)
             else:
                 begin = symbolic.pystr_to_symbolic(unparse(begin))
+                if (begin < 0) == True:
+                    begin += arrdesc.shape[i]
             if end is None and arrname is None:
                 raise SyntaxError('Cannot define range without end')
             elif end is not None:
                 end = symbolic.pystr_to_symbolic(unparse(end)) - 1
+                if (end < 0) == True:
+                    end += arrdesc.shape[i]
             else:
                 end = symbolic.pystr_to_symbolic(
                     symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
@@ -236,6 +240,8 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         else:
             # In the case where a single element is given
             begin = symbolic.pystr_to_symbolic(unparse(r))
+            if (begin < 0) == True:
+                begin += arrdesc.shape[i]
             end = begin
             skip = symbolic.pystr_to_symbolic(1)
 

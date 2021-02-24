@@ -117,8 +117,6 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     def apply(self, sdfg: SDFG):
         subgraph = self.subgraph_view(sdfg)
-        if not self.can_be_applied(sdfg, subgraph):
-            raise Exception('The given subgraph cannot be fused!')
 
         entry_states_in, entry_states_out = self.get_entry_states(
             sdfg, subgraph)

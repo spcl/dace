@@ -58,6 +58,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
             if isinstance(arg_type, data.Scalar):
+                # GPU global memory is only accessed via pointers
+                # TODO(later): Fix workaround somehow
+                if arg_type.storage is dtypes.StorageType.GPU_Global:
+                    self._dispatcher.defined_vars.add(
+                        name, DefinedType.Pointer,
+                        dtypes.pointer(arg_type.dtype).ctype)
+                    continue
+
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar,
                                                   arg_type.dtype.ctype)
             elif isinstance(arg_type, data.Array):
