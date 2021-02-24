@@ -6,7 +6,7 @@ import copy
 import functools
 import typing
 
-from dace import data, registry, subsets
+from dace import data, registry, subsets, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
@@ -161,8 +161,9 @@ class RedundantArray(pm.Transformation):
             sdfg.arrays[in_array.data] = data.View(
                 in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                 out_desc.storage, out_desc.location, in_desc.strides,
-                in_desc.offset, out_desc.may_alias, out_desc.lifetime,
-                in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
+                in_desc.offset, out_desc.may_alias,
+                dtypes.AllocationLifetime.Scope, in_desc.alignment,
+                in_desc.debuginfo, in_desc.total_size)
             return
 
         for e in graph.in_edges(in_array):
@@ -180,7 +181,6 @@ class RedundantArray(pm.Transformation):
         graph.remove_node(in_array)
         if in_array.data in sdfg.arrays:
             del sdfg.arrays[in_array.data]
-
 
 
 @registry.autoregister_params(singlestate=True, strict=True)
