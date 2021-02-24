@@ -124,8 +124,9 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Pivot output must be an integer array!")
 
         stride_x = desc_xin.strides[sqdims1[0]]
-        rows_x = desc_xin.shape[0]
-        cols_x = desc_xin.shape[1]
+        shape_x = squeezed1.size()
+        rows_x = shape_x[0]
+        cols_x = shape_x[1]
 
         if len(squeezed1.size()) != 2:
             print(str(squeezed1))
