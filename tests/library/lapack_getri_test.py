@@ -28,37 +28,61 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                    dace.dtypes.int32,
                    storage=storage,
                    transient=transient)
-    sdfg.add_array("result" + suffix, [1],
+    sdfg.add_array("result_getrf" + suffix, [1],
+                   dace.dtypes.int32,
+                   storage=storage,
+                   transient=transient)
+    sdfg.add_array("result_getri" + suffix, [1],
                    dace.dtypes.int32,
                    storage=storage,
                    transient=transient)
 
-    xin = state.add_access("x" + suffix)
-    xout = state.add_access("x" + suffix)
-    pivots = state.add_access("pivots" + suffix)
-    result = state.add_access("result" + suffix)
+    xin = state.add_read("x" + suffix)
+    xout_getrf = state.add_write("x" + suffix)
+    xout_getri = state.add_write("x" + suffix)
+    pivots = state.add_write("pivots" + suffix)
+    res_getrf = state.add_write("result_getrf" + suffix)
+    res_getri = state.add_write("result_getri" + suffix)
 
     getrf_node = lapack.nodes.getrf.Getrf("getrf")
     getrf_node.implementation = implementation
+    getri_node = lapack.nodes.getri.Getri("getri")
+    getri_node.implementation = implementation
+
 
     state.add_memlet_path(xin,
                           getrf_node,
                           dst_conn="_xin",
                           memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n*n))
+    # TODO: remove -1 once this no longer triggers a write in the codegen.
     state.add_memlet_path(getrf_node,
-                          result,
+                          res_getrf,
                           src_conn="_res",
-                          memlet=Memlet.simple(result, "0", num_accesses=1))
+                          memlet=Memlet.simple(res_getrf, "0", num_accesses=-1))
+    state.add_memlet_path(getri_node,
+                          res_getri,
+                          src_conn="_res",
+                          memlet=Memlet.simple(res_getri, "0", num_accesses=-1))
     state.add_memlet_path(getrf_node,
                           pivots,
                           src_conn="_ipiv",
-                          memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
+                          memlet=Memlet.simple(pivots, "0:n", num_accesses=-1))
+    state.add_memlet_path(pivots,
+                          getri_node,
+                          dst_conn="_ipiv",
+                          memlet=Memlet.simple(pivots, "0:n", num_accesses=-1))
     state.add_memlet_path(getrf_node,
-                          xout,
+                          xout_getrf,
                           src_conn="_xout",
-                          memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n*n))
-
-
+                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=-1))
+    state.add_memlet_path(xout_getrf,
+                          getri_node,
+                          dst_conn="_xin",
+                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=-1))
+    state.add_memlet_path(getri_node,
+                          xout_getri,
+                          src_conn="_xout",
+                          memlet=Memlet.simple(xout_getri, "0:n, 0:n", num_accesses=-1))
 
     return sdfg
 
@@ -67,7 +91,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 
 def _test_getrf(implementation, dtype, sdfg):
-    getrf_sdfg = sdfg.compile()
+    getri_sdfg = sdfg.compile()
     
     from scipy.linalg import lu_factor
     size = 4

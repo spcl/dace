@@ -84,8 +84,8 @@ class Getri(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, n=None, *args, **kwargs):
         super().__init__(name,
                          *args,
-                         inputs={"_xin"},
-                         outputs={"_xout", "_ipiv", "_res"},
+                         inputs={"_xin", "_ipiv"},
+                         outputs={"_xout", "_res"},
                          **kwargs)
 
     def validate(self, sdfg, state):
@@ -94,13 +94,13 @@ class Getri(dace.sdfg.nodes.LibraryNode):
                  parent SDFG.
         """
         in_edges = state.in_edges(self)
-        if len(in_edges) != 1:
-            raise ValueError("Expected exactly one input to getri")
+        if len(in_edges) != 2:
+            raise ValueError("Expected exactly two inputs to getri")
         in_memlets = [in_edges[0].data]
         out_edges = state.out_edges(self)
-        if len(out_edges) != 3:
-            raise ValueError("Expected exactly three outputs from getri product")
-        out_memlet = out_edges[0].data
+        if len(out_edges) != 2:
+            raise ValueError("Expected exactly two outputs from getri")
+        out_memlets = out_edges[0].data
 
         # Squeeze input memlets
         squeezed1 = copy.deepcopy(in_memlets[0].subset)
@@ -110,27 +110,22 @@ class Getri(dace.sdfg.nodes.LibraryNode):
         for e in state.in_edges(self):
             if e.dst_conn == "_xin":
                 desc_xin = sdfg.arrays[e.data.data]
+            if e.dst_conn == "_ipiv":
+                desc_ipiv = sdfg.arrays[e.data.data]
         for e in state.out_edges(self):
             if e.src_conn == "_xout":
                 desc_xout = sdfg.arrays[e.data.data]
-            if e.src_conn == "_ipiv":
-                desc_ipiv = sdfg.arrays[e.data.data]
             if e.src_conn == "_result":
                 desc_res = sdfg.arrays[e.data.data]
         
         if desc_xin.dtype.base_type != desc_xout.dtype.base_type:
             raise ValueError("Basetype of input and output must be equal!")
         if desc_ipiv.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("Pivot output must be an integer array!")
+            raise ValueError("Pivot input must be an integer array!")
 
         stride_x = desc_xin.strides[sqdims1[0]]
         rows_x = desc_xin.shape[0]
         cols_x = desc_xin.shape[1]
-
-        if len(squeezed1.size()) != 2:
-            print(str(squeezed1))
-            raise ValueError(
-                "getri only supported on 2-dimensional arrays")
 
         return (desc_xin, stride_x, rows_x, cols_x), desc_ipiv, desc_res
 
