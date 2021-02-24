@@ -182,9 +182,13 @@ class CPUCodeGen(TargetCodeGenerator):
                                            global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
-        atype, aname, value = cpp.emit_memlet_reference(
-            self._dispatcher, sdfg, edge.data, name,
-            dtypes.pointer(nodedesc.dtype), ancestor=0)
+        atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+                                                        sdfg,
+                                                        edge.data,
+                                                        name,
+                                                        dtypes.pointer(
+                                                            nodedesc.dtype),
+                                                        ancestor=0)
 
         declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
         # Casting is already done in emit_memlet_reference
@@ -510,8 +514,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Writing one index
             if (isinstance(memlet.subset, subsets.Indices)
                     and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(
-                        vconn)[0] == DefinedType.Scalar):
+                    and self._dispatcher.defined_vars.get(vconn)[0]
+                    == DefinedType.Scalar):
                 stream.write(
                     "%s = %s;" %
                     (vconn,
@@ -534,9 +538,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if is_array_stream_view(sdfg, dfg, src_node):
                         return  # Do nothing (handled by ArrayStreamView)
 
-                    array_subset = (memlet.subset
-                                    if memlet.data == dst_node.data else
-                                    memlet.other_subset)
+                    array_subset = (memlet.subset if memlet.data
+                                    == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array
                         array_subset = subsets.Range.from_array(dst_nodedesc)
 
@@ -737,7 +740,8 @@ class CPUCodeGen(TargetCodeGenerator):
         atomic = "_atomic" if not nc else ""
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet,
+                                                defined_type), indices)
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
 
@@ -892,7 +896,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
                     # Write out
                     result.write(write_expr, sdfg, state_id, node)
-
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
@@ -1443,7 +1446,8 @@ class CPUCodeGen(TargetCodeGenerator):
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         memlet_references = []
-        for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn):
+        for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),
+                                                key=lambda e: e.dst_conn):
             if vconn in inout or in_memlet.data is None:
                 continue
             memlet_references.append(
@@ -1453,7 +1457,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                           vconn,
                                           conntype=node.in_connectors[vconn]))
 
-        for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn):
+        for _, uconn, _, _, out_memlet in sorted(state.out_edges(node),
+                                                 key=lambda e: e.src_conn):
             if out_memlet.data is not None:
                 memlet_references.append(
                     cpp.emit_memlet_reference(
@@ -1614,8 +1619,8 @@ class CPUCodeGen(TargetCodeGenerator):
             if e.data.data != e.dst_conn:
                 callsite_stream.write(
                     self.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                           e.dst.in_connectors[e.dst_conn]), sdfg,
-                    state_id, node)
+                                           e.dst.in_connectors[e.dst_conn]),
+                    sdfg, state_id, node)
 
         inner_stream = CodeIOStream()
         self.generate_scope_preamble(sdfg, dfg, state_id, function_stream,
