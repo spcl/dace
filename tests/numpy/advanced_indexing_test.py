@@ -31,6 +31,7 @@ def test_flat_noncontiguous():
     res = indexing_test(A)
     assert np.allclose(A.flat, res)
 
+
 def test_ellipsis():
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
@@ -40,8 +41,46 @@ def test_ellipsis():
     res = indexing_test(A)
     assert np.allclose(A[1:5, ..., 0], res)
 
+@pytest.mark.skip
+def test_aug_implicit():
+    @dace.program
+    def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
+        A[:,1:5][:,0:2] += 5
+
+    A = np.random.rand(5, 5, 5, 5, 5)
+    regression = np.copy(A)
+    regression[:, 1:5][:, 0:2] += 5
+    indexing_test(A)
+    assert np.allclose(A, regression)
+
+
+@pytest.mark.skip
+def test_ellipsis_aug():
+    @dace.program
+    def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
+        A[1:5, ..., 0] += 5
+
+    A = np.random.rand(5, 5, 5, 5, 5)
+    regression = np.copy(A)
+    regression[1:5, ..., 0] += 5
+    indexing_test(A)
+    assert np.allclose(A, regression)
+
+def test_newaxis():
+    @dace.program
+    def indexing_test(A: dace.float64[20, 30]):
+        return A[:, np.newaxis, None, :]
+
+    A = np.random.rand(20, 30)
+    res = indexing_test(A)
+    assert res.shape == (20, 1, 1, 30)
+    assert np.allclose(A[:, np.newaxis, None, :], res)
+
 
 if __name__ == '__main__':
     test_flat()
     # test_flat_noncontiguous() # Skip due to broken strided copy
     test_ellipsis()
+    # test_aug_implicit() # Skip due to duplicate make_slice
+    # test_ellipsis_aug() # Skip due to duplicate make_slice
+    test_newaxis()

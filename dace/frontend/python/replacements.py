@@ -15,7 +15,6 @@ from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
 import dace.frontend.python.memlet_parser as mem_parser
-from dace.frontend.python.memlet_parser import parse_memlet_subset
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet

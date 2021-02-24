@@ -601,7 +601,8 @@ class GlobalResolver(ast.NodeTransformer):
 
     def global_value_to_node(self, value, parent_node, recurse=False):
         # if recurse is false, we don't allow recursion into lists
-        # this should not happen anyway; the globals dict should only contain single "level" lists
+        # this should not happen anyway; the globals dict should only contain 
+        # single "level" lists
         if not recurse and isinstance(value, (list, tuple)):
             # bail after more than one level of lists
             return None
@@ -626,7 +627,10 @@ class GlobalResolver(ast.NodeTransformer):
             if sys.version_info >= (3, 8):
                 newnode = ast.Constant(value=value, kind='')
             else:
-                newnode = ast.Num(n=value)
+                if value is None:
+                    newnode = ast.NameConstant(value=None)
+                else:
+                    newnode = ast.Num(n=value)
         else:
             return None
 
@@ -655,6 +659,19 @@ class GlobalResolver(ast.NodeTransformer):
         if node.arg in self.globals and isinstance(self.globals[node.arg],
                                                    symbolic.symbol):
             node.arg = self.globals[node.arg].name
+        return self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        # TODO: Support more levels of modules (mod.mod2.mod3.value)
+        if (isinstance(node.value, ast.Name)
+                and isinstance(node.value.ctx, ast.Load)
+                and node.value.id in self.globals):
+            global_val = getattr(self.globals[node.value.id], node.attr)
+            newnode = self.global_value_to_node(global_val,
+                                                parent_node=node,
+                                                recurse=True)
+            if newnode is not None:
+                return newnode
         return self.generic_visit(node)
 
 
@@ -1195,16 +1212,17 @@ class ProgramVisitor(ExtNodeVisitor):
                     r = return_state.add_read(arrname)
                     w = return_state.add_write(vname)
                     if vname not in self.sdfg.arrays:
-                        self.sdfg.add_array(vname,
-                                            desc.shape,
-                                            desc.dtype,
-                                            storage=desc.storage,
-                                            transient=False,
-                                            strides=desc.strides,
-                                            offset=desc.offset,
-                                            debuginfo=desc.debuginfo,
-                                            total_size=desc.total_size,
-                                            allow_conflicts=desc.allow_conflicts)
+                        self.sdfg.add_array(
+                            vname,
+                            desc.shape,
+                            desc.dtype,
+                            storage=desc.storage,
+                            transient=False,
+                            strides=desc.strides,
+                            offset=desc.offset,
+                            debuginfo=desc.debuginfo,
+                            total_size=desc.total_size,
+                            allow_conflicts=desc.allow_conflicts)
                     return_state.add_nedge(r, w, Memlet(vname))
                 else:
                     # Other cases can be replaced with return value directly
@@ -2968,6 +2986,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         defined_vars[name] = result
                         continue
 
+            # TODO(later): Refactor to use make_slice
             if new_data:
                 rng = dace.subsets.Range.from_array(new_data)
             else:
@@ -3954,7 +3973,14 @@ class ProgramVisitor(ExtNodeVisitor):
                                             None, memlet, tmp, self)
         else:
             other_subset = copy.deepcopy(expr.subset)
-            other_subset.squeeze()
+            
+            # Make new axes and squeeze for scalar subsets (as per numpy behavior)
+            # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
+            new_axes = []
+            if expr.new_axes:
+                new_axes = other_subset.unsqueeze(expr.new_axes)
+            other_subset.squeeze(ignore_indices=new_axes)
+
             tmp, tmparr = self.sdfg.add_temp_transient(other_subset.size(),
                                                        arrobj.dtype,
                                                        arrobj.storage)
