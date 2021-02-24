@@ -90,10 +90,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 ###############################################################################
 
 
-def _test_getrf(implementation, dtype, sdfg):
+def _test_getri(implementation, dtype, sdfg):
     inv_sdfg = sdfg.compile()
     
-    from scipy.linalg import lu_factor
     size = 4
     lapack_status1 = np.array([-1], dtype=np.int32)
     lapack_status2 = np.array([-1], dtype=np.int32)
@@ -111,12 +110,12 @@ def _test_getrf(implementation, dtype, sdfg):
         raise ValueError("Validation error!")
 
 
-def test_getrf():
-    _test_getrf("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
-    _test_getrf("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
+def test_getri():
+    _test_getri("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
+    _test_getri("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
 
 ###############################################################################
 
 if __name__ == "__main__":
-    test_getrf()
+    test_getri()
 ###############################################################################
