@@ -31,7 +31,17 @@ def test_flat_noncontiguous():
     res = indexing_test(A)
     assert np.allclose(A.flat, res)
 
+def test_ellipsis():
+    @dace.program
+    def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
+        return A[1:5, ..., 0]
+
+    A = np.random.rand(5, 5, 5, 5, 5)
+    res = indexing_test(A)
+    assert np.allclose(A[1:5, ..., 0], res)
+
 
 if __name__ == '__main__':
     test_flat()
     # test_flat_noncontiguous() # Skip due to broken strided copy
+    test_ellipsis()

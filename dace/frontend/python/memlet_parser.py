@@ -68,22 +68,31 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
     ndslice = [None] * len(array.shape)
-    ndslice_size = 1
     offsets = []
     idx = 0
+    has_ellipsis = False
     for i, dim in enumerate(ast_ndslice):
         if isinstance(dim, tuple):
             rb = pyexpr_to_symbolic(das, dim[0] or 0)
             re = pyexpr_to_symbolic(das, dim[1] or array.shape[indices[i]]) - 1
             rs = pyexpr_to_symbolic(das, dim[2] or 1)
-            ndslice[i] = (rb, re, rs)
-            offsets.append(i)
+            ndslice[idx] = (rb, re, rs)
+            offsets.append(idx)
             idx += 1
+        elif isinstance(dim, ast.Ellipsis):
+            if has_ellipsis:
+                raise IndexError('an index can only have a single ellipsis ("...")')
+            has_ellipsis = True
+            remaining_dims = len(ast_ndslice) - i - 1
+            for j in range(idx, len(ndslice) - remaining_dims):
+                ndslice[j] = (0, array.shape[j] - 1, 1)
+                idx += 1
         else:
-            ndslice[i] = pyexpr_to_symbolic(das, dim)
+            ndslice[idx] = pyexpr_to_symbolic(das, dim)
+            idx += 1
 
     # Extend slices to unspecified dimensions
-    for i in range(len(ast_ndslice), len(array.shape)):
+    for i in range(idx, len(array.shape)):
         # ndslice[i] = (0, array.shape[idx] - 1, 1)
         # idx += 1
         ndslice[i] = (0, array.shape[i] - 1, 1)
