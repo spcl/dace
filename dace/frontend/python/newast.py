@@ -662,16 +662,18 @@ class GlobalResolver(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> Any:
-        # TODO: Support more levels of modules (mod.mod2.mod3.value)
+        # TODO(later): Support more levels of modules (mod.mod2.mod3.value)
         if (isinstance(node.value, ast.Name)
                 and isinstance(node.value.ctx, ast.Load)
                 and node.value.id in self.globals):
             global_val = getattr(self.globals[node.value.id], node.attr)
-            newnode = self.global_value_to_node(global_val,
-                                                parent_node=node,
-                                                recurse=True)
-            if newnode is not None:
-                return newnode
+            # TODO: Without this check, dace dtypes do not serialize well
+            if dtypes.isconstant(global_val):
+                newnode = self.global_value_to_node(global_val,
+                                                    parent_node=node,
+                                                    recurse=True)
+                if newnode is not None:
+                    return newnode
         return self.generic_visit(node)
 
 
