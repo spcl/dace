@@ -211,6 +211,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
+        arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         alloc_name = cpp.ptr(name, nodedesc)
 
@@ -285,15 +286,28 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.defined_vars.add(name, DefinedType.Stream,
                                               ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register
-                  and symbolic.issymbolic(arrsize, sdfg.constants))):
+        elif (
+                nodedesc.storage == dtypes.StorageType.CPU_Heap or
+            (nodedesc.storage == dtypes.StorageType.Register and
+             (symbolic.issymbolic(arrsize, sdfg.constants) or
+              (arrsize_bytes > Config.get("compiler", "max_stack_array_size"))))
+        ):
 
-            if nodedesc.storage == dtypes.StorageType.Register:
+            if nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(
+                    arrsize, sdfg.constants):
                 warnings.warn('Variable-length array %s with size %s '
                               'detected and was allocated on heap instead of '
                               '%s' %
                               (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+
+            if nodedesc.storage == dtypes.StorageType.Register and (
+                    arrsize_bytes > Config.get("compiler",
+                                               "max_stack_array_size")):
+                warnings.warn(
+                    "Array {} with size {} detected and was allocated on heap instead of "
+                    "{} since it's size is greater than max_stack_array_size ({})"
+                    .format(name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
+                            Config.get("compiler", "max_stack_array_size")))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
