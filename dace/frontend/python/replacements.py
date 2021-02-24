@@ -133,9 +133,7 @@ def _reduce(pv: 'ProgramVisitor',
             axis = tuple(pystr_to_symbolic(a) for a in axis)
             axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
-        input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                           ast.parse(in_array).body[0].value,
-                                           {})
+        input_subset = subsets.Range.from_array(sdfg.arrays[inarr])
         input_memlet = Memlet.simple(inarr, input_subset)
         output_shape = None
 
@@ -168,13 +166,9 @@ def _reduce(pv: 'ProgramVisitor',
             axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
         # Compute memlets
-        input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                           ast.parse(in_array).body[0].value,
-                                           {})
+        input_subset = subsets.Range.from_array(sdfg.arrays[inarr])
         input_memlet = Memlet.simple(inarr, input_subset)
-        output_subset = parse_memlet_subset(sdfg.arrays[outarr],
-                                            ast.parse(out_array).body[0].value,
-                                            {})
+        output_subset = subsets.Range.from_array(sdfg.arrays[outarr])
         output_memlet = Memlet.simple(outarr, output_subset)
 
     # Create reduce subgraph
@@ -1615,7 +1609,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Array', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -1640,12 +1634,12 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('View', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('View', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -3993,7 +3987,7 @@ def dot(pv: 'ProgramVisitor',
         op_a: str,
         op_b: str,
         op_out=None):
-    
+
 
     # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
     # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
@@ -4011,7 +4005,7 @@ def dot(pv: 'ProgramVisitor',
         # TODO: `If op_out`, then this is not correct. We need np.matmult,
         # but it is not implemented yet
         return _matmult(pv, sdfg, state, op_a, op_b)
-    
+
     if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1] or
             isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
         # Case dot(N-D, 0-D), intepreted as np.multiply(a, b)
@@ -4021,7 +4015,7 @@ def dot(pv: 'ProgramVisitor',
         if op_out:
             args.append(op_out)
         return ufunc_impl(pv, node, ufunc_name, sdfg, state, args)
-    
+
     if len(arr_a.shape) > 2 or len(arr_b.shape) > 2:
         raise NotImplementedError
 
