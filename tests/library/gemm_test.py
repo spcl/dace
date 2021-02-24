@@ -29,12 +29,12 @@ def test_gemm_no_c(implementation):
 
     try:
         result = simple_gemm(A, B)
+        assert np.allclose(result, A @ B)
     except (CompilerConfigurationError, CompilationError):
         warnings.warn(
             "Configuration/compilation failed, library missing or "
             "misconfigured, skipping test for {}.".format(implementation))
 
-    assert np.allclose(result, A @ B)
 
     Gemm.default_implementation = None
 
