@@ -17,7 +17,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("dot_product_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, dtype))
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x" + suffix, [n,n],
@@ -78,9 +78,7 @@ def _test_getrf(implementation, dtype, sdfg):
     # the x is input AND output, the "result" argument gives the lapack status!
     getrf_sdfg(x=A, result=lapack_status, pivots=np.ndarray([0,0,0,0], dtype=np.int32), n=size)
 
-    comparison = A == lu_ref
-    
-    if comparison.all():
+    if np.allclose(A, lu_ref):
         print("Test ran successfully for {}.".format(implementation))
     else:
         raise ValueError("Validation error!")

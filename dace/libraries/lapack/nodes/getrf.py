@@ -49,7 +49,7 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 
 
         n = n or node.n
-        code = f"_res[0] = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, _xin, {stride_x}, _ipiv);"
+        code = f"_res = LAPACKE_{lapack_dtype}getrf(LAPACK_ROW_MAJOR, {rows_x}, {cols_x}, _xin, {stride_x}, _ipiv);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

@@ -17,32 +17,32 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     suffix = "_device" if storage != dace.StorageType.Default else ""
     transient = storage != dace.StorageType.Default
 
-    sdfg = dace.SDFG("dot_product_{}_{}".format(implementation, dtype))
+    sdfg = dace.SDFG("matrix_inv_getrf_getri_{}_{}".format(implementation, dtype))
     state = sdfg.add_state("dataflow")
 
     sdfg.add_array("x" + suffix, [n,n],
                    dtype,
                    storage=storage,
-                   transient=transient)
+                   transient=False)
     sdfg.add_array("pivots" + suffix, [n],
                    dace.dtypes.int32,
                    storage=storage,
-                   transient=transient)
+                   transient=True)
     sdfg.add_array("result_getrf" + suffix, [1],
                    dace.dtypes.int32,
                    storage=storage,
-                   transient=transient)
+                   transient=False)
     sdfg.add_array("result_getri" + suffix, [1],
                    dace.dtypes.int32,
                    storage=storage,
-                   transient=transient)
+                   transient=False)
 
-    xin = state.add_read("x" + suffix)
-    xout_getrf = state.add_write("x" + suffix)
-    xout_getri = state.add_write("x" + suffix)
-    pivots = state.add_write("pivots" + suffix)
-    res_getrf = state.add_write("result_getrf" + suffix)
-    res_getri = state.add_write("result_getri" + suffix)
+    xin = state.add_access("x" + suffix)
+    xout_getrf = state.add_access("x" + suffix)
+    xout_getri = state.add_access("x" + suffix)
+    pivots = state.add_access("pivots" + suffix)
+    res_getrf = state.add_access("result_getrf" + suffix)
+    res_getri = state.add_access("result_getri" + suffix)
 
     getrf_node = lapack.nodes.getrf.Getrf("getrf")
     getrf_node.implementation = implementation
@@ -58,31 +58,31 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(getrf_node,
                           res_getrf,
                           src_conn="_res",
-                          memlet=Memlet.simple(res_getrf, "0", num_accesses=-1))
+                          memlet=Memlet.simple(res_getrf, "0", num_accesses=1))
     state.add_memlet_path(getri_node,
                           res_getri,
                           src_conn="_res",
-                          memlet=Memlet.simple(res_getri, "0", num_accesses=-1))
+                          memlet=Memlet.simple(res_getri, "0", num_accesses=1))
     state.add_memlet_path(getrf_node,
                           pivots,
                           src_conn="_ipiv",
-                          memlet=Memlet.simple(pivots, "0:n", num_accesses=-1))
+                          memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
     state.add_memlet_path(pivots,
                           getri_node,
                           dst_conn="_ipiv",
-                          memlet=Memlet.simple(pivots, "0:n", num_accesses=-1))
+                          memlet=Memlet.simple(pivots, "0:n", num_accesses=n))
     state.add_memlet_path(getrf_node,
                           xout_getrf,
                           src_conn="_xout",
-                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=-1))
+                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n*n))
     state.add_memlet_path(xout_getrf,
                           getri_node,
                           dst_conn="_xin",
-                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=-1))
+                          memlet=Memlet.simple(xout_getrf, "0:n, 0:n", num_accesses=n*n))
     state.add_memlet_path(getri_node,
                           xout_getri,
                           src_conn="_xout",
-                          memlet=Memlet.simple(xout_getri, "0:n, 0:n", num_accesses=-1))
+                          memlet=Memlet.simple(xout_getri, "0:n, 0:n", num_accesses=n*n))
 
     return sdfg
 
@@ -91,22 +91,23 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 
 def _test_getrf(implementation, dtype, sdfg):
-    getri_sdfg = sdfg.compile()
+    inv_sdfg = sdfg.compile()
     
     from scipy.linalg import lu_factor
     size = 4
-    lapack_status = np.array([-1], dtype=np.int32)
-    A = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=dtype)
-    lu_ref, piv_ref = lu_factor(A)
+    lapack_status1 = np.array([-1], dtype=np.int32)
+    lapack_status2 = np.array([-1], dtype=np.int32)
+    A1 = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=dtype)
+    A2 = np.copy(A1)
+    A3 = np.linalg.inv(A2)
   
     # the x is input AND output, the "result" argument gives the lapack status!
-    getrf_sdfg(x=A, result=lapack_status, pivots=np.ndarray([0,0,0,0], dtype=np.int32), n=size)
+    inv_sdfg(x=A1, result_getrf=lapack_status1, result_getri=lapack_status2, pivots=np.ndarray([0,0,0,0], dtype=np.int32), n=size)
 
-    comparison = A == lu_ref
-    
-    if comparison.all():
+    if np.allclose(A1, A3):
         print("Test ran successfully for {}.".format(implementation))
     else:
+        print(A1-A3)
         raise ValueError("Validation error!")
 
 
