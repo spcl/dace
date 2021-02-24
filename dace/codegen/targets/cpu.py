@@ -212,6 +212,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # Compute array size
         arrsize = nodedesc.total_size
         arrsize_bytes = arrsize * nodedesc.dtype.bytes
+        try:
+            size_too_big = arrsize_bytes > Config.get("compiler",
+                                                      "max_stack_array_size")
+        except TypeError:
+            # size was symbolic
+            size_too_big = True
 
         alloc_name = cpp.ptr(name, nodedesc)
 
@@ -288,10 +294,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         elif (
                 nodedesc.storage == dtypes.StorageType.CPU_Heap or
-            (nodedesc.storage == dtypes.StorageType.Register and
-             (symbolic.issymbolic(arrsize, sdfg.constants) or
-              (arrsize_bytes > Config.get("compiler", "max_stack_array_size"))))
-        ):
+            (nodedesc.storage == dtypes.StorageType.Register and size_too_big)):
 
             if nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(
                     arrsize, sdfg.constants):
@@ -299,9 +302,7 @@ class CPUCodeGen(TargetCodeGenerator):
                               'detected and was allocated on heap instead of '
                               '%s' %
                               (name, cpp.sym2cpp(arrsize), nodedesc.storage))
-            elif nodedesc.storage == dtypes.StorageType.Register and (
-                    arrsize_bytes > Config.get("compiler",
-                                               "max_stack_array_size")):
+            elif nodedesc.storage == dtypes.StorageType.Register and size_too_big:
                 warnings.warn(
                     "Array {} with size {} detected and was allocated on heap instead of "
                     "{} since it's size is greater than max_stack_array_size ({})"
