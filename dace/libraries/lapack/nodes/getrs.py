@@ -96,7 +96,12 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         in_edges = state.in_edges(self)
         if len(in_edges) != 3:
             raise ValueError("Expected exactly three inputs to getrs")
-        in_memlets = [in_edges[0].data, in_edges[1].data]
+        in_memlets = [None] * 2
+        for _, _, _, conn, data in in_edges:
+            if conn == '_a':
+                in_memlets[0] = data
+            elif conn == '_rhs_in':
+                in_memlets[1] = data
         out_edges = state.out_edges(self)
         if len(out_edges) != 2:
             raise ValueError("Expected exactly two outputs from getrs")
@@ -129,15 +134,17 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Pivot input must be an integer array!")
 
         stride_a = desc_a.strides[sqdims1[0]]
-        rows_a = desc_a.shape[0]
-        cols_a = desc_a.shape[1]
+        shape_a = squeezed1.size()
+        rows_a = shape_a[0]
+        cols_a = shape_a[1]
 
         stride_rhs = desc_rhs.strides[sqdims2[0]]
-        rows_rhs = desc_rhs.shape[0]
+        shape_rhs = squeezed2.size()
+        rows_rhs = shape_rhs[0]
         if len(desc_rhs.shape) < 2:
             cols_rhs = 1
         else:
-            cols_rhs = desc_rhs.shape[1]
+            cols_rhs = shape_rhs[1]
 
         if rows_a != cols_a:
             raise ValueError("Matrix A must be square")
