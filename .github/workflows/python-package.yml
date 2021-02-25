@@ -46,6 +46,7 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        cp tests/library/gemmz_test.py /tmp/gemmz_test.py
         cp bisect.sh /tmp/bisect.sh
         chmod a+x /tmp/bisect.sh
         git fetch --all
