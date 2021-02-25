@@ -221,8 +221,8 @@ class CPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         arrsize_bytes = arrsize * nodedesc.dtype.bytes
         try:
-            size_too_big = arrsize_bytes > Config.get("compiler",
-                                                      "max_stack_array_size")
+            size_too_big = bool(
+                arrsize_bytes > Config.get("compiler", "max_stack_array_size"))
         except TypeError:
             # size was symbolic
             size_too_big = True
