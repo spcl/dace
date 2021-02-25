@@ -2,7 +2,7 @@
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 from dace.data import Array
-from dace import memlet as mm, properties
+from dace import dtypes, memlet as mm, properties
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
@@ -98,54 +98,40 @@ class ExpandGemmPure(ExpandTransformation):
             mul_program = "__out = {} * __a * __b".format(
                 _cast_to_dtype_str(node.alpha, dtype_a))
 
-        init_state = sdfg.add_state(node.label + "_initstate")
-        state = sdfg.add_state_after(init_state, node.label + "_state")
-
-        if node.beta == 0:
-            mul_out, mul_out_array = "_c", array_c
-            output_nodes = None
+        if node.beta == 1:
+            state = sdfg.add_state(node.label + "_state")
         else:
-            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-                shape_c, dtype_c, storage=storage)
+            init_state = sdfg.add_state(node.label + "_initstate")
+            state = sdfg.add_state_after(init_state, node.label + "_state")
 
-            access_tmp = state.add_read(tmp)
-            output_nodes = {mul_out: access_tmp}
+        sdfg.add_array("_cin",
+                       shape_c,
+                       dtype_c,
+                       strides=cdata[-1],
+                       storage=cdata[1].storage)
 
-        # Initialization map
-        init_state.add_mapped_tasklet(
-            'gemm_init',
-            {'_o%d' % i: '0:%s' % symstr(d)
-             for i, d in enumerate(shape_c)}, {},
-            'out = 0', {
-                'out':
-                dace.Memlet.simple(
-                    mul_out, ','.join(['_o%d' % i
-                                       for i in range(len(shape_c))]))
-            },
-            external_edges=True)
+        mul_out, mul_out_array = "_c", array_c
+        output_nodes = None
 
-        # Multiplication map
-        state.add_mapped_tasklet(
-            "_GEMM_",
-            {"__i%d" % i: "0:%s" % s
-             for i, s in enumerate([M, N, K])}, {
-                 "__a":
-                 dace.Memlet.simple(
-                     "_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-                 "__b":
-                 dace.Memlet.simple(
-                     "_b", "__i1, __i2" if node.transB else "__i2, __i1")
-             },
-            mul_program, {
-                "__out":
-                dace.Memlet.simple(
-                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
-            },
-            external_edges=True,
-            output_nodes=output_nodes)
-
-        if node.beta != 0:
-            add_program = "__y = ({} * __c) + __tmp".format(
+        # Initialization / beta map
+        if node.beta == 0:
+            init_state.add_mapped_tasklet(
+                'gemm_init',
+                {'_o%d' % i: '0:%s' % symstr(d)
+                 for i, d in enumerate(shape_c)}, {},
+                'out = 0', {
+                    'out':
+                    dace.Memlet.simple(
+                        mul_out, ','.join(
+                            ['_o%d' % i for i in range(len(shape_c))]))
+                },
+                external_edges=True)
+        elif node.beta == 1:
+            # Do nothing for initialization, only update the values
+            pass
+        else:
+            # Beta map
+            add_program = "__y = ({} * __c)".format(
                 _cast_to_dtype_str(node.beta, dtype_a))
 
             # manually broadcasting C to [M, N]
@@ -161,17 +147,34 @@ class ExpandGemmPure(ExpandTransformation):
                 raise ValueError(
                     "Could not broadcast input _c to ({}, {})".format(M, N))
 
-            # addition map
-            state.add_mapped_tasklet(
-                "_Add_",
+            init_state.add_mapped_tasklet(
+                "gemm_init",
                 {"__i%d" % i: "0:%s" % s
                  for i, s in enumerate([M, N])}, {
-                     "__c": dace.Memlet.simple("_c", memlet_idx),
-                     "__tmp": dace.Memlet.simple(mul_out, "__i0, __i1"),
+                     "__c": dace.Memlet.simple("_cin", memlet_idx),
                  },
                 add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
-                external_edges=True,
-                input_nodes={mul_out: access_tmp})
+                external_edges=True)
+
+        # Multiplication map
+        state.add_mapped_tasklet(
+            "gemm", {"__i%d" % i: "0:%s" % s
+                     for i, s in enumerate([M, N, K])},
+            {
+                "__a":
+                dace.Memlet.simple(
+                    "_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+                "__b":
+                dace.Memlet.simple(
+                    "_b", "__i1, __i2" if node.transB else "__i2, __i1")
+            },
+            mul_program, {
+                "__out":
+                dace.Memlet.simple(
+                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
+            },
+            external_edges=True,
+            output_nodes=output_nodes)
 
         return sdfg
 
@@ -182,9 +185,9 @@ class ExpandGemmPure(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGemmMKL(ExpandTransformation):
+class ExpandGemmOpenBLAS(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, state, sdfg):
@@ -194,40 +197,54 @@ class ExpandGemmMKL(ExpandTransformation):
                      bstrides), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
-        # TODO: Fix w.r.t. other alpha/beta values
-        if dtype == dace.float32:
-            alpha = f'(float)({node.alpha})'
-            beta = f'(float)({node.beta})'
-        elif dtype == dace.float64:
-            alpha = f'(double)({node.alpha})'
-            beta = f'(double)({node.beta})'
-        elif dtype == dace.complex64:
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
-        elif dtype == dace.complex128:
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
-            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
-        else:
-            raise ValueError("Unsupported type for BLAS dot product: " +
-                             str(dtype))
-        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
-                                     alpha, beta, cdesc.dtype.ctype, func)
+        alpha = f'{dtype.ctype}({node.alpha})'
+        beta = f'{dtype.ctype}({node.beta})'
 
-        # Adaptations for MKL/BLAS API
+        # Deal with complex input constants
+        if isinstance(node.alpha, complex):
+            alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+        if isinstance(node.beta, complex):
+            beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
+
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
+                                     alpha, beta, dtype.ctype, func)
+
+        # Adaptations for BLAS API
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
         opt['tb'] = 'CblasNoTrans' if opt['tb'] == 'N' else 'CblasTrans'
 
-        code = ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
-                "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
-                "_c, {ldc});").format_map(opt)
+        code = ''
+        if dtype in (dace.complex64, dace.complex128):
+            code = f'''
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            opt['alpha'] = '&alpha'
+            opt['beta'] = '&beta'
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
+                 "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
+                 "_c, {ldc});").format_map(opt)
+
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
         return tasklet
+
+
+@dace.library.expansion
+class ExpandGemmMKL(ExpandTransformation):
+    environments = [environments.intel_mkl.IntelMKL]
+
+    @staticmethod
+    def expansion(*args, **kwargs):
+        return ExpandGemmOpenBLAS.expansion(*args, **kwargs)
 
 
 @dace.library.expansion
@@ -238,10 +255,6 @@ class ExpandGemmCuBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-
-        # TODO: Fix (use One/Zero, copy to custom_alpha/custom_beta if necessary)
-        if node.alpha != 1.0 or node.beta != 0.0:
-            raise NotImplementedError('Only alpha = 1 and beta = 0 supported')
 
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None
@@ -282,10 +295,41 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        alpha = ("__state->cublas_handle.Constants(__dace_cuda_device)."
-                 f"{factort}Pone()")
-        beta = ("__state->cublas_handle.Constants(__dace_cuda_device)."
-                f"{factort}Zero()")
+        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_suffix = ''
+
+        # Handle alpha / beta
+        constants = {
+            1.0:
+            f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
+            #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
+            0.0:
+            f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+        }
+        if node.alpha not in constants or node.beta not in constants:
+            # Deal with complex input constants
+            if isinstance(node.alpha, complex):
+                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            else:
+                alpha = f'{dtype.ctype}({node.alpha})'
+            if isinstance(node.beta, complex):
+                beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            else:
+                beta = f'{dtype.ctype}({node.beta})'
+
+            # Set pointer mode to host
+            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            call_suffix += '''
+cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
+            '''
+            alpha = f'({cdtype} *)&alpha'
+            beta = f'({cdtype} *)&beta'
+        else:
+            alpha = constants[node.alpha]
+            beta = constants[node.beta]
 
         # Set up options for code formatting
         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
@@ -301,16 +345,16 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             {beta},
             ({dtype}*)_c, {ldc});'''
 
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) +
-                call.format_map(opt))
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        code = (call_prefix + call.format_map(opt) + call_suffix)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
 
         # If buffers are not on the GPU, copy them
-        # TODO: This creates potential variable shadowing
         if any(desc.storage not in
                [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
                for desc in [adesc, bdesc, cdesc]):
@@ -351,9 +395,8 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                 ({dtype}*)_conn_c, {ldc});'''
             opt['x'] = '_conn' + opt['x']
             opt['y'] = '_conn' + opt['y']
-            tasklet.code.as_string = (
-                environments.cublas.cuBLAS.handle_setup_code(node) +
-                call.format_map(opt))
+            tasklet.code.as_string = (call_prefix + call.format_map(opt) +
+                                      call_suffix)
 
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
@@ -366,6 +409,14 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             nstate.add_edge(tasklet, '_conn_c', gc, None,
                             dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
+
+            if node.beta != 0.0:
+                rc = nstate.add_read('_c')
+                rgc = nstate.add_access('_c_gpu')
+                tasklet.add_in_connector('_conn_cin')
+                nstate.add_nedge(rc, rgc, dace.Memlet('_c'))
+                nstate.add_edge(rgc, None, tasklet, '_conn_cin',
+                                dace.Memlet('_c_gpu'))
 
             return nsdfg
         # End of copy to GPU
@@ -383,6 +434,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     implementations = {
         "pure": ExpandGemmPure,
         "MKL": ExpandGemmMKL,
+        "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS
     }
     default_implementation = None
@@ -408,10 +460,11 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                  transB=False,
                  alpha=1,
                  beta=0):
-        super().__init__(name,
-                         location=location,
-                         inputs={"_a", "_b"},
-                         outputs={"_c"})
+        super().__init__(
+            name,
+            location=location,
+            inputs=({"_a", "_b", "_cin"} if beta != 0 else {"_a", "_b"}),
+            outputs={"_c"})
         self.transA = transA
         self.transB = transB
         self.alpha = alpha
@@ -431,6 +484,10 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size1 = subset.size()
+            if dst_conn == '_c':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size2 = subset.size()
 
         if self.transA:
             size0 = list(reversed(size0))
@@ -451,6 +508,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size3 = out_subset.size()
+        if size2 is not None and size2 != size3:
+            raise ValueError("Input C matrix must match output matrix.")
         if len(size3) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2 and list(size3) != [size0[-2], size1[-1]]:
@@ -487,9 +546,8 @@ def gemv_libnode(sdfg: SDFG,
     state.add_edge(B_in, None, libnode, '_b', mm.Memlet(B))
     state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
 
-    # TODO: Bring back C as input connector if beta is not 0
-    # if beta != 0:
-    #     C_in = state.add_read(C)
-    #     state.add_edge(C_in, None, libnode, '_c', mm.Memlet(C))
+    if beta != 0:
+        C_in = state.add_read(C)
+        state.add_edge(C_in, None, libnode, '_cin', mm.Memlet(C))
 
     return []

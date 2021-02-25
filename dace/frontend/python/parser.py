@@ -91,15 +91,18 @@ def parse_from_file(filename, *compilation_args):
     return [parse_function(p, *compilation_args) for p in programs]
 
 
-def parse_from_function(function, *compilation_args, strict=None):
-    """ Try to parse a DaceProgram object and return the `dace.SDFG` object
-        that corresponds to it.
-        :param function: DaceProgram object (obtained from the `@dace.program`
-                         decorator).
-        :param compilation_args: Various compilation arguments e.g. dtypes.
-        :param strict: Whether to apply strict transformations or not (None
-                       uses configuration-defined value). 
-        :return: The generated SDFG object.
+def parse_from_function(function, *compilation_args, strict=None, save=True):
+    """ 
+    Try to parse a DaceProgram object and return the `dace.SDFG` object
+    that corresponds to it.
+    :param function: DaceProgram object (obtained from the ``@dace.program``
+                     decorator).
+    :param compilation_args: Various compilation arguments e.g. dtypes.
+    :param strict: Whether to apply strict transformations or not (None
+                   uses configuration-defined value). 
+    :param save: If True, saves the generated SDFG to 
+                 ``_dacegraphs/program.sdfg`` after parsing.
+    :return: The generated SDFG object.
     """
     # Avoid import loop
     from dace.sdfg.analysis import scalar_to_symbol as scal2sym
@@ -131,7 +134,7 @@ def parse_from_function(function, *compilation_args, strict=None):
 
     # Save the SDFG (again). Skip this step if running from a cached SDFG, as
     # it might overwrite the cached SDFG.
-    if not Config.get_bool('compiler', 'use_cache'):
+    if not Config.get_bool('compiler', 'use_cache') and save:
         sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
     # Validate SDFG
@@ -254,13 +257,13 @@ class DaceProgram:
     def name(self):
         return self._name
 
-    def to_sdfg(self, *args, strict=None) -> SDFG:
+    def to_sdfg(self, *args, strict=None, save=True) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
-        return parse_from_function(self, *args, strict=strict)
+        return parse_from_function(self, *args, strict=strict, save=save)
 
-    def compile(self, *args, strict=None):
+    def compile(self, *args, strict=None, save=True):
         """ Convenience function that parses and compiles a DaCe program. """
-        sdfg = parse_from_function(self, *args, strict=strict)
+        sdfg = parse_from_function(self, *args, strict=strict, save=save)
         return sdfg.compile()
 
     def __call__(self, *args, **kwargs):

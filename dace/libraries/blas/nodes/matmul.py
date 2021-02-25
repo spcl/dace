@@ -96,9 +96,18 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
     (_, _, ashape,
      astride), (_, _, bshape,
                 bstride), _ = _get_matmul_operands(node, state, sdfg)
+
+    if getattr(node, 'transA', False):
+        ashape = list(reversed(ashape))
+        astride = list(reversed(astride))
+    if getattr(node, 'transB', False):
+        bshape = list(reversed(bshape))
+        bstride = list(reversed(bstride))
+
     opt = get_gemm_opts(astride, bstride, cdesc.strides)
     bopt = _get_batchmm_opts(ashape, astride, bshape, bstride, cdesc.shape,
                              cdesc.strides)
+
     opt['x'] = '_a'
     opt['y'] = '_b'
     opt['M'] = sym2cpp(ashape[-2])

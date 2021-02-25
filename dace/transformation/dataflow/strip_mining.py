@@ -227,7 +227,10 @@ class StripMining(transformation.Transformation):
             return target_dim
         candidate = '%s_%s' % (prefix, target_dim)
         index = 1
-        while candidate in map(str, stree[entry].defined_vars):
+        defined_vars = set(
+            str(s) for s in (state.symbols_defined_at(entry).keys()
+                             | sdfg.symbols.keys()))
+        while candidate in defined_vars:
             candidate = '%s%d_%s' % (prefix, index, target_dim)
             index += 1
         return candidate
@@ -473,7 +476,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements().simplify()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_in_edges[key] = new_memlet
             else:
                 if src_conn is not None and src_conn[:4] == 'OUT_':
@@ -519,7 +523,8 @@ class StripMining(transformation.Transformation):
                     if memlet.dynamic:
                         new_memlet.num_accesses = memlet.num_accesses
                     else:
-                        new_memlet.num_accesses = new_memlet.num_elements().simplify()
+                        new_memlet.num_accesses = new_memlet.num_elements(
+                        ).simplify()
                     new_out_edges[key] = new_memlet
             else:
                 if dst_conn is not None and dst_conn[:3] == 'IN_':
