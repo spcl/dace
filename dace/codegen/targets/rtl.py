@@ -352,6 +352,8 @@ for(int i = 0; i < {veclen}; i++){{
         if not hasattr(tasklet, "is_autorun"):
             tasklet.is_autorun = self.default_autorun
 
+        self.frame.statestruct.append("bool autorun_active = true;")
+
         # create rtl code object (that is later written to file)
         self.code_objects.append(
             codeobject.CodeObject(
@@ -390,12 +392,12 @@ for(int i = 0; i < {veclen}; i++){{
         # add init and exit code for auto-run kernels
         if tasklet.is_autorun and self.is_first_autorun:
             self.is_first_autorun = False
-            function_stream.write(contents="bool autorun_active = true;\n",
+            function_stream.write(contents="struct {name}_t global_params;\n\n".format(name=sdfg.name),
                                   sdfg=sdfg,
                                   state_id=state_id,
                                   node_id=node)
-            sdfg.append_init_code("// start simulation of all free running kernels\n autorun_active = true;\n")
-            sdfg.append_exit_code("// stop simulation of all free running kernels\nautorun_active = false;\n")
+            sdfg.append_init_code("// start simulation of all free running kernels\n global_params.autorun_active = true;\n")
+            sdfg.append_exit_code("// stop simulation of all free running kernels\nglobal_params.autorun_active = false;\n")
 
         # add main cpp code to stream
         callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
@@ -406,7 +408,7 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
-            running_condition="autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
+            running_condition="global_params.autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
@@ -441,7 +443,7 @@ std::cout << std::flush;
 
     CPP_MODEL_HEADER_TEMPLATE = """\
 // include model header, generated from verilating the sv design
-#include "V{name}.h"
+#include "V{name}.h"\n
 """
 
     CPP_MAIN_TEMPLATE = """\
