@@ -33,7 +33,8 @@ def make_sdfg(implementation,
               out_shape=[n, n],
               in_subset="0:n, 0:n",
               out_subset="0:n, 0:n",
-              overwrite=False):
+              overwrite=False,
+              getri=True):
 
     sdfg = dace.SDFG("linalg_inv_{}_{}_{}".format(implementation,
                                                   dtype.__name__, id))
@@ -50,7 +51,7 @@ def make_sdfg(implementation,
     else:
         xout = state.add_write("xout")
 
-    inv_node = Inv("inv", overwrite_a=overwrite)
+    inv_node = Inv("inv", overwrite_a=overwrite, use_getri=getri)
     inv_node.implementation = implementation
 
     state.add_memlet_path(xin,
@@ -79,7 +80,8 @@ def _test_inv(implementation,
              out_offset=[0, 0],
              in_dims=[0, 1],
              out_dims=[0, 1],
-             overwrite=False):
+             overwrite=False,
+             getri=True):
 
     assert np.all(np.array(in_shape)[in_dims] >= size)
     assert np.all(np.array(out_shape)[out_dims] >= size)
@@ -115,7 +117,7 @@ def _test_inv(implementation,
         ])
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape,
-                     in_subset_str, out_subset_str, overwrite)
+                     in_subset_str, out_subset_str, overwrite, getri)
     try:
         inv_sdfg = sdfg.compile()
     except (CompilerConfigurationError, CompilationError):
@@ -149,9 +151,9 @@ def _test_inv(implementation,
         assert not np.array_equal(A0, A1)
 
 
-def test_inv():
-    _test_inv('MKL', np.float32)
-    _test_inv('MKL', np.float64)
+def test_with_getri():
+    _test_inv('MKL', np.float32, id=0)
+    _test_inv('MKL', np.float64, id=0)
     _test_inv('MKL',
              np.float32,
              id=1,
@@ -190,7 +192,55 @@ def test_inv():
              in_dims=[0, 2],
              out_dims=[1, 2],
              overwrite=True)
+
+
+def test_with_getrs():
+    _test_inv('MKL', np.float32, id=3, getri=False)
+    _test_inv('MKL', np.float64, id=3, getri=False)
+    _test_inv('MKL',
+             np.float32,
+             id=4,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2],
+             getri=False)
+    _test_inv('MKL',
+             np.float64,
+             id=4,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2],
+             getri=False)
+    _test_inv('MKL',
+             np.float32,
+             id=5,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2],
+             overwrite=True,
+             getri=False)
+    _test_inv('MKL',
+             np.float64,
+             id=5,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2],
+             overwrite=True,
+             getri=False)
 
 
 if __name__ == "__main__":
-    test_inv()
+    test_with_getri()
+    test_with_getrs()

@@ -6,12 +6,12 @@ import dace.properties
 import dace.sdfg.nodes
 import numpy as np
 from dace import Memlet
-from dace.libraries.lapack.nodes import Getrf, Getri
+from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
 
-def _make_sdfg(node, parent_state, parent_sdfg, implementation, use_getri=True):
+def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
     if node._overwrite:
@@ -91,6 +91,103 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation, use_getri=True):
     return sdfg
 
 
+def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
+
+    arr_desc = node.validate(parent_sdfg, parent_state)
+    if node._overwrite:
+        in_shape, in_dtype, in_strides, n = arr_desc
+    else:
+        (in_shape, in_dtype, in_strides, out_shape, out_dtype, out_strides,
+         n) = arr_desc
+    dtype = in_dtype
+
+    sdfg = dace.SDFG("{l}_{d}_sdfg".format(l=node.label, d=dtype))
+
+    a_arr = sdfg.add_array('_ain', in_shape, dtype=in_dtype, strides=in_strides)
+    if not node._overwrite:
+        ain_arr = a_arr
+        a_arr = sdfg.add_array('_ainout',
+                               [n, n],
+                               dtype=in_dtype,
+                               transient=True)
+        b_arr = sdfg.add_array('_aout', out_shape, dtype=out_dtype, strides=out_strides)
+    else:
+        b_arr = sdfg.add_array('_b', [n, n], dtype=dtype, transient=True)
+    ipiv_arr = sdfg.add_array('_pivots', [n], dtype=dace.int32, transient=True)
+    info_arr = sdfg.add_array('_info', [1], dtype=dace.int32, transient=True)
+
+    state = sdfg.add_state("{l}_{d}_state".format(l=node.label, d=dtype))
+
+    getrf_node = Getrf('getrf')
+    getrf_node.implementation = implementation
+    getrs_node = Getrs('getrs')
+    getrs_node.implementation = implementation
+
+    if node._overwrite:
+        ain = state.add_read('_ain')
+        ainout = state.add_access('_ain')
+        aout = state.add_write('_ain')
+        # bin = state.add_access('_b')
+        bin_name = '_b'
+        bout = state.add_write('_b')
+        state.add_nedge(bout, aout, Memlet.from_array(*a_arr))
+    else:
+        a = state.add_read('_ain')
+        ain = state.add_read('_ainout')
+        ainout = state.add_access('_ainout')
+        # aout = state.add_write('_aout')
+        state.add_nedge(a, ain, Memlet.from_array(*ain_arr))
+        # bin = state.add_access('_aout')
+        bin_name = '_aout'
+        bout = state.add_access('_aout')
+    
+    _, _, mx = state.add_mapped_tasklet('_eye_', dict(i="0:n", j="0:n"), {}, '_out = (i == j) ? 1 : 0;', dict(_out=Memlet.simple(bin_name, 'i, j')), language=dace.dtypes.Language.CPP, external_edges=True)
+    bin = state.out_edges(mx)[0].dst
+
+    ipiv = state.add_access('_pivots')
+    info1 = state.add_write('_info')
+    info2 = state.add_write('_info')
+
+    state.add_memlet_path(ain,
+                          getrf_node,
+                          dst_conn="_xin",
+                          memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(getrf_node,
+                          info1,
+                          src_conn="_res",
+                          memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrf_node,
+                          ipiv,
+                          src_conn="_ipiv",
+                          memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrf_node,
+                          ainout,
+                          src_conn="_xout",
+                          memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(ainout,
+                          getrs_node,
+                          dst_conn="_a",
+                          memlet=Memlet.from_array(*a_arr))
+    state.add_memlet_path(bin,
+                          getrs_node,
+                          dst_conn="_rhs_in",
+                          memlet=Memlet.from_array(*b_arr))
+    state.add_memlet_path(ipiv,
+                          getrs_node,
+                          dst_conn="_ipiv",
+                          memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrs_node,
+                          info2,
+                          src_conn="_res",
+                          memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrs_node,
+                          bout,
+                          src_conn="_rhs_out",
+                          memlet=Memlet.from_array(*b_arr))
+
+    return sdfg
+
+
 @dace.library.expansion
 class ExpandInvPure(ExpandTransformation):
 
@@ -126,7 +223,10 @@ class ExpandInvMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        return _make_sdfg(node, parent_state, parent_sdfg, "MKL")
+        if node._getri:
+            return _make_sdfg(node, parent_state, parent_sdfg, "MKL")
+        else:
+            return _make_sdfg_getrs(node, parent_state, parent_sdfg, "MKL")
 
 
 @dace.library.node
@@ -141,13 +241,14 @@ class Inv(dace.sdfg.nodes.LibraryNode):
     default_implementation = ExpandInvOpenBLAS
 
     # Object fields
-    def __init__(self, name, overwrite_a=False, *args, **kwargs):
+    def __init__(self, name, overwrite_a=False, use_getri=True, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_ain"},
                          outputs={"_aout"},
                          **kwargs)
         self._overwrite = overwrite_a
+        self._getri = use_getri
 
     def validate(self, sdfg, state):
         """
