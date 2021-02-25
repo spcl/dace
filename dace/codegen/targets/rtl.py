@@ -352,6 +352,7 @@ for(int i = 0; i < {veclen}; i++){{
         if not hasattr(tasklet, "is_autorun"):
             tasklet.is_autorun = self.default_autorun
 
+        # add global struct variables
         self.frame.statestruct.append("bool autorun_active = true;")
 
         # create rtl code object (that is later written to file)
