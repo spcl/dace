@@ -46,6 +46,8 @@ jobs:
         export DACE_testing_single_cache=1
         export DACE_optimizer_interface=" "
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        git fetch --all
+        git checkout bisector
         git bisect start
         git bisect bad
         git bisect good 72db6cbc8d546b90af3b35303b12831789cd78d4
