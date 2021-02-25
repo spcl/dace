@@ -51,4 +51,4 @@ jobs:
         git bisect start
         git bisect bad
         git bisect good 72db6cbc8d546b90af3b35303b12831789cd78d4
-        git bisect run run_many.sh
+        git bisect run bash run_many.sh
