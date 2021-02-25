@@ -46,7 +46,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
             "compiler", "rtl", "verilator_enable_debug")
         self.code_objects: List[codeobject.CodeObject] = list()
         self.cpp_general_header_added: bool = False
-        self.is_autorun: bool = True
+        self.default_autorun: bool = True
         self.is_first_autorun: bool = True
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView,
@@ -348,6 +348,10 @@ for(int i = 0; i < {veclen}; i++){{
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
         inputs, outputs = self.generate_rtl_inputs_outputs(sdfg, tasklet)
 
+        # set default choice for autorun if the user hasn't actively set the value
+        if not hasattr(tasklet, "is_autorun"):
+            tasklet.is_autorun = self.default_autorun
+
         # create rtl code object (that is later written to file)
         self.code_objects.append(
             codeobject.CodeObject(
@@ -384,7 +388,7 @@ for(int i = 0; i < {veclen}; i++){{
                 name=unique_name))
 
         # add init and exit code for auto-run kernels
-        if self.is_autorun and self.is_first_autorun:
+        if tasklet.is_autorun and self.is_first_autorun:
             self.is_first_autorun = False
             function_stream.write(contents="bool autorun_active = true;\n",
                                   sdfg=sdfg,
@@ -402,7 +406,7 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
-            running_condition="autorun_active && out_ptr < num_elements" if self.is_autorun else "out_ptr < num_elements",
+            running_condition="autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"

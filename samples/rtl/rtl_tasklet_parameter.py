@@ -62,6 +62,9 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
     ''',
                             language=dace.Language.SystemVerilog)
 
+# override default autorun
+tasklet.is_autorun = False
+
 # add input/output array
 A = state.add_read('A')
 B = state.add_write('B')

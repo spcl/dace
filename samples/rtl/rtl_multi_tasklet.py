@@ -74,6 +74,10 @@ assign valid_o = (c >= 100) ? 1'b1:1'b0;
 """,
                              language=dace.Language.SystemVerilog)
 
+# override default autorun
+tasklet0.is_autorun = False
+tasklet1.is_autorun = False
+
 # add input/output array
 A = state.add_read('A')
 B_w = state.add_write('B')
