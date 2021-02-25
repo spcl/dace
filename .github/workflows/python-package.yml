@@ -5,9 +5,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, ci-fix ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, ci-fix ]
 
 jobs:
   test:
