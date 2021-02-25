@@ -249,6 +249,10 @@ class DaceProgram:
         }
         if self.argnames is None:
             self.argnames = []
+        
+        # @dace.program(auto_optimize = True, device = 'CPU')
+        self._auto_optimize = auto_optimize
+        self._device = device
 
     @property
     def name(self):
@@ -261,6 +265,8 @@ class DaceProgram:
     def compile(self, *args, strict=None):
         """ Convenience function that parses and compiles a DaCe program. """
         sdfg = parse_from_function(self, *args, strict=strict)
+        if self._auto_optimize:
+            auto_optimize(sdfg, self._device)
         return sdfg.compile()
 
     def __call__(self, *args, **kwargs):
