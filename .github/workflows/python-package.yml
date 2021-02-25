@@ -47,6 +47,7 @@ jobs:
         export DACE_optimizer_interface=" "
         export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
         cp run_many.sh secret_run_many.sh
+        chmod a+x secret_run_many.sh
         git fetch --all
         git checkout bisector
         git bisect start
