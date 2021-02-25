@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
 import re
@@ -76,11 +76,18 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             rb = pyexpr_to_symbolic(das, dim[0] or 0)
             re = pyexpr_to_symbolic(das, dim[1] or array.shape[indices[i]]) - 1
             rs = pyexpr_to_symbolic(das, dim[2] or 1)
+            if (rb < 0) == True:
+                rb += array.shape[indices[i]]
+            if (re < 0) == True:
+                re += array.shape[indices[i]]
             ndslice[i] = (rb, re, rs)
             offsets.append(i)
             idx += 1
         else:
-            ndslice[i] = pyexpr_to_symbolic(das, dim)
+            r = pyexpr_to_symbolic(das, dim)
+            if (r < 0) == True:
+                r += array.shape[indices[i]]
+            ndslice[i] = r
 
     # Extend slices to unspecified dimensions
     for i in range(len(ast_ndslice), len(array.shape)):

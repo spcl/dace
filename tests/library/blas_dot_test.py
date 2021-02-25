@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.memlet import Memlet
 from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
@@ -52,7 +52,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(dot_node,
                           result,
                           src_conn="_result",
-                          memlet=Memlet.simple(result, "0", num_accesses=-1))
+                          memlet=Memlet.simple(result, "0", num_accesses=1))
 
     if storage != dace.StorageType.Default:
 

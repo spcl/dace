@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
@@ -231,12 +231,11 @@ def emit_memlet_reference(dispatcher,
     """
     desc = sdfg.arrays[memlet.data]
     typedef = conntype.ctype
-    datadef = memlet.data
+    datadef = ptr(memlet.data, desc)
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
     ref = ''
-    pointer_name = ptr(pointer_name, desc)
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
@@ -435,17 +434,12 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    subset = copy.deepcopy(subset_in)
-
-    # Offset according to parameters
+    # Offset according to parameters, then offset according to array
     if offset is not None:
-        if isinstance(offset, subsets.Subset):
-            subset.offset(offset, False)
-        else:
-            subset.offset(subsets.Indices(offset), False)
-
-    # Then, offset according to array
-    subset.offset(subsets.Indices(d.offset), False)
+        subset = subset_in.offset_new(offset, False)
+        subset.offset(d.offset, False)
+    else:
+        subset = subset_in.offset_new(d.offset, False)
 
     # Obtain start range from offsetted subset
     indices = indices or ([0] * len(d.strides))
@@ -498,6 +492,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
 
 def cpp_ptr_expr(sdfg,
                  memlet,
+                 defined_type,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
@@ -513,7 +508,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
 
-    if isinstance(sdfg.arrays[dname], data.Scalar):
+    if defined_type == DefinedType.Scalar:
         dname = '&' + dname
 
     if offset_cppstr == '0':

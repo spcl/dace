@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
 import ast
@@ -237,6 +237,7 @@ def _elementwise(pv: 'ProgramVisitor',
                 "Expected lambda with one arg, but {} has {}".format(
                     func, len(lambda_ast.args.arrgs)))
         arg = lambda_ast.args.args[0].arg
+        astutils.ASTFindReplace({arg: '__inp'}).visit(lambda_ast.body)
         body = astutils.unparse(lambda_ast.body)
     except AttributeError:
         raise SyntaxError("Could not parse func {}".format(func))
@@ -247,8 +248,8 @@ def _elementwise(pv: 'ProgramVisitor',
     if num_elements == 1:
         inp = state.add_read(in_array)
         out = state.add_write(out_array)
-        tasklet = state.add_tasklet("_elementwise_", {arg}, {'__out'}, code)
-        state.add_edge(inp, None, tasklet, arg,
+        tasklet = state.add_tasklet("_elementwise_", {'__inp'}, {'__out'}, code)
+        state.add_edge(inp, None, tasklet, '__inp',
                        Memlet.from_array(in_array, inparr))
         state.add_edge(tasklet, '__out', out, None,
                        Memlet.from_array(out_array, outarr))
@@ -260,7 +261,7 @@ def _elementwise(pv: 'ProgramVisitor',
                 for i, n in enumerate(inparr.shape)
             },
             inputs={
-                arg:
+                '__inp':
                 Memlet.simple(
                     in_array,
                     ','.join(['__i%d' % i for i in range(len(inparr.shape))]))
@@ -644,6 +645,11 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     if cast:
         tasklet_code = tasklet_code.replace('__in1', "{}(__in1)".format(cast))
 
+    # NOTE: This is a fix for np.bool_, which is a true boolean.
+    # In this case, the invert operator must become a not operator.
+    if opcode == '~' and arr1.dtype == dace.bool_:
+        opcode = 'not'
+
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
     state.add_mapped_tasklet(
         "_%s_" % opname,
@@ -843,7 +849,8 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
     elif issubclass(nptype, np.bool_):
         return np.bool_(True)
     elif issubclass(nptype, Integral):
-        return nptype(np.iinfo(nptype).max)
+        # return nptype(np.iinfo(nptype).max)
+        return 0
     else:
         return nptype(np.finfo(nptype).resolution)
 
@@ -1578,6 +1585,11 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('Array', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -1598,6 +1610,16 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('View', op, otherclass='View')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
+    
+    @oprepo.replaces_operator('View', op, otherclass='Array')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+            op2: str):
+        return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
@@ -2688,7 +2710,33 @@ def _broadcast(
         output_indices.append(get_idx(i))
 
         not_none_dims = [d for d in dims if d is not None]
-        max_dim = max(not_none_dims)
+        # Per NumPy broadcasting rules, we need to find the largest dimension.
+        # However, `max_dim = max(not_none_dims)` does not work with symbols.
+        # Therefore, we sequentially check every not-none dimension.
+        # Symbols are assumed to be larger than constants.
+        # This will not work properly otherwise.
+        # If more than 1 (different) symbols are found, then this fails, because
+        # we cannot know which will have the greater size.
+        # NOTE: This is a compromise. NumPy broadcasting depends on knowing
+        # the exact array sizes. However, symbolic sizes are not known at this
+        # point.
+        max_dim = 0
+        for d in not_none_dims:
+            if isinstance(max_dim, Number):
+                if isinstance(d, Number):
+                    max_dim = max(max_dim, d)
+                elif symbolic.issymbolic(d):
+                    max_dim = d
+                else:
+                    raise NotImplementedError
+            elif symbolic.issymbolic(max_dim):
+                if isinstance(d, Number):
+                    pass
+                elif symbolic.issymbolic(d):
+                    if max_dim != d:
+                        raise NotImplementedError
+                else:
+                    raise NotImplementedError
 
         map_lengths[get_idx(i)] = max_dim
         for j, d in enumerate(dims):
@@ -2905,14 +2953,12 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                 nested_sdfg_outputs = dict()
                 nested_sdfg._temp_transients = sdfg._temp_transients
 
-                idx = 0
-                for arg in inputs + [where]:
+                for idx, arg in enumerate(inputs + [where]):
                     if not (isinstance(arg, str) and arg in sdfg.arrays.keys()):
                         continue
                     arg_data = sdfg.arrays[arg]
                     conn_name = nested_sdfg.temp_data_name()
                     nested_sdfg_inputs[arg] = (conn_name, input_indices[idx])
-                    idx += 1
                     if isinstance(arg_data, data.Scalar):
                         nested_sdfg.add_scalar(conn_name, arg_data.dtype)
                     elif isinstance(arg_data, data.Array):
@@ -2989,6 +3035,8 @@ def _create_subgraph(visitor: 'ProgramVisitor',
                     set([n for n, _ in nested_sdfg_outputs.values()]))
                 me, mx = state.add_map(state.label + '_map', map_indices)
                 for arg in inputs + [where]:
+                    if not (isinstance(arg, str) and arg in sdfg.arrays.keys()):
+                        continue
                     n = state.add_read(arg)
                     conn, idx = nested_sdfg_inputs[arg]
                     state.add_memlet_path(n,
@@ -3857,3 +3905,79 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
                      where=None)
 
     return outputs
+
+
+# Replacements that need ufuncs ###############################################
+# TODO: Fix by separating to different modules and importing
+
+
+@oprepo.replaces('dace.dot')
+@oprepo.replaces('numpy.dot')
+def dot(pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        op_a: str,
+        op_b: str,
+        op_out=None):
+    
+
+    # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
+    # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
+    # TODO: Add/improve validation
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    arr_a = sdfg.arrays[op_a]
+    arr_b = sdfg.arrays[op_b]
+
+    if len(arr_a.shape) == 2 and len(arr_b.shape == 2):
+        # Matrix multiplication
+        # TODO: `If op_out`, then this is not correct. We need np.matmult,
+        # but it is not implemented yet
+        return _matmult(pv, sdfg, state, op_a, op_b)
+    
+    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1] or
+            isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
+        # Case dot(N-D, 0-D), intepreted as np.multiply(a, b)
+        node = ast.Call()
+        ufunc_name = 'multiply'
+        args = [op_a, op_b]
+        if op_out:
+            args.append(op_out)
+        return ufunc_impl(pv, node, ufunc_name, sdfg, state, args)
+    
+    if len(arr_a.shape) > 2 or len(arr_b.shape) > 2:
+        raise NotImplementedError
+
+    if arr_a.shape[0] != arr_b.shape[0]:
+        raise SyntaxError()
+
+    if op_out:
+        if not isinstance(op_out, str) or not op_out in sdfg.arrays.keys():
+            raise SyntaxError()
+    else:
+        # Infer result type
+        restype, _ = _result_type([arr_a, arr_b], 'Mul')
+        op_out = sdfg.temp_data_name()
+        sdfg.add_scalar(op_out, restype, transient=True, storage=arr_a.storage)
+
+    arr_out = sdfg.arrays[op_out]
+
+    from dace.libraries.blas.nodes.dot import Dot  # Avoid import loop
+
+    acc_a = state.add_read(op_a)
+    acc_b = state.add_read(op_b)
+    acc_out = state.add_write(op_out)
+
+    tasklet = Dot('_Dot_')
+    state.add_node(tasklet)
+    state.add_edge(acc_a, None, tasklet, '_x',
+                   dace.Memlet.from_array(op_a, arr_a))
+    state.add_edge(acc_b, None, tasklet, '_y',
+                   dace.Memlet.from_array(op_b, arr_b))
+    state.add_edge(tasklet, '_result', acc_out, None,
+                   dace.Memlet.from_array(op_out, arr_out))
+
+    return op_out

@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ 
 Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
@@ -368,9 +368,10 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
+        state = sdfg.node(state_id)
         satisfied_dispatchers = [
             dispatcher for pred, dispatcher in self._node_dispatchers
-            if pred(sdfg, node)
+            if pred(sdfg, state, node)
         ]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:

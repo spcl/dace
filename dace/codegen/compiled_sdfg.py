@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to load, use, and invoke compiled SDFG libraries. """
 import ctypes
 import os
@@ -263,6 +263,12 @@ class CompiledSDFG(object):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
+                elif (isinstance(arg, int) and atype.dtype.type == np.int32
+                      and abs(arg) <= (1 << 31) - 1):
+                    pass
+                elif (isinstance(arg, int) and atype.dtype.type == np.uint32
+                      and arg >= 0 and arg <= (1 << 32) - 1):
+                    pass
                 else:
                     print(
                         'WARNING: Casting scalar argument "%s" from %s to %s' %
@@ -271,7 +277,9 @@ class CompiledSDFG(object):
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector)
-                        and atype.dtype.vtype.as_numpy_dtype() != arg.dtype):
+                        and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+                    pass
+                else:
                     print(
                         'WARNING: Passing %s array argument "%s" to a %s array'
                         % (arg.dtype, a, atype.dtype.type.__name__))
@@ -341,27 +349,48 @@ class CompiledSDFG(object):
         self._return_arrays = []
         self._return_kwarrays = {}
         for arrname, arr in sorted(self.sdfg.arrays.items()):
-            if arrname.startswith('__return'):
+            if arrname.startswith('__return') and not arr.transient:
+                if arrname in kwargs:
+                    self._return_arrays.append(kwargs[arrname])
+                    self._return_kwarrays[arrname] = kwargs[arrname]
+                    continue
+
                 if isinstance(arr, dt.Stream):
                     raise NotImplementedError('Return streams are unsupported')
-                if arr.storage in [
-                        dtypes.StorageType.GPU_Global,
-                        dtypes.StorageType.FPGA_Global
-                ]:
-                    raise NotImplementedError('Non-host return values are '
+
+                ndarray = np.ndarray
+                zeros = np.zeros
+
+                if arr.storage is dtypes.StorageType.GPU_Global:
+                    try:
+                        import cupy
+
+                        # Set allocator to GPU
+                        def ndarray(*args, buffer=None, **kwargs):
+                            if buffer is not None:
+                                buffer = buffer.data
+                            return cupy.ndarray(*args, memptr=buffer, **kwargs)
+
+                        zeros = cupy.zeros
+                    except (ImportError, ModuleNotFoundError):
+                        raise NotImplementedError('GPU return values are '
+                                                  'unsupported if cupy is not '
+                                                  'installed')
+                if arr.storage is dtypes.StorageType.FPGA_Global:
+                    raise NotImplementedError('FPGA return values are '
                                               'unsupported')
 
                 # Create an array with the properties of the SDFG array
                 self._return_arrays.append(
-                    np.ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
-                               arr.dtype.as_numpy_dtype(),
-                               buffer=np.zeros(
-                                   [symbolic.evaluate(arr.total_size, syms)],
-                                   arr.dtype.as_numpy_dtype()),
-                               strides=[
-                                   symbolic.evaluate(s, syms) * arr.dtype.bytes
-                                   for s in arr.strides
-                               ]))
+                    ndarray([symbolic.evaluate(s, syms) for s in arr.shape],
+                            arr.dtype.as_numpy_dtype(),
+                            buffer=zeros(
+                                [symbolic.evaluate(arr.total_size, syms)],
+                                arr.dtype.as_numpy_dtype()),
+                            strides=[
+                                symbolic.evaluate(s, syms) * arr.dtype.bytes
+                                for s in arr.strides
+                            ]))
                 self._return_kwarrays[arrname] = self._return_arrays[-1]
 
         # Set up return_arrays field

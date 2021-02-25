@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # Executes a bunch of small test for the Intel FPGA backend
 # These are not intended to be performance test: they just check that everything compiles

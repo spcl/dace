@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from copy import deepcopy as dcpy
 from functools import reduce
@@ -175,13 +175,13 @@ class Memlet(object):
         node = object.__new__(Memlet)
 
         # Set properties
-        node.volume = dcpy(self.volume, memo=memo)
+        node._volume = dcpy(self._volume, memo=memo)
         node._dynamic = self._dynamic
-        node.subset = dcpy(self.subset, memo=memo)
-        node.other_subset = dcpy(self.other_subset, memo=memo)
-        node.data = dcpy(self.data, memo=memo)
-        node.wcr = dcpy(self.wcr, memo=memo)
-        node.debuginfo = dcpy(self.debuginfo, memo=memo)
+        node._subset = dcpy(self._subset, memo=memo)
+        node._other_subset = dcpy(self._other_subset, memo=memo)
+        node._data = dcpy(self._data, memo=memo)
+        node._wcr = dcpy(self._wcr, memo=memo)
+        node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
         node._is_data_src = self._is_data_src

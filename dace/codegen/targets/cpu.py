@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.sdfg.state import SDFGState
 import functools
 import itertools
@@ -58,6 +58,14 @@ class CPUCodeGen(TargetCodeGenerator):
         # nested scopes
         for name, arg_type in sdfg.arglist().items():
             if isinstance(arg_type, data.Scalar):
+                # GPU global memory is only accessed via pointers
+                # TODO(later): Fix workaround somehow
+                if arg_type.storage is dtypes.StorageType.GPU_Global:
+                    self._dispatcher.defined_vars.add(
+                        name, DefinedType.Pointer,
+                        dtypes.pointer(arg_type.dtype).ctype)
+                    continue
+
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar,
                                                   arg_type.dtype.ctype)
             elif isinstance(arg_type, data.Array):
@@ -178,9 +186,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[0].src if edge.dst is node else mpath[-1].dst
-        self.allocate_array(sdfg, dfg, state_id, viewed_dnode,
-                            global_stream, declaration_stream,
-                            allocation_stream)
+        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode,
+                                           global_stream, allocation_stream)
 
         # Emit memlet as a reference and register defined variable
         atype, aname, value = cpp.emit_memlet_reference(
@@ -736,10 +743,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         redtype = operations.detect_reduction_type(memlet.wcr)
         atomic = "_atomic" if not nc else ""
+        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -1385,7 +1393,8 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data)
+            defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
             callsite_stream.write(
                 f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id,
                 src_node)

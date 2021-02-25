@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # The scope of the test is to verify channel mangling. In the
 # SDFG we have two nested SDFG that increments some streaming data by one.

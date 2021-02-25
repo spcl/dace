@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 # The scope of the test is to verify that code nested SDFGs with a unique name is generated only once
 # The nested SDFG compute vector addition on FPGA, with vectorization

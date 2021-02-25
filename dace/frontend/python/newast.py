@@ -1,4 +1,4 @@
-# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 from collections import OrderedDict
@@ -3222,7 +3222,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         **self.sdfg.symbols
                     }[arg] if isinstance(arg, str) else arg
                                    for aname, arg in args),
-                                 strict=self.strict))
+                                 strict=self.strict, save=False))
 
             else:
                 raise DaceSyntaxError(
@@ -3424,7 +3424,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add return values as additional outputs
             rets = []
             for arrname, arr in sdfg.arrays.items():
-                if arrname.startswith('__return'):
+                if arrname.startswith('__return') and not arr.transient:
                     # Add a transient to the current SDFG
                     new_arrname = '%s_ret_%d' % (sdfg.name, len(rets))
                     newarr = copy.deepcopy(arr)
@@ -3891,9 +3891,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if new_rng.ranges == full_rng.ranges:
                     return new_name
                 else:
-                    raise NotImplementedError(
-                        "Read accesses using nested for-loop symbols "
-                        "are not supported yet")
+                    new_name, _ = self.make_slice(new_name, new_rng)
+                    return new_name
 
         # Obtain array
         node_parsed = self._gettype(node.value)
