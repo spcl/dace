@@ -25,8 +25,8 @@ GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 def greedy_fuse(graph_or_subgraph: GraphViewType, 
                 validate_all: bool,
-                apply_multi_expansion: bool = False,
-                apply_stencil_tiling: bool = False,
+                apply_multi_expansion: bool = False, # run both
+                apply_stencil_tiling: bool = False, # not now yet
                 recursive: bool = False) -> None:
 
     if isinstance(graph_or_subgraph, SDFG):
