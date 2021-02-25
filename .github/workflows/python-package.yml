@@ -37,7 +37,7 @@ jobs:
 
     - name: Test dependencies
       run: |
-        papi_avail
+        papi_avail 
 
     - name: Test with pytest
       run: |
