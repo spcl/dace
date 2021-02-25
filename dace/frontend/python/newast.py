@@ -665,10 +665,11 @@ class GlobalResolver(ast.NodeTransformer):
         # TODO(later): Support more levels of modules (mod.mod2.mod3.value)
         if (isinstance(node.value, ast.Name)
                 and isinstance(node.value.ctx, ast.Load)
-                and node.value.id in self.globals):
+                and node.value.id in self.globals
+                and hasattr(self.globals[node.value.id], node.attr)):
             global_val = getattr(self.globals[node.value.id], node.attr)
             # TODO: Without this check, dace dtypes do not serialize well
-            if dtypes.isconstant(global_val):
+            if not isinstance(global_val, dtypes.typeclass):
                 newnode = self.global_value_to_node(global_val,
                                                     parent_node=node,
                                                     recurse=True)
