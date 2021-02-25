@@ -1,8 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import Memlet
+from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
 from dace.libraries.linalg import Inv
 import numpy as np
+import warnings
+
 
 n = dace.symbol("n", dace.int64)
 
@@ -66,7 +69,7 @@ def make_sdfg(implementation,
     return sdfg
 
 
-def test_inv(implementation,
+def _test_inv(implementation,
              dtype,
              id=0,
              size=4,
@@ -113,7 +116,13 @@ def test_inv(implementation,
 
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape,
                      in_subset_str, out_subset_str, overwrite)
-    inv_sdfg = sdfg.compile()
+    try:
+        inv_sdfg = sdfg.compile()
+    except (CompilerConfigurationError, CompilationError):
+        warnings.warn(
+            'Configuration/compilation failed, library missing or '
+            'misconfigured, skipping test for {}.'.format(implementation))
+        return
 
     A0 = np.zeros(in_shape, dtype=dtype)
     A0[in_subset] = generate_matrix(size, dtype)
@@ -140,44 +149,48 @@ def test_inv(implementation,
         assert not np.array_equal(A0, A1)
 
 
+def test_inv():
+    _test_inv('MKL', np.float32)
+    _test_inv('MKL', np.float64)
+    _test_inv('MKL',
+             np.float32,
+             id=1,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2])
+    _test_inv('MKL',
+             np.float64,
+             id=1,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2])
+    _test_inv('MKL',
+             np.float32,
+             id=2,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2],
+             overwrite=True)
+    _test_inv('MKL',
+             np.float64,
+             id=2,
+             in_shape=[5, 5, 5],
+             out_shape=[5, 5, 5],
+             in_offset=[1, 3, 0],
+             out_offset=[2, 0, 1],
+             in_dims=[0, 2],
+             out_dims=[1, 2],
+             overwrite=True)
+
+
 if __name__ == "__main__":
-    test_inv('MKL', np.float32)
-    test_inv('MKL', np.float64)
-    test_inv('MKL',
-             np.float32,
-             id=1,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2])
-    test_inv('MKL',
-             np.float64,
-             id=1,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2])
-    test_inv('MKL',
-             np.float32,
-             id=2,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             overwrite=True)
-    test_inv('MKL',
-             np.float64,
-             id=2,
-             in_shape=[5, 5, 5],
-             out_shape=[5, 5, 5],
-             in_offset=[1, 3, 0],
-             out_offset=[2, 0, 1],
-             in_dims=[0, 2],
-             out_dims=[1, 2],
-             overwrite=True)
+    test_inv()
