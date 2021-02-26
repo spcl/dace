@@ -393,12 +393,8 @@ for(int i = 0; i < {veclen}; i++){{
         # add init and exit code for auto-run kernels
         if tasklet.is_autorun and self.is_first_autorun:
             self.is_first_autorun = False
-            function_stream.write(contents="struct {name}_t global_params;\n\n".format(name=sdfg.name),
-                                  sdfg=sdfg,
-                                  state_id=state_id,
-                                  node_id=node)
-            sdfg.append_init_code("// start simulation of all free running kernels\n global_params.autorun_active = true;\n")
-            sdfg.append_exit_code("// stop simulation of all free running kernels\nglobal_params.autorun_active = false;\n")
+            sdfg.append_init_code("// start simulation of all free running kernels\n __state->autorun_active = true;\n")
+            sdfg.append_exit_code("// stop simulation of all free running kernels\n__state->autorun_active = false;\n")
 
         # add main cpp code to stream
         callsite_stream.write(contents=RTLCodeGen.CPP_MAIN_TEMPLATE.format(
@@ -409,7 +405,26 @@ for(int i = 0; i < {veclen}; i++){{
             vector_init=vector_init,
             internal_state_str=internal_state_str,
             internal_state_var=internal_state_var,
-            running_condition="global_params.autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
+            feed_element="""\
+    if(model->valid_i == 0 && in_ptr < num_elements {stream_condition}){{
+        {debug_feed_element}
+        {inputs}
+        model->valid_i = 1;
+    }}
+""".format(debug_feed_element="std::cout << \"feed new element\" << std::endl;"
+            if self.verilator_debug else "",
+           inputs="model->pipe_in = PIPE_IN.pop();\n" if tasklet.is_autorun else inputs,
+           stream_condition="&& !PIPE_IN.is_empty()" if tasklet.is_autorun else ""),
+            export_element="""\
+if(model->valid_o == 1 {stream_condition}){{
+    {debug_export_element}
+    {outputs}
+    model->ready_i = 1;
+}}      
+            """.format(debug_export_element="std::cout << \"export element\" << std::endl;",
+                       outputs="PIPE_OUT.push(model->pipe_in);\n" if tasklet.is_autorun else outputs,
+                       stream_condition="&& !PIPE_OUT.is_full()" if tasklet.is_autorun else ""),
+            running_condition="__state.autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"
@@ -491,18 +506,11 @@ while ({running_condition}) {{
         read_input_hs = true;
     }} 
     // feed new element
-    if(model->valid_i == 0 && in_ptr < num_elements){{
-        {debug_feed_element}
-        {inputs}
-        model->valid_i = 1;
-    }}
+    {feed_element}
 
     // export element
-    if(model->valid_o == 1){{
-        {debug_export_element}
-        {outputs}
-        model->ready_i = 1;
-    }}
+    {export_element}
+    
     // check if valid_o and ready_i have been asserted at the rising clock edge -> output write handshake
     if (model->ready_i == 1 && model->valid_o == 1){{
         write_output_hs = true;
