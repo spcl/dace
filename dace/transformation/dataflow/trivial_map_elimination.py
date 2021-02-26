@@ -63,11 +63,13 @@ class TrivialMapElimination(transformation.Transformation):
         for edge in graph.in_edges(map_exit):
             path = graph.memlet_path(edge)
             ind = path.index(edge)
+            
 
             # Add an edge directly from the source to the next destination
             # connector
-            graph.add_edge(edge.src, edge.src_conn,
-                        path[ind + 1].dst, path[ind + 1].dst_conn, edge.data)
+            if ind + 1 < len(path): # if next destination connector exists
+                graph.add_edge(edge.src, edge.src_conn,
+                            path[ind + 1].dst, path[ind + 1].dst_conn, edge.data)
         
         # Clean-up
         graph.remove_nodes_from([map_entry, map_exit])

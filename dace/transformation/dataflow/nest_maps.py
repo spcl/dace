@@ -100,19 +100,23 @@ class NestMapContent(transformation.Transformation):
 
         internal_nodes = state.all_nodes_between(map_entry, map_exit)
 
-        # detect that internal nodes contain something else from the nested sdfg and access nodes
-        already_nested = True
-        for node in internal_nodes:
-            if isinstance(node, nodes.AccessNode):
-                continue
-            if isinstance(node, nodes.NestedSDFG):
-                continue
-            already_nested = False
+        entry_access_nodes = [e.dst for e in state.out_edges(map_entry)]
+        exit_access_nodes = [e.src for e in state.in_edges(map_exit)]
 
-        if already_nested:
-            return False
+        for an in entry_access_nodes:
+            if not isinstance(an, nodes.AccessNode):
+                return False # unsupported case
 
-        return True
+        for an in exit_access_nodes:
+            if not isinstance(an, nodes.AccessNode):
+                return False # unsupported case
+
+        inner_nodes = list(set(internal_nodes) - set(entry_access_nodes) - set(exit_access_nodes))
+
+        if len(inner_nodes) != 1 or not isinstance(inner_nodes[0], nodes.NestedSDFG):
+            return True
+
+        return False
 
     @staticmethod
     def match_to_str(state: dace_state.SDFGState, candidate):
@@ -125,6 +129,14 @@ class NestMapContent(transformation.Transformation):
         state: dace_state.SDFGState = sdfg.nodes()[self.state_id]
         candidate = self.subgraph
         map_entry: nodes.MapEntry = state.nodes()[candidate[NestMapContent.map_entry]]
+        map_exit = state.exit_node(map_entry)
+
+        internal_nodes = state.all_nodes_between(map_entry, map_exit)
+
+        entry_access_nodes = [e.dst for e in state.out_edges(map_entry)]
+        exit_access_nodes = [e.src for e in state.in_edges(map_exit)]
+
+        inner_nodes = list(set(internal_nodes) - set(entry_access_nodes) - set(exit_access_nodes))
 
         nest_state_subgraph(sdfg=sdfg, state=state,
-                            subgraph=state.scope_subgraph(map_entry, include_entry=False, include_exit=False))
+                            subgraph=SubgraphView(state, inner_nodes))

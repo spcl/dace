@@ -669,6 +669,10 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         return symbol(expr)
 
     symbol_map = symbol_map or {}
+
+    int_floor = lambda a, b: a // b
+    int_ceil = lambda a, b: a // b + (1 - 0 ** (a % b))
+
     locals = {
         'min': sympy.Min,
         'max': sympy.Max,
@@ -677,6 +681,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'GtE': sympy.Ge,
         'LtE': sympy.Le,
         'NotEq': sympy.Ne,
+        'int_floor': int_floor,
+        'int_ceil': int_ceil,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

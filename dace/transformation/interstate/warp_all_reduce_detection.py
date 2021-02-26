@@ -16,37 +16,6 @@ from dace.libraries.standard.nodes import ParallelAllReduce
 
 
 def add_all_reduce_node(state: dace_state.SDFGState, wcr: str):
-    # input_name = 'in'
-    # output_name = 'out'
-    #
-    # reduction_type = operations.detect_reduction_type(wcr)
-    #
-    # if reduction_type == dtypes.ReductionType.Max:
-    #     reduction_op = 'if (new_val > out) { out = new_val; }'
-    # elif reduction_type == dtypes.ReductionType.Sum:
-    #     reduction_op = 'out += new_val;'
-    # else:
-    #     raise Exception("Unknown reduction type")
-    #
-    # code = textwrap.dedent("""
-    #         out = in[threadIdx.x];
-    #         # pragma unroll
-    #         for (int i = 1; i < 32; i = i * 2) {{
-    #             auto new_val = __shfl_xor_sync(0xffffffff, out, i);
-    #             {reduction_op}
-    #         }}
-    #     """.format(reduction_op=reduction_op))
-    #
-    # # TODO: remove and reimplement as library node, for now this stub is used for debugging
-    # code = "out = in;"
-    #
-    # warp_all_reduce_tasklet: nodes.Tasklet = state.add_tasklet(
-    #     name='warp_all_reduce',
-    #     inputs={input_name},
-    #     outputs={output_name},
-    #     code=code,
-    #     language=dtypes.Language.CPP)
-
     all_reduce_node = ParallelAllReduce(name='parallel_all_reduce', wcr=wcr)
 
     return all_reduce_node
@@ -96,8 +65,10 @@ def replace_access_nodes(state: dace_sdfg, old_name: str, new_name: str):
     for n in old_access_nodes:
         new_node = state.add_access(new_name)
         for e in state.in_edges(n):
-            state.add_edge(e.src, e.src_conn, new_node, None, Memlet(data=new_name, subset=e.data.subset))
+            new_data = None if e.data.is_empty() else new_name
+            state.add_edge(e.src, e.src_conn, new_node, None, Memlet(data=new_data, subset=e.data.subset))
         for e in state.out_edges(n):
+            new_data = None if e.data.is_empty() else new_name
             state.add_edge(new_node, None, e.dst, e.dst_conn, Memlet(data=new_name, subset=e.data.subset))
         state.remove_node(n)
 
@@ -217,3 +188,78 @@ class WarpAllReduceDetection(transformation.Transformation):
 
         # remove old state
         sdfg.remove_node(accumulate_state)
+
+# theoretically it should go to single state (dataflow) transformations
+@registry.autoregister_params(singlestate=True)
+class WarpAllReduceDetectionNoTasklet(transformation.Transformation):
+    """
+    Works for patterns AccessNode --(WCR)-> AccessNode
+    """
+
+    src_access = transformation.PatternNode(nodes.AccessNode)
+    dst_access = transformation.PatternNode(nodes.AccessNode)
+
+    @staticmethod
+    def expressions():
+        return [
+            utils.node_path_graph(
+                WarpAllReduceDetectionNoTasklet.src_access,
+                WarpAllReduceDetectionNoTasklet.dst_access,
+            )
+        ]
+
+    @staticmethod
+    def can_be_applied(state: dace_sdfg.SDFGState,
+                       candidate,
+                       expr_index,
+                       sdfg: dace_sdfg.SDFG,
+                       strict=False):
+        src_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetectionNoTasklet.src_access]]
+        dst_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetectionNoTasklet.dst_access]]
+
+        edges = state.edges_between(src_access, dst_access)
+        if len(edges) != 1:
+            return False
+
+        if not edges[0].data.wcr:
+            return False
+
+        if state.in_degree(src_access) == 0:
+            return False
+
+        if state.out_degree(dst_access) > 0:
+            return False
+
+        return True
+
+    def apply(self, sdfg: dace_sdfg.SDFG):
+        state = sdfg.nodes()[self.state_id]
+
+        candidate = self.subgraph
+        src_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetectionNoTasklet.src_access]]
+        dst_access: nodes.AccessNode = state.nodes()[candidate[WarpAllReduceDetectionNoTasklet.dst_access]]
+
+        wcr_edge = state.edges_between(src_access, dst_access)[0]
+
+        # create new state for WCR
+        new_state = sdfg.add_state()
+        new_src = new_state.add_access(src_access.data)
+        new_dst = new_state.add_access(dst_access.data)
+
+        tasklet: nodes.Tasklet = new_state.add_tasklet(name='id_tasklet', inputs={'a'}, outputs={'b'}, code='b = a')
+        new_state.add_edge(new_src, None, tasklet, 'a', Memlet(data=src_access.data, subset=wcr_edge.data.subset))
+        new_state.add_edge(tasklet, 'b', new_dst, None, Memlet(data=dst_access.data, subset=wcr_edge.data.subset, wcr=wcr_edge.data.wcr))
+
+        # remove nodes from existing state
+        state.remove_node(dst_access)
+
+        # connect new state to the graph
+        old_interstate_edges = sdfg.out_edges(state)
+        for edge in old_interstate_edges:
+            sdfg.add_edge(new_state, edge.dst, dace_sdfg.InterstateEdge())
+            sdfg.remove_edge(edge)
+
+        sdfg.add_edge(state, new_state, dace_sdfg.InterstateEdge())
+
+        # now apply transformation to new state
+        WarpAllReduceDetection.apply_to(sdfg, accumulate_state=new_state)

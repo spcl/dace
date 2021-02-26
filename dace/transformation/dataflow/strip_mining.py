@@ -266,6 +266,10 @@ class StripMining(transformation.Transformation):
                 dimsym + tile_size - 1)
         td_step_new = td_step
 
+        td_from_new = sympy.simplify(td_from_new)
+        td_to_new = sympy.simplify(td_to_new)
+        td_step_new = sympy.simplify(td_step_new)
+
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
     def _create_ceil_range(self, sdfg: SDFG, graph: SDFGState,

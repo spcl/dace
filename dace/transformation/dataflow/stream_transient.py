@@ -20,6 +20,7 @@ from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.nodes import NestedSDFG
 from dace.data import Array
+from dace.frontend.operations import detect_reduction_type
 
 
 def calc_set_image_index(map_idx, map_set, array_idx):
@@ -220,6 +221,14 @@ class AccumulateTransient(transformation.Transformation):
                          for e in graph.edges_between(map_exit, outer_map_exit)
                          if e.data.wcr is not None)
 
+        # get edge corresponding to wcr
+        target_edge = None
+        for e in graph.edges_between(map_exit, outer_map_exit):
+            if e.data.data == array:
+                target_edge = e
+
+        assert target_edge
+
         # Avoid import loop
         from dace.transformation.dataflow.local_storage import OutLocalStorage
 
@@ -232,9 +241,15 @@ class AccumulateTransient(transformation.Transformation):
             node_b=outer_map_exit)
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize '
-                          'newly-created transient!')
-            return
+            reduction_type = detect_reduction_type(target_edge.data.wcr)
+            if reduction_type == dace.dtypes.ReductionType.Max:
+                identity = -1e9
+            elif reduction_type == dace.dtypes.ReductionType.Sum:
+                identity = 0
+            else:
+                raise Exception("Unknown WCR type")
+        else:
+            identity = self.identity
 
         sdfg_state: SDFGState = sdfg.node(self.state_id)
 
@@ -260,7 +275,7 @@ class AccumulateTransient(transformation.Transformation):
                 for i, d in enumerate(temp_array.shape)
             },
             inputs={},
-            code='out = %s' % self.identity,
+            code='out = %s' % identity,
             outputs={
                 'out':
                 dace.Memlet.simple(data=data_node.data,
