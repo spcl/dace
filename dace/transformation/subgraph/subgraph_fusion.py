@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2020 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion
 """
 import dace
@@ -46,7 +46,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     debug = Property(desc="Show debug info", dtype=bool, default=False)
 
     transient_allocation = Property(
-        choices=dtypes.StorageType,
         desc="Storage Location to push transients to that are "
         "fully contained within the subgraph.",
         dtype=dtypes.StorageType,
@@ -54,7 +53,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
                                   "keeps schedule.",
-                                  choices=dtypes.ScheduleType,
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Default,
                                   allow_none=True)
@@ -445,14 +443,37 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         '''
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg, nsdfg, name, nname):
+    def adjust_arrays_nsdfg(self, sdfg, nsdfg, name, nname, memlet):
         '''
         DFS to replace strides and volumes of data that has adjacent
         nested SDFGs to its access nodes. Needed in a post-processing
         step during fusion.
         '''
-        nsdfg.data(nname).strides = dcpy(sdfg.data(name).strides)
-        nsdfg.data(nname).total_size = dcpy(sdfg.data(name).total_size)
+        # check whether array needs to change 
+        if len(sdfg.data(name).shape) != len(nsdfg.data(nname).shape):
+            subset_copy = dcpy(memlet.subset)
+            non_ones = subset_copy.squeeze()
+            strides = []
+            total_size = 1
+
+            if non_ones:
+                strides = []
+                total_size = 1
+                for (i, (sh, st)) in enumerate(zip(sdfg.data(name).shape, sdfg.data(name).strides)):
+                    if i in non_ones:
+                        strides.append(st)
+                        total_size *= sh 
+            else:
+                strides = [1]
+                total_size = 1
+                
+            nsdfg.data(nname).strides = tuple(strides)
+            nsdfg.data(nname).total_size = total_size 
+        
+        else:
+            nsdfg.data(nname).strides = sdfg.data(name).strides 
+            nsdfg.data(nname).total_size = sdfg.data(name).total_size
+
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
             for nnode in ngraph.nodes():
@@ -463,10 +484,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         for te in ngraph.memlet_tree(e):
                             if isinstance(te.dst, nodes.NestedSDFG):
                                 self.adjust_arrays_nsdfg(
-                                    nsdfg, te.dst.sdfg, nname, te.dst_conn)
+                                    nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data)
                             if isinstance(te.src, nodes.NestedSDFG):
                                 self.adjust_arrays_nsdfg(
-                                    nsdfg, te.src.sdfg, nname, te.src_conn)
+                                    nsdfg, te.src.sdfg, nname, te.src_conn, te.data)
 
     def prepare_intermediate_nodes(self,
                                    sdfg,
@@ -750,11 +771,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                         e_inner = graph.add_edge(dst, None, global_map_exit,
                                                  in_conn, inner_memlet)
-                        mm_outer = propagate_memlet(graph, inner_memlet, global_map_entry, \
-                                                    union_inner_edges = False)
-
+                        #mm_outer = propagate_memlet(graph, inner_memlet, global_map_entry, \
+                        #                            union_inner_edges = False)
+                        outer_memlet = dcpy(out_edge.data)
                         e_outer = graph.add_edge(global_map_exit, out_conn,
-                                                 dst_transient, None, mm_outer)
+                                                 dst_transient, None, outer_memlet)
 
                         # remove edge from dst to dst_transient that was created
                         # in intermediate preparation.
@@ -799,6 +820,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # all connected edges will be finally removed as well
             graph.remove_node(map_entry)
             graph.remove_node(map_exit)
+
+        #_propagate_node(graph, global_map_entry)
+        #_propagate_node(graph, global_map_exit)
 
         # create a mapping from data arrays to offsets
         # for later memlet adjustments later
@@ -915,7 +939,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         nsdfg = iedge.src.sdfg
                         nested_data_name = edge.src_conn
                         self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data,
-                                                 nested_data_name)
+                                                 nested_data_name, iedge.data)
 
                 for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
@@ -928,7 +952,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             nsdfg = edge.dst.sdfg
                             nested_data_name = edge.dst_conn
                             self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data,
-                                                     nested_data_name)
+                                                     nested_data_name, edge.data)
 
                 # if in_edges has several entries:
                 # put other_subset into out_edges for correctness
