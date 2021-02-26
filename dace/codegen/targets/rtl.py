@@ -413,8 +413,8 @@ for(int i = 0; i < {veclen}; i++){{
     }}
 """.format(debug_feed_element="std::cout << \"feed new element\" << std::endl;"
             if self.verilator_debug else "",
-           inputs="model->pipe_in = PIPE_IN.pop();\n" if tasklet.is_autorun else inputs,
-           stream_condition="&& !PIPE_IN.is_empty()" if tasklet.is_autorun else ""),
+           inputs="\n".join(["model->{name} = {name}.pop();".format(name=x) for x in tasklet.in_connectors]) if tasklet.is_autorun else inputs,
+           stream_condition="&& " + " && ".join(["!{}.is_empty()".format(x) for x in tasklet.in_connectors]) if tasklet.is_autorun else ""),
             export_element="""\
 if(model->valid_o == 1 {stream_condition}){{
     {debug_export_element}
@@ -422,8 +422,8 @@ if(model->valid_o == 1 {stream_condition}){{
     model->ready_i = 1;
 }}      
             """.format(debug_export_element="std::cout << \"export element\" << std::endl;",
-                       outputs="PIPE_OUT.push(model->pipe_in);\n" if tasklet.is_autorun else outputs,
-                       stream_condition="&& !PIPE_OUT.is_full()" if tasklet.is_autorun else ""),
+                       outputs="\n".join(["{name}.push(model->{name});".format(name=x) for x in tasklet.out_connectors]) if tasklet.is_autorun else outputs,
+                       stream_condition="&& " + " && ".join(["!{}.is_full()".format(x) for x in tasklet.out_connectors]) if tasklet.is_autorun else ""),
             running_condition="__state.autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
@@ -431,12 +431,12 @@ if(model->valid_o == 1 {stream_condition}){{
             if self.verilator_debug else "",
             debug_export_element="std::cout << \"export element\" << std::endl;"
             if self.verilator_debug else "",
-            debug_internal_state="""
+            debug_internal_state="""\
 // report internal state 
 VL_PRINTF("[t=%lu] clk_i=%u rst_i=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n", main_time, model->clk_i, model->rst_i, model->valid_i, model->ready_i, model->valid_o, model->ready_o);
 VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
 std::cout << std::flush;
-""".format(internal_state_str=internal_state_str,
+""".format(internal_state_str=internal_state_str if self.verilator_debug else "",
            internal_state_var=internal_state_var)
             if self.verilator_debug else "",
             debug_read_input_hs=
