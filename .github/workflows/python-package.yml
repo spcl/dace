@@ -56,6 +56,32 @@ jobs:
         git checkout 38fb56d12b59aa8dfe8bb1ff0068e29c5c75efc9
         /tmp/bisect.sh
 
+    - name: Sanity check 2
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_single_cache=1
+        export DACE_optimizer_interface=" "
+        export DACE_optimizer_automatic_strict_transformations=${{ matrix.strict-xforms }}
+        cp tests/library/gemmz_test.py /tmp/gemmz_test.py
+        cp tests/reloadable_libz_test.py /tmp/reloadable_libz_test.py
+        cp bisect.sh /tmp/bisect.sh
+        chmod a+x /tmp/bisect.sh
+        git fetch --all
+        
+        git checkout 6ac868e321d8344eb8bb161e4cdaf5b1ee51aedc
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+        pytest --cov-report=xml --cov=dace --tb=short tests/reloadable_lib_test.py
+
+
     - name: Bisect
       run: |
         export NOSTATUSBAR=1
