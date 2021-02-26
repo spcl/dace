@@ -1,7 +1,6 @@
 #!/bin/bash
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
-cp /tmp/reloadable_libz_test.py tests/reloadable_libz_test.py
 cp /tmp/gemmz_test.py tests/library/gemmz_test.py
 
 for i in `seq 1 10`; do
