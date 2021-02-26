@@ -243,9 +243,9 @@ class ModuleResolver(ast.NodeTransformer):
 _DISALLOWED_STMTS = [
     'Global', 'Delete', 'Import', 'ImportFrom', 'Assert', 'Pass', 'Exec',
     'Print', 'Nonlocal', 'Yield', 'YieldFrom', 'Raise', 'Try', 'TryExcept',
-    'TryFinally', 'ExceptHandler', 'Starred', 'Ellipsis', 'ClassDef',
-    'AsyncFor', 'Await', 'Bytes', 'Set', 'Dict', 'ListComp', 'GeneratorExp',
-    'SetComp', 'DictComp', 'comprehension'
+    'TryFinally', 'ExceptHandler', 'Starred', 'ClassDef', 'AsyncFor', 'Await',
+    'Bytes', 'Set', 'Dict', 'ListComp', 'GeneratorExp', 'SetComp', 'DictComp',
+    'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -601,7 +601,7 @@ class GlobalResolver(ast.NodeTransformer):
 
     def global_value_to_node(self, value, parent_node, recurse=False):
         # if recurse is false, we don't allow recursion into lists
-        # this should not happen anyway; the globals dict should only contain 
+        # this should not happen anyway; the globals dict should only contain
         # single "level" lists
         if not recurse and isinstance(value, (list, tuple)):
             # bail after more than one level of lists
@@ -1177,9 +1177,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit(self, node: ast.AST):
         """Visit a node."""
-        self.current_lineinfo = dtypes.DebugInfo(node.lineno, node.col_offset,
-                                                 node.lineno, node.col_offset,
-                                                 self.filename)
+        if hasattr(node, 'lineno'):
+            self.current_lineinfo = dtypes.DebugInfo(node.lineno,
+                                                     node.col_offset,
+                                                     node.lineno,
+                                                     node.col_offset,
+                                                     self.filename)
         return super().visit(node)
 
     def parse_program(self, program: ast.FunctionDef, is_tasklet: bool = False):
@@ -3954,6 +3957,9 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node,
                                   'Type "%s" cannot be sliced' % arrtype)
 
+        # Visit slice contents
+        node.slice = self.visit(node.slice)
+
         # Try to construct memlet from subscript
         # expr: MemletExpr = ParseMemlet(self, self.defined, node)
         # TODO: This needs to be formalized better
@@ -3976,7 +3982,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                             None, memlet, tmp, self)
         else:
             other_subset = copy.deepcopy(expr.subset)
-            
+
             # Make new axes and squeeze for scalar subsets (as per numpy behavior)
             # For example: A[0, np.newaxis, 5:7] results in a 1x2 ndarray
             new_axes = []
@@ -3997,6 +4003,45 @@ class ProgramVisitor(ExtNodeVisitor):
                               wcr_str=expr.wcr,
                               other_subset_str=other_subset))
             return tmp
+
+    def visit_Index(self, node: ast.Index) -> Any:
+        result = self.visit(node.value)
+        newnode = None
+        if result is None:
+            return node
+        if isinstance(result, ast.AST):
+            newnode = result
+        elif isinstance(result, Number):
+            # Compatibility check since Python changed their AST nodes
+            if sys.version_info >= (3, 8):
+                newnode = ast.Constant(value=result, kind='')
+            else:
+                newnode = ast.Num(n=result)
+        else:
+            newnode = ast.Name(id=result)
+
+        node.value = ast.copy_location(newnode, node.value)
+        return node
+
+    def visit_ExtSlice(self, node: ast.ExtSlice) -> Any:
+        for i, dim in enumerate(node.dims):
+            result = self.visit(dim)
+            newnode = None
+            if result is None:
+                continue
+            if isinstance(result, ast.AST):
+                newnode = result
+            elif isinstance(result, Number):
+                # Compatibility check since Python changed their AST nodes
+                if sys.version_info >= (3, 8):
+                    newnode = ast.Constant(value=result, kind='')
+                else:
+                    newnode = ast.Num(n=result)
+            else:
+                newnode = ast.Name(id=result)
+            node.dims[i] = ast.copy_location(newnode, dim)
+
+        return node
 
     def make_slice(self, arrname: str, rng: subsets.Range):
 

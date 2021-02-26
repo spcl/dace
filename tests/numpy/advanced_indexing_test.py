@@ -41,11 +41,12 @@ def test_ellipsis():
     res = indexing_test(A)
     assert np.allclose(A[1:5, ..., 0], res)
 
+
 @pytest.mark.skip
 def test_aug_implicit():
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
-        A[:,1:5][:,0:2] += 5
+        A[:, 1:5][:, 0:2] += 5
 
     A = np.random.rand(5, 5, 5, 5, 5)
     regression = np.copy(A)
@@ -65,6 +66,7 @@ def test_ellipsis_aug():
     regression[1:5, ..., 0] += 5
     indexing_test(A)
     assert np.allclose(A, regression)
+
 
 def test_newaxis():
     @dace.program
