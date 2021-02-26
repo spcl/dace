@@ -78,6 +78,18 @@ class FIFO {
   void SetName(std::string const &str) {
     stream_.set_name(str.c_str());
   }
+#else
+  void SetName(std::string const &) {}
+#endif
+
+#ifndef DACE_SYNTHESIS
+  bool is_empty() const {
+    return stream_.empty(); 
+  }
+
+  bool is_full() const {
+    return stream_.full(); 
+  }
 #endif
 
  private:

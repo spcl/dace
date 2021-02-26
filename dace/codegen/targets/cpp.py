@@ -493,6 +493,7 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
 
 def cpp_ptr_expr(sdfg,
                  memlet,
+                 defined_type,
                  offset=None,
                  relative_offset=True,
                  use_other_subset=False,
@@ -508,7 +509,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     dname = ptr(memlet.data, desc)
 
-    if isinstance(sdfg.arrays[dname], data.Scalar):
+    if defined_type == DefinedType.Scalar:
         dname = '&' + dname
 
     if offset_cppstr == '0':

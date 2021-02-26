@@ -458,12 +458,23 @@ class InlineSDFG(transformation.Transformation):
         ]
         for edge in removed_in_edges:
             # Find first access node that refers to this edge
-            node = next(n for n in order if n.data == edge.data.data)
+            try:
+                node = next(n for n in order if n.data == edge.data.data)
+            except StopIteration:
+                raise NameError(f'Access node with data "{n.data}" not found in'
+                                f' nested SDFG "{nsdfg.name}" while inlining '
+                                '(reconnecting inputs)')
             state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn,
                            edge.data)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
-            node = next(n for n in reversed(order) if n.data == edge.data.data)
+            try:
+                node = next(n for n in reversed(order)
+                            if n.data == edge.data.data)
+            except StopIteration:
+                raise NameError(f'Access node with data "{n.data}" not found in'
+                                f' nested SDFG "{nsdfg.name}" while inlining '
+                                '(reconnecting outputs)')
             state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn,
                            edge.data)
 
