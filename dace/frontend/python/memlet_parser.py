@@ -140,6 +140,10 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             ndslice[idx] = (0, array.shape[idx] - 1, 1)
             arrdims[indices[idx]] = dim.id
             idx += 1
+        elif (isinstance(dim, ast.Name) and dim.id in das
+              and isinstance(das[dim.id], data.Scalar)):
+            ndslice[idx] = (dim.id, dim.id, 1)
+            idx += 1
         else:
             r = pyexpr_to_symbolic(das, dim)
             if (r < 0) == True:
