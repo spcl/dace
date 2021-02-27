@@ -97,7 +97,8 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             offsets.append(idx)
             idx += 1
         elif (isinstance(dim, ast.Ellipsis)
-              or isinstance(dim, ast.Constant) and dim.value is Ellipsis):
+              or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
+              or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
             if has_ellipsis:
                 raise IndexError(
                     'an index can only have a single ellipsis ("...")')
