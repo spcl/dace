@@ -812,7 +812,7 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
         else:
             return '(' + repstr(sstr) + ')'
     except (AttributeError, TypeError, ValueError):
-        sstr = DaceSympyPrinter().doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
         return '(' + repstr(sstr) + ')'
 
 
