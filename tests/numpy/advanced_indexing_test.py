@@ -90,6 +90,40 @@ def test_index_intarr_1d():
     assert np.allclose(A[indices], res)
 
 
+def test_index_intarr_1d_literal():
+    @dace.program
+    def indexing_test(A: dace.float64[20]):
+        return A[[1, 10, 15]]
+
+    A = np.random.rand(20)
+    indices = [1, 10, 15]
+    res = indexing_test(A, indices)
+    assert np.allclose(A[indices], res)
+
+
+def test_index_intarr_1d_constant():
+    indices = [1, 10, 15]
+
+    @dace.program
+    def indexing_test(A: dace.float64[20]):
+        return A[indices]
+
+    A = np.random.rand(20)
+    res = indexing_test(A, indices)
+    assert np.allclose(A[indices], res)
+
+
+def test_index_intarr_1d_multi():
+    @dace.program
+    def indexing_test(A: dace.float64[20, 10, 30], indices: dace.int32[3]):
+        return A[indices, 2:7:2, [15, 10, 1]]
+
+    A = np.random.rand(20, 10, 30)
+    indices = [1, 10, 15]
+    res = indexing_test(A, indices)
+    assert np.allclose(A[indices, 2:7:2, [15, 10, 1]], res)
+
+
 def test_index_intarr_nd():
     @dace.program
     def indexing_test(A: dace.float64[4, 3], rows: dace.int64[2, 2],
@@ -129,5 +163,8 @@ if __name__ == '__main__':
     # test_ellipsis_aug() # Skip due to duplicate make_slice
     test_newaxis()
     test_index_intarr_1d()
+    test_index_intarr_1d_literal()
+    test_index_intarr_1d_constant()
+    test_index_intarr_1d_multi()
     test_index_intarr_nd()
     test_index_boolarr_rhs()

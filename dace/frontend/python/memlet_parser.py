@@ -110,6 +110,11 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
               and dim.value is None):
             new_axes.append(idx)
             # NOTE: Do not increment idx here
+        elif isinstance(dim, ast.Name) and isinstance(dim.id, (list, tuple)):
+            # List/tuple literal
+            ndslice[idx] = (0, array.shape[idx] - 1, 1)
+            arrdims[indices[idx]] = dim.id
+            idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
               and isinstance(das[dim.id], data.Array)):
             # Accessing an array with another

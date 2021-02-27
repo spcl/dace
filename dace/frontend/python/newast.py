@@ -3971,7 +3971,8 @@ class ProgramVisitor(ExtNodeVisitor):
         has_array_indirection = False
         for dim, arrname in expr.arrdims.items():
             # Boolean arrays only allowed as lhs
-            if self.sdfg.arrays[arrname].dtype == dtypes.bool:
+            if (isinstance(arrname, str)
+                    and self.sdfg.arrays[arrname].dtype == dtypes.bool):
                 raise IndexError('Boolean array indexing is only supported for '
                                  'assignment targets (e.g., "A[A > 5] += 1")')
             has_array_indirection = True
@@ -4087,15 +4088,32 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Create output shape dimensions based on the sizes of the arrays
         output_shape = None
-        for arrname in expr.arrdims.values():
-            desc = self.sdfg.arrays[arrname]
-            if output_shape is not None and tuple(desc.shape) != output_shape:
+        constant_indices: Dict[int, str] = {}
+        for i, arrname in expr.arrdims.items():
+            if isinstance(arrname, str):  # Array or constant
+                if arrname in self.sdfg.arrays:
+                    desc = self.sdfg.arrays[arrname]
+                elif arrname in self.sdfg.constants:
+                    desc = self.sdfg.constants[arrname]
+                    constant_indices[i] = arrname
+                else:
+                    raise NameError(f'Array "{arrname}" used in indexing '
+                                    f'"{aname}" not found')
+                shape = desc.shape
+            else:  # Literal list or tuple, add as constant and use shape
+                carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
+                cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
+                self.sdfg.add_constant(cname, carr)
+                constant_indices[i] = cname
+                shape = carr.shape
+
+            if output_shape is not None and tuple(shape) != output_shape:
                 raise IndexError(
                     f'Mismatch in array index shapes in access of '
-                    f'"{aname}": {arrname} (shape {desc.shape}) '
+                    f'"{aname}": {arrname} (shape {shape}) '
                     f'does not match existing shape {output_shape}')
             elif output_shape is None:
-                output_shape = tuple(desc.shape)
+                output_shape = tuple(shape)
 
         # Check subset shapes for matching the array shapes
         input_index = []
@@ -4108,7 +4126,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise IndexError('Combining multidimensional array indices and '
                                  'numeric subsets is unsupported (array '
                                  f'"{aname}").')
-            if tuple(elem) != output_shape:
+            if (elem, ) != output_shape:
                 raise IndexError(
                     f'Mismatch in array index shapes in access of '
                     f'"{aname}": Subset {expr.subset[i]} '
@@ -4133,10 +4151,15 @@ class ProgramVisitor(ExtNodeVisitor):
                                debuginfo=self.current_lineinfo)
 
         # Make indirection tasklet for array-index dimensions
-        access_str = ', '.join([f'__inp{i}' for i in expr.arrdims.keys()])
+        array_indices = set(expr.arrdims.keys()) - set(constant_indices.keys())
+        output_str = ', '.join(ind for ind, _ in maprange)
+        access_str = ', '.join([
+            f'__inp{i}' if i in array_indices else f'{cname}[{output_str}]'
+            for i in expr.arrdims.keys()
+        ])
         t = state.add_tasklet('indirection',
                               {'__arr'} | set(f'__inp{i}'
-                                              for i in expr.arrdims.keys()),
+                                              for i in array_indices),
                               {'__out'}, f'__out = __arr[{access_str}]')
 
         # Offset input memlet according to offset and stride if fixed, or
@@ -4148,23 +4171,24 @@ class ProgramVisitor(ExtNodeVisitor):
                             Memlet(data=aname, subset=input_subset, volume=1),
                             internal_connector='__arr')
         # Add array-index memlets
-        for dim, arrname in expr.arrdims.items():
+        for dim in array_indices:
+            arrname = expr.arrdims[dim]
             arrnode = state.add_read(arrname)
-            state.add_edge_pair(
-                me, t, arrnode,
-                Memlet(data=arrname,
-                       subset=subsets.Range([(ind, ind, 1)
-                                             for ind, _ in maprange])),
-                internal_connector=f'__inp{dim}')
+            state.add_edge_pair(me,
+                                t,
+                                arrnode,
+                                Memlet(data=arrname,
+                                       subset=subsets.Range([
+                                           (ind, ind, 1) for ind, _ in maprange
+                                       ])),
+                                internal_connector=f'__inp{dim}')
 
         # Output matches the output shape exactly
+        output_index = subsets.Range([(ind, ind, 1) for ind, _ in maprange])
         state.add_edge_pair(mx,
                             t,
                             wnode,
-                            Memlet(data=outname,
-                                   subset=subsets.Range([
-                                       (ind, ind, 1) for ind, _ in maprange
-                                   ])),
+                            Memlet(data=outname, subset=output_index),
                             external_memlet=Memlet(data=outname),
                             internal_connector='__out')
 
