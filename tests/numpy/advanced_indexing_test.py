@@ -21,7 +21,6 @@ def test_flat():
     assert np.allclose(A.flat, res)
 
 
-@pytest.mark.skip
 def test_flat_noncontiguous():
     @dace.program
     def indexing_test(A):
@@ -204,7 +203,7 @@ def test_index_boolarr_inline():
 
 if __name__ == '__main__':
     test_flat()
-    # test_flat_noncontiguous() # Skip due to broken strided copy
+    test_flat_noncontiguous()
     test_ellipsis()
     test_aug_implicit()
     test_ellipsis_aug()
