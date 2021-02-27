@@ -121,7 +121,8 @@ def test_index_intarr_1d_multi():
     A = np.random.rand(20, 10, 30)
     indices = [1, 10, 15]
     res = indexing_test(A, indices)
-    assert np.allclose(A[indices, 2:7:2, [15, 10, 1]], res)
+    # FIXME: NumPy behavior is unclear in this case
+    assert np.allclose(np.diag(A[indices, 2:7:2, [15, 10, 1]]), res)
 
 
 def test_index_intarr_nd():
