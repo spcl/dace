@@ -42,7 +42,6 @@ def test_ellipsis():
     assert np.allclose(A[1:5, ..., 0], res)
 
 
-@pytest.mark.skip
 def test_aug_implicit():
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
@@ -55,7 +54,6 @@ def test_aug_implicit():
     assert np.allclose(A, regression)
 
 
-@pytest.mark.skip
 def test_ellipsis_aug():
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
@@ -156,12 +154,60 @@ def test_index_boolarr_rhs():
         assert np.allclose(regression, res)
 
 
+def test_index_multiboolarr():
+    @dace.program
+    def indexing_test(A: dace.float64[20, 20], B: dace.bool[20]):
+        A[B, B] = 2
+
+    A = np.ndarray((20, 20), dtype=np.float64)
+    for i in range(20):
+        A[i, :] = np.arange(0, 20)
+    B = A[:, 1] > 0
+
+    # Advanced indexing with multiple boolean arrays should be disallowed
+    with pytest.raises(IndexError):
+        indexing_test(A, B)
+
+
+def test_index_boolarr_fixed():
+    @dace.program
+    def indexing_test(A: dace.float64[20, 30], barr: dace.bool[20, 30]):
+        A[barr] += 5
+
+    A = np.ndarray((20, 30), dtype=np.float64)
+    for i in range(20):
+        A[i, :] = np.arange(0, 30)
+    barr = A > 15
+    regression = np.copy(A)
+    regression[barr] += 5
+
+    indexing_test(A, barr)
+
+    assert np.allclose(regression, A)
+
+
+def test_index_boolarr_inline():
+    @dace.program
+    def indexing_test(A: dace.float64[20, 30]):
+        A[A > 15] = 2
+
+    A = np.ndarray((20, 30), dtype=np.float64)
+    for i in range(20):
+        A[i, :] = np.arange(0, 30)
+    regression = np.copy(A)
+    regression[A > 15] = 2
+
+    indexing_test(A)
+
+    assert np.allclose(regression, A)
+
+
 if __name__ == '__main__':
     test_flat()
     # test_flat_noncontiguous() # Skip due to broken strided copy
     test_ellipsis()
-    # test_aug_implicit() # Skip due to duplicate make_slice
-    # test_ellipsis_aug() # Skip due to duplicate make_slice
+    test_aug_implicit()
+    test_ellipsis_aug()
     test_newaxis()
     test_index_intarr_1d()
     test_index_intarr_1d_literal()
@@ -169,3 +215,6 @@ if __name__ == '__main__':
     test_index_intarr_1d_multi()
     test_index_intarr_nd()
     test_index_boolarr_rhs()
+    test_index_multiboolarr()
+    test_index_boolarr_fixed()
+    test_index_boolarr_inline()

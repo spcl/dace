@@ -2465,7 +2465,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         node: Union[ast.Assign, ast.AugAssign],
                         target: Union[str, Tuple[str, subsets.Range]],
                         operand: Union[str, Tuple[str, subsets.Range]],
-                        op: str = None):
+                        op: Optional[str] = None,
+                        boolarr: Optional[str] = None):
         # TODO: Refactor these if/else blocks. Maybe
         # the subset should never be None?
         if isinstance(target, tuple):
@@ -2497,6 +2498,23 @@ class ProgramVisitor(ExtNodeVisitor):
                                              self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
 
+        tasklet_code = ''
+        input_memlets = {}
+        if target_subset.num_elements() != 1:
+            target_index = ','.join(
+                ['__i%d' % i for i in range(len(target_subset))])
+        else:
+            target_index = '0'
+
+        # Handle boolean array access
+        if boolarr is not None:
+            if boolarr in self.sdfg.arrays:  # Array
+                input_memlets['__in_cond'] = Memlet(
+                    f'{boolarr}[{target_index}]')
+                tasklet_code += 'if __in_cond:\n    '
+            else:  # Constant
+                tasklet_code += f'if {boolarr}[{target_index}]:\n    '
+
         state = self._add_state("assign_{l}_{c}".format(l=node.lineno,
                                                         c=node.col_offset))
 
@@ -2513,20 +2531,28 @@ class ProgramVisitor(ExtNodeVisitor):
                         ])))
                     out_memlet = Memlet("{a}[{s}]".format(
                         a=target_name,
-                        s=','.join(
-                            ['__i%d' % i for i in range(len(target_subset))])))
+                        s=target_index))
                     if op:
                         out_memlet.wcr = LambdaProperty.from_string(
                             'lambda x, y: x {} y'.format(op))
+
+                    if boolarr is not None:
+                        inp_memlet.dynamic = True
+                        out_memlet.dynamic = True
+
+                    tasklet_code += '__out = __inp'
                     state.add_mapped_tasklet(state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(target_subset)
-                    }, {'__inp': inp_memlet},
-                                             '__out = __inp',
+                    }, {'__inp': inp_memlet, **input_memlets},
+                                             tasklet_code,
                                              {'__out': out_memlet},
                                              external_edges=True,
                                              debuginfo=self.current_lineinfo)
                 else:
+                    if boolarr is not None:
+                        raise NotImplementedError
+
                     op1 = state.add_read(op_name,
                                          debuginfo=self.current_lineinfo)
                     op2 = state.add_write(target_name,
@@ -2551,10 +2577,17 @@ class ProgramVisitor(ExtNodeVisitor):
                         '__inp': Memlet("{a}[{s}]".format(a=op_name,
                                                           s=op_subset))
                     }
-                    tasklet_code = '__out = __inp'
+                    tasklet_code += '__out = __inp'
                 else:
                     inp_memlet = dict()
-                    tasklet_code = '__out = {}'.format(operand)
+                    tasklet_code += '__out = {}'.format(operand)
+
+                if boolarr is not None:
+                    for m in inp_memlet.values():
+                        m.dynamic = True
+                    memlet.dynamic = True
+
+                inp_memlet.update(input_memlets)
                 state.add_mapped_tasklet(state.label, {
                     '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                     for i, (start, end, step) in enumerate(target_subset)
@@ -2571,10 +2604,11 @@ class ProgramVisitor(ExtNodeVisitor):
             if op_name:
                 op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
                 inp_conn = {'__inp'}
-                tasklet_code = '__out = __inp'
+                tasklet_code += '__out = __inp'
             else:
-                inp_conn = dict()
-                tasklet_code = '__out = {}'.format(operand)
+                inp_conn = set()
+                tasklet_code += '__out = {}'.format(operand)
+            inp_conn |= set(input_memlets.keys())
             op2 = state.add_write(target_name, debuginfo=self.current_lineinfo)
             tasklet = state.add_tasklet(name=state.label,
                                         inputs=inp_conn,
@@ -2583,18 +2617,31 @@ class ProgramVisitor(ExtNodeVisitor):
                                         debuginfo=self.current_lineinfo)
             if op_name:
                 inp_memlet = Memlet.simple(op_name, '%s' % op_subset)
+                if boolarr is not None:
+                    inp_memlet.dynamic = True
                 state.add_edge(op1, None, tasklet, '__inp', inp_memlet)
+
             out_memlet = Memlet.simple(target_name, '%s' % target_subset)
+            if boolarr is not None:
+                out_memlet.dynamic = True
+            
+            for cname, memlet in input_memlets.items():
+                r = state.add_read(memlet.data)
+                state.add_edge(r, None, tasklet, cname, memlet)
+
             if op:
                 out_memlet.wcr = LambdaProperty.from_string(
                     'lambda x, y: x {} y'.format(op))
+
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
-    def _add_aug_assignment(self, node: Union[ast.Assign, ast.AugAssign],
+    def _add_aug_assignment(self,
+                            node: Union[ast.Assign, ast.AugAssign],
                             rtarget: Union[str, Tuple[str, subsets.Range]],
                             wtarget: Union[str, Tuple[str, subsets.Range]],
-                            operand: Union[str, Tuple[str,
-                                                      subsets.Range]], op: str):
+                            operand: Union[str, Tuple[str, subsets.Range]],
+                            op: str,
+                            boolarr: Optional[str] = None):
 
         # TODO: Refactor these if/else blocks. Maybe
         # the subset should never be None?
@@ -2636,6 +2683,23 @@ class ProgramVisitor(ExtNodeVisitor):
                                              self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
 
+        tasklet_code = ''
+        input_memlets = {}
+        if wtarget_subset.num_elements() != 1:
+            wtarget_index = ','.join(
+                ['__i%d' % i for i in range(len(wtarget_subset))])
+        else:
+            wtarget_index = '0'
+
+        # Handle boolean array access
+        if boolarr is not None:
+            if boolarr in self.sdfg.arrays:  # Array
+                input_memlets['__in_cond'] = Memlet(
+                    f'{boolarr}[{wtarget_index}]')
+                tasklet_code += 'if __in_cond:\n    '
+            else:  # Constant
+                tasklet_code += f'if {boolarr}[{wtarget_index}]:\n    '
+
         state = self._add_state("augassign_{l}_{c}".format(l=node.lineno,
                                                            c=node.col_offset))
 
@@ -2659,18 +2723,25 @@ class ProgramVisitor(ExtNodeVisitor):
                     out_memlet = Memlet.simple(
                         wtarget_name, ','.join(
                             ['__i%d' % i for i in range(len(wtarget_subset))]))
+                    if boolarr is not None:
+                        in1_memlet.dynamic = True
+                        out_memlet.dynamic = True
+                    tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
                     state.add_mapped_tasklet(state.label, {
                         '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                         for i, (start, end, step) in enumerate(wtarget_subset)
                     }, {
                         '__in1': in1_memlet,
-                        '__in2': in2_memlet
+                        '__in2': in2_memlet,
+                        **input_memlets,
                     },
-                                             '__out = __in1 {op} __in2'.format(
-                                                 op=op), {'__out': out_memlet},
+                                             tasklet_code,
+                                             {'__out': out_memlet},
                                              external_edges=True,
                                              debuginfo=self.current_lineinfo)
                 else:
+                    if boolarr is not None:
+                        raise NotImplementedError
                     op1 = state.add_read(op_name,
                                          debuginfo=self.current_lineinfo)
                     op2 = state.add_write(wtarget_name,
@@ -2692,14 +2763,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 if op_name:
                     in2_memlet = Memlet.simple(op_name, '%s' % op_subset)
                     inp_memlets = {'__in1': in1_memlet, '__in2': in2_memlet}
-                    tasklet_code = '__out = __in1 {op} __in2'.format(op=op)
+                    tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
                 else:
                     inp_memlets = {'__in1': in1_memlet}
-                    tasklet_code = '__out = __in1 {op} {n}'.format(op=op,
-                                                                   n=operand)
+                    tasklet_code += '__out = __in1 {op} {n}'.format(op=op,
+                                                                    n=operand)
+                inp_memlets.update(input_memlets)
                 out_memlet = Memlet.simple(
                     wtarget_name,
                     ','.join(['__i%d' % i for i in range(len(wtarget_subset))]))
+                if boolarr is not None:
+                    in1_memlet.dynamic = True
+                    out_memlet.dynamic = True
                 state.add_mapped_tasklet(state.label, {
                     '__i%d' % i: '%s:%s+1:%s' % (start, end, step)
                     for i, (start, end, step) in enumerate(wtarget_subset)
@@ -2720,11 +2795,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     op2 = state.add_read(op_name,
                                          debuginfo=self.current_lineinfo)
                     inp_conns = {'__in1', '__in2'}
-                    tasklet_code = '__out = __in1 {op} __in2'.format(op=op)
+                    tasklet_code += '__out = __in1 {op} __in2'.format(op=op)
                 else:
                     inp_conns = {'__in1'}
-                    tasklet_code = '__out = __in1 {op} {n}'.format(op=op,
-                                                                   n=operand)
+                    tasklet_code += '__out = __in1 {op} {n}'.format(op=op,
+                                                                    n=operand)
+                inp_conns |= set(input_memlets.keys())
                 op3 = state.add_write(wtarget_name,
                                       debuginfo=self.current_lineinfo)
                 tasklet = state.add_tasklet(name=state.label,
@@ -2736,7 +2812,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 if op_name:
                     in2_memlet = Memlet.simple(op_name, '%s' % op_subset)
                     state.add_edge(op2, None, tasklet, '__in2', in2_memlet)
+                for cname, memlet in input_memlets.items():
+                    r = state.add_read(memlet.data)
+                    state.add_edge(r, None, tasklet, cname, memlet)
+
                 out_memlet = Memlet.simple(wtarget_name, '%s' % wtarget_subset)
+                if boolarr is not None:
+                    in1_memlet.dynamic = True
+                    out_memlet.dynamic = True
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
 
@@ -2992,7 +3075,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         defined_vars[name] = result
                         continue
 
-            # TODO(later): Refactor to use make_slice
+            boolarr = None
             if new_data:
                 rng = dace.subsets.Range.from_array(new_data)
             else:
@@ -3001,8 +3084,51 @@ class ProgramVisitor(ExtNodeVisitor):
                     true_target.id = true_name
                 elif isinstance(target, ast.Subscript):
                     true_target.value.id = true_name
-                rng = dace.subsets.Range(
-                    astutils.subscript_to_slice(true_target, defined_arrays)[1])
+
+                    # Visit slice contents
+                    true_target.slice = self.visit(true_target.slice)
+                    defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+
+                expr: MemletExpr = ParseMemlet(self, defined_arrays,
+                                               true_target)
+                rng = expr.subset
+
+                # Figure out whether the target subcript is an array-index
+                # indirection or a boolean array
+                array_indirection = False
+                if expr.arrdims:
+                    for arr in expr.arrdims.values():
+                        if isinstance(arr, str):
+                            if arr in self.sdfg.arrays:
+                                desc = self.sdfg.arrays[arr]
+                                if desc.dtype == dtypes.bool:
+                                    boolarr = arr
+                            elif arr in self.sdfg.constants:
+                                desc = self.sdfg.constants[arr]
+                                if desc.dtype == numpy.bool:
+                                    boolarr = arr
+                            else:
+                                raise IndexError(
+                                    f'Array index "{arr}" undefined')
+                        elif isinstance(arr, (list, tuple)):
+                            if numpy.array(arr).dtype == numpy.bool:
+                                carr = numpy.array(
+                                    arrname, dtype=dtypes.typeclass(int).type)
+                                cname = self.sdfg.find_new_constant(
+                                    f'__ind{i}_{aname}')
+                                self.sdfg.add_constant(cname, carr)
+                                boolarr = cname
+
+                        array_indirection = boolarr is None
+
+                if array_indirection:
+                    raise NotImplementedError(
+                        'Array indexing as assignment target not yet '
+                        'implemented')
+                if boolarr is not None and _subset_has_indirection(rng, self):
+                    raise IndexError(
+                        'Boolean array indexing cannot be combined '
+                        'with indirect access')
 
             if self.nested and not new_data:
                 new_name, new_rng = self._add_write_access(name, rng, target)
@@ -3069,9 +3195,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Generate subgraph for assignment
             if op and independent:
-                self._add_aug_assignment(node, rtarget, wtarget, result, op)
+                self._add_aug_assignment(node, rtarget, wtarget, result, op,
+                                         boolarr)
             else:
-                self._add_assignment(node, wtarget, result, op=op)
+                self._add_assignment(node, wtarget, result, op, boolarr)
 
             # Connect states properly when there is output indirection
             if output_indirection:
@@ -3624,6 +3751,10 @@ class ProgramVisitor(ExtNodeVisitor):
             state = self._add_state('globalmemlet_%d' % node.lineno)
             src_expr = ParseMemlet(self, self.defined, src)
             dst_expr = ParseMemlet(self, self.defined, dst)
+            if src_expr.arrdims or dst_expr.arrdims:
+                raise NotImplementedError(
+                    'Copying with array indices only allowed through assignment '
+                    'expressions ("A[...] = B[...]")')
             src_name = src_expr.name
             src_rng = None
             if src_name not in self.sdfg.arrays:
@@ -4117,7 +4248,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Check subset shapes for matching the array shapes
         input_index = []
-        i0 = symbolic.pystr_to_symbolic('_i0')
+        i0 = symbolic.pystr_to_symbolic('__i0')
         for i, elem in enumerate(expr.subset.size()):
             if i in expr.arrdims:
                 input_index.append((0, elem - 1, 1))
@@ -4145,7 +4276,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Make map with output shape
         state: SDFGState = self.last_state
         wnode = state.add_write(outname)
-        maprange = [(f'_i{i}', f'0:{s}') for i, s in enumerate(output_shape)]
+        maprange = [(f'__i{i}', f'0:{s}') for i, s in enumerate(output_shape)]
         me, mx = state.add_map('indirect_slice',
                                maprange,
                                debuginfo=self.current_lineinfo)

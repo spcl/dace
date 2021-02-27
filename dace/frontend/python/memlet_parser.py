@@ -121,7 +121,13 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             desc = das[dim.id]
             if desc.dtype == dtypes.bool:
                 # Boolean array indexing
-                pass
+                if len(ast_ndslice) > 1:
+                    raise IndexError(f'Invalid indexing into array "{dim.id}". '
+                                     'Only one boolean array is allowed.')
+                if tuple(desc.shape) != tuple(array.shape):
+                    raise IndexError(
+                        f'Invalid indexing into array "{dim.id}". '
+                        'Shape of boolean index must match original array.')
             elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32,
                                 dtypes.int64, dtypes.uint8, dtypes.uint16,
                                 dtypes.uint32, dtypes.uint64):
@@ -162,8 +168,6 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
     :param das: Dictionary of defined arrays and symbols mapped to their values.
     :return: A 2-tuple of (subset, list of new axis indices).
     """
-    array_dependencies = {}
-
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
     extra_dims = []
@@ -200,16 +204,6 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
         for i in range(1, len(subset_array)):
             subset = subset.compose(subset_array[i])
 
-        # Compute additional array dependencies (as a result of
-        # indirection)
-        # for dim in subset:
-        #     if not isinstance(dim, tuple): dim = [dim]
-        #     for r in dim:
-        #         for expr in symbolic.swalk(r):
-        #             if symbolic.is_sympy_userfunction(expr):
-        #                 arr = expr.func.__name__
-        #                 array_dependencies[arr] = self.curnode.globals[arr]
-
     else:  # Use entire range
         subset = _ndslice_to_subset(ndslice)
 
@@ -220,7 +214,7 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
 
 # Parses a memlet statement
 def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
-                node: MemletType):
+                node: MemletType) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = rname(node)
     if arrname not in das:
