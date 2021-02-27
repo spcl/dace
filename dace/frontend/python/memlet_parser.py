@@ -3,18 +3,27 @@ import ast
 import copy
 import re
 from collections import namedtuple
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
 
-from dace import data, subsets
+from dace import data, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.memlet import Memlet
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
-MemletExpr = namedtuple('MemletExpr',
-                        ['name', 'accesses', 'wcr', 'subset', 'new_axes'])
+
+
+@dataclass
+class MemletExpr:
+    name: str
+    accesses: SymbolicType
+    wcr: Optional[ast.AST]
+    subset: subsets.Range
+    new_axes: List[int]
+    arrdims: Dict[int, str]
 
 
 def inner_eval_ast(defined, node, additional_syms=None):
@@ -71,6 +80,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
     ndslice = [None] * len(array.shape)
     offsets = []
     new_axes = []
+    arrdims: Dict[int, str] = {}
     idx = 0
     has_ellipsis = False
     for dim in ast_ndslice:
@@ -100,6 +110,25 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
               and dim.value is None):
             new_axes.append(idx)
             # NOTE: Do not increment idx here
+        elif (isinstance(dim, ast.Name) and dim.id in das
+              and isinstance(das[dim.id], data.Array)):
+            # Accessing an array with another
+            desc = das[dim.id]
+            if desc.dtype == dtypes.bool:
+                # Boolean array indexing
+                pass
+            elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32,
+                                dtypes.int64, dtypes.uint8, dtypes.uint16,
+                                dtypes.uint32, dtypes.uint64):
+                # Integer array indexing
+                pass
+            else:
+                raise ValueError(
+                    f'Unsupported indexing into array "{dim.id}". '
+                    'Only integer and boolean arrays are supported.')
+            ndslice[idx] = (0, array.shape[idx] - 1, 1)
+            arrdims[indices[idx]] = dim.id
+            idx += 1
         else:
             r = pyexpr_to_symbolic(das, dim)
             if (r < 0) == True:
@@ -114,7 +143,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
         ndslice[i] = (0, array.shape[i] - 1, 1)
         offsets.append(i)
 
-    return ndslice, offsets, new_axes
+    return ndslice, offsets, new_axes, arrdims
 
 
 def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
@@ -133,6 +162,7 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
     extra_dims = []
+    arrdims: Dict[int, str] = {}
     if isinstance(node, ast.Subscript):
         # Parse and evaluate ND slice(s) (possibly nested)
         ast_ndslices = astutils.subscript_to_ast_slice_recursive(node)
@@ -148,11 +178,14 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
             ]
 
             # Loop over the N dimensions
-            ndslice, offsets, new_extra_dims = _fill_missing_slices(
+            ndslice, offsets, new_extra_dims, arrdims = _fill_missing_slices(
                 das, ast_ndslice, narray, offsets)
             if new_extra_dims and idx != (len(ast_ndslices) - 1):
                 raise NotImplementedError('New axes only implemented for last '
                                           'slice')
+            if arrdims and len(ast_ndslices) != 1:
+                raise NotImplementedError('Array dimensions not implemented '
+                                          'for consecutive subscripts')
             extra_dims = new_extra_dims
             subset_array.append(_ndslice_to_subset(ndslice))
 
@@ -177,7 +210,7 @@ def parse_memlet_subset(array: data.Data, node: Union[ast.Name, ast.Subscript],
 
     if isinstance(subset, subsets.Indices):
         subset = subsets.Range([(i, i, 1) for i in subset])
-    return subset, extra_dims
+    return subset, extra_dims, arrdims
 
 
 # Parses a memlet statement
@@ -213,14 +246,14 @@ def ParseMemlet(visitor, defined_arrays_and_symbols: Dict[str, Any],
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
-    subset, new_axes = parse_memlet_subset(array, node, das)
+    subset, new_axes, arrdims = parse_memlet_subset(array, node, das)
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
         num_accesses = subset.num_elements()
 
     return MemletExpr(arrname, num_accesses, write_conflict_resolution, subset,
-                      new_axes)
+                      new_axes, arrdims)
 
 
 def parse_memlet(visitor, src: MemletType, dst: MemletType,

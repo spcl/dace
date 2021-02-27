@@ -3967,11 +3967,21 @@ class ProgramVisitor(ExtNodeVisitor):
         expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node)
         arrobj = self.sdfg.arrays[array]
 
-        # TODO: Check dimensionality of access and extend as necessary
+        # Consider array dims (rhs expression)
+        has_array_indirection = False
+        for dim, arrname in expr.arrdims.items():
+            # Boolean arrays only allowed as lhs
+            if self.sdfg.arrays[arrname].dtype == dtypes.bool:
+                raise IndexError('Boolean array indexing is only supported for '
+                                 'assignment targets (e.g., "A[A > 5] += 1")')
+            has_array_indirection = True
 
         # Add slicing state
         self._add_state('slice_%s_%d' % (array, node.lineno))
         rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
+        if has_array_indirection:
+            # Make copy slicing state
+            return self._array_indirection_subgraph(rnode, expr)
         if _subset_has_indirection(expr.subset, self):
             memlet = Memlet.simple(array,
                                    expr.subset,
@@ -4064,5 +4074,100 @@ class ProgramVisitor(ExtNodeVisitor):
                               num_accesses=rng.num_elements(),
                               other_subset_str=other_subset))
         return tmp, other_subset
+
+    def _array_indirection_subgraph(self, rnode: nodes.AccessNode,
+                                    expr: MemletExpr) -> str:
+        aname = rnode.data
+        idesc = self.sdfg.arrays[aname]
+
+        if expr.new_axes:
+            # NOTE: Matching behavior with numpy would be to append all new
+            # axes in the end
+            raise IndexError('New axes unsupported when array indices are used')
+
+        # Create output shape dimensions based on the sizes of the arrays
+        output_shape = None
+        for arrname in expr.arrdims.values():
+            desc = self.sdfg.arrays[arrname]
+            if output_shape is not None and tuple(desc.shape) != output_shape:
+                raise IndexError(
+                    f'Mismatch in array index shapes in access of '
+                    f'"{aname}": {arrname} (shape {desc.shape}) '
+                    f'does not match existing shape {output_shape}')
+            elif output_shape is None:
+                output_shape = tuple(desc.shape)
+
+        # Check subset shapes for matching the array shapes
+        input_index = []
+        i0 = symbolic.pystr_to_symbolic('_i0')
+        for i, elem in enumerate(expr.subset.size()):
+            if i in expr.arrdims:
+                input_index.append((0, elem - 1, 1))
+                continue
+            if len(output_shape) > 1:
+                raise IndexError('Combining multidimensional array indices and '
+                                 'numeric subsets is unsupported (array '
+                                 f'"{aname}").')
+            if tuple(elem) != output_shape:
+                raise IndexError(
+                    f'Mismatch in array index shapes in access of '
+                    f'"{aname}": Subset {expr.subset[i]} '
+                    f'does not match existing shape {output_shape}')
+
+            # Since there can only be one-dimensional outputs if arrays and
+            # subsets are both involved, express memlet as a function of _i0
+            rb, _, rs = expr.subset[i]
+            input_index.append((rb + i0 * rs, rb + i0 * rs, 1))
+
+        outname, _ = self.sdfg.add_temp_transient(output_shape, idesc.dtype)
+
+        # Make slice subgraph - input shape dimensions are len(expr.subset) and
+        # output shape dimensions are len(output_shape)
+
+        # Make map with output shape
+        state: SDFGState = self.last_state
+        wnode = state.add_write(outname)
+        maprange = [(f'_i{i}', f'0:{s}') for i, s in enumerate(output_shape)]
+        me, mx = state.add_map('indirect_slice',
+                               maprange,
+                               debuginfo=self.current_lineinfo)
+
+        # Make indirection tasklet for array-index dimensions
+        access_str = ', '.join([f'__inp{i}' for i in expr.arrdims.keys()])
+        t = state.add_tasklet('indirection',
+                              {'__arr'} | set(f'__inp{i}'
+                                              for i in expr.arrdims.keys()),
+                              {'__out'}, f'__out = __arr[{access_str}]')
+
+        # Offset input memlet according to offset and stride if fixed, or
+        # entire array with volume 1 if array-index
+        input_subset = subsets.Range(input_index)
+        state.add_edge_pair(me,
+                            t,
+                            rnode,
+                            Memlet(data=aname, subset=input_subset, volume=1),
+                            internal_connector='__arr')
+        # Add array-index memlets
+        for dim, arrname in expr.arrdims.items():
+            arrnode = state.add_read(arrname)
+            state.add_edge_pair(
+                me, t, arrnode,
+                Memlet(data=arrname,
+                       subset=subsets.Range([(ind, ind, 1)
+                                             for ind, _ in maprange])),
+                internal_connector=f'__inp{dim}')
+
+        # Output matches the output shape exactly
+        state.add_edge_pair(mx,
+                            t,
+                            wnode,
+                            Memlet(data=outname,
+                                   subset=subsets.Range([
+                                       (ind, ind, 1) for ind, _ in maprange
+                                   ])),
+                            external_memlet=Memlet(data=outname),
+                            internal_connector='__out')
+
+        return outname
 
     ##################################
