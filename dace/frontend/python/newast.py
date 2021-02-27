@@ -4004,8 +4004,8 @@ class ProgramVisitor(ExtNodeVisitor):
                               other_subset_str=other_subset))
             return tmp
 
-    def visit_Index(self, node: ast.Index) -> Any:
-        result = self.visit(node.value)
+    def _visit_ast_or_value(self, node: ast.AST):
+        result = self.visit(node)
         newnode = None
         if result is None:
             return node
@@ -4019,27 +4019,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 newnode = ast.Num(n=result)
         else:
             newnode = ast.Name(id=result)
+        return ast.copy_location(newnode, node)
 
-        node.value = ast.copy_location(newnode, node.value)
+    def visit_Index(self, node: ast.Index) -> Any:
+        if isinstance(node.value, ast.Tuple):
+            for i, elt in enumerate(node.value.elts):
+                node.value.elts[i] = self._visit_ast_or_value(elt)
+            return node
+        node.value = self._visit_ast_or_value(node.value)
         return node
 
     def visit_ExtSlice(self, node: ast.ExtSlice) -> Any:
         for i, dim in enumerate(node.dims):
-            result = self.visit(dim)
-            newnode = None
-            if result is None:
-                continue
-            if isinstance(result, ast.AST):
-                newnode = result
-            elif isinstance(result, Number):
-                # Compatibility check since Python changed their AST nodes
-                if sys.version_info >= (3, 8):
-                    newnode = ast.Constant(value=result, kind='')
-                else:
-                    newnode = ast.Num(n=result)
-            else:
-                newnode = ast.Name(id=result)
-            node.dims[i] = ast.copy_location(newnode, dim)
+            node.dims[i] = self._visit_ast_or_value(dim)
 
         return node
 
