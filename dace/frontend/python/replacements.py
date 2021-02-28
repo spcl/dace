@@ -47,13 +47,13 @@ def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
 def _define_local_ex(
-    pv: 'ProgramVisitor',
-    sdfg: SDFG,
-    state: SDFGState,
-    shape: Shape,
-    dtype: dace.typeclass,
-    storage: dtypes.StorageType = dtypes.StorageType.Default,
-    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
+        pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        shape: Shape,
+        dtype: dace.typeclass,
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
@@ -73,11 +73,11 @@ def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
-    pv: 'ProgramVisitor',
-    sdfg: SDFG,
-    state: SDFGState,
-    dtype: dace.typeclass,
-    storage: dtypes.StorageType = dtypes.StorageType.Default):
+        pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        dtype: dace.typeclass,
+        storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True, storage=storage)
@@ -203,6 +203,165 @@ def eye(pv: 'ProgramVisitor',
     return name
 
 
+@oprepo.replaces('numpy.empty')
+def _numpy_empty(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 shape: Shape,
+                 dtype: dace.typeclass):
+    """ Creates an unitialized array of the specificied shape and dtype. """
+    return _define_local(pv, sdfg, state, shape, dtype)
+
+
+@oprepo.replaces('numpy.empty_like')
+def _numpy_empty_like(pv: 'ProgramVisitor',
+                      sdfg: SDFG,
+                      state: SDFGState,
+                      prototype: str,
+                      dtype: dace.typeclass = None,
+                      shape: Shape = None):
+    """ Creates an unitialized array of the same shape and dtype as prototype.
+        The optional dtype and shape inputs allow overriding the corresponding
+        attributes of prototype.
+    """
+    if prototype not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(
+                a=prototype))
+    desc = sdfg.arrays[prototype]
+    dtype = dtype or desc.dtype
+    shape = shape or desc.shape
+    return _define_local(pv, sdfg, state, shape, dtype)
+
+
+@oprepo.replaces('numpy.identity')
+def _numpy_identity(pv: 'ProgramVisitor',
+                    sdfg: SDFG,
+                    state: SDFGState,
+                    n,
+                    dtype=dace.float64):
+    """ Generates the nxn identity matrix. """
+    return eye(pv, sdfg, state, n, dtype=dtype)
+
+
+@oprepo.replaces('numpy.full')
+def _numpy_full(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                shape: Shape,
+                fill_value: Number,
+                dtype: dace.typeclass = None):
+    """ Creates and array of the specified shape and initializes it with
+        the fill value.
+    """
+    if isinstance(fill_value, Number):
+        vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+    else:
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Fill value {f} must be a number!".format(f=fill_value))
+    dtype = dtype or vtype
+    name, _ = sdfg.add_temp_transient(shape, dtype)
+
+    state.add_mapped_tasklet('_numpy_full_',
+                             {"__i{}".format(i): "0: {}".format(s)
+                             for i, s in enumerate(shape)},
+                             {},
+                             "__out = {}".format(fill_value),
+                             dict(__out=dace.Memlet.simple(
+                                 name, ",".join(["__i{}".format(i)
+                                                 for i in range(len(shape))]))),
+                             external_edges=True)
+
+    return name
+
+
+@oprepo.replaces('numpy.full_like')
+def _numpy_full_like(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     a: str,
+                     fill_value: Number,
+                     dtype: dace.typeclass = None,
+                     shape: Shape = None):
+    """ Creates and array of the same shape and dtype as a and initializes it
+        with the fill value.
+    """
+    if a not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
+    desc = sdfg.arrays[a]
+    dtype = dtype or desc.dtype
+    shape = shape or desc.shape
+    return _numpy_full(pv, sdfg, state, shape, fill_value, dtype)
+
+
+@oprepo.replaces('numpy.ones')
+def _numpy_ones(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                shape: Shape,
+                dtype: dace.typeclass = dace.float64):
+    """ Creates and array of the specified shape and initializes it with ones.
+    """
+    return _numpy_full(pv, sdfg, state, shape, 1.0, dtype)
+
+
+@oprepo.replaces('numpy.ones_like')
+def _numpy_ones_like(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     a: str,
+                     dtype: dace.typeclass = None,
+                     shape: Shape = None):
+    """ Creates and array of the same shape and dtype as a and initializes it
+        with ones.
+    """
+    return _numpy_full_like(pv, sdfg, state, a, 1.0, dtype, shape)
+
+
+@oprepo.replaces('numpy.zeros')
+def _numpy_zeros(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 shape: Shape,
+                 dtype: dace.typeclass = dace.float64):
+    """ Creates and array of the specified shape and initializes it with zeros.
+    """
+    return _numpy_full(pv, sdfg, state, shape, 0.0, dtype)
+
+
+@oprepo.replaces('numpy.zeros_like')
+def _numpy_zeros_like(pv: 'ProgramVisitor',
+                      sdfg: SDFG,
+                      state: SDFGState,
+                      a: str,
+                      dtype: dace.typeclass = None,
+                      shape: Shape = None):
+    """ Creates and array of the same shape and dtype as a and initializes it
+        with zeros.
+    """
+    return _numpy_full_like(pv, sdfg, state, a, 0.0, dtype, shape)
+
+
+@oprepo.replaces('numpy.copy')
+def _numpy_copy(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                a: str):
+    """ Creates a copy of array a.
+    """
+    if a not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
+    # TODO: The whole AddTransientMethod class should be move in replacements.py
+    from dace.frontend.python.newast import _add_transient_data
+    name, desc = _add_transient_data(sdfg, sdfg.arrays[a])
+    rnode = state.add_read(a)
+    wnode = state.add_write(name)
+    state.add_nedge(rnode, wnode, dace.Memlet.from_array(name, desc))
+    return name
+    
+
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
 def _elementwise(pv: 'ProgramVisitor',
@@ -230,8 +389,10 @@ def _elementwise(pv: 'ProgramVisitor',
                 "Expected lambda with one arg, but {} has {}".format(
                     func, len(lambda_ast.args.arrgs)))
         arg = lambda_ast.args.args[0].arg
-        astutils.ASTFindReplace({arg: '__inp'}).visit(lambda_ast.body)
-        body = astutils.unparse(lambda_ast.body)
+        replaced_ast = astutils.ASTFindReplace({
+            arg: '__inp'
+        }).visit(lambda_ast.body)
+        body = astutils.unparse(replaced_ast)
     except AttributeError:
         raise SyntaxError("Could not parse func {}".format(func))
 
@@ -3987,7 +4148,6 @@ def dot(pv: 'ProgramVisitor',
         op_b: str,
         op_out=None):
 
-
     # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
     # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
     # TODO: Add/improve validation
@@ -4005,8 +4165,8 @@ def dot(pv: 'ProgramVisitor',
         # but it is not implemented yet
         return _matmult(pv, sdfg, state, op_a, op_b)
 
-    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1] or
-            isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
+    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1]
+            or isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
         # Case dot(N-D, 0-D), intepreted as np.multiply(a, b)
         node = ast.Call()
         ufunc_name = 'multiply'
