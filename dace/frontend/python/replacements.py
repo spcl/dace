@@ -15,7 +15,6 @@ from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
 import dace.frontend.python.memlet_parser as mem_parser
-from dace.frontend.python.memlet_parser import parse_memlet_subset
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
@@ -133,9 +132,7 @@ def _reduce(pv: 'ProgramVisitor',
             axis = tuple(pystr_to_symbolic(a) for a in axis)
             axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
-        input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                           ast.parse(in_array).body[0].value,
-                                           {})
+        input_subset = subsets.Range.from_array(sdfg.arrays[inarr])
         input_memlet = Memlet.simple(inarr, input_subset)
         output_shape = None
 
@@ -168,13 +165,9 @@ def _reduce(pv: 'ProgramVisitor',
             axis = tuple(normalize_axes(axis, len(sdfg.arrays[inarr].shape)))
 
         # Compute memlets
-        input_subset = parse_memlet_subset(sdfg.arrays[inarr],
-                                           ast.parse(in_array).body[0].value,
-                                           {})
+        input_subset = subsets.Range.from_array(sdfg.arrays[inarr])
         input_memlet = Memlet.simple(inarr, input_subset)
-        output_subset = parse_memlet_subset(sdfg.arrays[outarr],
-                                            ast.parse(out_array).body[0].value,
-                                            {})
+        output_subset = subsets.Range.from_array(sdfg.arrays[outarr])
         output_memlet = Memlet.simple(outarr, output_subset)
 
     # Create reduce subgraph
@@ -4031,6 +4024,48 @@ def view(pv: 'ProgramVisitor',
 
     # Register view with DaCe program visitor
     pv.views[newarr] = arr
+
+    return newarr
+
+
+@oprepo.replaces_attribute('Array', 'flat')
+@oprepo.replaces_attribute('Scalar', 'flat')
+@oprepo.replaces_attribute('View', 'flat')
+def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+    desc = sdfg.arrays[arr]
+    totalsize = data._prod(desc.shape)
+    c_contig_strides = tuple(
+        data._prod(desc.shape[i + 1:]) for i in range(len(desc.shape)))
+
+    if desc.total_size != totalsize or desc.strides != c_contig_strides:
+        # If data is not C-contiguous (numpy standard), create copy
+        warnings.warn(f'Generating copy for non-contiguous array "{arr}"')
+        newarr, _ = sdfg.add_array(arr, [totalsize],
+                                   desc.dtype,
+                                   storage=desc.storage,
+                                   strides=[1],
+                                   allow_conflicts=desc.allow_conflicts,
+                                   total_size=totalsize,
+                                   may_alias=desc.may_alias,
+                                   alignment=desc.alignment,
+                                   transient=True,
+                                   find_new_name=True)
+
+        r = state.add_read(arr)
+        w = state.add_write(newarr)
+        state.add_nedge(r, w, Memlet(data=arr))
+    else:
+        newarr, _ = sdfg.add_view(arr, [totalsize],
+                                  desc.dtype,
+                                  storage=desc.storage,
+                                  strides=[1],
+                                  allow_conflicts=desc.allow_conflicts,
+                                  total_size=totalsize,
+                                  may_alias=desc.may_alias,
+                                  alignment=desc.alignment,
+                                  find_new_name=True)
+        # Register view with DaCe program visitor
+        pv.views[newarr] = arr
 
     return newarr
 
