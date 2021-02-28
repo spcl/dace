@@ -3909,6 +3909,19 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return newarr
 
 
+@oprepo.replaces_method('Array', 'reshape')
+@oprepo.replaces_method('Scalar', 'reshape')
+@oprepo.replaces_method('View', 'reshape')
+def _ndarray_reshape(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arr: str,
+                     newshape: Union[str, symbolic.SymbolicType,
+                               Tuple[Union[str, symbolic.SymbolicType]]],
+                     order='C') -> str:
+    return reshape(pv, sdfg, state, arr, newshape, order)
+
+
 # Datatype converter #########################################################
 
 
