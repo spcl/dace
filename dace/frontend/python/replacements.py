@@ -3909,8 +3909,45 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return newarr
 
 
+@oprepo.replaces_attribute('Array', 'T')
+@oprepo.replaces_attribute('View', 'T')
+def _ndarray_T(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               arr: str) -> str:
+    return _transpose(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_attribute('Array', 'real')
+@oprepo.replaces_attribute('Scalar', 'real')
+@oprepo.replaces_attribute('View', 'real')
+def _ndarray_real(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str) -> str:
+    return _real(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_attribute('Array', 'imag')
+@oprepo.replaces_attribute('Scalar', 'imag')
+@oprepo.replaces_attribute('View', 'imag')
+def _ndarray_imag(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str) -> str:
+    return _imag(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_method('Array', 'copy')
+@oprepo.replaces_method('View', 'copy')
+def _ndarray_copy(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str) -> str:
+    return _numpy_copy(pv, sdfg, state, arr)
+
+
 @oprepo.replaces_method('Array', 'reshape')
-@oprepo.replaces_method('Scalar', 'reshape')
 @oprepo.replaces_method('View', 'reshape')
 def _ndarray_reshape(pv: 'ProgramVisitor',
                      sdfg: SDFG,
