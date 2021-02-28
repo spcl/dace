@@ -69,6 +69,11 @@ def test_ravel(A: dace.float32[M, N, N, M]):
     return A.ravel()
 
 
+@compare_numpy_output()
+def test_max(A: dace.float32[M, N, N, M]):
+    return A.max()
+
+
 if __name__ == "__main__":
     test_T()
     test_real()
@@ -82,3 +87,4 @@ if __name__ == "__main__":
     test_transpose3()
     test_flatten()
     test_ravel()
+    test_max()
