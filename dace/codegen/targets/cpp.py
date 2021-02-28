@@ -386,10 +386,10 @@ def ndcopy_to_strided_copy(
     # and shapes to the copy. The second condition is there because sometimes
     # the symbolic math engine fails to produce the same expressions for both
     # arrays.
-    if (tuple(src_strides) == tuple(dst_strides) and 
+    if (tuple(src_strides) == tuple(dst_strides) and (
         (src_copylen == copy_length and dst_copylen == copy_length)
             or (tuple(src_shape) == tuple(copy_shape)
-                and tuple(dst_shape) == tuple(copy_shape))):
+                and tuple(dst_shape) == tuple(copy_shape)))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]

@@ -67,9 +67,9 @@ def make_sdfg(implementation,
                           memlet=Memlet.simple(result, "0:m, 0:n"))
 
     if storage != dace.StorageType.Default:
-        sdfg.add_array("x", [m, k], dtype)
-        sdfg.add_array("y", [k, n], dtype)
-        sdfg.add_array("result", [m, n], dtype)
+        sdfg.add_array("x", [m, k], dtype, strides=xstrides)
+        sdfg.add_array("y", [k, n], dtype, strides=ystrides)
+        sdfg.add_array("result", [m, n], dtype, strides=zstrides)
 
         init_state = sdfg.add_state("copy_to_device")
         sdfg.add_edge(init_state, state, dace.InterstateEdge())
