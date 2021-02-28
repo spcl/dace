@@ -48,13 +48,13 @@ def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
 def _define_local_ex(
-    pv: 'ProgramVisitor',
-    sdfg: SDFG,
-    state: SDFGState,
-    shape: Shape,
-    dtype: dace.typeclass,
-    storage: dtypes.StorageType = dtypes.StorageType.Default,
-    lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
+        pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        shape: Shape,
+        dtype: dace.typeclass,
+        storage: dtypes.StorageType = dtypes.StorageType.Default,
+        lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
@@ -66,19 +66,19 @@ def _define_local_ex(
 
 
 @oprepo.replaces('numpy.ndarray')
-def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape,
-                  dtype: dace.typeclass):
+def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                  shape: Shape, dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
     return _define_local_ex(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
 def _define_local_scalar(
-    pv: 'ProgramVisitor',
-    sdfg: SDFG,
-    state: SDFGState,
-    dtype: dace.typeclass,
-    storage: dtypes.StorageType = dtypes.StorageType.Default):
+        pv: 'ProgramVisitor',
+        sdfg: SDFG,
+        state: SDFGState,
+        dtype: dace.typeclass,
+        storage: dtypes.StorageType = dtypes.StorageType.Default):
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_scalar(name, dtype, transient=True, storage=storage)
@@ -610,7 +610,13 @@ def _transpose(pv: 'ProgramVisitor',
 
 @oprepo.replaces('numpy.sum')
 def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+    return _reduce(pv,
+                   sdfg,
+                   state,
+                   "lambda x, y: x + y",
+                   a,
+                   axis=axis,
+                   identity=0)
 
 
 @oprepo.replaces('numpy.mean')
@@ -643,7 +649,8 @@ def _mean(pv: 'ProgramVisitor',
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
 def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(pv, sdfg,
+    return _reduce(pv,
+                   sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
@@ -654,7 +661,8 @@ def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
 def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
-    return _reduce(pv, sdfg,
+    return _reduce(pv,
+                   sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
@@ -663,13 +671,35 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
+def _argmax(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis,
+            result_type=dace.int32):
+    return _argminmax(pv,
+                      sdfg,
+                      state,
+                      a,
+                      axis,
+                      func="max",
+                      result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
-    return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
+def _argmin(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            a: str,
+            axis,
+            result_type=dace.int32):
+    return _argminmax(pv,
+                      sdfg,
+                      state,
+                      a,
+                      axis,
+                      func="min",
+                      result_type=result_type)
 
 
 def _argminmax(pv: 'ProgramVisitor',
@@ -1744,7 +1774,7 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('Array', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -1769,12 +1799,12 @@ def _makebinop(op, opcode):
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('View', op, otherclass='View')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
-    
+
     @oprepo.replaces_operator('View', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
             op2: str):
@@ -1902,7 +1932,8 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'),
 @oprepo.replaces_operator('View', 'MatMult')
 @oprepo.replaces_operator('Array', 'MatMult', 'View')
 @oprepo.replaces_operator('View', 'MatMult', 'Array')
-def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str,
+             op2: str):
 
     from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
 
@@ -3591,7 +3622,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call,
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
-        _reduce(visitor, sdfg,
+        _reduce(visitor,
+                sdfg,
                 state,
                 ufunc_impl['reduce'],
                 inputs[0],
@@ -4078,7 +4110,6 @@ def dot(pv: 'ProgramVisitor',
         op_a: str,
         op_b: str,
         op_out=None):
-    
 
     # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
     # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
@@ -4096,9 +4127,9 @@ def dot(pv: 'ProgramVisitor',
         # TODO: `If op_out`, then this is not correct. We need np.matmult,
         # but it is not implemented yet
         return _matmult(pv, sdfg, state, op_a, op_b)
-    
-    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1] or
-            isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
+
+    if (isinstance(arr_a, data.Scalar) or list(arr_a.shape) == [1]
+            or isinstance(arr_b, data.Scalar) or list(arr_b.shape) == [1]):
         # Case dot(N-D, 0-D), intepreted as np.multiply(a, b)
         node = ast.Call()
         ufunc_name = 'multiply'
@@ -4106,7 +4137,7 @@ def dot(pv: 'ProgramVisitor',
         if op_out:
             args.append(op_out)
         return ufunc_impl(pv, node, ufunc_name, sdfg, state, args)
-    
+
     if len(arr_a.shape) > 2 or len(arr_b.shape) > 2:
         raise NotImplementedError
 
