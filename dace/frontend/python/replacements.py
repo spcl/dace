@@ -4100,12 +4100,27 @@ def _ndarray_imag(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('Array', 'copy')
+@oprepo.replaces_method('Scalar', 'copy')
 @oprepo.replaces_method('View', 'copy')
 def _ndarray_copy(pv: 'ProgramVisitor',
                   sdfg: SDFG,
                   state: SDFGState,
                   arr: str) -> str:
     return _numpy_copy(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_method('Array', 'fill')
+@oprepo.replaces_method('Scalar', 'fill')
+@oprepo.replaces_method('View', 'fill')
+def _ndarray_fill(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str,
+                  value: Number) -> str:
+    if not isinstance(value, Number):
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Fill value {f} must be a number!".format(f=value))
+    return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
 
 
 @oprepo.replaces_method('Array', 'reshape')
@@ -4118,6 +4133,20 @@ def _ndarray_reshape(pv: 'ProgramVisitor',
                                Tuple[Union[str, symbolic.SymbolicType]]],
                      order='C') -> str:
     return reshape(pv, sdfg, state, arr, newshape, order)
+
+
+@oprepo.replaces_method('Array', 'transpose')
+@oprepo.replaces_method('View', 'transpose')
+def _ndarray_reshape(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arr: str,
+                     *axes) -> str:
+    if len(axes) == 0:
+        axes = None
+    elif len(axes) == 1:
+        axes = axes[0]
+    return _transpose(pv, sdfg, state, arr, axes)
 
 
 # Datatype converter #########################################################
@@ -4183,6 +4212,19 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
                      where=None)
 
     return outputs
+
+
+@oprepo.replaces_method('Array', 'astype')
+@oprepo.replaces_method('Scalar', 'astype')
+@oprepo.replaces_method('View', 'astype')
+def _ndarray_astype(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str,
+                  dtype: dace.typeclass) -> str:
+    if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+        dtype = dtypes.typeclass(dtype)
+    return _datatype_converter(sdfg, state, arr, dtype)[0]
 
 
 # Replacements that need ufuncs ###############################################
