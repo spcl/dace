@@ -4197,10 +4197,6 @@ def dot(pv: 'ProgramVisitor',
         op_a: str,
         op_b: str,
         op_out=None):
-<<<<<<< HEAD
-
-=======
->>>>>>> master
 
     # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
     # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
