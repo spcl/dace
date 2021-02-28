@@ -74,6 +74,50 @@ def test_max(A: dace.float32[M, N, N, M]):
     return A.max()
 
 
+# TODO: Need to debug `_argminmax`
+# @compare_numpy_output()
+# def test_argmax(A: dace.float32[M, N, N, M]):
+#     return A.argmax()
+
+
+@compare_numpy_output()
+def test_min(A: dace.float32[M, N, N, M]):
+    return A.min()
+
+
+@compare_numpy_output()
+def test_conj(A: dace.complex64[M, N, N, M]):
+    return A.conj()
+
+
+@compare_numpy_output()
+def test_sum(A: dace.float32[M, N, N, M]):
+    return A.sum()
+
+
+@compare_numpy_output()
+def test_mean(A: dace.float32[M, N, N, M]):
+    return A.mean()
+
+
+@compare_numpy_output()
+def test_prod(A: dace.float32[M, N, N, M]):
+    return A.prod()
+
+
+@compare_numpy_output()
+def test_all():
+    A = np.full([5], True, dtype=np.bool_)
+    return A.all()
+
+
+@compare_numpy_output()
+def test_any():
+    A = np.full([5], False, dtype=np.bool_)
+    A[4] = True
+    return A.any()
+
+
 if __name__ == "__main__":
     test_T()
     test_real()
@@ -88,3 +132,11 @@ if __name__ == "__main__":
     test_flatten()
     test_ravel()
     test_max()
+    # test_argmax()
+    test_min()
+    test_conj()
+    test_sum()
+    test_mean()
+    test_prod()
+    test_all()
+    test_any()

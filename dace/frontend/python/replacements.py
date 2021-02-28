@@ -4162,6 +4162,118 @@ def _ndarray_max(pv: 'ProgramVisitor',
                                   kwargs)[0]
 
 
+@oprepo.replaces_method('Array', 'min')
+@oprepo.replaces_method('Scalar', 'min')
+@oprepo.replaces_method('View', 'min')
+def _ndarray_min(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr],
+                                  kwargs)[0]
+
+
+# TODO: It looks like `_argminmax` does not work with a flattened array.
+# @oprepo.replaces_method('Array', 'argmax')
+# @oprepo.replaces_method('Scalar', 'argmax')
+# @oprepo.replaces_method('View', 'argmax')
+# def _ndarray_argmax(pv: 'ProgramVisitor',
+#                  sdfg: SDFG,
+#                  state: SDFGState,
+#                  arr: str,
+#                  axis: int = None,
+#                  out: str = None) -> str:
+#     if not axis:
+#         axis = 0
+#         arr = flat(pv, sdfg, state, arr)
+#     nest, newarr = _argmax(pv, sdfg, state, arr, axis)
+#     if out:
+#         r = state.add_read(arr)
+#         w = state.add_read(newarr)
+#         state.add_nedge(r, w, dace.Memlet.from_array(newarr, sdfg.arrays[newarr]))
+#     return new_arr
+
+
+@oprepo.replaces_method('Array', 'conj')
+@oprepo.replaces_method('Scalar', 'conj')
+@oprepo.replaces_method('View', 'conj')
+def _ndarray_conj(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str) -> str:
+    return implement_ufunc(pv, None, sdfg, state, 'conj', [arr], {})[0]
+
+
+@oprepo.replaces_method('Array', 'sum')
+@oprepo.replaces_method('Scalar', 'sum')
+@oprepo.replaces_method('View', 'sum')
+def _ndarray_sum(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'add', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'mean')
+@oprepo.replaces_method('Scalar', 'mean')
+@oprepo.replaces_method('View', 'mean')
+def _ndarray_mean(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str,
+                  kwargs: Dict[str, Any] = None) -> str:
+    nest = NestedCall(pv, sdfg, state)
+    kwargs = kwargs or dict(axis=None)
+    sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add', [arr],
+                                    kwargs)[0]
+    desc = sdfg.arrays[arr]
+    sz = reduce(lambda x, y: x * y, desc.shape)
+    return nest, _elementwise(pv, sdfg, nest.add_state(), "lambda x: x / {}".format(sz), sumarr)
+
+
+@oprepo.replaces_method('Array', 'prod')
+@oprepo.replaces_method('Scalar', 'prod')
+@oprepo.replaces_method('View', 'prod')
+def _ndarray_prod(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str,
+                  kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'multiply', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'all')
+@oprepo.replaces_method('Scalar', 'all')
+@oprepo.replaces_method('View', 'all')
+def _ndarray_all(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_and', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'any')
+@oprepo.replaces_method('Scalar', 'any')
+@oprepo.replaces_method('View', 'any')
+def _ndarray_any(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr],
+                                  kwargs)[0]
+
 # Datatype converter #########################################################
 
 
