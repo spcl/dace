@@ -4258,6 +4258,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                  'numeric subsets is unsupported (array '
                                  f'"{aname}").')
             if (elem, ) != output_shape:
+                # TODO(later): Properly broadcast multiple (and missing) shapes
                 raise IndexError(
                     f'Mismatch in array index shapes in access of '
                     f'"{aname}": Subset {expr.subset[i]} '

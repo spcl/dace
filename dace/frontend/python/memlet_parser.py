@@ -138,8 +138,14 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 raise ValueError(
                     f'Unsupported indexing into array "{dim.id}". '
                     'Only integer and boolean arrays are supported.')
-            ndslice[idx] = (0, array.shape[idx] - 1, 1)
-            arrdims[indices[idx]] = dim.id
+
+            if data._prod(desc.shape) == 1:
+                # Special case: one-element array treated as scalar
+                ndslice[idx] = (dim.id, dim.id, 1)
+            else:
+                ndslice[idx] = (0, array.shape[idx] - 1, 1)
+                arrdims[indices[idx]] = dim.id
+                
             idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das
               and isinstance(das[dim.id], data.Scalar)):
