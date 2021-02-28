@@ -4137,16 +4137,41 @@ def _ndarray_reshape(pv: 'ProgramVisitor',
 
 @oprepo.replaces_method('Array', 'transpose')
 @oprepo.replaces_method('View', 'transpose')
-def _ndarray_reshape(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     arr: str,
-                     *axes) -> str:
+def _ndarray_transpose(pv: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       arr: str,
+                       *axes) -> str:
     if len(axes) == 0:
         axes = None
     elif len(axes) == 1:
         axes = axes[0]
     return _transpose(pv, sdfg, state, arr, axes)
+
+
+@oprepo.replaces_method('Array', 'flatten')
+@oprepo.replaces_method('Scalar', 'flatten')
+@oprepo.replaces_method('View', 'flatten')
+def _ndarray_flatten(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arr: str) -> str:
+    new_arr = flat(pv, sdfg, state, arr)
+    # `flatten` always returns a copy
+    if isinstance(new_arr, data.View):
+        return _ndarray_copy(pv, sdfg, state, new_arr)
+    return new_arr
+
+
+@oprepo.replaces_method('Array', 'ravel')
+@oprepo.replaces_method('Scalar', 'ravel')
+@oprepo.replaces_method('View', 'ravel')
+def _ndarray_ravel(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   arr: str) -> str:
+    # `ravel` returns a copy only when necessary (sounds like ndarray.flat)
+    return flat(pv, sdfg, state, arr)
 
 
 # Datatype converter #########################################################
