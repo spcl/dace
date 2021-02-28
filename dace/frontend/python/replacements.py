@@ -204,11 +204,8 @@ def eye(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.empty')
-def _numpy_empty(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 shape: Shape,
-                 dtype: dace.typeclass):
+def _numpy_empty(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                 shape: Shape, dtype: dace.typeclass):
     """ Creates an unitialized array of the specificied shape and dtype. """
     return _define_local(pv, sdfg, state, shape, dtype)
 
@@ -226,8 +223,8 @@ def _numpy_empty_like(pv: 'ProgramVisitor',
     """
     if prototype not in sdfg.arrays.keys():
         raise mem_parser.DaceSyntaxError(
-            pv, None, "Prototype argument {a} is not SDFG data!".format(
-                a=prototype))
+            pv, None,
+            "Prototype argument {a} is not SDFG data!".format(a=prototype))
     desc = sdfg.arrays[prototype]
     dtype = dtype or desc.dtype
     shape = shape or desc.shape
@@ -262,15 +259,14 @@ def _numpy_full(pv: 'ProgramVisitor',
     dtype = dtype or vtype
     name, _ = sdfg.add_temp_transient(shape, dtype)
 
-    state.add_mapped_tasklet('_numpy_full_',
-                             {"__i{}".format(i): "0: {}".format(s)
-                             for i, s in enumerate(shape)},
-                             {},
-                             "__out = {}".format(fill_value),
-                             dict(__out=dace.Memlet.simple(
-                                 name, ",".join(["__i{}".format(i)
-                                                 for i in range(len(shape))]))),
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        '_numpy_full_',
+        {"__i{}".format(i): "0: {}".format(s)
+         for i, s in enumerate(shape)}, {},
+        "__out = {}".format(fill_value),
+        dict(__out=dace.Memlet.simple(
+            name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+        external_edges=True)
 
     return name
 
@@ -344,10 +340,7 @@ def _numpy_zeros_like(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.copy')
-def _numpy_copy(pv: 'ProgramVisitor',
-                sdfg: SDFG,
-                state: SDFGState,
-                a: str):
+def _numpy_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
     """ Creates a copy of array a.
     """
     if a not in sdfg.arrays.keys():
@@ -360,7 +353,7 @@ def _numpy_copy(pv: 'ProgramVisitor',
     wnode = state.add_write(name)
     state.add_nedge(rnode, wnode, dace.Memlet.from_array(name, desc))
     return name
-    
+
 
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
@@ -3412,8 +3405,8 @@ def _validate_axis_kword(
     else:
         inp_shape = [1]
     if 'axis' in kwargs.keys():
-        # Set to (0,) if the keyword arg value is None
-        axis = kwargs['axis'] or axis
+        # Set to (0, 1, 2, ...) if the keyword arg value is None
+        axis = kwargs['axis'] or tuple(range(len(inp_shape)))
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
     if axis is not None:
@@ -4070,6 +4063,217 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return newarr
 
 
+@oprepo.replaces_attribute('Array', 'T')
+@oprepo.replaces_attribute('View', 'T')
+def _ndarray_T(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+               arr: str) -> str:
+    return _transpose(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_attribute('Array', 'real')
+@oprepo.replaces_attribute('Scalar', 'real')
+@oprepo.replaces_attribute('View', 'real')
+def _ndarray_real(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                  arr: str) -> str:
+    return _real(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_attribute('Array', 'imag')
+@oprepo.replaces_attribute('Scalar', 'imag')
+@oprepo.replaces_attribute('View', 'imag')
+def _ndarray_imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                  arr: str) -> str:
+    return _imag(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_method('Array', 'copy')
+@oprepo.replaces_method('Scalar', 'copy')
+@oprepo.replaces_method('View', 'copy')
+def _ndarray_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                  arr: str) -> str:
+    return _numpy_copy(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_method('Array', 'fill')
+@oprepo.replaces_method('Scalar', 'fill')
+@oprepo.replaces_method('View', 'fill')
+def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
+                  value: Number) -> str:
+    if not isinstance(value, Number):
+        raise mem_parser.DaceSyntaxError(
+            pv, None, "Fill value {f} must be a number!".format(f=value))
+    return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
+
+
+@oprepo.replaces_method('Array', 'reshape')
+@oprepo.replaces_method('View', 'reshape')
+def _ndarray_reshape(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arr: str,
+                     newshape: Union[str, symbolic.SymbolicType,
+                                     Tuple[Union[str, symbolic.SymbolicType]]],
+                     order='C') -> str:
+    return reshape(pv, sdfg, state, arr, newshape, order)
+
+
+@oprepo.replaces_method('Array', 'transpose')
+@oprepo.replaces_method('View', 'transpose')
+def _ndarray_transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                       arr: str, *axes) -> str:
+    if len(axes) == 0:
+        axes = None
+    elif len(axes) == 1:
+        axes = axes[0]
+    return _transpose(pv, sdfg, state, arr, axes)
+
+
+@oprepo.replaces_method('Array', 'flatten')
+@oprepo.replaces_method('Scalar', 'flatten')
+@oprepo.replaces_method('View', 'flatten')
+def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                     arr: str) -> str:
+    new_arr = flat(pv, sdfg, state, arr)
+    # `flatten` always returns a copy
+    if isinstance(new_arr, data.View):
+        return _ndarray_copy(pv, sdfg, state, new_arr)
+    return new_arr
+
+
+@oprepo.replaces_method('Array', 'ravel')
+@oprepo.replaces_method('Scalar', 'ravel')
+@oprepo.replaces_method('View', 'ravel')
+def _ndarray_ravel(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                   arr: str) -> str:
+    # `ravel` returns a copy only when necessary (sounds like ndarray.flat)
+    return flat(pv, sdfg, state, arr)
+
+
+@oprepo.replaces_method('Array', 'max')
+@oprepo.replaces_method('Scalar', 'max')
+@oprepo.replaces_method('View', 'max')
+def _ndarray_max(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'maximum', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'min')
+@oprepo.replaces_method('Scalar', 'min')
+@oprepo.replaces_method('View', 'min')
+def _ndarray_min(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr],
+                                  kwargs)[0]
+
+
+# TODO: It looks like `_argminmax` does not work with a flattened array.
+# @oprepo.replaces_method('Array', 'argmax')
+# @oprepo.replaces_method('Scalar', 'argmax')
+# @oprepo.replaces_method('View', 'argmax')
+# def _ndarray_argmax(pv: 'ProgramVisitor',
+#                  sdfg: SDFG,
+#                  state: SDFGState,
+#                  arr: str,
+#                  axis: int = None,
+#                  out: str = None) -> str:
+#     if not axis:
+#         axis = 0
+#         arr = flat(pv, sdfg, state, arr)
+#     nest, newarr = _argmax(pv, sdfg, state, arr, axis)
+#     if out:
+#         r = state.add_read(arr)
+#         w = state.add_read(newarr)
+#         state.add_nedge(r, w, dace.Memlet.from_array(newarr, sdfg.arrays[newarr]))
+#     return new_arr
+
+
+@oprepo.replaces_method('Array', 'conj')
+@oprepo.replaces_method('Scalar', 'conj')
+@oprepo.replaces_method('View', 'conj')
+def _ndarray_conj(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str) -> str:
+    return implement_ufunc(pv, None, sdfg, state, 'conj', [arr], {})[0]
+
+
+@oprepo.replaces_method('Array', 'sum')
+@oprepo.replaces_method('Scalar', 'sum')
+@oprepo.replaces_method('View', 'sum')
+def _ndarray_sum(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'add', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'mean')
+@oprepo.replaces_method('Scalar', 'mean')
+@oprepo.replaces_method('View', 'mean')
+def _ndarray_mean(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str,
+                  kwargs: Dict[str, Any] = None) -> str:
+    nest = NestedCall(pv, sdfg, state)
+    kwargs = kwargs or dict(axis=None)
+    sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add', [arr],
+                                    kwargs)[0]
+    desc = sdfg.arrays[arr]
+    sz = reduce(lambda x, y: x * y, desc.shape)
+    return nest, _elementwise(pv, sdfg, nest.add_state(), "lambda x: x / {}".format(sz), sumarr)
+
+
+@oprepo.replaces_method('Array', 'prod')
+@oprepo.replaces_method('Scalar', 'prod')
+@oprepo.replaces_method('View', 'prod')
+def _ndarray_prod(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  arr: str,
+                  kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'multiply', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'all')
+@oprepo.replaces_method('Scalar', 'all')
+@oprepo.replaces_method('View', 'all')
+def _ndarray_all(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_and', [arr],
+                                  kwargs)[0]
+
+
+@oprepo.replaces_method('Array', 'any')
+@oprepo.replaces_method('Scalar', 'any')
+@oprepo.replaces_method('View', 'any')
+def _ndarray_any(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 arr: str,
+                 kwargs: Dict[str, Any] = None) -> str:
+    kwargs = kwargs or dict(axis=None)
+    return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr],
+                                  kwargs)[0]
+
 # Datatype converter #########################################################
 
 
@@ -4133,6 +4337,16 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput,
                      where=None)
 
     return outputs
+
+
+@oprepo.replaces_method('Array', 'astype')
+@oprepo.replaces_method('Scalar', 'astype')
+@oprepo.replaces_method('View', 'astype')
+def _ndarray_astype(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
+                    arr: str, dtype: dace.typeclass) -> str:
+    if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+        dtype = dtypes.typeclass(dtype)
+    return _datatype_converter(sdfg, state, arr, dtype)[0]
 
 
 # Replacements that need ufuncs ###############################################

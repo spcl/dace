@@ -3697,7 +3697,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     'Method "%s" is not registered for object type "%s"' %
                     (methodname, classname))
             # Add object as first argument
-            args.append(self.scope_vars[modname])
+            if modname in self.variables.keys():
+                arg = self.variables[modname]
+            else:
+                arg = self.scope_vars[modname]
+            args.append(arg)
         # Otherwise, try to find a default implementation for the SDFG
         elif not found_ufunc:
             func = oprepo.Replacements.get(funcname)
