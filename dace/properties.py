@@ -531,14 +531,7 @@ class ListProperty(Property):
     def to_json(self, l):
         if l is None:
             return None
-        # If element knows how to convert itself, let it
-        if hasattr(self.element_type, "to_json"):
-            return [elem.to_json() for elem in l]
-        # If elements are one of the JSON basic types, use directly
-        if self.element_type in (int, float, list, tuple, dict):
-            return l
-        # Otherwise, convert to strings
-        return list(map(str, l))
+        return [dace.serialize.to_json(elem) for elem in l]
 
     def from_string(self, s):
         if s.startswith('[') and s.endswith(']'):
@@ -554,8 +547,10 @@ class ListProperty(Property):
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "from_json"):
             return [self.element_type.from_json(elem) for elem in data]
-        # Type-checks (casts) to the element type
-        return list(map(self.element_type, data))
+        return [
+            dace.serialize.from_json(v, known_type=self.element_type)
+            for v in data
+        ]
 
 
 class TransformationHistProperty(Property):

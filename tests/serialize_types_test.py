@@ -36,9 +36,9 @@ class MyListObject(object):
     def to_json(self):
         return all_properties_to_json(self)
 
-    @staticmethod
-    def from_json(json_obj, context=None):
-        ret = MyListObject([])
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        ret = cls([])
         set_properties_from_json(ret, json_obj, context=context)
         return ret
 
@@ -50,6 +50,14 @@ def test_serialize_int_float():
     # Force casting to int
     json_obj['float_prop'] = int(json_obj['float_prop'])
     obj = MyObject.from_json(json_obj)
+    assert obj.float_prop == 1.0
+
+
+def test_serialize_float32():
+    obj = MyObject(np.float32(1.0))
+    assert obj.float_prop == 1.0
+    json_obj = obj.to_json()
+    obj = MyObject.from_json(json.loads(json.dumps(json_obj)))
     assert obj.float_prop == 1.0
 
 
@@ -65,3 +73,5 @@ def test_serialize_list_int64():
 
 if __name__ == '__main__':
     test_serialize_int_float()
+    test_serialize_float32()
+    test_serialize_list_int64()

@@ -92,6 +92,8 @@ def from_json(obj, context=None, known_type=None):
             if isinstance(obj, str):
                 if hasattr(known_type, "from_string"):
                     return known_type.from_string(obj)
+                elif known_type in (int, float):
+                    return known_type(obj)
         if isinstance(obj, list):
             return [from_json(o, context) for o in obj]
         # Otherwise we don't know what to do with this
