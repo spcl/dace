@@ -16,6 +16,7 @@ from dace.transformation.subgraph import helpers
 from copy import deepcopy as dcpy
 from typing import List, Union
 
+import itertools
 import dace.libraries.standard as stdlib
 
 
@@ -37,6 +38,10 @@ class MultiExpansion(transformation.SubgraphTransformation):
                                     "created during expansion sequential",
                                     default=False)
 
+    check_contiguity = Property(dtype=bool,
+                                desc="Don't allow MultiExpansion if contiguous"
+                                "dimension is partially split",
+                                default = True)
     @staticmethod
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -44,10 +49,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
         # (or nested sdfgs therein)
 
         graph = subgraph.graph
-
-        for node in subgraph.nodes():
-            if node not in graph.nodes():
-                return False
 
         # next, get all the maps
         maps = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
@@ -60,6 +61,26 @@ class MultiExpansion(transformation.SubgraphTransformation):
         # see whether they have common parameters; if not -> fail
         if len(brng) == 0:
             return False
+
+        if MultiExpansion.check_contiguity._default == True:
+            reassignment = helpers.find_reassignment(maps, brng)
+            for map_entry in maps:
+                print("Analyzing", map_entry)
+                no_common = sum([1 for j in reassignment[map_entry] if j != -1])
+                if no_common != len(map_entry.params):
+                    print("Lengths differ!")
+                    # check every memlet for access 
+                    for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
+                        subset = dcpy(e.data.subset)
+                        subset.pop([i for i in range(subset.dims()-1)])
+                        for s in subset.free_symbols:
+                            print("SYMBOL", s)
+                            print(map_entry.map.params)
+                            print(reassignment[map_entry])
+                            print(map_entry.map.params.index(s))
+                            if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
+                                return False 
+
 
         return True
 
@@ -93,6 +114,10 @@ class MultiExpansion(transformation.SubgraphTransformation):
         """
 
         maps = [entry.map for entry in map_entries]
+        
+        # short circuit
+        if all([map.params == maps[0].params for map in maps]) and all([map.range == maps[0].range for map in maps]):
+            return
 
         if not map_base_variables:
             # find the maximal subset of variables to expand
