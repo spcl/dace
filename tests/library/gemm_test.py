@@ -35,14 +35,13 @@ def test_gemm_no_c(implementation):
             "Configuration/compilation failed, library missing or "
             "misconfigured, skipping test for {}.".format(implementation))
 
-
     Gemm.default_implementation = None
 
 
 def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                     alpha, beta, implementation):
+                     alpha, beta, implementation, sdfg_name):
 
-    sdfg = dace.SDFG("gemm")
+    sdfg = dace.SDFG(sdfg_name)
     state = sdfg.add_state()
     A, A_arr = sdfg.add_array("A", A_shape, dtype)
     B, B_arr = sdfg.add_array("B", B_shape, dtype)
@@ -81,6 +80,9 @@ def run_test(implementation,
              alpha=1.0,
              beta=1.0,
              C_shape=["M", "N"]):
+    # unique name for sdfg
+    sdfg_name = f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_shape}"
+
     if C_shape is not None:
         replace_map = dict(M=M, N=N)
         C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
@@ -122,7 +124,7 @@ def run_test(implementation,
 
     sdfg = create_gemm_sdfg(dace.complex64 if complex else dace.float32,
                             A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                            alpha, beta, implementation)
+                            alpha, beta, implementation, sdfg_name)
 
     if C_shape is not None:
         Y[:] = C
