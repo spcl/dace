@@ -192,6 +192,13 @@ required:
                 description: >
                     If set to true, inlines all nested SDFGs upon code generation by default.
 
+            max_stack_array_size:
+                type: int
+                default: 65536
+                title: Max stack-allocated array size (bytes)
+                description: >
+                    All stack allocated arrays (i.e. StorageType.Register) with
+                    size larger than this will be allocated on the heap.
 
             #############################################
             # CPU compiler

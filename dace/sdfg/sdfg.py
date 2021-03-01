@@ -1299,6 +1299,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name + ('_%d' % index)
 
+    def find_new_constant(self, name: str):
+        """ 
+        Tries to find a new constant name by adding an underscore and a number.
+        """
+        constants = self.constants
+        if name not in constants:
+            return name
+            
+        index = 0
+        while (name + ('_%d' % index)) in constants:
+            index += 1
+
+        return name + ('_%d' % index)
+
     def add_array(self,
                   name: str,
                   shape,
@@ -1947,15 +1961,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for xform, opts in zip(xforms, options):
             # Find only the first match
             try:
-                match = next(m for m in opt.get_pattern_matches(
-                    strict=strict, patterns=[xform], states=states))
+                match = next(m
+                             for m in opt.get_pattern_matches(strict=strict,
+                                                              patterns=[xform],
+                                                              states=states,
+                                                              options=[opts]))
             except StopIteration:
                 continue
             sdfg = self.sdfg_list[match.sdfg_id]
 
-            # Set transformation properties
-            for prop_name, prop_val in opts.items():
-                setattr(match, prop_name, prop_val)
             match.apply(sdfg)
             applied_transformations[type(match).__name__] += 1
             if validate_all:
@@ -2033,11 +2047,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         def _apply_and_validate(match):
             sdfg = self.sdfg_list[match.sdfg_id]
 
-            # Set transformation properties
-            opts = params_by_xform[type(match)]
-            for prop_name, prop_val in opts.items():
-                setattr(match, prop_name, prop_val)
-
             match.apply(sdfg)
             applied_transformations[type(match).__name__] += 1
             if validate_all:
@@ -2057,23 +2066,28 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     applied = True
                     while applied:
                         applied = False
-                        for match in opt.get_pattern_matches(strict=strict,
-                                                             patterns=[xform],
-                                                             states=states):
+                        for match in opt.get_pattern_matches(
+                                strict=strict,
+                                patterns=[xform],
+                                states=states,
+                                options=[params_by_xform[xform]]):
                             _apply_and_validate(match)
                             applied = True
                             applied_anything = True
                             break
         else:
             # Cache transformations as metadata for faster application
-            opt.set_transformation_metadata(xforms)
+            options = [params_by_xform[x] for x in xforms]
+            opt.set_transformation_metadata(xforms, options)
             applied = True
             while applied:
                 applied = False
                 # Find and apply one of the chosen transformations
-                for match in opt.get_pattern_matches(strict=strict,
-                                                     patterns=xforms,
-                                                     states=states):
+                for match in opt.get_pattern_matches(
+                        strict=strict,
+                        patterns=xforms,
+                        states=states,
+                        options=options):
                     _apply_and_validate(match)
                     applied = True
                     break
