@@ -519,7 +519,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
     def generate_host_function_body(self, sdfg, state, kernel_name, parameters,
-                                    symbol_parameters, kernel_stream):
+                                    symbol_parameters, kernel_stream, rtl_tasklets):
 
         # Just collect all variable names for calling the kernel function
         added = set()
@@ -541,13 +541,25 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
 
+        rtl_starts = []
+        rtl_waits = []
+        for rtl_tasklet in rtl_tasklets:
+            rtl_starts.append(f"  auto kernel_{rtl_tasklet} = program.MakeKernel(\"{rtl_tasklet}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if isinstance(p, dace.data.Scalar)])}).ExecuteTaskFork();")
+            rtl_waits.append(f"  kernel_{rtl_tasklet}.wait();")
         kernel_stream.write(
             """\
+  {rtl_starts}
   auto kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {kernel_args});
   const std::pair<double, double> elapsed = kernel.ExecuteTask();
+  {rtl_waits}
   std::cout << "Kernel executed in " << elapsed.second << " seconds.\\n" << std::flush;
 }}""".format(kernel_function_name=kernel_function_name,
-             kernel_args=", ".join(kernel_args)), sdfg, sdfg.node_id(state))
+             kernel_args=", ".join(kernel_args),
+             rtl_starts="\n  ".join(rtl_starts),
+             rtl_waits="\n  ".join(rtl_waits)
+             ), sdfg, sdfg.node_id(state))
+
+
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
                         symbol_parameters, module_stream, entry_stream,
@@ -580,26 +592,28 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             # _1 in names are due to vitis
             for node in subgraph.source_nodes():
-                if node.data not in self._stream_connections:
-                    self._stream_connections[node.data] = [None, None]
-                for edge in state.out_edges(node):
-                    rtl_name = "{}_{}_{}_{}".format(edge.dst, sdfg.sdfg_id,
-                                                    sdfg.node_id(state),
-                                                    state.node_id(edge.dst))
-                    self._stream_connections[
-                        node.data][1] = '{}_top_1.s_axis_{}'.format(
-                            rtl_name, edge.dst_conn)
+                if isinstance(sdfg.arrays[node.data], dace.data.Stream):
+                    if node.data not in self._stream_connections:
+                        self._stream_connections[node.data] = [None, None]
+                    for edge in state.out_edges(node):
+                        rtl_name = "{}_{}_{}_{}".format(edge.dst, sdfg.sdfg_id,
+                                                        sdfg.node_id(state),
+                                                        state.node_id(edge.dst))
+                        self._stream_connections[
+                            node.data][1] = '{}_top_1.s_axis_{}'.format(
+                                rtl_name, edge.dst_conn)
 
             for node in subgraph.sink_nodes():
-                if node.data not in self._stream_connections:
-                    self._stream_connections[node.data] = [None, None]
-                for edge in state.in_edges(node):
-                    rtl_name = "{}_{}_{}_{}".format(edge.src, sdfg.sdfg_id,
-                                                    sdfg.node_id(state),
-                                                    state.node_id(edge.src))
-                    self._stream_connections[
-                        node.data][0] = '{}_top_1.m_axis_{}'.format(
-                            rtl_name, edge.src_conn)
+                if isinstance(sdfg.arrays[node.data], dace.data.Stream):
+                    if node.data not in self._stream_connections:
+                        self._stream_connections[node.data] = [None, None]
+                    for edge in state.in_edges(node):
+                        rtl_name = "{}_{}_{}_{}".format(edge.src, sdfg.sdfg_id,
+                                                        sdfg.node_id(state),
+                                                        state.node_id(edge.src))
+                        self._stream_connections[
+                            node.data][0] = '{}_top_1.m_axis_{}'.format(
+                                rtl_name, edge.src_conn)
 
             # Skip RTL modules
             # Should still generate the node:
@@ -785,6 +799,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                          for pname, param in scalar_parameters]
 
         host_code_stream = CodeIOStream()
+        rtl_tasklets = ["{}_{}_{}_{}".format(nd.name, sdfg.sdfg_id,
+                                        sdfg.node_id(state),
+                                        state.node_id(nd))
+                                        for nd in state.nodes() if isinstance(nd, nodes.RTLTasklet)]
 
         # Generate host code
         self.generate_host_header(sdfg, kernel_name,
@@ -796,7 +814,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             function_stream, callsite_stream)
         self.generate_host_function_body(sdfg, state, kernel_name,
                                          global_data_parameters + sc_parameters,
-                                         symbol_parameters, host_code_stream)
+                                         symbol_parameters, host_code_stream, rtl_tasklets)
         # Store code to be passed to compilation phase
         self._host_codes.append((kernel_name, host_code_stream.getvalue()))
 
