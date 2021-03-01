@@ -105,6 +105,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{} {} = *({} *)(&{}[0]);".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.src.data)
+            elif isinstance(dst_node.in_connectors[edge.dst_conn], dtypes.struct) and dst_node.in_connectors[edge.dst_conn].ctype == "stream":  # TODO: change to actual stream class
+                line: str = "dace::Stream<{}> *{} = &{};".format(
+                    dst_node.in_connectors[edge.dst_conn].fields['a'].ctype,
+                    edge.dst_conn, edge.src.data)
             else:  # scalar accessor
                 line: str = "{}* {} = &{}[0];".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
@@ -136,6 +140,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{} {} = *({} *)(&{}[0]);".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     src_node.out_connectors[edge.src_conn].ctype, edge.dst.data)
+            elif isinstance(src_node.out_connectors[edge.src_conn], dtypes.struct) and src_node.out_connectors[
+                    edge.src_conn].ctype == "stream":  # TODO: change to actual stream class
+                line: str = "dace::Stream<{}> *{} = &{};".format(
+                    src_node.out_connectors[edge.src_conn].fields['a'].ctype,
+                    edge.src_conn, edge.dst.data)
             else:  # scalar accessor
                 line: str = "{}* {} = &{}[0];".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
@@ -335,6 +344,13 @@ for(int i = 0; i < {veclen}; i++){{
                         function_stream: prettycode.CodeIOStream,
                         callsite_stream: prettycode.CodeIOStream):
 
+
+        # TODO: should not be necessary anymore, if exit function is called from somewhere else
+        function_stream.write("DACE_EXPORTED void __dace_exit_{name}({name}_t *__state);".format(name=sdfg.name),
+                              sdfg=sdfg,
+                              state_id=state_id,
+                              node_id=node)
+
         # extract data
         state = sdfg.nodes()[state_id]
         tasklet = node
@@ -413,8 +429,8 @@ for(int i = 0; i < {veclen}; i++){{
     }}
 """.format(debug_feed_element="std::cout << \"feed new element\" << std::endl;"
             if self.verilator_debug else "",
-           inputs="\n".join(["model->{name} = {name}.pop();".format(name=x) for x in tasklet.in_connectors]) if tasklet.is_autorun else inputs,
-           stream_condition="&& " + " && ".join(["!{}.is_empty()".format(x) for x in tasklet.in_connectors]) if tasklet.is_autorun else ""),
+           inputs="\n".join(["model->{name} = {name}->pop();".format(name=x) for x in tasklet.in_connectors]) if tasklet.is_autorun else inputs,
+           stream_condition="&& " + " && ".join(["!{}->is_empty()".format(x) for x in tasklet.in_connectors]) if tasklet.is_autorun else ""),
             export_element="""\
 if(model->valid_o == 1 {stream_condition}){{
     {debug_export_element}
@@ -422,9 +438,9 @@ if(model->valid_o == 1 {stream_condition}){{
     model->ready_i = 1;
 }}      
             """.format(debug_export_element="std::cout << \"export element\" << std::endl;",
-                       outputs="\n".join(["{name}.push(model->{name});".format(name=x) for x in tasklet.out_connectors]) if tasklet.is_autorun else outputs,
-                       stream_condition="&& " + " && ".join(["!{}.is_full()".format(x) for x in tasklet.out_connectors]) if tasklet.is_autorun else ""),
-            running_condition="__state.autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
+                       outputs="\n".join(["{name}->push(model->{name});".format(name=x) for x in tasklet.out_connectors]) if tasklet.is_autorun else outputs,
+                       stream_condition="&& " + " && ".join(["!{}->is_full()".format(x) for x in tasklet.out_connectors]) if tasklet.is_autorun else ""),
+            running_condition="__state->autorun_active && out_ptr < num_elements" if tasklet.is_autorun else "out_ptr < num_elements",
             debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;".format(name=unique_name)
             if self.verilator_debug else "",
             debug_feed_element="std::cout << \"feed new element\" << std::endl;"

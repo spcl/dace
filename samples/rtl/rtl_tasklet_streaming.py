@@ -34,7 +34,7 @@ sdfg.add_stream("PIPE_OUT", dtype=dace.int32, transient=True, buffer_size=1)
 # add custom cpp tasklet
 tasklet_read = state.add_tasklet(name='tasklet_read',
                             inputs={'a'},
-                            outputs={'pipe_in'},
+                            outputs={'pipe_in'},  # TODO: change to stream class
                             code='''
 for(int i = 0; i < N; i++){
     PIPE_IN.push(a[i]);
@@ -43,8 +43,8 @@ for(int i = 0; i < N; i++){
                             language=dace.Language.CPP)
 
 tasklet_rtl = state.add_tasklet(name='tasklet_rtl',
-                            inputs={'pipe_in'},
-                            outputs={'pipe_out'},
+                            inputs={'pipe_in': dace.struct("stream", a=dace.int32)},  # TODO: change to stream class
+                            outputs={'pipe_out': dace.struct("stream", a=dace.int32)},  # TODO: change to stream class
                             code='''
     /*
         Convention:
@@ -133,12 +133,14 @@ tasklet_rtl = state.add_tasklet(name='tasklet_rtl',
         language=dace.Language.SystemVerilog)
 
 tasklet_write = state.add_tasklet(name='tasklet_write',
-                            inputs={'pipe_out'},
+                            inputs={'pipe_out'}, # TODO: change to stream class
                             outputs={'b'},
                             code='''
 for(int i = 0; i < N; i++){
     b[i] = PIPE_OUT.pop();
 }
+
+__dace_exit_rtl_tasklet_streaming(__state); // TODO: should be called from elsewhere
                             ''',
                             language=dace.Language.CPP)
 
@@ -156,7 +158,7 @@ state.add_edge(A, None, tasklet_read, 'a', dace.Memlet.simple('A', '0:N-1'))  # 
 state.add_edge(tasklet_read, 'pipe_in', PIPE_IN_W, None, dace.Memlet.simple('PIPE_IN', '0:N-1'))  # read tasklet -> pipe
 state.add_edge(PIPE_IN_R, None, tasklet_rtl, 'pipe_in', dace.Memlet.simple('PIPE_IN', '0:N-1'))  # pipe -> rtl tasklet
 state.add_edge(tasklet_rtl, 'pipe_out', PIPE_OUT_W, None, dace.Memlet.simple('PIPE_OUT', '0:N-1'))  # rtl tasklet -> pipe
-state.add_edge(PIPE_OUT_R, None, tasklet_write, 'pipe_out', dace.Memlet.simple('PIPE_OUT', '0:N-1'))  # pipe -> write tasklet
+state.add_edge(PIPE_OUT_R, None, tasklet_write, 'pipe_out', dace.Memlet.simple('PIPE_OUT', '0'))  # pipe -> write tasklet
 state.add_edge(tasklet_write, 'b', B, None, dace.Memlet.simple('B', '0:N-1'))  # write tasklet -> array
 
 # validate sdfg
