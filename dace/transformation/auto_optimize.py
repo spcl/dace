@@ -1,18 +1,21 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
+import dace
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_states
 from dace import config, dtypes
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Union
 import warnings
 
+
 # Transformations
-from dace.transformation.dataflow import MapCollapse
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import helpers
+from dace.transformation.subgraph import helpers, ReduceExpansion
 
 # Environments
 from dace.libraries.blas.environments import intel_mkl as mkl, openblas
@@ -20,17 +23,23 @@ from dace.libraries.blas.environments import intel_mkl as mkl, openblas
 # Enumerator 
 from dace.transformation.estimator.enumeration import GreedyEnumerator
 
+
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 
 def greedy_fuse(graph_or_subgraph: GraphViewType, 
                 validate_all: bool,
-                apply_multi_expansion: bool = False, # run both
-                apply_stencil_tiling: bool = False, # not now yet
+                #apply_multi_expansion: bool = False, # run both
+                #apply_stencil_tiling: bool = False, # not now yet
                 recursive: bool = False) -> None:
+
+    #CompositeFusion.allow_expansion = apply_multi_expansion
+    #CompositeFusion.allow_tiling = apply_stencil_tiling
 
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs 
+        #graph_or_subgraph.apply_transformations_repeated(ReduceExpansion)
+        graph_or_subgraph.apply_transformations_repeated(MapFusion)
         for graph in graph_or_subgraph.nodes():
             greedy_fuse(graph, validate_all)
     else:
@@ -38,6 +47,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None 
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
+            sdfg.apply_transformations_repeated(MapFusion)
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes()) 
         else:
@@ -64,6 +74,10 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                     global_entry = cf._global_map_entry
                     greedy_fuse(graph.scope_subgraph(global_entry))
         
+        for node in graph_or_subgraph.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                greedy_fuse(node.sdfg, validate_all = validate_all)
+
         if applied_transformations > 0:
             print(f"Applied {applied_transformations} SubgraphFusion")
            
@@ -74,6 +88,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
         if validate_all:
             graph.validate()
+
+        sdfg.save('inspect.sdfg')
 
 
 
@@ -94,10 +110,16 @@ def find_fast_library(device: dtypes.DeviceType) -> str:
         result = []
 
         # BLAS calls
-        if mkl.IntelMKL.is_installed():
-            result.append('MKL')
-        elif openblas.OpenBLAS.is_installed():
-            result.append('OpenBLAS')
+        try:
+            if mkl.IntelMKL.is_installed():
+                result.append('MKL')
+        except AttributeError:
+            pass 
+        try:
+            if openblas.OpenBLAS.is_installed():
+                result.append('OpenBLAS')
+        except AttributeError:
+            pass 
 
         return result + ['pure']
 
@@ -129,18 +151,30 @@ def auto_optimize(sdfg: SDFG,
     # Strict transformations
     sdfg.apply_strict_transformations(validate=False, validate_all=validate_all)
 
+    # Try to eliminate trivial maps 
+    sdfg.apply_transformations_repeated(TrivialMapElimination, validate = validate, validate_all = validate_all)
     # Try to parallelize loops
-    sdfg.apply_transformations_repeated(LoopToMap,
+    for sd in sdfg.all_sdfgs_recursive():
+        propagate_states(sd)
+    strict_transformations = dace.transformation.strict_transformations()
+    sdfg.apply_transformations_repeated([LoopToMap] + strict_transformations,
                                         strict=True,
                                         validate=False,
                                         validate_all=validate_all)
 
+    # TEST: Collapse maps
+    sdfg.apply_transformations_repeated(MapCollapse,
+                                        strict=True,
+                                        validate=False,
+                                        validate_all=validate_all)
+    
     # Map fusion
     greedy_fuse(sdfg, validate_all)
 
     # Tiled WCR and streams
     tile_wcrs(sdfg, validate_all)
 
+    
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse,
                                         strict=True,
@@ -151,6 +185,8 @@ def auto_optimize(sdfg: SDFG,
             node.map.collapse = len(node.map.range)
 
     # Set all library nodes to expand to fast library calls
+    
+    
     implementation_prio = find_fast_library(device)
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
@@ -161,15 +197,16 @@ def auto_optimize(sdfg: SDFG,
             else:
                 warnings.warn('No fast library implementation found for "%s", '
                               'falling back to default.' % node.name)
-
+    
     # TODO(later): Safe vectorization
-
+    
     # Disable OpenMP parallel sections
     # TODO(later): Set on a per-SDFG basis
+    '''
     config.Config.set('compiler', 'cpu', 'openmp_sections', value=False)
-
+    
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
-
+    '''
     return sdfg

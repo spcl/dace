@@ -66,23 +66,29 @@ class CompositeFusion(transformation.SubgraphTransformation):
     def can_be_applied(sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
         if CompositeFusion.allow_expansion._default == True:
-            # deepcopy graph 
-            graph_indices = [i for (i,n) in enumerate(graph.nodes()) if n in subgraph]
-            sdfg_copy = SDFG.from_json(sdfg.to_json())
-            graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
-            subgraph_copy = SubgraphView(graph_copy,
+            if SubgraphFusion.can_be_applied(sdfg, subgraph):
+                return True 
+            
+            if MultiExpansion.can_be_applied(sdfg, subgraph):
+                # deepcopy
+                graph_indices = [i for (i,n) in enumerate(graph.nodes()) if n in subgraph]
+                print("DEEPCOPY (CBA)")
+                sdfg_copy = SDFG.from_json(sdfg.to_json())
+                print("Done")
+                graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
+                subgraph_copy = SubgraphView(graph_copy,
                 [graph_copy.nodes()[i] for i in graph_indices])
             
-            if MultiExpansion.can_be_applied(sdfg_copy, subgraph_copy):
+                
                 #sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
                 expansion = MultiExpansion(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
-            if SubgraphFusion.can_be_applied(sdfg_copy, subgraph_copy):
-                return True 
-            
-            if CompositeFusion.allow_tiling:
-                if StencilTiling.can_be_applied(sdfg_copy, subgraph_copy):
+                if SubgraphFusion.can_be_applied(sdfg_copy, subgraph_copy):
+                    return True 
+                
+            elif CompositeFusion.allow_tiling:
+                if StencilTiling.can_be_applied(sdfg, subgraph):
                     return True 
 
 

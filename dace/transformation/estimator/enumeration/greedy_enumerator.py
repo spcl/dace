@@ -47,11 +47,14 @@ class GreedyEnumerator(Enumerator):
         # need topology information 
         self.calculate_topology(subgraph) 
 
+
     def iterator(self):
         # iterate through adjacency list starting with map with lowest label.
         # then greedily explore neighbors with next lowest label and see whether set is fusible 
         # if not fusible, cancel and create a new set 
 
+        if len(self._adjacency_list) == 0:
+            return
         first_map = next(me for me in self._adjacency_list if self._labels[me] == 0)
 
         # define queue / visited set which helps us find starting points
