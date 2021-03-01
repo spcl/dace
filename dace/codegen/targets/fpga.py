@@ -282,10 +282,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 tasks = [
                     t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
                 ]
-                external = True in [
+                external = any([
                     t.language == dace.dtypes.Language.SystemVerilog
                     for t in tasks
-                ]
+                ])
                 if external:
                     external_streams += [(True, e.data.data,
                                           subsdfg.arrays[e.data.data], None)
