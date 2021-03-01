@@ -8,6 +8,8 @@ import argparse
 
 import numpy as np
 
+from dace.transformation.interstate import FPGATransformSDFG
+
 # add symbol
 N = dace.symbol('N')
 
@@ -160,6 +162,9 @@ state.add_edge(PIPE_IN_R, None, tasklet_rtl, 'pipe_in', dace.Memlet.simple('PIPE
 state.add_edge(tasklet_rtl, 'pipe_out', PIPE_OUT_W, None, dace.Memlet.simple('PIPE_OUT', '0:N-1'))  # rtl tasklet -> pipe
 state.add_edge(PIPE_OUT_R, None, tasklet_write, 'pipe_out', dace.Memlet.simple('PIPE_OUT', '0'))  # pipe -> write tasklet
 state.add_edge(tasklet_write, 'b', B, None, dace.Memlet.simple('B', '0:N-1'))  # write tasklet -> array
+
+# convert SDFG to FPGA using a transformation
+sdfg.apply_transformations(FPGATransformSDFG)
 
 # validate sdfg
 sdfg.validate()
