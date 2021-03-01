@@ -4,7 +4,7 @@ import itertools
 
 from typing import List, Tuple, Dict
 
-from dace import dtypes, config, registry, symbolic, nodes, sdfg
+from dace import dtypes, config, registry, symbolic, nodes, sdfg, data
 from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
@@ -204,7 +204,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 for i, key in enumerate(constants)
             ]))
 
-    def generate_padded_axis(self, is_input, name, total_size, veclen):
+    def generate_padded_axis(self, is_output, name, total_size, veclen):
         """
         Generates a padded list of strings for pretty printing streaming
         AXI port definitions. E.g. for a streaming input port named "a", the
@@ -219,9 +219,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
         vec_str = '' if veclen <= 1 else f'[{veclen-1}:0]'
         bits_str = f'[{(total_size // veclen) * 8 - 1}:0]'
         bytes_str = f'[{total_size - 1}:0]'
-        dir_str = 'input     ' if is_input else 'output reg'
-        ndir_str = 'output reg' if is_input else 'input     '
-        prefix = f's_axis_{name}' if is_input else f'm_axis_{name}'
+        dir_str  = 'output reg' if is_output else 'input     '
+        ndir_str = 'input     ' if is_output else 'output reg'
+        prefix = f'm_axis_{name}' if is_output else f's_axis_{name}'
         padding = ' ' * (len(bits_str) + len(vec_str))
         bytes_padding = ' ' * ((len(bits_str) - len(bytes_str)) + len(vec_str))
         return [
@@ -232,45 +232,18 @@ class RTLCodeGen(target.TargetCodeGenerator):
             f', {dir_str} {padding} {prefix}_tlast',
         ]
 
-    def generate_rtl_inputs_outputs(self, sdfg, tasklet):
-        # construct input / output module header
-        inputs = list()
-        for inp in tasklet.in_connectors:
-            # catch symbolic (compile time variables)
-            check_issymbolic([
-                tasklet.in_connectors[inp].veclen,
-                tasklet.in_connectors[inp].bytes
-            ], sdfg)
+    def generate_rtl_inputs_outputs(self, buses, scalars):
+        inputs = []
+        outputs = []
+        for scalar, (is_output, total_size) in scalars.items():
+            inputs += [f', {"output" if is_output else "input"} [{total_size-1}:0] {scalar}']
 
-            # extract parameters
-            vec_len = int(
-                symbolic.evaluate(tasklet.in_connectors[inp].veclen,
-                                  sdfg.constants))
-            total_size = int(
-                symbolic.evaluate(tasklet.in_connectors[inp].bytes,
-                                  sdfg.constants))
+        for bus, (is_output, total_size, vec_len) in buses.items():
+            if is_output:
+                inputs += self.generate_padded_axis(True, bus, total_size, vec_len)
+            else:
+                outputs += self.generate_padded_axis(False, bus, total_size, vec_len)
 
-            # generate padded strings and add to list
-            inputs += self.generate_padded_axis(True, inp, total_size, vec_len)
-
-        outputs = list()
-        for outp in tasklet.out_connectors:
-            # catch symbolic (compile time variables)
-            check_issymbolic([
-                tasklet.out_connectors[outp].veclen,
-                tasklet.out_connectors[outp].bytes
-            ], sdfg)
-
-            # extract parameters
-            vec_len = int(
-                symbolic.evaluate(tasklet.out_connectors[outp].veclen,
-                                  sdfg.constants))
-            total_size = int(
-                symbolic.evaluate(tasklet.out_connectors[outp].bytes,
-                                  sdfg.constants))
-
-            # generate padded strings and add to list
-            outputs += self.generate_padded_axis(False, outp, total_size, vec_len)
         return inputs, outputs
 
     def generate_cpp_zero_inits(self, tasklet):
@@ -481,9 +454,45 @@ for(int i = 0; i < {veclen}; i++){{
                                                 sdfg.node_id(state),
                                                 state.node_id(tasklet))
 
+        # Collect all of the input and output connectors into buses and scalars
+        import dace
+        buses = {}
+        scalars = {}
+        for edge in state.in_edges(tasklet):
+            arr = sdfg.arrays[edge.src.data]
+            # catch symbolic (compile time variables)
+            check_issymbolic([
+                tasklet.in_connectors[edge.dst_conn].veclen,
+                tasklet.in_connectors[edge.dst_conn].bytes
+            ], sdfg)
+
+            # extract parameters
+            vec_len = int(
+                symbolic.evaluate(tasklet.in_connectors[edge.dst_conn].veclen,
+                                  sdfg.constants))
+            total_size = int(
+                symbolic.evaluate(tasklet.in_connectors[edge.dst_conn].bytes,
+                                  sdfg.constants))
+            if isinstance(arr, data.Array):
+                # TODO
+                raise NotImplementedError('Array input not implemented')
+            elif isinstance(arr, data.Stream):
+                buses[edge.dst_conn] = (False, total_size, vec_len)
+            elif isinstance(arr, data.Scalar):
+                scalars[edge.dst_conn] = (False, total_size * 8)
+
+        for edge in state.out_edges(tasklet):
+            arr = sdfg.arrays[edge.dst.data]
+            if isinstance(arr, data.Array):
+                print ('Array output not implemented')
+            elif isinstance(arr, data.Stream):
+                buses[edge.src_conn] = (True, total_size, vec_len)
+            elif isinstance(arr, data.Scalar):
+                print ('Scalar output not implemented')
+
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
-        inputs, outputs = self.generate_rtl_inputs_outputs(sdfg, tasklet)
+        inputs, outputs = self.generate_rtl_inputs_outputs(buses, scalars)
 
         # create rtl code object (that is later written to file)
         self.code_objects.append(
@@ -503,21 +512,17 @@ for(int i = 0; i < {veclen}; i++){{
                 environments=None))
 
         if self.mode == 'xilinx':
-            buses = {
-                name: ('s_axis', tasklet.in_connectors[name].veclen)
-                for name in tasklet.in_connectors
-            }
-            buses.update({
-                name: ('m_axis', tasklet.out_connectors[name].veclen)
-                for name in tasklet.out_connectors
-            })
-            # TODO handle scalars
-            # TODO handle ip cores
             rtllib_config = {
                 "name": unique_name,
-                "buses": buses,
+                "buses": {
+                    name : ('m_axis' if is_output else 's_axis', vec_len)
+                    for name, (is_output, _, vec_len) in buses.items()
+                },
                 "params": {
-                    "scalars": {},
+                    "scalars": {
+                        name : total_size
+                        for name, (_, total_size) in scalars.items()
+                    },
                     "memory": {}
                 },
                 "ip_cores": tasklet.ip_cores if isinstance(
