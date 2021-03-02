@@ -50,7 +50,6 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                           dot_node,
                           dst_conn="_y",
                           memlet=Memlet.simple(y, "0:n", num_accesses=n))
-    # TODO: remove -1 once this no longer triggers a write in the codegen.
     state.add_memlet_path(dot_node,
                           result,
                           src_conn="_result",
@@ -106,7 +105,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     pytest.param("cuBLAS", dace.float64, marks=pytest.mark.gpu)
 ])
 def test_dot(implementation, dtype):
-    sdfg = make_sdfg(implementation, dtype)
+    storage = (dace.StorageType.GPU_Global
+               if implementation == 'cuBLAS' else dace.StorageType.Default)
+    sdfg = make_sdfg(implementation, dtype, storage=storage)
     np_dtype = getattr(np, dtype.to_string())
 
     dot = sdfg.compile()
