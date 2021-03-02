@@ -154,10 +154,19 @@ class RedundantArray(pm.Transformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
-        # If arrays are not of the same shape, modify first array to reshape
-        # instead of removing it
-        if len(in_desc.shape) != len(out_desc.shape) or any(
-                i != o for i, o in zip(in_desc.shape, out_desc.shape)):
+        # If input shape is not a subset of the output shape, create a view.
+        make_view = False
+        if (len(in_desc.shape) != len(out_desc.shape) or any(
+                i != o for i, o in zip(in_desc.shape, out_desc.shape))):
+            sub_shape = out_desc.shape
+            for sz in in_desc.shape:
+                try:
+                    idx = sub_shape.index(sz)
+                except ValueError:
+                    make_view = True
+                    break
+                sub_shape = sub_shape[idx:]
+        if make_view:
             sdfg.arrays[in_array.data] = data.View(
                 in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                 out_desc.storage, out_desc.location, in_desc.strides,
@@ -165,17 +174,30 @@ class RedundantArray(pm.Transformation):
                 dtypes.AllocationLifetime.Scope, in_desc.alignment,
                 in_desc.debuginfo, in_desc.total_size)
             return
-
-        for e in graph.in_edges(in_array):
-            # Modify all incoming edges to point to out_array
-            path = graph.memlet_path(e)
-            for pe in path:
-                if pe.data.data == in_array.data:
-                    pe.data.data = out_array.data
-
-            # Redirect edge to out_array
-            graph.remove_edge(e)
-            graph.add_edge(e.src, e.src_conn, out_array, e.dst_conn, e.data)
+        
+        # 1. Get edge e1 and extract subsets for arrays A and B
+        e1 = graph.edges_between(in_array, out_array)[0]
+        a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
+        # 2. Iterate over the e2 edges and traverse the memlet tree
+        for e2 in graph.in_edges(in_array):
+            path = graph.memlet_tree(e2)
+            for e3 in path:
+                # 2-a. Extract subsets for array B and others
+                other_subset, a3_subset = _validate_subsets(
+                    e3, sdfg.arrays, dst_name=in_array.data)
+                # 2-b. Modify memlet to match array B.
+                e3.data.data = out_array.data
+                a3_subset.offset(a1_subset, negative=True)
+                if isinstance(b_subset, subsets.Indices):
+                    tmp = copy.deepcopy(b_subset)
+                    tmp.offset(a3_subset, negative=False)
+                    e3.data.subset = tmp
+                else:
+                    e3.data.subset = b_subset.compose(a3_subset)
+                e3.data.other_subset = other_subset
+            # 2-c. Remove edge and add new one
+            graph.remove_edge(e2)
+            graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
@@ -217,9 +239,16 @@ class RedundantSecondArray(pm.Transformation):
         if not out_desc.transient:
             return False
 
-        # Dimensionality must be the same in strict mode
-        if strict and len(in_desc.shape) != len(out_desc.shape):
-            return False
+        # In strict mode, output shape must be a subset of the input shape
+        if strict:
+            if len(in_desc.shape) != len(out_desc.shape):
+                sub_shape = in_desc.shape
+                for sz in out_desc.shape:
+                    try:
+                        idx = sub_shape.index(sz)
+                    except ValueError:
+                        return False
+                    sub_shape = sub_shape[idx:]
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
