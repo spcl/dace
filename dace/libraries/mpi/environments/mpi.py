@@ -16,6 +16,6 @@ class MPI:
 
     headers = ["mpi.h"]
     state_fields = []
-    init_code = "MPI_Init(NULL, NULL);"
+    init_code = "int t; MPI_Initialized(&t);  if (!t) MPI_Init(NULL, NULL);"
     finalize_code = "MPI_Finalize();"
     dependencies = []
