@@ -173,6 +173,44 @@ def test_loop_to_map_variable_reassigned(n=None):
         raise RuntimeError("LoopToMap was not applied.")
 
 
+def test_output_copy():
+    @dace.program
+    def l2mtest(A: dace.float64[20, 20]):
+        for i in range(1, 20):
+            A[i, :] = A[i - 1] + 5
+
+    A = np.random.rand(20, 20)
+    regression = np.copy(A)
+    for i in range(1, 20):
+        regression[i, :] = regression[i - 1] + 5
+
+    sdfg = l2mtest.to_sdfg()
+
+    assert sdfg.apply_transformations(LoopToMap) == 0
+    sdfg(A=A)
+
+    assert np.allclose(A, regression)
+
+
+def test_output_accumulate():
+    @dace.program
+    def l2mtest(A: dace.float64[20, 20]):
+        for i in range(1, 20):
+            A[i, :] += A[i - 1] + 5
+
+    A = np.random.rand(20, 20)
+    regression = np.copy(A)
+    for i in range(1, 20):
+        regression[i, :] += regression[i - 1] + 5
+
+    sdfg = l2mtest.to_sdfg()
+
+    assert sdfg.apply_transformations(LoopToMap) == 0
+    sdfg(A=A)
+
+    assert np.allclose(A, regression)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -187,3 +225,5 @@ if __name__ == "__main__":
     test_loop_to_map_negative_step(n)
     test_loop_to_map_variable_used(n)
     test_loop_to_map_variable_reassigned(n)
+    test_output_copy()
+    test_output_accumulate()

@@ -67,7 +67,7 @@ class LoopToMap(DetectLoop):
         guard = graph.node(candidate[DetectLoop._loop_guard])
         begin = graph.node(candidate[DetectLoop._loop_begin])
 
-        # Guard state should contain any dataflow
+        # Guard state should not contain any dataflow
         if len(guard.nodes()) != 0:
             return False
 
@@ -90,7 +90,6 @@ class LoopToMap(DetectLoop):
                 return False
 
         _, write_set = begin.read_and_write_sets()
-        code_nodes = [n for n in begin.nodes() if isinstance(n, nodes.CodeNode)]
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes = set()
@@ -109,14 +108,12 @@ class LoopToMap(DetectLoop):
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
 
-        for cn in code_nodes:
+        for dn in begin.data_nodes():
+            if dn.data not in other_access_nodes:
+                continue
             # Take all writes that are not conflicted into consideration
-            for e in begin.out_edges(cn):
-                data = e.data.data
-                if data not in other_access_nodes:
-                    continue
-                subset = e.data.subset
-                if data in write_set:
+            if dn.data in write_set:
+                for e in begin.in_edges(dn):
                     if e.data.dynamic and e.data.wcr is None:
                         # If pointers are involved, give up
                         return False
@@ -125,25 +122,28 @@ class LoopToMap(DetectLoop):
                     # of the form "a*i+b" where a >= 1, and i is the iteration
                     # variable. The iteration variable must be used.
                     if e.data.wcr is None:
-                        if not _check_range(e.data.subset, a, itersym, b, step):
+                        if not _check_range(e.data.dst_subset, a, itersym, b, step):
                             return False
                     # End of check
 
-                    write_memlets[data].append(e.data)
+                    write_memlets[dn.data].append(e.data)
 
         # After looping over relevant writes, consider reads that may overlap
-        for cn in code_nodes:
-            for e in begin.in_edges(cn):
-                data = e.data.data
-                subset = e.data.subset
+        for dn in begin.data_nodes():
+            if dn.data not in other_access_nodes:
+                continue
+            data = dn.data
+            if data in write_memlets:
+                # Import as necessary
                 from dace.sdfg.propagation import propagate_subset
-                # If the same container is both read and written, only match if
-                # it read and written at locations that will not create data races
-                if data in write_memlets:
-                    if e.data.dynamic and subset.num_elements() != 1:
+
+                for e in begin.out_edges(dn):
+                    # If the same container is both read and written, only match if
+                    # it read and written at locations that will not create data races
+                    if e.data.dynamic and e.data.src_subset.num_elements() != 1:
                         # If pointers are involved, give up
                         return False
-                    if not _check_range(e.data.subset, a, itersym, b, step):
+                    if not _check_range(e.data.src_subset, a, itersym, b, step):
                         return False
 
                     pread = propagate_subset([e.data], sdfg.arrays[data],
