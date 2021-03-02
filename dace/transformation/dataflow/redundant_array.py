@@ -34,39 +34,13 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     src_subset = copy.deepcopy(edge.data.src_subset)
     dst_subset = copy.deepcopy(edge.data.dst_subset)
 
-    # Infer missing subsets
-    if not src_subset and src_name:
-        src_desc = arrays[src_name]
-        dst_subset_size = dst_subset.size_exact()
-        # If the number of dimensions doesn't match, try squeezing
-        if len(dst_subset_size) > len(src_desc.shape):
-            tmp = copy.deepcopy(dst_subset)
-            tmp.squeeze()
-            dst_subset_size = tmp.size_exact()
-        # If the number of dimensions still doesn't match, fail to apply
-        if len(dst_subset_size) != len(src_desc.shape):
-            raise NotImplementedError
-        # If the dimension sizes don't match, fail to apply
-        for a, b in zip(src_desc.shape, dst_subset_size):
-            if a != b:
-                raise NotImplementedError
-        src_subset = subsets.Range.from_array(src_desc)
-    if not dst_subset and dst_name:
-        dst_desc = arrays[dst_name]
-        src_subset_size = src_subset.size_exact()
-        # If the number of dimensions doesn't match, try squeezing
-        if len(src_subset_size) > len(dst_desc.shape):
-            tmp = copy.deepcopy(src_subset)
-            tmp.squeeze()
-            src_subset_size = tmp.size_exact()
-        # If the number of dimensions still doesn't match, fail to apply
-        if len(src_subset_size) != len(dst_desc.shape):
-            raise NotImplementedError
-        # If the dimension sizes don't match, fail to apply
-        for a, b in zip(dst_desc.shape, src_subset_size):
-            if a != b:
-                raise NotImplementedError
-        dst_subset = subsets.Range.from_array(dst_desc)
+    if not src_subset and not dst_subset:
+        # This should never happen
+        raise NotImplementedError
+    if not src_subset:
+        src_subset = copy.deepcopy(dst_subset)
+    elif not dst_subset:
+        dst_subset = copy.deepcopy(src_subset)
 
     return src_subset, dst_subset
 
@@ -194,7 +168,13 @@ class RedundantArray(pm.Transformation):
                     e3.data.subset = tmp
                 else:
                     e3.data.subset = b_subset.compose(a3_subset)
-                e3.data.other_subset = other_subset
+                # NOTE: This fixes the following case:
+                # Tasklet ----> A[subset] ----> ... -----> A
+                # Tasklet is not data, so it doesn't have an other subset.
+                if isinstance(e3.src, nodes.AccessNode):
+                    e3.data.other_subset = other_subset
+                else:
+                    e3.data.other_subset = None
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
@@ -344,7 +324,13 @@ class RedundantSecondArray(pm.Transformation):
                     e3.data.subset = tmp
                 else:
                     e3.data.subset = a_subset.compose(b3_subset)
-                e3.data.other_subset = other_subset
+                # NOTE: This fixes the following case:
+                # A ----> A[subset] ----> ... -----> Tasklet
+                # Tasklet is not data, so it doesn't have an other subset.
+                if isinstance(e3.dst, nodes.AccessNode):
+                    e3.data.other_subset = other_subset
+                else:
+                    e3.data.other_subset = None
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
