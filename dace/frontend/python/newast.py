@@ -2974,9 +2974,14 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
-        # TODO(later): Reuse tasklet and output to multiple targets
-        for target in node.targets:
-            self._visit_assign(node, target, None)
+        # Compute first target
+        self._visit_assign(node, node.targets[0], None)
+
+        # Then, for other targets make copies
+        for target in node.targets[1:]:
+            assign_from_first = ast.copy_location(
+                ast.Assign(targets=[target], value=node.targets[0]), node)
+            self._visit_assign(assign_from_first, target, None)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         type_name = rname(node.annotation)
