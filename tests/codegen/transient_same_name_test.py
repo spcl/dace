@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
 from dace.transformation.interstate import StateFusion
@@ -25,3 +26,7 @@ def test_regression_transient_not_allocated():
     sdfg(A=inp.copy(), B=result)
 
     assert np.allclose(result, inp + 1)
+
+
+if __name__ == '__main__':
+    test_regression_transient_not_allocated()
