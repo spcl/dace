@@ -138,7 +138,10 @@ def compare_numpy_output(non_zero=False,
                     reference_result = [reference_result]
                     dace_result = [dace_result]
                     for ref, val in zip(reference_result, dace_result):
-                        assert np.allclose(ref, val, equal_nan=True)
+                        if ref.dtype == np.float32:
+                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
+                        else:
+                            assert np.allclose(ref, val, equal_nan=True)
                         if check_dtype and not validation_func:
                             assert (ref.dtype == val.dtype)
 
