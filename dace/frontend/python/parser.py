@@ -241,7 +241,7 @@ class DaceProgram:
         self.f = f
         self.args = args
         self.kwargs = kwargs
-        self._name = f.__name__
+        self.name = f.__name__
         self.argnames = _get_argnames(f)
 
         global_vars = _get_locals_and_globals(f)
@@ -252,10 +252,6 @@ class DaceProgram:
         }
         if self.argnames is None:
             self.argnames = []
-
-    @property
-    def name(self):
-        return self._name
 
     def to_sdfg(self, *args, strict=None, save=True) -> SDFG:
         """ Parses the DaCe function into an SDFG. """
@@ -286,7 +282,13 @@ class DaceProgram:
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile()
 
-        return binaryobj(**kwargs)
+        # Call SDFG
+        result = binaryobj(**kwargs)
+
+        # Enforce deletion and closure of compiled program
+        del binaryobj
+
+        return result
 
     def generate_pdp(self, *compilation_args, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
@@ -356,6 +358,7 @@ class DaceProgram:
 
         # Parse AST to create the SDFG
         return newast.parse_dace_program(dace_func,
+                                         self.name,
                                          argtypes,
                                          global_vars,
                                          modules,

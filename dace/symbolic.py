@@ -751,12 +751,18 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
+    def __init__(self, arrays, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.arrays = arrays or set()
+
     def _print_Float(self, expr):
         if int(expr) == expr:
             return str(int(expr))
         return super()._print_Float(expr)
 
     def _print_Function(self, expr):
+        if str(expr.func) in self.arrays:
+            return f'{expr.func}[{expr.args[0]}]'
         if str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(
                 expr.args[0]), self._print(expr.args[1]))
@@ -778,20 +784,26 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return '(not (%s))' % self._print(expr.args[0])
 
 
-def symstr(sym):
-    """ Convert a symbolic expression to a C++ compilable expression. """
+def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
+    """ 
+    Convert a symbolic expression to a C++ compilable expression. 
+    :param sym: Symbolic expression to convert.
+    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+                       user-functions back to array expressions.
+    :return: C++-compilable expression.
+    """
     def repstr(s):
         return s.replace('Min', 'min').replace('Max', 'max')
 
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr)
+        return symstr(sym.expr, arrayexprs)
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        sstr = DaceSympyPrinter().doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
 
         if isinstance(sym,
                       symbol) or isinstance(sym, sympy.Symbol) or isinstance(
@@ -800,7 +812,7 @@ def symstr(sym):
         else:
             return '(' + repstr(sstr) + ')'
     except (AttributeError, TypeError, ValueError):
-        sstr = DaceSympyPrinter().doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
         return '(' + repstr(sstr) + ')'
 
 

@@ -11,7 +11,7 @@ def myprint(input, N, M):
         a << input
         for i in range(0, N):
             for j in range(0, M):
-                printf("%f\n", mt.sin(a[i, j]))
+                mt.sin(a[i, j])
 
 
 def test():

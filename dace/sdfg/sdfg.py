@@ -1299,6 +1299,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name + ('_%d' % index)
 
+    def find_new_constant(self, name: str):
+        """ 
+        Tries to find a new constant name by adding an underscore and a number.
+        """
+        constants = self.constants
+        if name not in constants:
+            return name
+            
+        index = 0
+        while (name + ('_%d' % index)) in constants:
+            index += 1
+
+        return name + ('_%d' % index)
+
     def add_array(self,
                   name: str,
                   shape,
