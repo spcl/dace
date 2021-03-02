@@ -6,6 +6,8 @@ import dace.libraries.mpi as mpi
 import sys
 import warnings
 import numpy as np
+from mpi4py import MPI as MPI4PY
+
 
 ###############################################################################
 
@@ -62,16 +64,29 @@ def make_sdfg(dtype):
 
 
 def _test_mpi(info, sdfg, dtype):
-    mpi_sdfg = sdfg.compile()
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    drank = (rank+1) % commsize
+    srank = (rank-1+commsize) % commsize
+    mpi_sdfg = None
+    if commsize < 2:
+        raise ValueError("This test is supposed to be run with at least two processes!")
+    for r in range(0, commsize):
+        if r == rank:
+            mpi_sdfg = sdfg.compile()
+        comm.Barrier()
   
     size = 128
-    A = np.random.randn(size)
-    B = np.zeros(size)
-    src = np.array([0], dtype=np.int32)
-    dest = np.array([1], dtype=np.int32)
+    A = np.full(size, rank, dtype=dtype)
+    B = np.zeros(size, dtype=dtype)
+    src = np.array([srank], dtype=np.int32)
+    dest = np.array([drank], dtype=np.int32)
     tag = np.array([23], dtype=np.int32)
     mpi_sdfg(x=A, y=B, src=src, dest=dest, tag=tag, n=size)
-
+    # now B should be an array of size, containing srank
+    if not np.allclose(B, np.full(size, srank, dtype=dtype)):
+        raise(ValueError("The received values are not what I expected."))
 
 def test_mpi():
     _test_mpi("MPI Send/Recv", make_sdfg(np.float), np.float)
