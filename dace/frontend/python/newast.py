@@ -3537,7 +3537,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 for k, v in argdict.items() if self._is_inputnode(sdfg, k)
             }
             outputs = {
-                k: v
+                k: copy.deepcopy(v) if k in inputs else v
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
             # If an argument does not register as input nor as output,
