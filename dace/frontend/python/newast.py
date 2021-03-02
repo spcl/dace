@@ -2974,7 +2974,14 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
+        # Compute first target
         self._visit_assign(node, node.targets[0], None)
+
+        # Then, for other targets make copies
+        for target in node.targets[1:]:
+            assign_from_first = ast.copy_location(
+                ast.Assign(targets=[target], value=node.targets[0]), node)
+            self._visit_assign(assign_from_first, target, None)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         type_name = rname(node.annotation)
@@ -3210,7 +3217,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):
-
         self._visit_assign(node, node.target,
                            augassign_ops[type(node.op).__name__])
 
@@ -3531,7 +3537,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 for k, v in argdict.items() if self._is_inputnode(sdfg, k)
             }
             outputs = {
-                k: v
+                k: copy.deepcopy(v) if k in inputs else v
                 for k, v in argdict.items() if self._is_outputnode(sdfg, k)
             }
             # If an argument does not register as input nor as output,
