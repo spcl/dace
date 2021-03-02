@@ -32,7 +32,7 @@ class DefinedMemlets:
         The ones defined in the first (top) scope, refer to global variables.
     """
     def __init__(self):
-        self._scopes = [(None, {}, True)]
+        self._scopes = [(None, {}, True), (None, {}, True)]
 
     def enter_scope(self, parent, can_access_parent=True):
         self._scopes.append((parent, {}, can_access_parent))
