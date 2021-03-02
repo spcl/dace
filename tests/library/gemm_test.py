@@ -15,9 +15,11 @@ N = dace.symbol('N')
 
 
 @pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ),
+                         [('pure', ),
+                          pytest.param('MKL', marks=pytest.mark.mkl),
                           pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemm_no_c(implementation):
+
     Gemm.default_implementation = implementation
 
     @dace.program
@@ -27,13 +29,8 @@ def test_gemm_no_c(implementation):
     A = np.random.rand(10, 15)
     B = np.random.rand(15, 3)
 
-    try:
-        result = simple_gemm(A, B)
-        assert np.allclose(result, A @ B)
-    except (CompilerConfigurationError, CompilationError):
-        warnings.warn(
-            "Configuration/compilation failed, library missing or "
-            "misconfigured, skipping test for {}.".format(implementation))
+    result = simple_gemm(A, B)
+    assert np.allclose(result, A @ B)
 
     Gemm.default_implementation = None
 

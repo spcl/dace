@@ -2,7 +2,6 @@
 import dace
 import dace.libraries.blas as blas
 from dace.transformation.dataflow import RedundantSecondArray
-from dace.codegen.exceptions import CompilationError, CompilerConfigurationError
 import numpy as np
 import pytest
 
@@ -11,7 +10,9 @@ N = dace.symbol('N')
 
 
 @pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ), ('OpenBLAS', ),
+                         [('pure', ),
+                          pytest.param('MKL', marks=pytest.mark.mkl),
+                          ('OpenBLAS', ),
                           pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemv_strided(implementation):
     @dace.program
@@ -28,13 +29,7 @@ def test_gemv_strided(implementation):
         sdfg.apply_transformations_repeated(RedundantSecondArray)
 
     blas.default_implementation = implementation
-    try:
-        daceres = sdfg(A=A, x=x, M=20, N=30)
-    except (CompilationError, CompilerConfigurationError):
-        print('Failed to compile, skipping')
-        blas.default_implementation = None
-        pytest.skip("Failed compilation")
-        return
+    daceres = sdfg(A=A, x=x, M=20, N=30)
 
     blas.default_implementation = None
     assert np.allclose(daceres, reference)
@@ -53,20 +48,16 @@ def test_dot_subset():
     # Enforce one-dimensional memlets from two-dimensional arrays
     sdfg.apply_transformations_repeated(RedundantSecondArray)
     blas.default_implementation = 'pure'
-    try:
-        daceres = sdfg(x=x, y=y, N=30)
-    except (CompilationError, CompilerConfigurationError):
-        print('Failed to compile, skipping')
-        blas.default_implementation = None
-        pytest.skip("Failed compilation")
-        return
+    daceres = sdfg(x=x, y=y, N=30)
 
     blas.default_implementation = None
     assert np.allclose(daceres, reference)
 
 
 @pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ), ('OpenBLAS', ),
+                         [('pure', ),
+                          pytest.param('MKL', marks=pytest.mark.mkl),
+                          ('OpenBLAS', ),
                           pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_dot_strided(implementation):
     @dace.program
@@ -86,13 +77,7 @@ def test_dot_strided(implementation):
         sdfg.apply_gpu_transformations()
 
     blas.default_implementation = implementation
-    try:
-        daceres = sdfg(x=x, y=y, N=30)
-    except (CompilationError, CompilerConfigurationError):
-        print('Failed to compile, skipping')
-        blas.default_implementation = None
-        pytest.skip("Failed compilation")
-        return
+    daceres = sdfg(x=x, y=y, N=30)
 
     blas.default_implementation = None
     assert np.allclose(daceres, reference)
