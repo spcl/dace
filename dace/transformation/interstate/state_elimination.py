@@ -5,10 +5,12 @@ import copy
 import networkx as nx
 
 from dace import dtypes, registry, sdfg, symbolic
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.config import Config
+import itertools
 
 
 @registry.autoregister_params(strict=True)
@@ -56,6 +58,52 @@ class EndStateElimination(transformation.Transformation):
     def apply(self, sdfg):
         state = sdfg.nodes()[self.subgraph[EndStateElimination._end_state]]
         sdfg.remove_node(state)
+
+
+@registry.autoregister_params(strict=True)
+class EmptyStateElimination(transformation.Transformation):
+    """
+    Empty-state elimination removes a redundant state that has one incoming edge
+    and no contents.
+    """
+
+    empty_state = transformation.PatternNode(sdfg.SDFGState)
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(EmptyStateElimination.empty_state)]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+        empty_state = graph.nodes()[candidate[EmptyStateElimination.empty_state]]
+
+        out_edges = graph.out_edges(empty_state)
+        in_edges = graph.in_edges(empty_state)
+
+        # if this is last node in sdfg, then we will not touch it
+        if len(sdfg.nodes()) == 1:
+            return False
+
+        if empty_state.nodes():
+            return False # state is not empty
+
+        for e in itertools.chain(in_edges, out_edges):
+            if not e.data.is_unconditional() or e.data.assignments:
+                return False
+
+        return True
+
+    def apply(self, sdfg):
+        empty_state = sdfg.nodes()[self.subgraph[EmptyStateElimination.empty_state]]
+
+        in_edges = sdfg.in_edges(empty_state)
+        out_edges = sdfg.out_edges(empty_state)
+
+        for oe in out_edges:
+            for ie in in_edges:
+                sdfg.add_edge(ie.src, oe.dst, InterstateEdge())
+
+        sdfg.remove_node(empty_state)
 
 
 def _assignments_to_consider(sdfg, edge):
