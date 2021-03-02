@@ -35,12 +35,53 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     dst_subset = copy.deepcopy(edge.data.dst_subset)
 
     if not src_subset and not dst_subset:
-        # This should never happen
+        # NOTE: This should never happen
         raise NotImplementedError
+    # NOTE: If any of the subsets is None, it means that we proceed in 
+    # experimental mode. The base case here is that we just copy the other
+    # subset. However, if we can locate the other array, we check the
+    # dimensionality of the subset and we pop or pad indices/ranges accordingly.
+    # In that case, we also set the subset to start from 0 in each dimension. 
     if not src_subset:
         src_subset = copy.deepcopy(dst_subset)
+        if src_name:
+            desc = arrays[src_name]
+            padding = len(desc.shape) - len(src_subset)
+            if padding > 0:
+                if isinstance(src_subset, subsets.Indices):
+                    indices = [0] * padding + src_subset.indices
+                    src_subset = subsets.Indices(indices)
+                elif isinstance(src_subset, subsets.Range):
+                    ranges = [(0, 0, 1)] * padding + src_subset.ranges
+                    src_subset = subsets.Range(ranges)
+            elif padding < 0:
+                if isinstance(src_subset, subsets.Indices):
+                    indices = src_subset.indices[-padding:]
+                    src_subset = subsets.Indices(indices)
+                elif isinstance(src_subset, subsets.Range):
+                    ranges = src_subset.ranges[-padding:]
+                    src_subset = subsets.Range(ranges)
+            src_subset.offset(src_subset, True)
     elif not dst_subset:
         dst_subset = copy.deepcopy(src_subset)
+        if dst_name:
+            desc = arrays[dst_name]
+            padding = len(desc.shape) - len(dst_subset)
+            if padding > 0:
+                if isinstance(dst_subset, subsets.Indices):
+                    indices = [0] * padding + dst_subset.indices
+                    dst_subset = subsets.Indices(indices)
+                elif isinstance(dst_subset, subsets.Range):
+                    ranges = [(0, 0, 1)] * padding + dst_subset.ranges
+                    dst_subset = subsets.Range(ranges)
+            elif padding < 0:
+                if isinstance(dst_subset, subsets.Indices):
+                    indices = dst_subset.indices[-padding:]
+                    dst_subset = subsets.Indices(indices)
+                elif isinstance(dst_subset, subsets.Range):
+                    ranges = dst_subset.ranges[-padding:]
+                    dst_subset = subsets.Range(ranges)
+            dst_subset.offset(dst_subset, True)
 
     return src_subset, dst_subset
 
