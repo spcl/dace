@@ -618,7 +618,7 @@ class Range(Subset):
                 all([r == (0, 0, 1) for r in other.ranges])):
             # NOTE: This is a special case where both subsets contain a single
             # element, while the other subset is the (multidimensional) index
-            # zero. For example, A[i, j] -> tmp[0]. The result of such a 
+            # zero. For example, A[i, j] -> tmp[0]. The result of such a
             # composition should be equal to the first subset. Perhaps this
             # can be generalized.
             new_subset.extend(self.ranges)
@@ -662,9 +662,16 @@ class Range(Subset):
         return non_ones
 
     def unsqueeze(self, axes):
+        result = []
         for axis in sorted(axes):
             self.ranges.insert(axis, (0, 0, 1))
             self.tile_sizes.insert(axis, 1)
+
+            if len(result) > 0 and result[-1] >= axis:
+                result.append(result[-1] + 1)
+            else:
+                result.append(axis)
+        return result
 
     def pop(self, dimensions):
         new_ranges = []
@@ -913,8 +920,15 @@ class Indices(Subset):
         return non_ones
 
     def unsqueeze(self, axes):
+        result = []
         for axis in sorted(axes):
             self.indices.insert(axis, 0)
+
+            if len(result) > 0 and result[-1] >= axis:
+                result.append(result[-1] + 1)
+            else:
+                result.append(axis)
+        return result
 
     def replace(self, repl_dict):
         for i, ind in enumerate(self.indices):

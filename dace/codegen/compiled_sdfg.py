@@ -248,9 +248,12 @@ class CompiledSDFG(object):
         # Type checking
         for a, arg, atype in zip(argnames, arglist, argtypes):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
-                raise TypeError(
-                    'Passing an object (type %s) to an array in argument "%s"' %
-                    (type(arg).__name__, a))
+                if isinstance(arg, list):
+                    print('WARNING: Casting list argument "%s" to ndarray' % a)
+                else:
+                    raise TypeError(
+                        'Passing an object (type %s) to an array in argument "%s"'
+                        % (type(arg).__name__, a))
             elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
                 raise TypeError(
                     'Passing an array to a scalar (type %s) in argument "%s"' %
@@ -284,10 +287,14 @@ class CompiledSDFG(object):
                         'WARNING: Passing %s array argument "%s" to a %s array'
                         % (arg.dtype, a, atype.dtype.type.__name__))
 
-        # Call a wrapper function to make NumPy arrays from pointers.
+        # Explicit casting
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
+            # Call a wrapper function to make NumPy arrays from pointers.
             if isinstance(argtype.dtype, dtypes.callback):
                 arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
+            # List to array
+            elif isinstance(arg, list) and isinstance(argtype, dt.Array):
+                arglist[index] = np.array(arg, dtype=argtype.dtype.type)
 
         # Retain only the element datatype for upcoming checks and casts
         arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
