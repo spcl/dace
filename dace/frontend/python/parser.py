@@ -282,7 +282,13 @@ class DaceProgram:
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile()
 
-        return binaryobj(**kwargs)
+        # Call SDFG
+        result = binaryobj(**kwargs)
+
+        # Enforce deletion and closure of compiled program
+        del binaryobj
+
+        return result
 
     def generate_pdp(self, *compilation_args, strict=None):
         """ Generates the parsed AST representation of a DaCe program.
