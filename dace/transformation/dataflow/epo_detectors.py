@@ -304,3 +304,131 @@ class OuterProductOperation(pm.Transformation):
 
     def apply(self, sdfg: dace.SDFG):
         pass
+
+
+@registry.autoregister_params(singlestate=True)
+class Reduction1Operation(pm.Transformation):
+    """ Detects reduction1 operations.
+    """
+
+    map_entry = pm.PatternNode(nodes.MapEntry)
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(Reduction1Operation.map_entry)]
+
+    @staticmethod
+    def can_be_applied(graph: dace.SDFGState,
+                       candidate: Dict[pm.PatternNode, int],
+                       expr_index: int,
+                       sdfg: dace.SDFG,
+                       strict: bool = False):
+
+        map_entry = graph.node(candidate[Reduction1Operation.map_entry])
+        map_exit = graph.exit_node(map_entry)
+        params = [dace.symbol(p) for p in map_entry.map.params]
+
+        outputs = dict()
+        for _, _, _, _, m in graph.out_edges(map_exit):
+            if not m.wcr:
+                return False
+            desc = sdfg.arrays[m.data]
+            if desc not in outputs.keys():
+                outputs[desc] = []
+            outputs[desc].append(m.subset)
+        
+        for desc, accesses in outputs.items():
+            if isinstance(desc, dace.data.Scalar):
+                continue
+            elif isinstance(desc, (dace.data.Array, dace.data.View)):
+                for a in accesses:
+                    if a.num_elements() != 1:
+                        return False
+            else:
+                return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
+                                                            int]) -> str:
+        map_entry = graph.node(candidate[Reduction1Operation.map_entry])
+        return map_entry.map.label + ': ' + str(map_entry.map.params)
+
+    def apply(self, sdfg: dace.SDFG):
+        pass
+
+
+@registry.autoregister_params(singlestate=True)
+class ReductionNOperation(pm.Transformation):
+    """ Detects reductionN operations.
+    """
+
+    map_entry = pm.PatternNode(nodes.MapEntry)
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(ReductionNOperation.map_entry)]
+
+    @staticmethod
+    def can_be_applied(graph: dace.SDFGState,
+                       candidate: Dict[pm.PatternNode, int],
+                       expr_index: int,
+                       sdfg: dace.SDFG,
+                       strict: bool = False):
+
+        map_entry = graph.node(candidate[ReductionNOperation.map_entry])
+        map_exit = graph.exit_node(map_entry)
+        params = [dace.symbol(p) for p in map_entry.map.params]
+
+        inputs = dict()
+        for _, _, _, _, m in graph.out_edges(map_entry):
+            if not m.data:
+                continue
+            desc = sdfg.arrays[m.data]
+            if desc not in inputs.keys():
+                inputs[desc] = []
+            inputs[desc].append(m.subset)
+
+        outputs = dict()
+        for _, _, _, _, m in graph.in_edges(map_exit):
+            desc = sdfg.arrays[m.data]
+            if not m.wcr:
+                if desc not in inputs.keys():
+                    return False
+                access_found = False
+                for a in inputs[desc]:
+                    if a == m.subset:
+                        access_found = True
+                        break
+                if not access_found:
+                    return False
+            if desc not in outputs.keys():
+                outputs[desc] = []
+            outputs[desc].append(m.subset)
+        
+        for desc, accesses in outputs.items():
+            if isinstance(desc, (dace.data.Array, dace.data.View)):
+                for a in accesses:
+                    if a.num_elements() != 1:
+                        return False
+                    indices = a.min_element()
+                    unmatched_indices = set(params)
+                    for idx in indices:
+                        if idx in unmatched_indices:
+                            unmatched_indices.remove(idx)
+                    if len(unmatched_indices) == len(params):
+                        return False
+            else:
+                return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
+                                                            int]) -> str:
+        map_entry = graph.node(candidate[ReductionNOperation.map_entry])
+        return map_entry.map.label + ': ' + str(map_entry.map.params)
+
+    def apply(self, sdfg: dace.SDFG):
+        pass

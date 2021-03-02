@@ -47,4 +47,6 @@ from .mpi import MPITransformMap
 from .matrix_product_transpose import MatrixProductTranspose
 
 # Parallel-pattern detectors
-from .epo_detectors import ElementWiseArrayOperation, StencilOperation, OuterProductOperation
+from .epo_detectors import (ElementWiseArrayOperation, StencilOperation,
+                            OuterProductOperation, Reduction1Operation,
+                            ReductionNOperation)
