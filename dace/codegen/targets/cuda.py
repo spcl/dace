@@ -146,10 +146,9 @@ class CUDACodeGen(TargetCodeGenerator):
         ######################################
 
     def _emit_sync(self, codestream: CodeIOStream):
+        codestream.write('DACE_CUDA_CHECK({backend}GetLastError());'.format(backend=self.backend))
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-            codestream.write('''DACE_CUDA_CHECK({backend}GetLastError());
-            DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(
-                backend=self.backend))
+            codestream.write('DACE_CUDA_CHECK({backend}DeviceSynchronize());'.format(backend=self.backend))
 
     def on_target_used(self) -> None:
         # Right before finalizing code, write GPU context to state structure
