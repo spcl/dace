@@ -2974,7 +2974,9 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
-        self._visit_assign(node, node.targets[0], None)
+        # TODO(later): Reuse tasklet and output to multiple targets
+        for target in node.targets:
+            self._visit_assign(node, target, None)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         type_name = rname(node.annotation)
@@ -3210,7 +3212,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.last_state = output_indirection
 
     def visit_AugAssign(self, node: ast.AugAssign):
-
         self._visit_assign(node, node.target,
                            augassign_ops[type(node.op).__name__])
 
