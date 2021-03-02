@@ -582,10 +582,6 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         scalars += [(False, k, v) for k, v in symbol_parameters.items()]
         scalars = list(sorted(scalars, key=lambda t: t[1]))
         for is_output, pname, p in itertools.chain(arrays, scalars):
-
-            if isinstance(p, dace.data.Scalar) and not any(item.data==pname for item in subgraph.data_nodes()):
-                continue
-
             if pname in added:
                 continue
             added.add(pname)
