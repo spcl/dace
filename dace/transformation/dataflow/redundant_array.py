@@ -34,39 +34,58 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     src_subset = copy.deepcopy(edge.data.src_subset)
     dst_subset = copy.deepcopy(edge.data.dst_subset)
 
-    # Infer missing subsets
-    if not src_subset and src_name:
-        src_desc = arrays[src_name]
-        dst_subset_size = dst_subset.size_exact()
-        # If the number of dimensions doesn't match, try squeezing
-        if len(dst_subset_size) > len(src_desc.shape):
-            tmp = copy.deepcopy(dst_subset)
-            tmp.squeeze()
-            dst_subset_size = tmp.size_exact()
-        # If the number of dimensions still doesn't match, fail to apply
-        if len(dst_subset_size) != len(src_desc.shape):
-            raise NotImplementedError
-        # If the dimension sizes don't match, fail to apply
-        for a, b in zip(src_desc.shape, dst_subset_size):
-            if a != b:
-                raise NotImplementedError
-        src_subset = subsets.Range.from_array(src_desc)
-    if not dst_subset and dst_name:
-        dst_desc = arrays[dst_name]
-        src_subset_size = src_subset.size_exact()
-        # If the number of dimensions doesn't match, try squeezing
-        if len(src_subset_size) > len(dst_desc.shape):
-            tmp = copy.deepcopy(src_subset)
-            tmp.squeeze()
-            src_subset_size = tmp.size_exact()
-        # If the number of dimensions still doesn't match, fail to apply
-        if len(src_subset_size) != len(dst_desc.shape):
-            raise NotImplementedError
-        # If the dimension sizes don't match, fail to apply
-        for a, b in zip(dst_desc.shape, src_subset_size):
-            if a != b:
-                raise NotImplementedError
-        dst_subset = subsets.Range.from_array(dst_desc)
+    if not src_subset and not dst_subset:
+        # NOTE: This should never happen
+        raise NotImplementedError
+    # NOTE: If any of the subsets is None, it means that we proceed in 
+    # experimental mode. The base case here is that we just copy the other
+    # subset. However, if we can locate the other array, we check the
+    # dimensionality of the subset and we pop or pad indices/ranges accordingly.
+    # In that case, we also set the subset to start from 0 in each dimension. 
+    if not src_subset:
+        if src_name:
+            desc = arrays[src_name]
+            if not isinstance(desc, data.View):
+                src_subset = copy.deepcopy(dst_subset)
+                padding = len(desc.shape) - len(src_subset)
+                if padding != 0:
+                    if padding > 0:
+                        if isinstance(src_subset, subsets.Indices):
+                            indices = [0] * padding + src_subset.indices
+                            src_subset = subsets.Indices(indices)
+                        elif isinstance(src_subset, subsets.Range):
+                            ranges = [(0, 0, 1)] * padding + src_subset.ranges
+                            src_subset = subsets.Range(ranges)
+                    elif padding < 0:
+                        if isinstance(src_subset, subsets.Indices):
+                            indices = src_subset.indices[-padding:]
+                            src_subset = subsets.Indices(indices)
+                        elif isinstance(src_subset, subsets.Range):
+                            ranges = src_subset.ranges[-padding:]
+                            src_subset = subsets.Range(ranges)
+                    src_subset.offset(src_subset, True)
+    elif not dst_subset:
+        if dst_name:
+            desc = arrays[dst_name]
+            if not isinstance(desc, data.View):
+                dst_subset = copy.deepcopy(src_subset)
+                padding = len(desc.shape) - len(dst_subset)
+                if padding != 0:
+                    if padding > 0:
+                        if isinstance(dst_subset, subsets.Indices):
+                            indices = [0] * padding + dst_subset.indices
+                            dst_subset = subsets.Indices(indices)
+                        elif isinstance(dst_subset, subsets.Range):
+                            ranges = [(0, 0, 1)] * padding + dst_subset.ranges
+                            dst_subset = subsets.Range(ranges)
+                    elif padding < 0:
+                        if isinstance(dst_subset, subsets.Indices):
+                            indices = dst_subset.indices[-padding:]
+                            dst_subset = subsets.Indices(indices)
+                        elif isinstance(dst_subset, subsets.Range):
+                            ranges = dst_subset.ranges[-padding:]
+                            dst_subset = subsets.Range(ranges)
+                    dst_subset.offset(dst_subset, True)
 
     return src_subset, dst_subset
 
@@ -154,10 +173,12 @@ class RedundantArray(pm.Transformation):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
-        # If arrays are not of the same shape, modify first array to reshape
-        # instead of removing it
-        if len(in_desc.shape) != len(out_desc.shape) or any(
-                i != o for i, o in zip(in_desc.shape, out_desc.shape)):
+        # 1. Get edge e1 and extract subsets for arrays A and B
+        e1 = graph.edges_between(in_array, out_array)[0]
+        a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
+
+        # If the memlet does not cover the removed array, create a view.
+        if any(m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
             sdfg.arrays[in_array.data] = data.View(
                 in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                 out_desc.storage, out_desc.location, in_desc.strides,
@@ -165,17 +186,31 @@ class RedundantArray(pm.Transformation):
                 dtypes.AllocationLifetime.Scope, in_desc.alignment,
                 in_desc.debuginfo, in_desc.total_size)
             return
-
-        for e in graph.in_edges(in_array):
-            # Modify all incoming edges to point to out_array
-            path = graph.memlet_path(e)
-            for pe in path:
-                if pe.data.data == in_array.data:
-                    pe.data.data = out_array.data
-
-            # Redirect edge to out_array
-            graph.remove_edge(e)
-            graph.add_edge(e.src, e.src_conn, out_array, e.dst_conn, e.data)
+        
+        # 2. Iterate over the e2 edges and traverse the memlet tree
+        for e2 in graph.in_edges(in_array):
+            path = graph.memlet_tree(e2)
+            for e3 in path:
+                # 2-a. Extract subsets for array B and others
+                other_subset, a3_subset = _validate_subsets(
+                    e3, sdfg.arrays, dst_name=in_array.data)
+                # 2-b. Modify memlet to match array B.
+                e3.data.data = out_array.data
+                a3_subset.offset(a1_subset, negative=True)
+                if isinstance(b_subset, subsets.Indices):
+                    e3.data.subset = b_subset.new_offset(a3_subset, False)
+                else:
+                    e3.data.subset = b_subset.compose(a3_subset)
+                # NOTE: This fixes the following case:
+                # Tasklet ----> A[subset] ----> ... -----> A
+                # Tasklet is not data, so it doesn't have an other subset.
+                if isinstance(e3.src, nodes.AccessNode):
+                    e3.data.other_subset = other_subset
+                else:
+                    e3.data.other_subset = None
+            # 2-c. Remove edge and add new one
+            graph.remove_edge(e2)
+            graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
@@ -217,9 +252,15 @@ class RedundantSecondArray(pm.Transformation):
         if not out_desc.transient:
             return False
 
-        # Dimensionality must be the same in strict mode
-        if strict and len(in_desc.shape) != len(out_desc.shape):
-            return False
+        # 1. Get edge e1 and extract/validate subsets for arrays A and B
+        e1 = graph.edges_between(in_array, out_array)[0]
+        _, b1_subset = _validate_subsets(e1, sdfg.arrays)
+
+        # In strict mode, make sure the memlet covers the removed array
+        if strict:
+            if any(m != a
+                   for m, a in zip(b1_subset.size(), out_desc.shape)):
+                return False
 
         # Make sure that both arrays are using the same storage location
         # and are of the same type (e.g., Stream->Stream)
@@ -246,12 +287,6 @@ class RedundantSecondArray(pm.Transformation):
         # the subsets of all the output edges of the second datanode.
         # We assume the following pattern: A -- e1 --> B -- e2 --> others
 
-        # 1. Get edge e1 and extract/validate subsets for arrays A and B
-        e1 = graph.edges_between(in_array, out_array)[0]
-        try:
-            _, b1_subset = _validate_subsets(e1, sdfg.arrays)
-        except NotImplementedError:
-            return False
         # 2. Iterate over the e2 edges
         for e2 in graph.out_edges(out_array):
             # 2-a. Extract/validate subsets for array B and others
@@ -310,12 +345,16 @@ class RedundantSecondArray(pm.Transformation):
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
                 if isinstance(a_subset, subsets.Indices):
-                    tmp = copy.deepcopy(a_subset)
-                    tmp.offset(b3_subset, negative=False)
-                    e3.data.subset = tmp
+                    e3.data.subset = a_subset.new_offset(b3_subset, False)
                 else:
                     e3.data.subset = a_subset.compose(b3_subset)
-                e3.data.other_subset = other_subset
+                # NOTE: This fixes the following case:
+                # A ----> A[subset] ----> ... -----> Tasklet
+                # Tasklet is not data, so it doesn't have an other subset.
+                if isinstance(e3.dst, nodes.AccessNode):
+                    e3.data.other_subset = other_subset
+                else:
+                    e3.data.other_subset = None
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
