@@ -400,16 +400,18 @@ def ndcopy_to_strided_copy(
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)
 
         # In source strides
-        if len(copy_shape) == len(src_shape):
+        src_copy_shape = src_subset.size_exact()
+        if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
-            srcdim = next(i for i, c in enumerate(src_shape) if c != 1)
+            srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
 
         # In destination strides
-        if len(copy_shape) == len(dst_shape):
+        dst_copy_shape = dst_subset.size_exact()
+        if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
-            dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
+            dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
 
         # Return new copy
         return [copy_shape[copydim]], [src_strides[srcdim]
