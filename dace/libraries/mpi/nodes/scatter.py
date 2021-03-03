@@ -11,9 +11,9 @@ from dace.frontend.common import op_repository as oprepo
 
 
 @dace.library.expansion
-class ExpandBcastPure(ExpandTransformation):
+class ExpandScatterPure(ExpandTransformation):
     """
-    Naive backend-agnostic expansion of MPI Bcast.
+    Naive backend-agnostic expansion of MPI Scatter.
     """
 
     environments = []
@@ -23,7 +23,7 @@ class ExpandBcastPure(ExpandTransformation):
         raise(NotImplementedError)
   
 @dace.library.expansion
-class ExpandBcastMPI(ExpandTransformation):
+class ExpandScatterMPI(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
 
@@ -50,9 +50,9 @@ class ExpandBcastMPI(ExpandTransformation):
         if buffer.dtype.veclen > 1:
             raise(NotImplementedError)
         if root.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("Bcast root must be an integer!")
+            raise ValueError("Scatter root must be an integer!")
 
-        code = f"MPI_Bcast(_buffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);"
+        code = f"MPI_Scatter(_buffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
@@ -62,11 +62,11 @@ class ExpandBcastMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Bcast(dace.sdfg.nodes.LibraryNode):
+class Scatter(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MPI": ExpandBcastMPI,
+        "MPI": ExpandScatterMPI,
     }
     default_implementation = "MPI"
 
