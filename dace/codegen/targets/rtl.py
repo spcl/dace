@@ -474,8 +474,10 @@ for(int i = 0; i < {veclen}; i++){{
                 symbolic.evaluate(tasklet.in_connectors[edge.dst_conn].bytes,
                                   sdfg.constants))
             if isinstance(arr, data.Array):
-                # TODO
-                raise NotImplementedError('Array input not implemented')
+                if self.mode == 'xilinx':
+                    raise NotImplementedError('Array input for hardware* not implemented')
+                else:
+                    buses[edge.dst_conn] = (False, total_size, vec_len)
             elif isinstance(arr, data.Stream):
                 buses[edge.dst_conn] = (False, total_size, vec_len)
             elif isinstance(arr, data.Scalar):
@@ -483,8 +485,24 @@ for(int i = 0; i < {veclen}; i++){{
 
         for edge in state.out_edges(tasklet):
             arr = sdfg.arrays[edge.dst.data]
+            # catch symbolic (compile time variables)
+            check_issymbolic([
+                tasklet.out_connectors[edge.src_conn].veclen,
+                tasklet.out_connectors[edge.src_conn].bytes
+            ], sdfg)
+
+            # extract parameters
+            vec_len = int(
+                symbolic.evaluate(tasklet.out_connectors[edge.src_conn].veclen,
+                                  sdfg.constants))
+            total_size = int(
+                symbolic.evaluate(tasklet.out_connectors[edge.src_conn].bytes,
+                                  sdfg.constants))
             if isinstance(arr, data.Array):
-                print ('Array output not implemented')
+                if self.mode == 'xilinx':
+                    raise NotImplementedError('Array input for hardware* not implemented')
+                else:
+                    buses[edge.src_conn] = (True, total_size, vec_len)
             elif isinstance(arr, data.Stream):
                 buses[edge.src_conn] = (True, total_size, vec_len)
             elif isinstance(arr, data.Scalar):
