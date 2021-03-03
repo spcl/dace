@@ -177,7 +177,7 @@ class RedundantArray(pm.Transformation):
         e1 = graph.edges_between(in_array, out_array)[0]
         a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
 
-        # If the memlet does not cover the remove array, create a view.
+        # If the memlet does not cover the removed array, create a view.
         if any(m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
             sdfg.arrays[in_array.data] = data.View(
                 in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
@@ -198,9 +198,7 @@ class RedundantArray(pm.Transformation):
                 e3.data.data = out_array.data
                 a3_subset.offset(a1_subset, negative=True)
                 if isinstance(b_subset, subsets.Indices):
-                    tmp = copy.deepcopy(b_subset)
-                    tmp.offset(a3_subset, negative=False)
-                    e3.data.subset = tmp
+                    e3.data.subset = b_subset.new_offset(a3_subset, False)
                 else:
                     e3.data.subset = b_subset.compose(a3_subset)
                 # NOTE: This fixes the following case:
@@ -347,9 +345,7 @@ class RedundantSecondArray(pm.Transformation):
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
                 if isinstance(a_subset, subsets.Indices):
-                    tmp = copy.deepcopy(a_subset)
-                    tmp.offset(b3_subset, negative=False)
-                    e3.data.subset = tmp
+                    e3.data.subset = a_subset.new_offset(b3_subset, False)
                 else:
                     e3.data.subset = a_subset.compose(b3_subset)
                 # NOTE: This fixes the following case:
