@@ -208,6 +208,8 @@ class RedundantArray(pm.Transformation):
                     e3.data.src_subset = other_subset
                 else:
                     e3.data.src_subset = None
+                    e3.data.subset = copy.deepcopy(e3.data.dst_subset)
+                    e3.data.other_subset = None
                     
             # 2-c. Remove edge and add new one
             graph.remove_edge(e2)
