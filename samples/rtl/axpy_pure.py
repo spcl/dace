@@ -184,7 +184,6 @@ sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
 # validate sdfg
 sdfg.validate()
-sdfg.save('meh.sdfg')
 
 ######################################################################
 

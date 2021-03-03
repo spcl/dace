@@ -249,7 +249,7 @@ rtl_tasklet.add_ip_core("clk_wiz_0", "clk_wiz", "xilinx.com", "6.0", {
     "CONFIG.PRIM_IN_FREQ" : "300",
     "CONFIG.CLKOUT2_USED" : "true",
     "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ" : "300",
-    "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ" : "933",
+    "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ" : "600",
     "CONFIG.CLKIN1_JITTER_PS" : "33.330000000000005",
     "CONFIG.CLKOUT1_DRIVES" : "Buffer",
     "CONFIG.CLKOUT2_DRIVES" : "Buffer",
@@ -427,7 +427,6 @@ sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
 # validate sdfg
 sdfg.validate()
-sdfg.save('meh.sdfg')
 
 ######################################################################
 
