@@ -53,6 +53,8 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
                                 inputs={'input'},
                                 outputs={'output'},
                                 code='''
+    assign ap_done = 1;
+
     wire areset = ~ap_areset;
     wire clk_300;
     wire clk_600;

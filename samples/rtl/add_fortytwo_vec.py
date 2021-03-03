@@ -69,6 +69,8 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
+    assign ap_done = 1;
+
     reg ready;
     reg [31:0] accum;
 

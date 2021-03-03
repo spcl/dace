@@ -86,36 +86,9 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
            |--------------------------------------------------------|
     */
 
+    assign ap_done = 1;
+
     wire ap_aresetn = ~ap_areset;
-    /*wire [VECLEN:0] tmp_treadya;
-    wire [VECLEN:0] tmp_treadyb;
-    wire [VECLEN:0] tmp_tvalidc;
-
-    genvar i;
-    generate
-    for (i = 0; i < VECLEN; i = i + 1) begin
-        floating_point_add add(
-            .aclk(ap_aclk),
-            //.aresetn(ap_aresetn),
-
-            .s_axis_a_tvalid(s_axis_a_tvalid),
-            .s_axis_a_tdata(s_axis_a_tdata[i]),
-            .s_axis_a_tready(tmp_treadya[i]),
-
-            .s_axis_b_tvalid(s_axis_b_tvalid),
-            .s_axis_b_tdata(s_axis_b_tdata[i]),
-            .s_axis_b_tready(tmp_treadyb[i]),
-
-            .m_axis_result_tvalid(tmp_tvalidc[i]),
-            .m_axis_result_tdata(m_axis_c_tdata[i]),
-            .m_axis_result_tready(m_axis_c_tready)
-        );
-    end
-    endgenerate
-
-    assign s_axis_a_tready = &tmp_treadya;
-    assign s_axis_b_tready = &tmp_treadyb;
-    assign m_axis_c_tvalid = &tmp_tvalidc;*/
 
     floating_point_add add(
         .aclk(ap_aclk),
@@ -136,7 +109,7 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     ''',
                                 language=dace.Language.SystemVerilog)
 
-rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com', '7.1', { 
+rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
         'CONFIG.Add_Sub_Value' : 'Add'
         ,'CONFIG.Has_ARESETn': 'true'
     })
