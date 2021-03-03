@@ -6,6 +6,7 @@ import dace.libraries.lapack as lapack
 import numpy as np
 import sys
 import warnings
+import pytest
 
 ###############################################################################
 
@@ -97,21 +98,26 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 ###############################################################################
 
-
-def _test_getrs(implementation, dtype, sdfg):
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl)
+])
+def test_getrs(implementation, dtype):
+    sdfg = make_sdfg(implementation, dtype)
     solve_sdfg = sdfg.compile()
+    np_dtype = getattr(np, dtype.to_string())
     
     # this is what we are trying to do, using getrf (LU factorize the matrix a) and getrs (solve the system for b as rhs)
-    a1 = np.array([[1, 2], [3, 5]], dtype=dtype)
-    b1 = np.array([1, 2], dtype=dtype)
+    a1 = np.array([[1, 2], [3, 5]], dtype=np_dtype)
+    b1 = np.array([1, 2], dtype=np_dtype)
     x = np.linalg.solve(a1, b1)
 
     # verify if it works in numpy :)
     if not np.allclose(np.dot(a1, x), b1):
         raise ValueError("NumPy solve returned wrong result o_O")
   
-    lapack_status1 = np.array([-1], dtype=np.int32)
-    lapack_status2 = np.array([-1], dtype=np.int32)
+    lapack_status1 = np.array([-1], dtype=np_dtype)
+    lapack_status2 = np.array([-1], dtype=np_dtype)
     a2 = np.copy(a1)  # a input will be overwritten by its lu factorization (by getrf) 
     b2 = np.copy(b1)  # rhs input will be overwritten by the solution (by getrs)
     solve_sdfg(A=a2, B=b2, result_getrf=lapack_status1, result_getrs=lapack_status2, pivots=np.ndarray([0,0], dtype=np.int32), n=2)
@@ -123,12 +129,9 @@ def _test_getrs(implementation, dtype, sdfg):
         raise ValueError("Validation error!")
 
 
-def test_getrs():
-    _test_getrs("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
-    _test_getrs("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
-
 ###############################################################################
 
 if __name__ == "__main__":
-    test_getrs()
+    test_getrs("MKL", dace.float32)
+    test_getrs("MKL", dace.float64)
 ###############################################################################
