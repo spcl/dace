@@ -205,6 +205,7 @@ class RedundantArray(pm.Transformation):
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
                 if isinstance(e3.src, nodes.AccessNode):
+                    e3.data.data = e3.src.data
                     e3.data.src_subset = other_subset
                 else:
                     e3.data.src_subset = None
