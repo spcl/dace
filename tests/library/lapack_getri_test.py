@@ -6,6 +6,7 @@ import dace.libraries.lapack as lapack
 import numpy as np
 import sys
 import warnings
+import pytest
 
 ###############################################################################
 
@@ -14,35 +15,32 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
     n = dace.symbol("n")
 
-    suffix = "_device" if storage != dace.StorageType.Default else ""
-    transient = storage != dace.StorageType.Default
-
     sdfg = dace.SDFG("matrix_inv_getrf_getri_{}_{}".format(implementation, dtype))
     state = sdfg.add_state("dataflow")
 
-    sdfg.add_array("x" + suffix, [n,n],
+    sdfg.add_array("x", [n,n],
                    dtype,
                    storage=storage,
                    transient=False)
-    sdfg.add_array("pivots" + suffix, [n],
+    sdfg.add_array("pivots", [n],
                    dace.dtypes.int32,
                    storage=storage,
                    transient=True)
-    sdfg.add_array("result_getrf" + suffix, [1],
+    sdfg.add_array("result_getrf", [1],
                    dace.dtypes.int32,
                    storage=storage,
                    transient=False)
-    sdfg.add_array("result_getri" + suffix, [1],
+    sdfg.add_array("result_getri", [1],
                    dace.dtypes.int32,
                    storage=storage,
                    transient=False)
 
-    xin = state.add_access("x" + suffix)
-    xout_getrf = state.add_access("x" + suffix)
-    xout_getri = state.add_access("x" + suffix)
-    pivots = state.add_access("pivots" + suffix)
-    res_getrf = state.add_access("result_getrf" + suffix)
-    res_getri = state.add_access("result_getri" + suffix)
+    xin = state.add_access("x")
+    xout_getrf = state.add_access("x")
+    xout_getri = state.add_access("x")
+    pivots = state.add_access("pivots")
+    res_getrf = state.add_access("result_getrf")
+    res_getri = state.add_access("result_getri")
 
     getrf_node = lapack.nodes.getrf.Getrf("getrf")
     getrf_node.implementation = implementation
@@ -88,19 +86,25 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 ###############################################################################
 
-
-def _test_getri(implementation, dtype, sdfg):
+@pytest.mark.parametrize("implementation, dtype", [
+    pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl)
+])
+def test_getri(implementation, dtype):
+    sdfg = make_sdfg(implementation, dtype)
     inv_sdfg = sdfg.compile()
+    np_dtype = getattr(np, dtype.to_string())
     
     size = 4
     lapack_status1 = np.array([-1], dtype=np.int32)
     lapack_status2 = np.array([-1], dtype=np.int32)
-    A1 = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=dtype)
+    A1 = np.array([[2, 5, 8, 7], [5, 2, 2, 8], [7, 5, 6, 6], [5, 4, 4, 8]], dtype=np_dtype)
     A2 = np.copy(A1)
     A3 = np.linalg.inv(A2)
+    pivots = np.ndarray([0,0,0,0], dtype=np.int32)
   
     # the x is input AND output, the "result" argument gives the lapack status!
-    inv_sdfg(x=A1, result_getrf=lapack_status1, result_getri=lapack_status2, pivots=np.ndarray([0,0,0,0], dtype=np.int32), n=size)
+    inv_sdfg(x=A1, result_getrf=lapack_status1, result_getri=lapack_status2, pivots=pivots, n=size)
 
     if np.allclose(A1, A3):
         print("Test ran successfully for {}.".format(implementation))
@@ -108,13 +112,10 @@ def _test_getri(implementation, dtype, sdfg):
         print(A1-A3)
         raise ValueError("Validation error!")
 
-
-def test_getri():
-    _test_getri("32-bit MKL", np.float32, make_sdfg("MKL", dace.float32))
-    _test_getri("64-bit MKL", np.float64, make_sdfg("MKL", dace.float64))
-
 ###############################################################################
 
 if __name__ == "__main__":
-    test_getri()
+    test_getri("MKL", dace.float32)
+    test_getri("MKL", dace.float64)
+    
 ###############################################################################

@@ -96,16 +96,10 @@ class Getri(dace.sdfg.nodes.LibraryNode):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to getri")
-        in_memlets = [in_edges[0].data]
         out_edges = state.out_edges(self)
         if len(out_edges) != 2:
             raise ValueError("Expected exactly two outputs from getri")
-        out_memlets = out_edges[0].data
 
-        # Squeeze input memlets
-        squeezed1 = copy.deepcopy(in_memlets[0].subset)
-        sqdims1 = squeezed1.squeeze()
-        
         desc_xin, desc_xout, desc_ipiv, desc_res = None, None, None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_xin":
@@ -123,10 +117,23 @@ class Getri(dace.sdfg.nodes.LibraryNode):
         if desc_ipiv.dtype.base_type != dace.dtypes.int32:
             raise ValueError("Pivot input must be an integer array!")
 
-        stride_x = desc_xin.strides[sqdims1[0]]
-        shape_x = squeezed1.size()
-        rows_x = shape_x[0]
-        cols_x = shape_x[1]
+        in_memlets = [None] * 2
+        for _, _, _, conn, data in in_edges:
+            if conn == '_xin':
+                in_memlets[0] = data
+            elif conn == '_ipiv':
+                in_memlets[1] = data
+        
+        # Squeeze input memlets
+        squeezed_xin = copy.deepcopy(in_memlets[0].subset)
+        dims_xin = squeezed_xin.squeeze()
+        squeezed_ipiv = copy.deepcopy(in_memlets[1].subset)
+        dims_ipiv = squeezed_ipiv.squeeze()
+
+        stride_x = desc_xin.strides[dims_xin[0]]
+        shape_xin = squeezed_xin.size()
+        rows_x = shape_xin[0]
+        cols_x = shape_xin[1]
 
         return (desc_xin, stride_x, rows_x, cols_x), desc_ipiv, desc_res
 
