@@ -410,6 +410,7 @@ class Tasklet(CodeNode):
         else:
             return self.label
 
+
 @make_properties
 class RTLTasklet(Tasklet):
     """ A specialized tasklet, which is a functional computation procedure
@@ -419,10 +420,9 @@ class RTLTasklet(Tasklet):
         in that it adds support for adding metadata about the IP cores in use.
     """
     # TODO to be replaced when enums have embedded properties
-    ip_cores = DictProperty(
-        key_type=str,
-        value_type=dict,
-        desc="A set of IP cores used by the tasklet.")
+    ip_cores = DictProperty(key_type=str,
+                            value_type=dict,
+                            desc="A set of IP cores used by the tasklet.")
 
     @property
     def __jsontype__(self):

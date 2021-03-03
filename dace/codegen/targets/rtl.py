@@ -34,8 +34,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.dispatcher: dispatcher.TargetDispatcher = frame_codegen.dispatcher
         # register node dispatcher -> generate_node(), predicate: process tasklets only
         self.dispatcher.register_node_dispatcher(
-            self, lambda sdfg, state, node: isinstance(node, nodes.Tasklet) and node.
-            language == dtypes.Language.SystemVerilog)
+            self, lambda sdfg, state, node: isinstance(node, nodes.Tasklet) and
+            node.language == dtypes.Language.SystemVerilog)
         # register all storage types that connect from/to an RTL tasklet
         for src_storage, dst_storage in itertools.product(
                 dtypes.StorageType, dtypes.StorageType):
@@ -189,8 +189,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         options = [
             "-DDACE_RTL_VERBOSE=\"{}\"".format(verbose),
             "-DDACE_RTL_VERILATOR_FLAGS=\"{}\"".format(verilator_flags),
-            "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(verilator_lint_warnings),
-            "-DDACE_RTL_MODE=\"{}\"".format(mode)
+            "-DDACE_RTL_VERILATOR_LINT_WARNINGS=\"{}\"".format(
+                verilator_lint_warnings), "-DDACE_RTL_MODE=\"{}\"".format(mode)
         ]
         return options
 
@@ -222,7 +222,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         vec_str = '' if veclen <= 1 else f'[{veclen-1}:0]'
         bits_str = f'[{(total_size // veclen) * 8 - 1}:0]'
         bytes_str = f'[{total_size - 1}:0]'
-        dir_str  = 'output reg' if is_output else 'input     '
+        dir_str = 'output reg' if is_output else 'input     '
         ndir_str = 'input     ' if is_output else 'output reg'
         prefix = f'm_axis_{name}' if is_output else f's_axis_{name}'
         padding = ' ' * (len(bits_str) + len(vec_str))
@@ -242,13 +242,17 @@ class RTLCodeGen(target.TargetCodeGenerator):
         inputs = []
         outputs = []
         for scalar, (is_output, total_size) in scalars.items():
-            inputs += [f', {"output" if is_output else "input"} [{total_size-1}:0] {scalar}']
+            inputs += [
+                f', {"output" if is_output else "input"} [{total_size-1}:0] {scalar}'
+            ]
 
         for bus, (is_output, total_size, vec_len) in buses.items():
             if is_output:
-                inputs += self.generate_padded_axis(True, bus, total_size, vec_len)
+                inputs += self.generate_padded_axis(True, bus, total_size,
+                                                    vec_len)
             else:
-                outputs += self.generate_padded_axis(False, bus, total_size, vec_len)
+                outputs += self.generate_padded_axis(False, bus, total_size,
+                                                     vec_len)
 
         return inputs, outputs
 
@@ -510,7 +514,8 @@ for(int i = 0; i < {veclen}; i++){{
                                   sdfg.constants))
             if isinstance(arr, data.Array):
                 if self.mode == 'xilinx':
-                    raise NotImplementedError('Array input for hardware* not implemented')
+                    raise NotImplementedError(
+                        'Array input for hardware* not implemented')
                 else:
                     buses[edge.dst_conn] = (False, total_size, vec_len)
             elif isinstance(arr, data.Stream):
@@ -535,13 +540,14 @@ for(int i = 0; i < {veclen}; i++){{
                                   sdfg.constants))
             if isinstance(arr, data.Array):
                 if self.mode == 'xilinx':
-                    raise NotImplementedError('Array input for hardware* not implemented')
+                    raise NotImplementedError(
+                        'Array input for hardware* not implemented')
                 else:
                     buses[edge.src_conn] = (True, total_size, vec_len)
             elif isinstance(arr, data.Stream):
                 buses[edge.src_conn] = (True, total_size, vec_len)
             elif isinstance(arr, data.Scalar):
-                print ('Scalar output not implemented')
+                print('Scalar output not implemented')
 
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
@@ -569,17 +575,18 @@ for(int i = 0; i < {veclen}; i++){{
                 "name": unique_name,
                 "part": self.part,
                 "buses": {
-                    name : ('m_axis' if is_output else 's_axis', vec_len)
+                    name: ('m_axis' if is_output else 's_axis', vec_len)
                     for name, (is_output, _, vec_len) in buses.items()
                 },
                 "params": {
                     "scalars": {
-                        name : total_size
+                        name: total_size
                         for name, (_, total_size) in scalars.items()
                     },
                     "memory": {}
                 },
-                "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {},
+                "ip_cores": tasklet.ip_cores if isinstance(
+                    tasklet, nodes.RTLTasklet) else {},
             }
 
             self.code_objects.append(

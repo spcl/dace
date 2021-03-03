@@ -109,10 +109,11 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     ''',
                                 language=dace.Language.SystemVerilog)
 
-rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
-        'CONFIG.Add_Sub_Value' : 'Add'
-        ,'CONFIG.Has_ARESETn': 'true'
-    })
+rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com',
+                        '7.1', {
+                            'CONFIG.Add_Sub_Value': 'Add',
+                            'CONFIG.Has_ARESETn': 'true'
+                        })
 
 # add read and write tasklets
 read_a = state.add_tasklet('read_a', {'inp'}, {'out'}, 'out = inp')
@@ -222,7 +223,7 @@ if __name__ == '__main__':
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
     b = np.random.randint(0, 100, N.get()).astype(np.float32)
     c = np.zeros((N.get() // veclen, )).astype(np.float32)
-    print (a.shape, b.shape, c.shape)
+    print(a.shape, b.shape, c.shape)
 
     # show initial values
     print("a={}, b={}".format(a, b))

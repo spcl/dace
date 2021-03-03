@@ -173,71 +173,76 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     ''',
                                 language=dace.Language.SystemVerilog)
 
-rtl_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
-        'CONFIG.S_TDATA_NUM_BYTES' : '8',
-        'CONFIG.M_TDATA_NUM_BYTES' : '4',
-        'CONFIG.Component_Name' : 'slow_to_fast_data',
+rtl_tasklet.add_ip_core(
+    'slow_to_fast_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
+        'CONFIG.S_TDATA_NUM_BYTES': '8',
+        'CONFIG.M_TDATA_NUM_BYTES': '4',
+        'CONFIG.Component_Name': 'slow_to_fast_data',
     })
-rtl_tasklet.add_ip_core('fast_to_slow_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
-        'CONFIG.S_TDATA_NUM_BYTES' : '4',
-        'CONFIG.M_TDATA_NUM_BYTES' : '8',
-        'CONFIG.Component_Name' : 'fast_to_slow_data',
+rtl_tasklet.add_ip_core(
+    'fast_to_slow_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
+        'CONFIG.S_TDATA_NUM_BYTES': '4',
+        'CONFIG.M_TDATA_NUM_BYTES': '8',
+        'CONFIG.Component_Name': 'fast_to_slow_data',
     })
-rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
-        'CONFIG.TDATA_NUM_BYTES' : '8',
-        'CONFIG.SYNCHRONIZATION_STAGES' : '8',
-        'CONFIG.Component_Name' : 'slow_to_fast_clk',
+rtl_tasklet.add_ip_core(
+    'slow_to_fast_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
+        'CONFIG.TDATA_NUM_BYTES': '8',
+        'CONFIG.SYNCHRONIZATION_STAGES': '8',
+        'CONFIG.Component_Name': 'slow_to_fast_clk',
     })
-rtl_tasklet.add_ip_core('fast_to_slow_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
-        'CONFIG.TDATA_NUM_BYTES' : '8',
-        'CONFIG.SYNCHRONIZATION_STAGES' : '8',
-        'CONFIG.Component_Name' : 'fast_to_slow_clk',
+rtl_tasklet.add_ip_core(
+    'fast_to_slow_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
+        'CONFIG.TDATA_NUM_BYTES': '8',
+        'CONFIG.SYNCHRONIZATION_STAGES': '8',
+        'CONFIG.Component_Name': 'fast_to_slow_clk',
     })
-rtl_tasklet.add_ip_core('floating_point_reciprog', 'floating_point', 'xilinx.com', '7.1', {
-        'CONFIG.Operation_Type' : 'Reciprocal',
-        'CONFIG.Add_Sub_Value' : 'Both',
-        'CONFIG.Result_Precision_Type' : 'Single',
-        'CONFIG.C_Result_Exponent_Width' : '8',
-        'CONFIG.C_Result_Fraction_Width' : '24',
-        'CONFIG.C_Mult_Usage' : 'Full_Usage',
-        'CONFIG.C_Latency' : '32',
-        'CONFIG.C_Rate' : '1',
+rtl_tasklet.add_ip_core(
+    'floating_point_reciprog', 'floating_point', 'xilinx.com', '7.1', {
+        'CONFIG.Operation_Type': 'Reciprocal',
+        'CONFIG.Add_Sub_Value': 'Both',
+        'CONFIG.Result_Precision_Type': 'Single',
+        'CONFIG.C_Result_Exponent_Width': '8',
+        'CONFIG.C_Result_Fraction_Width': '24',
+        'CONFIG.C_Mult_Usage': 'Full_Usage',
+        'CONFIG.C_Latency': '32',
+        'CONFIG.C_Rate': '1',
     })
-rtl_tasklet.add_ip_core('clk_wiz_0', 'clk_wiz', 'xilinx.com', '6.0', {
-        'CONFIG.PRIMITIVE' : 'Auto',
-        'CONFIG.PRIM_IN_FREQ' : '300',
-        'CONFIG.CLKOUT2_USED' : 'true',
-        'CONFIG.CLKOUT1_REQUESTED_OUT_FREQ' : '300',
-        'CONFIG.CLKOUT2_REQUESTED_OUT_FREQ' : '600',
-        'CONFIG.CLKIN1_JITTER_PS' : '33.330000000000005',
-        'CONFIG.CLKOUT1_DRIVES' : 'Buffer',
-        'CONFIG.CLKOUT2_DRIVES' : 'Buffer',
-        'CONFIG.CLKOUT3_DRIVES' : 'Buffer',
-        'CONFIG.CLKOUT4_DRIVES' : 'Buffer',
-        'CONFIG.CLKOUT5_DRIVES' : 'Buffer',
-        'CONFIG.CLKOUT6_DRIVES' : 'Buffer',
-        'CONFIG.CLKOUT7_DRIVES' : 'Buffer',
-        'CONFIG.FEEDBACK_SOURCE' : 'FDBK_AUTO',
-        'CONFIG.USE_LOCKED' : 'false',
-        'CONFIG.USE_RESET' : 'false',
-        'CONFIG.MMCM_DIVCLK_DIVIDE' : '1',
-        'CONFIG.MMCM_BANDWIDTH' : 'OPTIMIZED',
-        'CONFIG.MMCM_CLKFBOUT_MULT_F' : '4',
-        'CONFIG.MMCM_CLKIN1_PERIOD' : '3.333',
-        'CONFIG.MMCM_CLKIN2_PERIOD' : '10.0',
-        'CONFIG.MMCM_COMPENSATION' : 'AUTO',
-        'CONFIG.MMCM_CLKOUT0_DIVIDE_F' : '4',
-        'CONFIG.MMCM_CLKOUT1_DIVIDE' : '2',
-        'CONFIG.NUM_OUT_CLKS' : '2',
-        'CONFIG.CLKOUT1_JITTER' : '81.814',
-        'CONFIG.CLKOUT1_PHASE_ERROR' : '77.836',
-        'CONFIG.CLKOUT2_JITTER' : '71.438',
-        'CONFIG.CLKOUT2_PHASE_ERROR' : '77.836',
-        'CONFIG.AUTO_PRIMITIVE' : 'PL',
+rtl_tasklet.add_ip_core(
+    'clk_wiz_0', 'clk_wiz', 'xilinx.com', '6.0', {
+        'CONFIG.PRIMITIVE': 'Auto',
+        'CONFIG.PRIM_IN_FREQ': '300',
+        'CONFIG.CLKOUT2_USED': 'true',
+        'CONFIG.CLKOUT1_REQUESTED_OUT_FREQ': '300',
+        'CONFIG.CLKOUT2_REQUESTED_OUT_FREQ': '600',
+        'CONFIG.CLKIN1_JITTER_PS': '33.330000000000005',
+        'CONFIG.CLKOUT1_DRIVES': 'Buffer',
+        'CONFIG.CLKOUT2_DRIVES': 'Buffer',
+        'CONFIG.CLKOUT3_DRIVES': 'Buffer',
+        'CONFIG.CLKOUT4_DRIVES': 'Buffer',
+        'CONFIG.CLKOUT5_DRIVES': 'Buffer',
+        'CONFIG.CLKOUT6_DRIVES': 'Buffer',
+        'CONFIG.CLKOUT7_DRIVES': 'Buffer',
+        'CONFIG.FEEDBACK_SOURCE': 'FDBK_AUTO',
+        'CONFIG.USE_LOCKED': 'false',
+        'CONFIG.USE_RESET': 'false',
+        'CONFIG.MMCM_DIVCLK_DIVIDE': '1',
+        'CONFIG.MMCM_BANDWIDTH': 'OPTIMIZED',
+        'CONFIG.MMCM_CLKFBOUT_MULT_F': '4',
+        'CONFIG.MMCM_CLKIN1_PERIOD': '3.333',
+        'CONFIG.MMCM_CLKIN2_PERIOD': '10.0',
+        'CONFIG.MMCM_COMPENSATION': 'AUTO',
+        'CONFIG.MMCM_CLKOUT0_DIVIDE_F': '4',
+        'CONFIG.MMCM_CLKOUT1_DIVIDE': '2',
+        'CONFIG.NUM_OUT_CLKS': '2',
+        'CONFIG.CLKOUT1_JITTER': '81.814',
+        'CONFIG.CLKOUT1_PHASE_ERROR': '77.836',
+        'CONFIG.CLKOUT2_JITTER': '71.438',
+        'CONFIG.CLKOUT2_PHASE_ERROR': '77.836',
+        'CONFIG.AUTO_PRIMITIVE': 'PL',
     })
-rtl_tasklet.add_ip_core('rst_clk_wiz', 'proc_sys_reset', 'xilinx.com', '5.0', {
-        'CONFIG.Component_Name' : 'rst_clk_wiz'
-    })
+rtl_tasklet.add_ip_core('rst_clk_wiz', 'proc_sys_reset', 'xilinx.com', '5.0',
+                        {'CONFIG.Component_Name': 'rst_clk_wiz'})
 
 # add read and write tasklets
 read_a = state.add_tasklet('read_a', {'inp'}, {'out'}, 'out = inp')
@@ -320,7 +325,7 @@ if __name__ == '__main__':
     N.set(262144 * 128)
     a = np.random.randint(1, 100, N.get()).astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
-    print (a.shape, c.shape)
+    print(a.shape, c.shape)
 
     # show initial values
     print("a={}".format(a))

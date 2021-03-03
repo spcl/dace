@@ -287,10 +287,11 @@ class FPGACodeGen(TargetCodeGenerator):
                     for t in tasks
                 ])
                 if external:
-                    external_streams += [(True, e.data.data,
-                                          subsdfg.arrays[e.data.data], None)
-                                          for e in state.out_edges(n)
-                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)]
+                    external_streams += [
+                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
+                        for e in state.out_edges(n)
+                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                    ]
                 else:
                     candidates += [(False, e.data.data,
                                     subsdfg.arrays[e.data.data])
@@ -308,10 +309,11 @@ class FPGACodeGen(TargetCodeGenerator):
                     for t in tasks
                 ])
                 if external:
-                    external_streams += [(False, e.data.data,
-                                          subsdfg.arrays[e.data.data], None)
-                                         for e in state.in_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)]
+                    external_streams += [
+                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
+                        for e in state.in_edges(n)
+                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                    ]
                 else:
                     candidates += [(True, e.data.data,
                                     subsdfg.arrays[e.data.data])

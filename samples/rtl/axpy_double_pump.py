@@ -21,9 +21,7 @@ sdfg.add_constant('WORD_WIDTH', 32)
 sdfg.add_constant('RATIO', 2)
 
 # add arrays
-sdfg.add_scalar('a',
-                dtype=dace.float32,
-                storage=dace.StorageType.FPGA_Global)
+sdfg.add_scalar('a', dtype=dace.float32, storage=dace.StorageType.FPGA_Global)
 sdfg.add_array('x', [N // veclen],
                dtype=dace.vector(dace.float32, veclen),
                storage=dace.StorageType.CPU_Heap)
@@ -244,81 +242,88 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     ''',
                                 language=dace.Language.SystemVerilog)
 
-rtl_tasklet.add_ip_core("clk_wiz_0", "clk_wiz", "xilinx.com", "6.0", {
-    "CONFIG.PRIMITIVE" : "Auto",
-    "CONFIG.PRIM_IN_FREQ" : "300",
-    "CONFIG.CLKOUT2_USED" : "true",
-    "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ" : "300",
-    "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ" : "600",
-    "CONFIG.CLKIN1_JITTER_PS" : "33.330000000000005",
-    "CONFIG.CLKOUT1_DRIVES" : "Buffer",
-    "CONFIG.CLKOUT2_DRIVES" : "Buffer",
-    "CONFIG.CLKOUT3_DRIVES" : "Buffer",
-    "CONFIG.CLKOUT4_DRIVES" : "Buffer",
-    "CONFIG.CLKOUT5_DRIVES" : "Buffer",
-    "CONFIG.CLKOUT6_DRIVES" : "Buffer",
-    "CONFIG.CLKOUT7_DRIVES" : "Buffer",
-    "CONFIG.FEEDBACK_SOURCE" : "FDBK_AUTO",
-    "CONFIG.USE_LOCKED" : "false",
-    "CONFIG.USE_RESET" : "false",
-    "CONFIG.MMCM_DIVCLK_DIVIDE" : "1",
-    "CONFIG.MMCM_BANDWIDTH" : "OPTIMIZED",
-    "CONFIG.MMCM_CLKFBOUT_MULT_F" : "4",
-    "CONFIG.MMCM_CLKIN1_PERIOD" : "3.333",
-    "CONFIG.MMCM_CLKIN2_PERIOD" : "10.0",
-    "CONFIG.MMCM_COMPENSATION" : "AUTO",
-    "CONFIG.MMCM_CLKOUT0_DIVIDE_F" : "4",
-    "CONFIG.MMCM_CLKOUT1_DIVIDE" : "2",
-    "CONFIG.NUM_OUT_CLKS" : "2",
-    "CONFIG.CLKOUT1_JITTER" : "81.814",
-    "CONFIG.CLKOUT1_PHASE_ERROR" : "77.836",
-    "CONFIG.CLKOUT2_JITTER" : "71.438",
-    "CONFIG.CLKOUT2_PHASE_ERROR" : "77.836",
-    "CONFIG.AUTO_PRIMITIVE" : "PLL"
-})
+rtl_tasklet.add_ip_core(
+    "clk_wiz_0", "clk_wiz", "xilinx.com", "6.0", {
+        "CONFIG.PRIMITIVE": "Auto",
+        "CONFIG.PRIM_IN_FREQ": "300",
+        "CONFIG.CLKOUT2_USED": "true",
+        "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ": "300",
+        "CONFIG.CLKOUT2_REQUESTED_OUT_FREQ": "600",
+        "CONFIG.CLKIN1_JITTER_PS": "33.330000000000005",
+        "CONFIG.CLKOUT1_DRIVES": "Buffer",
+        "CONFIG.CLKOUT2_DRIVES": "Buffer",
+        "CONFIG.CLKOUT3_DRIVES": "Buffer",
+        "CONFIG.CLKOUT4_DRIVES": "Buffer",
+        "CONFIG.CLKOUT5_DRIVES": "Buffer",
+        "CONFIG.CLKOUT6_DRIVES": "Buffer",
+        "CONFIG.CLKOUT7_DRIVES": "Buffer",
+        "CONFIG.FEEDBACK_SOURCE": "FDBK_AUTO",
+        "CONFIG.USE_LOCKED": "false",
+        "CONFIG.USE_RESET": "false",
+        "CONFIG.MMCM_DIVCLK_DIVIDE": "1",
+        "CONFIG.MMCM_BANDWIDTH": "OPTIMIZED",
+        "CONFIG.MMCM_CLKFBOUT_MULT_F": "4",
+        "CONFIG.MMCM_CLKIN1_PERIOD": "3.333",
+        "CONFIG.MMCM_CLKIN2_PERIOD": "10.0",
+        "CONFIG.MMCM_COMPENSATION": "AUTO",
+        "CONFIG.MMCM_CLKOUT0_DIVIDE_F": "4",
+        "CONFIG.MMCM_CLKOUT1_DIVIDE": "2",
+        "CONFIG.NUM_OUT_CLKS": "2",
+        "CONFIG.CLKOUT1_JITTER": "81.814",
+        "CONFIG.CLKOUT1_PHASE_ERROR": "77.836",
+        "CONFIG.CLKOUT2_JITTER": "71.438",
+        "CONFIG.CLKOUT2_PHASE_ERROR": "77.836",
+        "CONFIG.AUTO_PRIMITIVE": "PLL"
+    })
 
+rtl_tasklet.add_ip_core('rst_clk_wiz', 'proc_sys_reset', 'xilinx.com', '5.0',
+                        {})
 
-rtl_tasklet.add_ip_core('rst_clk_wiz', 'proc_sys_reset', 'xilinx.com', '5.0', {})
+rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter',
+                        'xilinx.com', '1.1', {
+                            "CONFIG.TDATA_NUM_BYTES": "8",
+                            "CONFIG.SYNCHRONIZATION_STAGES": "8"
+                        })
 
-rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
-    "CONFIG.TDATA_NUM_BYTES" : "8",
-    "CONFIG.SYNCHRONIZATION_STAGES" : "8"
-})
+rtl_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter',
+                        'xilinx.com', '1.1', {
+                            "CONFIG.S_TDATA_NUM_BYTES": "8",
+                            "CONFIG.M_TDATA_NUM_BYTES": "4"
+                        })
 
-rtl_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
-    "CONFIG.S_TDATA_NUM_BYTES" : "8",
-    "CONFIG.M_TDATA_NUM_BYTES" : "4"
-})
+rtl_tasklet.add_ip_core(
+    'floating_point_mult', 'floating_point', 'xilinx.com', '7.1', {
+        "CONFIG.Operation_Type": "Multiply",
+        "CONFIG.C_Mult_Usage": "Max_Usage",
+        "CONFIG.Axi_Optimize_Goal": "Performance",
+        "CONFIG.A_Precision_Type": "Single",
+        "CONFIG.C_A_Exponent_Width": "8",
+        "CONFIG.C_A_Fraction_Width": "24",
+        "CONFIG.Result_Precision_Type": "Single",
+        "CONFIG.C_Result_Exponent_Width": "8",
+        "CONFIG.C_Result_Fraction_Width": "24",
+        "CONFIG.C_Latency": "9",
+        "CONFIG.C_Rate": "1"
+    })
 
-rtl_tasklet.add_ip_core('floating_point_mult', 'floating_point', 'xilinx.com', '7.1', {
-    "CONFIG.Operation_Type" : "Multiply",
-    "CONFIG.C_Mult_Usage" : "Max_Usage",
-    "CONFIG.Axi_Optimize_Goal" : "Performance",
-    "CONFIG.A_Precision_Type" : "Single",
-    "CONFIG.C_A_Exponent_Width" : "8",
-    "CONFIG.C_A_Fraction_Width" : "24",
-    "CONFIG.Result_Precision_Type" : "Single",
-    "CONFIG.C_Result_Exponent_Width" : "8",
-    "CONFIG.C_Result_Fraction_Width" : "24",
-    "CONFIG.C_Latency" : "9",
-    "CONFIG.C_Rate" : "1"
-})
+rtl_tasklet.add_ip_core(
+    'floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
+        "CONFIG.Add_Sub_Value": "Add",
+        "CONFIG.Axi_Optimize_Goal": "Performance",
+        "CONFIG.C_Latency": "14"
+    })
 
-rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
-    "CONFIG.Add_Sub_Value" : "Add",
-    "CONFIG.Axi_Optimize_Goal" : "Performance",
-    "CONFIG.C_Latency" : "14"
-})
+rtl_tasklet.add_ip_core('fast_to_slow_data', 'axis_dwidth_converter',
+                        'xilinx.com', '1.1', {
+                            "CONFIG.S_TDATA_NUM_BYTES": "4",
+                            "CONFIG.M_TDATA_NUM_BYTES": "8"
+                        })
 
-rtl_tasklet.add_ip_core('fast_to_slow_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
-    "CONFIG.S_TDATA_NUM_BYTES" : "4",
-    "CONFIG.M_TDATA_NUM_BYTES" : "8"
-})
-
-rtl_tasklet.add_ip_core('fast_to_slow_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
-    "CONFIG.TDATA_NUM_BYTES" : "8",
-    "CONFIG.SYNCHRONIZATION_STAGES" : "8"
-})
+rtl_tasklet.add_ip_core('fast_to_slow_clk', 'axis_clock_converter',
+                        'xilinx.com', '1.1', {
+                            "CONFIG.TDATA_NUM_BYTES": "8",
+                            "CONFIG.SYNCHRONIZATION_STAGES": "8"
+                        })
 
 # add read and write tasklets
 read_x = state.add_tasklet('read_x', {'inp'}, {'out'}, 'out = inp')
@@ -327,13 +332,9 @@ write_result = state.add_tasklet('write_result', {'inp'}, {'out'}, 'out = inp')
 
 # add read and write maps
 read_x_entry, read_x_exit = state.add_map(
-    'read_x_map',
-    dict(i='0:N//VECLEN'),
-    schedule=dace.ScheduleType.FPGA_Device)
+    'read_x_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
 read_y_entry, read_y_exit = state.add_map(
-    'read_y_map',
-    dict(i='0:N//VECLEN'),
-    schedule=dace.ScheduleType.FPGA_Device)
+    'read_y_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
 write_result_entry, write_result_exit = state.add_map(
     'write_result_map',
     dict(i='0:N//VECLEN'),

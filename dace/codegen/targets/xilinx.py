@@ -332,7 +332,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         redtype = operations.detect_reduction_type(memlet.wcr)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet,
+                                                defined_type), indices)
         else:
             ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
 
@@ -520,7 +521,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
     def generate_host_function_body(self, sdfg, state, kernel_name, parameters,
-                                    symbol_parameters, kernel_stream, rtl_tasklets):
+                                    symbol_parameters, kernel_stream,
+                                    rtl_tasklets):
 
         # Just collect all variable names for calling the kernel function
         added = set()
@@ -545,7 +547,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         rtl_starts = []
         rtl_waits = []
         for rtl_tasklet in rtl_tasklets:
-            rtl_starts.append(f"  auto kernel_{rtl_tasklet} = program.MakeKernel(\"{rtl_tasklet}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if isinstance(p, dace.data.Scalar)])}).ExecuteTaskFork();")
+            rtl_starts.append(
+                f"  auto kernel_{rtl_tasklet} = program.MakeKernel(\"{rtl_tasklet}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if isinstance(p, dace.data.Scalar)])}).ExecuteTaskFork();"
+            )
             rtl_waits.append(f"  kernel_{rtl_tasklet}.wait();")
         kernel_stream.write(
             """\
@@ -557,10 +561,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 }}""".format(kernel_function_name=kernel_function_name,
              kernel_args=", ".join(kernel_args),
              rtl_starts="\n  ".join(rtl_starts),
-             rtl_waits="\n  ".join(rtl_waits)
-             ), sdfg, sdfg.node_id(state))
-
-
+             rtl_waits="\n  ".join(rtl_waits)), sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, name, subgraph, parameters,
                         symbol_parameters, module_stream, entry_stream,
@@ -800,10 +801,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                          for pname, param in scalar_parameters]
 
         host_code_stream = CodeIOStream()
-        rtl_tasklets = ["{}_{}_{}_{}".format(nd.name, sdfg.sdfg_id,
-                                        sdfg.node_id(state),
-                                        state.node_id(nd))
-                                        for nd in state.nodes() if isinstance(nd, nodes.RTLTasklet)]
+        rtl_tasklets = [
+            "{}_{}_{}_{}".format(nd.name, sdfg.sdfg_id, sdfg.node_id(state),
+                                 state.node_id(nd)) for nd in state.nodes()
+            if isinstance(nd, nodes.RTLTasklet)
+        ]
 
         # Generate host code
         self.generate_host_header(sdfg, kernel_name,
@@ -815,7 +817,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             function_stream, callsite_stream)
         self.generate_host_function_body(sdfg, state, kernel_name,
                                          global_data_parameters + sc_parameters,
-                                         symbol_parameters, host_code_stream, rtl_tasklets)
+                                         symbol_parameters, host_code_stream,
+                                         rtl_tasklets)
         # Store code to be passed to compilation phase
         self._host_codes.append((kernel_name, host_code_stream.getvalue()))
 

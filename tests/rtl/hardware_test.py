@@ -3,6 +3,7 @@
 import dace
 import numpy as np
 
+
 def make_sdfg(veclen=8):
     # add sdfg
     sdfg = dace.SDFG('floating_point_vector_plus_scalar')
@@ -15,21 +16,20 @@ def make_sdfg(veclen=8):
 
     # add arrays
     sdfg.add_array('A', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                storage=dace.StorageType.CPU_Heap)
-    sdfg.add_scalar('B', dace.float32,
-                storage=dace.StorageType.FPGA_Registers)
+                   dtype=dace.vector(dace.float32, veclen),
+                   storage=dace.StorageType.CPU_Heap)
+    sdfg.add_scalar('B', dace.float32, storage=dace.StorageType.FPGA_Registers)
     sdfg.add_array('C', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                storage=dace.StorageType.CPU_Heap)
+                   dtype=dace.vector(dace.float32, veclen),
+                   storage=dace.StorageType.CPU_Heap)
     sdfg.add_array('fpga_A', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.vector(dace.float32, veclen),
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
     sdfg.add_array('fpga_C', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.vector(dace.float32, veclen),
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
 
     # add streams
     sdfg.add_stream('A_stream',
@@ -91,10 +91,11 @@ def make_sdfg(veclen=8):
         ''',
                                     language=dace.Language.SystemVerilog)
 
-    rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
-            'CONFIG.Add_Sub_Value' : 'Add',
-            'CONFIG.Has_ARESETn': 'true'
-        })
+    rtl_tasklet.add_ip_core('floating_point_add', 'floating_point',
+                            'xilinx.com', '7.1', {
+                                'CONFIG.Add_Sub_Value': 'Add',
+                                'CONFIG.Has_ARESETn': 'true'
+                            })
 
     # add read and write tasklets
     read_a = state.add_tasklet('read_a', {'inp'}, {'out'}, 'out = inp')
@@ -102,7 +103,9 @@ def make_sdfg(veclen=8):
 
     # add read and write maps
     read_a_entry, read_a_exit = state.add_map(
-        'read_a_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
+        'read_a_map',
+        dict(i='0:N//VECLEN'),
+        schedule=dace.ScheduleType.FPGA_Device)
     write_c_entry, write_c_exit = state.add_map(
         'write_c_map',
         dict(i='0:N//VECLEN'),
@@ -112,54 +115,55 @@ def make_sdfg(veclen=8):
     read_a_inp = state.add_read('fpga_A')
     read_a_out = state.add_write('A_stream')
     state.add_memlet_path(read_a_inp,
-                        read_a_entry,
-                        read_a,
-                        dst_conn='inp',
-                        memlet=dace.Memlet.simple('fpga_A', 'i'))
+                          read_a_entry,
+                          read_a,
+                          dst_conn='inp',
+                          memlet=dace.Memlet.simple('fpga_A', 'i'))
     state.add_memlet_path(read_a,
-                        read_a_exit,
-                        read_a_out,
-                        src_conn='out',
-                        memlet=dace.Memlet.simple('A_stream', '0'))
+                          read_a_exit,
+                          read_a_out,
+                          src_conn='out',
+                          memlet=dace.Memlet.simple('A_stream', '0'))
 
     # add tasklet memlets
     A = state.add_read('A_stream')
     B = state.add_read('B')
     C = state.add_write('C_stream')
     state.add_memlet_path(A,
-                        rtl_tasklet,
-                        dst_conn='a',
-                        memlet=dace.Memlet.simple('A_stream', '0'))
+                          rtl_tasklet,
+                          dst_conn='a',
+                          memlet=dace.Memlet.simple('A_stream', '0'))
     state.add_memlet_path(B,
-                        rtl_tasklet,
-                        dst_conn='b',
-                        memlet=dace.Memlet.simple('B', '0'))
+                          rtl_tasklet,
+                          dst_conn='b',
+                          memlet=dace.Memlet.simple('B', '0'))
     state.add_memlet_path(rtl_tasklet,
-                        C,
-                        src_conn='c',
-                        memlet=dace.Memlet.simple('C_stream', '0'))
+                          C,
+                          src_conn='c',
+                          memlet=dace.Memlet.simple('C_stream', '0'))
 
     # add write_c memlets and access nodes
     write_c_inp = state.add_read('C_stream')
     write_c_out = state.add_write('fpga_C')
     state.add_memlet_path(write_c_inp,
-                        write_c_entry,
-                        write_c,
-                        dst_conn='inp',
-                        memlet=dace.Memlet.simple('C_stream', '0'))
+                          write_c_entry,
+                          write_c,
+                          dst_conn='inp',
+                          memlet=dace.Memlet.simple('C_stream', '0'))
     state.add_memlet_path(write_c,
-                        write_c_exit,
-                        write_c_out,
-                        src_conn='out',
-                        memlet=dace.Memlet.simple('fpga_C', 'i'))
+                          write_c_exit,
+                          write_c_out,
+                          src_conn='out',
+                          memlet=dace.Memlet.simple('fpga_C', 'i'))
 
     # add copy to device state
     copy_to_device = sdfg.add_state('copy_to_device')
     cpu_a = copy_to_device.add_read('A')
     dev_a = copy_to_device.add_write('fpga_A')
     copy_to_device.add_memlet_path(cpu_a,
-                                dev_a,
-                                memlet=dace.Memlet.simple('A', '0:N//VECLEN'))
+                                   dev_a,
+                                   memlet=dace.Memlet.simple(
+                                       'A', '0:N//VECLEN'))
     sdfg.add_edge(copy_to_device, state, dace.InterstateEdge())
 
     # add copy to host state
@@ -167,14 +171,15 @@ def make_sdfg(veclen=8):
     dev_c = copy_to_host.add_read('fpga_C')
     cpu_c = copy_to_host.add_write('C')
     copy_to_host.add_memlet_path(dev_c,
-                                cpu_c,
-                                memlet=dace.Memlet.simple('C', '0:N//VECLEN'))
+                                 cpu_c,
+                                 memlet=dace.Memlet.simple('C', '0:N//VECLEN'))
     sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
     # validate sdfg
     sdfg.validate()
 
     return sdfg
+
 
 # add symbol
 N = dace.symbol('N')
@@ -186,7 +191,7 @@ if __name__ == '__main__':
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
     b = np.random.rand(1)[0].astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
-    print (a.shape, b.shape, c.shape)
+    print(a.shape, b.shape, c.shape)
 
     # show initial values
     print("a={}, b={}".format(a, b))
