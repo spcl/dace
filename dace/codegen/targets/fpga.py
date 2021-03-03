@@ -1283,9 +1283,12 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Consider only the scalars that are actually used in this subgraph
             subgraph_scalar_parameters = []
-            for is_output, pname, p in scalar_parameters:
+            for is_output, pname, p ,*other in scalar_parameters:
                 if any(item.data == pname for item in subgraph.data_nodes()):
-                    subgraph_scalar_parameters.append((is_output, pname, p))
+                    if len(other)>0: # Xilinx: we indicate also the interface
+                        subgraph_scalar_parameters.append((is_output, pname, p, *other))
+                    else:
+                        subgraph_scalar_parameters.append((is_output, pname, p))
 
             # Consider only the symbols that are actually used in this subgraph
             subgraph_symbol_parameters = {}
