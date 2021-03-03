@@ -424,6 +424,10 @@ class RTLTasklet(Tasklet):
         value_type=dict,
         desc="A set of IP cores used by the tasklet.")
 
+    @property
+    def __jsontype__(self):
+        return 'Tasklet'
+
     def add_ip_core(self, module_name, name, vendor, version, params):
         self.ip_cores[module_name] = {
             'name': name,
