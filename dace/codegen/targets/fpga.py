@@ -104,7 +104,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._dispatcher.register_node_dispatcher(
             self,
-            predicate=lambda sdfg, node: self._in_device_code and not (
+            predicate=lambda sdfg, state, node: self._in_device_code and not (
                 isinstance(node, nodes.Tasklet) and node.language == dace.dtypes
                 .Language.SystemVerilog))
 
@@ -290,7 +290,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     external_streams += [(True, e.data.data,
                                           subsdfg.arrays[e.data.data], None)
                                           for e in state.out_edges(n)
-                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)] # TODO double check if there's a better way
+                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)]
                 else:
                     candidates += [(False, e.data.data,
                                     subsdfg.arrays[e.data.data])
