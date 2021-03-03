@@ -2,6 +2,7 @@
 import dace
 from dace.memlet import Memlet
 from dace.codegen.exceptions import CompilerConfigurationError, CompilationError
+import dace.libraries.blas as blas
 import dace.libraries.lapack as lapack
 import numpy as np
 import sys
@@ -21,10 +22,19 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     sdfg = dace.SDFG("matrix_lufact_getrf_{}_{}".format(implementation, str(dtype)))
     state = sdfg.add_state("dataflow")
 
-    sdfg.add_array("x" + suffix, [n,n],
-                   dtype,
-                   storage=storage,
-                   transient=transient)
+    xhost_arr = sdfg.add_array("x", [n, n],
+                               dtype,
+                               storage=dace.StorageType.Default)
+
+    if transient:
+        x_arr = sdfg.add_array("x" + suffix, [n, n],
+                               dtype,
+                               storage=storage,
+                               transient=transient)
+        xt_arr = sdfg.add_array('xt' + suffix, [n, n],
+                                dtype,
+                                storage=storage,
+                                transient=transient)
     sdfg.add_array("pivots" + suffix, [n],
                    dace.dtypes.int32,
                    storage=storage,
@@ -34,8 +44,40 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
                    storage=storage,
                    transient=transient)
 
-    xin = state.add_access("x" + suffix)
-    xout = state.add_access("x" + suffix)
+    if transient:
+        xhi = state.add_read("x")
+        xho = state.add_write("x")
+        xi = state.add_access("x" + suffix)
+        xo = state.add_access("x" + suffix)
+        xin = state.add_access("xt" + suffix)
+        xout = state.add_access("xt" + suffix)
+        transpose_in = blas.nodes.transpose.Transpose("transpose_in",
+                                                      dtype=dtype)
+        transpose_in.implementation = "cuBLAS"
+        transpose_out = blas.nodes.transpose.Transpose("transpose_out",
+                                                       dtype=dtype)
+        transpose_out.implementation = "cuBLAS"
+        state.add_nedge(xhi, xi, Memlet.from_array(*xhost_arr))
+        state.add_nedge(xo, xho, Memlet.from_array(*xhost_arr))
+        state.add_memlet_path(xi,
+                              transpose_in,
+                              dst_conn='_inp',
+                              memlet=Memlet.from_array(*x_arr))
+        state.add_memlet_path(transpose_in,
+                              xin,
+                              src_conn='_out',
+                              memlet=Memlet.from_array(*xt_arr))
+        state.add_memlet_path(xout,
+                              transpose_out,
+                              dst_conn='_inp',
+                              memlet=Memlet.from_array(*xt_arr))
+        state.add_memlet_path(transpose_out,
+                              xo,
+                              src_conn='_out',
+                              memlet=Memlet.from_array(*x_arr))
+    else:
+        xin = state.add_access("x" + suffix)
+        xout = state.add_access("x" + suffix)
     pivots = state.add_access("pivots" + suffix)
     result = state.add_access("result" + suffix)
 
@@ -45,7 +87,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(xin,
                           getrf_node,
                           dst_conn="_xin",
-                          memlet=Memlet.simple(xin, "0:n, 0:n", num_accesses=n*n))
+                          memlet=Memlet.simple(xin,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
     state.add_memlet_path(getrf_node,
                           result,
                           src_conn="_res",
@@ -57,9 +101,9 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
     state.add_memlet_path(getrf_node,
                           xout,
                           src_conn="_xout",
-                          memlet=Memlet.simple(xout, "0:n, 0:n", num_accesses=n*n))
-
-
+                          memlet=Memlet.simple(xout,
+                                               "0:n, 0:n",
+                                               num_accesses=n * n))
 
     return sdfg
 
@@ -68,11 +112,13 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
 
 @pytest.mark.parametrize("implementation, dtype", [
     pytest.param("MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl)
+    pytest.param("MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param("cuSolverDn", dace.float32, marks=pytest.mark.gpu),
+    pytest.param("cuSolverDn", dace.float64, marks=pytest.mark.gpu),
 ])
 
-def test_getrf(implementation, dtype):
-    sdfg = make_sdfg(implementation, dtype)
+def test_getrf(implementation, dtype, storage=dace.StorageType.Default):
+    sdfg = make_sdfg(implementation, dtype, storage)
     getrf_sdfg = sdfg.compile()
     np_dtype = getattr(np, dtype.to_string())
     
@@ -96,4 +142,6 @@ def test_getrf(implementation, dtype):
 if __name__ == "__main__":
     test_getrf("MKL", dace.float32)
     test_getrf("MKL", dace.float64)
+    test_getrf("cuSolverDn", dace.float32, dace.StorageType.GPU_Global)
+    test_getrf("cuSolverDn", dace.float64, dace.StorageType.GPU_Global)
 ###############################################################################
