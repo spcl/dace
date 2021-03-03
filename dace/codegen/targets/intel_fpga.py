@@ -770,19 +770,21 @@ __kernel void \\
 
         #generate Stream defines if needed
         for edge in state.in_edges(node):
-            desc = sdfg.arrays[edge.data.data]
-            if isinstance(desc, dace.data.Stream):
-                src_node = find_input_arraynode(state, edge)
-                self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
-                                               state, state_id, None,
-                                               nested_stream)
+            if edge.data.data is not None: # skip empty memlets
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dace.data.Stream):
+                    src_node = find_input_arraynode(state, edge)
+                    self._dispatcher.dispatch_copy(src_node, node, edge, sdfg,
+                                                   state, state_id, None,
+                                                   nested_stream)
         for edge in state.out_edges(node):
-            desc = sdfg.arrays[edge.data.data]
-            if isinstance(desc, dace.data.Stream):
-                dst_node = find_output_arraynode(state, edge)
-                self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
-                                               state, state_id, None,
-                                               nested_stream)
+            if edge.data.data is not None:  # skip empty memlets
+                desc = sdfg.arrays[edge.data.data]
+                if isinstance(desc, dace.data.Stream):
+                    dst_node = find_output_arraynode(state, edge)
+                    self._dispatcher.dispatch_copy(node, dst_node, edge, sdfg,
+                                                   state, state_id, None,
+                                                   nested_stream)
         return function_header + "\n" + nested_stream.getvalue()
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
